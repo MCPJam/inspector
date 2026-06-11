@@ -1071,6 +1071,193 @@
             "items": { "$ref": "#/components/schemas/Prompt" }
           }
         }
+      },
+      "CallToolResult": {
+        "type": "object",
+        "description": "MCP `CallToolResult`. `isError: true` means the tool itself reported an error — the call succeeded at the transport level.",
+        "required": ["content"],
+        "properties": {
+          "content": {
+            "type": "array",
+            "description": "Result content items (text, image, resource, etc.).",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "isError": {
+            "type": "boolean",
+            "description": "When `true`, the tool reported a tool-level error in `content`."
+          }
+        },
+        "additionalProperties": true
+      },
+      "GetPromptResult": {
+        "type": "object",
+        "description": "MCP `GetPromptResult`.",
+        "required": ["messages"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Optional description of the rendered prompt."
+          },
+          "messages": {
+            "type": "array",
+            "description": "The rendered prompt messages.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "CreateEvalRunRequest": {
+        "type": "object",
+        "description": "Request body for starting an eval run. Provide `suiteId` to rerun an existing suite, inline `tests` to define cases on the fly, or both.",
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "description": "ID of an existing eval suite to rerun. Required when `tests` is empty."
+          },
+          "suiteName": {
+            "type": "string",
+            "description": "Name for the suite. Used when creating a new suite from inline `tests`."
+          },
+          "serverIds": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs of the servers to connect for this run."
+          },
+          "tests": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "Inline test cases (up to 100). Each case defines the query, model, expected tool calls, and pass criteria.",
+            "items": {
+              "type": "object",
+              "required": ["title", "query", "runs", "model", "provider"],
+              "properties": {
+                "title": { "type": "string" },
+                "query": { "type": "string" },
+                "runs": { "type": "integer", "minimum": 1, "maximum": 10 },
+                "model": { "type": "string" },
+                "provider": { "type": "string" },
+                "expectedToolCalls": {
+                  "type": "array",
+                  "items": { "type": "object", "additionalProperties": true }
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "CreateEvalRunResponse": {
+        "type": "object",
+        "required": ["runId", "suiteId", "status", "caseUpsert"],
+        "properties": {
+          "runId": { "type": "string", "description": "ID of the created run. Use this to poll for status." },
+          "suiteId": { "type": "string", "description": "ID of the suite (existing or newly created)." },
+          "status": { "type": "string", "const": "running" },
+          "caseUpsert": {
+            "type": "object",
+            "description": "Summary of case upsert results when inline tests were supplied.",
+            "properties": {
+              "committed": {
+                "type": "array",
+                "items": { "type": "object", "additionalProperties": true }
+              },
+              "failed": {
+                "type": "array",
+                "items": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      },
+      "EvalRunDto": {
+        "type": "object",
+        "required": ["id", "suiteId", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "suiteId": { "type": "string" },
+          "runNumber": { "type": ["integer", "null"] },
+          "status": {
+            "type": "string",
+            "enum": ["running", "completed", "failed", "cancelled"],
+            "description": "Current run status. Poll until terminal (`completed`, `failed`, or `cancelled`)."
+          },
+          "result": {
+            "type": ["string", "null"],
+            "enum": ["passed", "failed", null]
+          },
+          "summary": {
+            "type": ["object", "null"],
+            "properties": {
+              "total": { "type": "integer" },
+              "passed": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "passRate": { "type": "number" }
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": ["ui", "api"],
+            "description": "How the run was triggered."
+          },
+          "notes": { "type": ["string", "null"] },
+          "createdAt": { "type": "number", "description": "Unix timestamp (ms)." },
+          "completedAt": { "type": ["number", "null"], "description": "Unix timestamp (ms), or `null` while running." }
+        }
+      },
+      "EvalIterationDto": {
+        "type": "object",
+        "required": ["id", "iterationNumber", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "testCaseId": { "type": ["string", "null"] },
+          "title": { "type": ["string", "null"] },
+          "iterationNumber": { "type": "integer" },
+          "status": { "type": "string", "enum": ["running", "completed", "failed", "cancelled"] },
+          "result": { "type": ["string", "null"], "enum": ["passed", "failed", null] },
+          "model": { "type": ["string", "null"] },
+          "provider": { "type": ["string", "null"] },
+          "startedAt": { "type": ["number", "null"] },
+          "durationMs": { "type": ["number", "null"], "description": "Wall-clock duration in milliseconds, or `null` while running." },
+          "tokensUsed": { "type": ["integer", "null"] },
+          "usage": {
+            "type": ["object", "null"],
+            "properties": {
+              "inputTokens": { "type": "integer" },
+              "outputTokens": { "type": "integer" },
+              "cachedTokens": { "type": "integer" },
+              "reasoningTokens": { "type": "integer" }
+            }
+          },
+          "actualToolCalls": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "expectedToolCalls": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "error": { "type": ["string", "null"] }
+        }
+      },
+      "EvalIterationPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EvalIterationDto" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
+          }
+        }
       }
     },
     "responses": {
