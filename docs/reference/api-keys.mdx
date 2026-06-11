@@ -8,7 +8,7 @@ icon: "key"
 
 - To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_…`) — the first one below.
 - Two others here are **third-party secrets you supply**, not keys MCPJam issues — they're listed only because the name collides.
-- One older key (`mcpjam_…`) is **deprecated**.
+- One older key (`mcpjam_…`) is **retired** and no longer works.
 
 ## MCPJam API key (`sk_…`)
 
@@ -48,13 +48,13 @@ A per-server bearer token for an HTTP MCP server that requires `Authorization: B
 
 **Errors:** [`auth/http_401`](/troubleshooting/error-codes#unauthorized-401), [`auth/http_403`](/troubleshooting/error-codes#forbidden-403) — the target server rejected the token.
 
-## Project API Key (`mcpjam_…`)
+## Project API Key (`mcpjam_…`) — retired
 
 <Warning>
-**Deprecated.** Being retired in favor of the **MCPJam API key (`sk_…`)** and the [MCPJam API](/reference/public-api) — don't build new integrations on it. It is currently still what the `@mcpjam/sdk` eval-reporting flow uses to save results to MCPJam.
+**Retired.** Project API keys no longer work: existing keys no longer authenticate, new keys can't be generated, and the `/sdk/v1/evals/*` ingestion endpoints they protected return `410 Gone` for every request. The `@mcpjam/sdk` eval-reporting flow that depended on them ([Saving Eval Results](/sdk/reference/eval-reporting)) is disabled until it's re-built on the **MCPJam API key (`sk_…`)** and the [MCPJam API](/reference/public-api). SDK evals still run and assert locally.
 </Warning>
 
-A project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, generated under **Settings → Project API Key** and read from the `MCPJAM_API_KEY` environment variable.
+This was a project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, read from the `MCPJAM_API_KEY` environment variable. If your CI logs now show `410` reporting errors, this retirement is why. The SDK's default auto-save path warns and continues (`reportEvalResultsSafely`), so eval runs themselves keep passing — but if you call `reportEvalResults` directly or set `strict: true`, remove that step (or unset `MCPJAM_API_KEY`) until `sk_`-based reporting ships.
 
 ## Quick reference
 
@@ -63,4 +63,4 @@ A project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, ge
 | **MCPJam API key** | `sk_…` | [Settings → API keys](https://app.mcpjam.com/settings/api-keys) | The [MCPJam API](/reference/public-api) (`/api/v1/*`) |
 | LLM provider key | provider-specific | the LLM provider | Playground chat — *third-party* |
 | Playground BYOK | server-specific | your MCP server | Authenticating to one MCP server — *third-party* |
-| Project API Key | `mcpjam_…` | Settings (legacy) | **Deprecated** — `@mcpjam/sdk` / CLI |
+| Project API Key | `mcpjam_…` | — (no longer issued) | **Retired** — no longer works |
