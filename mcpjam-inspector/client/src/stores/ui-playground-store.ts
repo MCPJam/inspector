@@ -229,6 +229,8 @@ const getDefaultCapabilities = (
   }
 };
 
+const initialDeviceType = getStoredDeviceType();
+
 const initialState = {
   isPlaygroundActive: false,
   selectedTool: null,
@@ -241,15 +243,15 @@ const initialState = {
   widgetUrl: null,
   widgetState: null,
   isWidgetTool: false,
-  deviceType: getStoredDeviceType(),
+  deviceType: initialDeviceType,
   displayMode: "inline" as DisplayMode,
-  globals: getInitialGlobals(),
+  globals: { ...getInitialGlobals(), deviceType: initialDeviceType },
   lastToolCallId: null,
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "permissive" as CspMode,
-  capabilities: getDefaultCapabilities("fill"),
+  capabilities: getDefaultCapabilities(initialDeviceType),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
   customViewport: getStoredCustomViewport(),
@@ -406,6 +408,7 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         isPlaygroundActive: state.isPlaygroundActive,
         // Preserve device type and custom viewport from localStorage
         deviceType: storedDeviceType,
+        globals: { ...initialState.globals, deviceType: storedDeviceType },
         customViewport: getStoredCustomViewport(),
         capabilities: getDefaultCapabilities(storedDeviceType),
         // Preserve CSP modes (may be set via CLI config before reset fires)
