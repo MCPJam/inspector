@@ -483,23 +483,44 @@ describe("runEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
-  it("returns the run with its project context", async () => {
-    const { client } = makeClient();
+  it("returns the run from the project the caller addressed", async () => {
+    const { client, fetchMock } = makeClient();
 
     const result = await getEvalRunOperation.execute(
-      { runId: "run-1" },
+      { project: "old", runId: "run-1" },
       { client }
     );
 
-    expect(result.project.id).toBe("project-new");
+    expect(result.project.id).toBe("project-old");
     expect(result.run).toEqual(RUN);
+    // The poll goes to the addressed project, not the most recent one.
+    expect(callsTo(fetchMock, "/eval-runs/run-1")[0]?.pathname).toBe(
+      "/api/v1/projects/project-old/eval-runs/run-1"
+    );
+  });
+
+  it("requires the project the run belongs to", () => {
+    for (const operation of [
+      getEvalRunOperation,
+      listEvalRunIterationsOperation,
+    ]) {
+      expect(operation.inputSchema.safeParse({ runId: "run-1" }).success).toBe(
+        false
+      );
+    }
+    expect(
+      getEvalIterationTraceOperation.inputSchema.safeParse({
+        runId: "run-1",
+        iterationId: "iter-1",
+      }).success
+    ).toBe(false);
   });
 
   it("forwards iteration pagination params and surfaces nextCursor", async () => {
     const { client, fetchMock } = makeClient();
 
     const result = await listEvalRunIterationsOperation.execute(
-      { runId: "run-1", cursor: "cursor-1", limit: 25 },
+      { project: "new", runId: "run-1", cursor: "cursor-1", limit: 25 },
       { client }
     );
 
@@ -514,7 +535,7 @@ describe("eval run polling operations", () => {
     const { client } = makeClient();
 
     const result = await getEvalIterationTraceOperation.execute(
-      { runId: "run-1", iterationId: "iter-1" },
+      { project: "project-new", runId: "run-1", iterationId: "iter-1" },
       { client }
     );
 
@@ -604,14 +625,17 @@ describe("operation catalog consistency", () => {
     { operation: listEvalSuitesOperation, minimalInput: {} },
     { operation: listEvalSuiteRunsOperation, minimalInput: { suite: "s" } },
     { operation: runEvalSuiteOperation, minimalInput: { suite: "s" } },
-    { operation: getEvalRunOperation, minimalInput: { runId: "r" } },
+    {
+      operation: getEvalRunOperation,
+      minimalInput: { project: "p", runId: "r" },
+    },
     {
       operation: listEvalRunIterationsOperation,
-      minimalInput: { runId: "r" },
+      minimalInput: { project: "p", runId: "r" },
     },
     {
       operation: getEvalIterationTraceOperation,
-      minimalInput: { runId: "r", iterationId: "i" },
+      minimalInput: { project: "p", runId: "r", iterationId: "i" },
     },
     { operation: listChatboxesOperation, minimalInput: {} },
     { operation: getChatboxOperation, minimalInput: { chatbox: "c" } },

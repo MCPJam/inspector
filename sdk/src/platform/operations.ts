@@ -253,8 +253,13 @@ function toOtherProjects(
 // ── Eval operations ──────────────────────────────────────────────────
 
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
+// Unlike the listing operations, the run-polling reads do NOT default the
+// project: a run is an existing resource in one specific project, and
+// guessing "most recently updated" makes a run in any other project read as
+// NOT_FOUND. run_eval_suite and list_eval_suite_runs return the resolved
+// project precisely so callers can address the polls exactly.
 const RUN_PROJECT_DESCRIPTION =
-  "Project the run belongs to (name or ID). Defaults to the most recently updated accessible project.";
+  "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
 
 export type ListEvalSuitesResult = {
   project: SelectedProjectInfo;
@@ -369,7 +374,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite against MCP servers saved in the project. Returns a runId immediately; poll get_eval_run until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
+    "Start an asynchronous rerun of an existing eval suite against MCP servers saved in the project. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
   readOnly: false,
   inputSchema: runEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -407,7 +412,7 @@ export const runEvalSuiteOperation: PlatformOperation<
 };
 
 const evalRunScopedInput = z.object({
-  project: z.string().min(1).optional().describe(RUN_PROJECT_DESCRIPTION),
+  project: z.string().min(1).describe(RUN_PROJECT_DESCRIPTION),
   runId: z
     .string()
     .min(1)

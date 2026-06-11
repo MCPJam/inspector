@@ -28,11 +28,14 @@ caller's project access.
 | `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers |
 | `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter |
 
-Project-scoped tools take an optional `project` (name or ID) and default to
-the most recently updated accessible project. `run_eval_suite` is the only
-non-read tool: it starts LLM iterations that consume the organization's
-credits, and is annotated `readOnlyHint: false` (but non-destructive) so
-hosts can gate it accordingly.
+Listing tools take an optional `project` (name or ID) and default to the most
+recently updated accessible project. The eval-run polling tools
+(`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`)
+require the project the run belongs to — `run_eval_suite` and
+`list_eval_suite_runs` return it, so the loop is self-contained.
+`run_eval_suite` is the only non-read tool: it starts LLM iterations that
+consume the organization's credits, and is annotated `readOnlyHint: false`
+(but non-destructive) so hosts can gate it accordingly.
 
 ## Auth
 
