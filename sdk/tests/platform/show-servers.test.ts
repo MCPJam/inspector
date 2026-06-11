@@ -448,6 +448,44 @@ describe("buildShowServersPayload", () => {
     expect(maxInFlight).toBe(SHOW_SERVERS_DOCTOR_CONCURRENCY);
   });
 
+  it("maps 502/504 without a wire code onto unreachable", async () => {
+    // A gateway 502 without a JSON envelope synthesizes INTERNAL_ERROR; the
+    // status fallback must still classify the target server as unreachable.
+    const doctor = vi.fn(async () => {
+      throw platformError("INTERNAL_ERROR", "Bad gateway", { status: 502 });
+    });
+
+    const payload = await buildShowServersPayload({
+      doctor,
+      project: PROJECTS[0]!,
+      projects: PROJECTS,
+      servers: [server({ id: "gateway" })],
+      generatedAt: "2026-06-11T00:00:00.000Z",
+    });
+
+    expect(payload.servers[0]?.status).toBe("unreachable");
+    expect(payload.servers[0]?.statusDetail).toBe("Bad gateway");
+  });
+
+  it("propagates caller-initiated aborts instead of recording unreachable entries", async () => {
+    const controller = new AbortController();
+    const doctor = vi.fn(async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    });
+
+    await expect(
+      buildShowServersPayload({
+        doctor,
+        project: PROJECTS[0]!,
+        projects: PROJECTS,
+        servers: [server({ id: "cancelled" })],
+        generatedAt: "2026-06-11T00:00:00.000Z",
+        signal: controller.signal,
+      })
+    ).rejects.toThrow("aborted");
+  });
+
   it("normalizes a missing organizationId to an empty string", async () => {
     const orphanProject = project({ id: "p", organizationId: null });
     const payload = await buildShowServersPayload({

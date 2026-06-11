@@ -299,10 +299,22 @@ export class PlatformApiClient {
   }
 }
 
-function parseRetryAfter(header: string | null): number | undefined {
+function parseRetryAfter(
+  header: string | null,
+  now: number = Date.now()
+): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds;
+  }
+
+  // RFC 9110 also allows an HTTP-date form.
+  const retryAt = Date.parse(header);
+  if (Number.isNaN(retryAt)) {
+    return undefined;
+  }
+  return Math.max(0, Math.ceil((retryAt - now) / 1000));
 }
 
 function errorMessage(error: unknown): string {

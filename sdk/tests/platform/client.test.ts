@@ -172,6 +172,27 @@ describe("PlatformApiClient", () => {
     expect((error as PlatformApiError).retryAfter).toBe(7);
   });
 
+  it("parses HTTP-date Retry-After values into seconds", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        { code: "RATE_LIMITED", message: "Slow down" },
+        {
+          status: 429,
+          headers: { "retry-after": new Date(Date.now() + 30_000).toUTCString() },
+        }
+      )
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    const retryAfter = (error as PlatformApiError).retryAfter;
+    expect(retryAfter).toBeGreaterThanOrEqual(28);
+    expect(retryAfter).toBeLessThanOrEqual(31);
+  });
+
   it("falls back to INTERNAL_ERROR for malformed error envelopes", async () => {
     const fetchMock = vi.fn(
       async () => new Response("upstream exploded", { status: 502 })

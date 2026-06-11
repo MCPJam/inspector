@@ -239,6 +239,11 @@ export async function buildShowServersPayload({
         });
         return entryFromDoctorReport(target.server, report);
       } catch (error) {
+        // Caller-initiated cancellation fails the whole operation; it must
+        // not masquerade as per-server unreachability.
+        if (signal?.aborted) {
+          throw error;
+        }
         return entryFromDoctorError(target.server, error);
       }
     }
@@ -345,10 +350,14 @@ function entryFromDoctorError(
 
     // 502/504 from the API describe the target MCP server; client-side
     // NETWORK_ERROR/TIMEOUT mean we never got an answer about it either way.
+    // The status fallback covers gateways that emit 502/504 without a
+    // well-formed envelope (the client then synthesizes INTERNAL_ERROR).
     if (
       error.code === "SERVER_UNREACHABLE" ||
       error.code === "TIMEOUT" ||
-      error.code === "NETWORK_ERROR"
+      error.code === "NETWORK_ERROR" ||
+      error.status === 502 ||
+      error.status === 504
     ) {
       return baseEntry(server, "unreachable", error.message);
     }
