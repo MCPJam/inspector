@@ -211,7 +211,7 @@ const navigationSections: NavSection[] = [
         url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients", "host-compare"],
+        matchTabs: ["clients", "host-compare", "computer"],
       },
       {
         title: "Servers",

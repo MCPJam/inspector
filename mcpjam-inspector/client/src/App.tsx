@@ -50,6 +50,8 @@ import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
+import { ComputerView } from "./components/computer/ComputerView";
+import { useComputersEnabled } from "./hooks/useComputersEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
@@ -454,6 +456,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <HostsRoute />;
     case "host-compare":
       return <HostCompareRoute />;
+    case "computer":
+      return <ComputerRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
@@ -509,11 +513,8 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const {
-    convexProjectId,
-    hostsHubFlagEnabled,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
+    useAppRouteContext();
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
@@ -523,7 +524,7 @@ export function ServersRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.servers);
     },
-    [navigate],
+    [navigate]
   );
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
@@ -622,7 +623,7 @@ export function HostsRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.hosts);
     },
-    [navigate],
+    [navigate]
   );
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
@@ -675,10 +676,62 @@ export function HostCompareRoute() {
             navigate(routePaths.servers);
           } else if (next === "host" && previewedHostId) {
             navigate(buildHostsPath(previewedHostId));
+          } else if (next === "computer") {
+            navigate(routePaths.computer);
           }
         }}
       />
       <div className="min-h-0 flex-1">{compareView}</div>
+    </motion.div>
+  );
+}
+
+export function ComputerRoute() {
+  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
+    useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
+  const computersEnabled = useComputersEnabled();
+
+  // Flag off ⇒ the feature is hidden; bounce to Servers so a stale /computer
+  // URL doesn't strand the user on a blank route.
+  if (!computersEnabled) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+
+  const computerView = (
+    <ComputerView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
+  );
+
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return computerView;
+  }
+
+  return (
+    <motion.div
+      key="computer"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="computer"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "compare") {
+            navigate(routePaths.hostCompare);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildHostsPath(previewedHostId));
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{computerView}</div>
     </motion.div>
   );
 }
@@ -714,10 +767,7 @@ export function ToolsRoute() {
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
   return (
-    <ActiveHostCapsResolverScope
-      activeHost={activeHost}
-      hostStyle={hostStyle}
-    >
+    <ActiveHostCapsResolverScope activeHost={activeHost} hostStyle={hostStyle}>
       <div className="h-full overflow-hidden">
         <ToolsTab
           serverConfig={selectedMCPConfig}
@@ -1718,7 +1768,8 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
-  const isHostedDefaultRoute = activeTab === "servers" || activeTab === "clients";
+  const isHostedDefaultRoute =
+    activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
@@ -3143,75 +3194,75 @@ export default function App() {
       />
       <AppStateProvider appState={effectiveAppState}>
         <ServerActionsProvider
-        actions={{
-          ensureServersReady,
-          runtimeDisconnectServer: handleRuntimeDisconnect,
-          reconnectServer: reconnectServerForClientSwitch,
-          setSelectedServerNames: setSelectedMCPConfigs,
-        }}
-      >
-        <ActiveHostServerReconciler
-          projectId={convexProjectId}
-          isAuthenticated={isAuthenticated}
-          activeHost={activeHost}
-          activeHostId={activeHostId}
-        />
-        <AppReadyProvider
-          isLoadingAppState={isLoading}
-          isConvexAuthLoading={isAuthLoading}
-          isConvexAuthenticated={isAuthenticated}
-          effectiveActiveProjectId={activeProjectId}
-          isLoadingRemoteProjects={isLoadingRemoteProjects}
+          actions={{
+            ensureServersReady,
+            runtimeDisconnectServer: handleRuntimeDisconnect,
+            reconnectServer: reconnectServerForClientSwitch,
+            setSelectedServerNames: setSelectedMCPConfigs,
+          }}
         >
-          <Toaster />
-          <MCPJamLimitDialog />
-          <div
-            data-testid="app-shell"
-            aria-hidden={shouldShowBillingHandoffOverlay || undefined}
-            className={
-              shouldShowBillingHandoffOverlay
-                ? "pointer-events-none opacity-0"
-                : undefined
-            }
-            inert={shouldShowBillingHandoffOverlay || undefined}
+          <ActiveHostServerReconciler
+            projectId={convexProjectId}
+            isAuthenticated={isAuthenticated}
+            activeHost={activeHost}
+            activeHostId={activeHostId}
+          />
+          <AppReadyProvider
+            isLoadingAppState={isLoading}
+            isConvexAuthLoading={isAuthLoading}
+            isConvexAuthenticated={isAuthenticated}
+            effectiveActiveProjectId={activeProjectId}
+            isLoadingRemoteProjects={isLoadingRemoteProjects}
           >
-            <HostedShellGate
-              state={effectiveHostedShellGateState}
-              loadingMessage={
-                shouldShowPendingDashboardOAuthGate
-                  ? pendingDashboardOAuthMessage
+            <Toaster />
+            <MCPJamLimitDialog />
+            <div
+              data-testid="app-shell"
+              aria-hidden={shouldShowBillingHandoffOverlay || undefined}
+              className={
+                shouldShowBillingHandoffOverlay
+                  ? "pointer-events-none opacity-0"
                   : undefined
               }
-              onSignIn={() => {
-                if (chatboxPathToken) {
-                  writeChatboxSignInReturnPath(window.location.pathname);
-                }
-                signIn();
-              }}
-              onSignOut={() => {
-                void (async () => {
-                  try {
-                    await disconnectRuntimeServersForAuthExit();
-                  } finally {
-                    await signOut();
-                  }
-                })();
-              }}
+              inert={shouldShowBillingHandoffOverlay || undefined}
             >
-              {isChatboxChatRoute ? (
-                <ChatboxChatPage
-                  pathToken={chatboxPathToken}
-                  onExitChatboxChat={() => setExitedChatboxChat(true)}
-                />
-              ) : (
-                appContent
-              )}
-            </HostedShellGate>
-          </div>
-          {shouldShowBillingHandoffOverlay ? (
-            <BillingHandoffLoading overlay />
-          ) : null}
-        </AppReadyProvider>
+              <HostedShellGate
+                state={effectiveHostedShellGateState}
+                loadingMessage={
+                  shouldShowPendingDashboardOAuthGate
+                    ? pendingDashboardOAuthMessage
+                    : undefined
+                }
+                onSignIn={() => {
+                  if (chatboxPathToken) {
+                    writeChatboxSignInReturnPath(window.location.pathname);
+                  }
+                  signIn();
+                }}
+                onSignOut={() => {
+                  void (async () => {
+                    try {
+                      await disconnectRuntimeServersForAuthExit();
+                    } finally {
+                      await signOut();
+                    }
+                  })();
+                }}
+              >
+                {isChatboxChatRoute ? (
+                  <ChatboxChatPage
+                    pathToken={chatboxPathToken}
+                    onExitChatboxChat={() => setExitedChatboxChat(true)}
+                  />
+                ) : (
+                  appContent
+                )}
+              </HostedShellGate>
+            </div>
+            {shouldShowBillingHandoffOverlay ? (
+              <BillingHandoffLoading overlay />
+            ) : null}
+          </AppReadyProvider>
         </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>

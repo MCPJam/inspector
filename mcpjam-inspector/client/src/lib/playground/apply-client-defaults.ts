@@ -140,9 +140,9 @@ export function applyHostConfigToPlayground(
   // delivered to Views via `ui/initialize.hostContext` (see
   // `applyHostTemplate` above). Don't project it onto the playground's
   // device-frame viewport — that shrunk the entire chat to e.g. 720px when
-  // picking Claude. Keep the playground full-width; the View iframe sizes
-  // itself from the hostContext.
-  useUIPlaygroundStore.getState().setDeviceType("desktop");
+  // picking Claude. Keep the playground filling the panel; the View iframe
+  // sizes itself from the hostContext.
+  useUIPlaygroundStore.getState().setDeviceType("fill");
 
   // Templates / configs encode their CSP intent under
   // `mcpProfile.apps.sandbox.csp.mode`; the only branded value today is

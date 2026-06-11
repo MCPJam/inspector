@@ -29,6 +29,7 @@ import {
   detachComputerPatch,
   shouldShowComputerToggle,
 } from "@/lib/host-config-computer";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -101,11 +102,14 @@ export function BehaviorTab({
   // computer-backed tool (the `bash` row ships disabled until launch) OR when
   // the host already has a computer attached, so an existing attachment is
   // always detachable even if no computer-backed tool is in the catalog.
-  const showComputerToggle = shouldShowComputerToggle({
-    catalogHasComputerBackedTool:
-      catalogHasComputerBackedTool(builtInToolCatalog),
-    computerAttached: draft.computer !== undefined,
-  });
+  const computersEnabled = useComputersEnabled();
+  const showComputerToggle =
+    computersEnabled &&
+    shouldShowComputerToggle({
+      catalogHasComputerBackedTool:
+        catalogHasComputerBackedTool(builtInToolCatalog),
+      computerAttached: draft.computer !== undefined,
+    });
 
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.

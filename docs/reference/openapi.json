@@ -38,12 +38,16 @@
       "description": "Asynchronous eval suite runs: create with 202, poll status, iterations, and traces."
     },
     {
+      "name": "OAuth",
+      "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
+    },
+    {
       "name": "Chatboxes",
       "description": "Read-only access to the chatboxes published from a project: listing, settings, attached servers, and share links."
     },
     {
-      "name": "OAuth",
-      "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
+      "name": "Catalog",
+      "description": "Discover the resources the other routes operate on: your account, projects, servers, eval suites, and chat sessions."
     }
   ],
   "paths": {
@@ -691,6 +695,164 @@
         }
       }
     },
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "tags": ["Catalog"],
+        "summary": "Get the authenticated account",
+        "description": "The user behind the API key (keys act as their creator, scoped to one organization).",
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Me" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "tags": ["Catalog"],
+        "summary": "List projects",
+        "description": "Projects the caller can access. API keys only ever see projects inside the key's organization.",
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to one organization.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's projects.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProjectPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers": {
+      "get": {
+        "operationId": "listProjectServers",
+        "tags": ["Catalog"],
+        "summary": "List a project's servers",
+        "description": "The MCP servers saved in the project — the `serverId`s every other route takes. STDIO command/args/env and raw headers are never exposed.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's servers.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProjectServerPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites": {
+      "get": {
+        "operationId": "listEvalSuites",
+        "tags": ["Catalog"],
+        "summary": "List a project's eval suites",
+        "description": "Eval suites in the project with latest-run summaries and pass-rate trends — the `suiteId`s the eval-run routes take.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's eval suites.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalSuitePage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/chat-sessions": {
+      "get": {
+        "operationId": "listChatSessions",
+        "tags": ["Catalog"],
+        "summary": "List chat sessions",
+        "description": "Chat sessions visible to the caller (personal + project-shared merged). Top-level rather than project-nested because `projectId` is an optional filter, not an owning scope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to one project.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "`active` (default) or `archived`.",
+            "schema": { "type": "string", "enum": ["active", "archived"], "default": "active" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1–200. Defaults to 50.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Cursor: the previous page's `nextCursor` (a `lastActivityAt` timestamp).",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of chat sessions, newest activity first.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatSessionPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
     "/projects/{projectId}/chatboxes": {
       "get": {
         "operationId": "listChatboxes",
@@ -707,10 +869,13 @@
               }
             }
           },
+          "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
         }
       }
     },
@@ -733,11 +898,13 @@
               }
             }
           },
+          "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
         }
       }
     }
@@ -1412,6 +1579,156 @@
               "scope": { "type": "string" },
               "id_token": { "type": "string", "format": "password" }
             }
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "required": ["id", "email", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string" },
+          "name": { "type": "string" },
+          "imageUrl": { "type": ["string", "null"] },
+          "profilePictureUrl": { "type": ["string", "null"] },
+          "plan": { "type": ["string", "null"] },
+          "createdAt": { "type": ["number", "null"], "description": "Epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "icon": { "type": ["string", "null"] },
+          "organizationId": { "type": ["string", "null"] },
+          "visibility": { "type": ["string", "null"] },
+          "role": {
+            "type": "string",
+            "description": "Caller's role on the project, when resolved."
+          },
+          "createdAt": { "type": ["number", "null"], "description": "Epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "ProjectPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Project" }
+          }
+        }
+      },
+      "ProjectServer": {
+        "type": "object",
+        "description": "A saved MCP server, projected toward the hosted (HTTP) shape. STDIO command/args/env and raw headers are never exposed.",
+        "required": ["id", "name", "enabled", "transportType", "useOAuth", "hasClientSecret"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "transportType": { "type": "string" },
+          "url": {
+            "type": ["string", "null"],
+            "description": "Endpoint for HTTP-transport servers; `null` for stdio."
+          },
+          "useOAuth": { "type": "boolean" },
+          "hasClientSecret": { "type": "boolean" },
+          "oauthScopes": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": ["number", "null"], "description": "Epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "ProjectServerPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ProjectServer" }
+          }
+        }
+      },
+      "EvalSuite": {
+        "type": "object",
+        "required": ["id", "totals", "passRateTrend"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": ["string", "null"] },
+          "projectId": { "type": ["string", "null"] },
+          "createdAt": { "type": ["number", "null"], "description": "Epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"] },
+          "latestRun": {
+            "type": ["object", "null"],
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "status": { "type": ["string", "null"] },
+              "passRate": { "type": ["number", "null"] },
+              "passed": { "type": ["integer", "null"] },
+              "failed": { "type": ["integer", "null"] },
+              "createdAt": { "type": ["number", "null"] }
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "passed": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "runs": { "type": "integer" }
+            }
+          },
+          "passRateTrend": {
+            "type": "array",
+            "description": "Recent runs' pass rates, oldest first.",
+            "items": { "type": "number" }
+          }
+        }
+      },
+      "EvalSuitePage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EvalSuite" }
+          }
+        }
+      },
+      "ChatSession": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "status": { "type": ["string", "null"] },
+          "projectId": { "type": ["string", "null"] },
+          "visibility": {
+            "type": ["string", "null"],
+            "description": "`private` or `project`."
+          },
+          "lastActivityAt": { "type": ["number", "null"], "description": "Epoch milliseconds." },
+          "createdAt": { "type": ["number", "null"] },
+          "isPinned": { "type": "boolean" },
+          "isUnread": { "type": "boolean" }
+        }
+      },
+      "ChatSessionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatSession" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass as `before` to fetch the next page. Omitted on the last page."
           }
         }
       },
