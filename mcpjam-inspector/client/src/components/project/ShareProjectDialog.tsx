@@ -66,9 +66,13 @@ interface ShareProjectDialogProps {
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function buildInviteToastMessage(
-  result: { kind: string },
+  result: { kind: string; requiresSeatPayment?: boolean },
   email: string,
 ): string {
+  if (result.requiresSeatPayment) {
+    return `Invitation saved for ${email}. Finish paid seat payment in organization settings before they get access.`;
+  }
+
   switch (result.kind) {
     case "organization_member_added":
       return `${email} added to the organization. They now have access to this project.`;

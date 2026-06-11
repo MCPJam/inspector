@@ -377,6 +377,28 @@ describe("ShareProjectDialog", () => {
     );
   });
 
+  it("explains that paid Team share invites need org settings payment", async () => {
+    mockInviteProjectMember.mockResolvedValueOnce({
+      changed: true,
+      kind: "project_invite_pending",
+      isPending: true,
+      requiresSeatPayment: true,
+    });
+
+    renderDialog({ visibility: "private" });
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "paid-seat@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        "Invitation saved for paid-seat@example.com. Finish paid seat payment in organization settings before they get access.",
+      );
+    });
+  });
+
   it("shows a project picker only when multiple projects are available", () => {
     renderDialog({
       availableProjects: {
