@@ -43,3 +43,39 @@ export async function discoverAuthorizationServer(input: {
 
   return body;
 }
+
+export interface HealthCheckResult {
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  durationMs: number;
+  reason?: "timeout" | "unreachable" | "redirect_not_followed";
+}
+
+/**
+ * Probe a registered health-check URL via the inspector server (which
+ * validates the outbound URL). Throws with the server's message when the URL
+ * itself is rejected; an unreachable or timed-out target resolves with
+ * `ok: false` instead.
+ */
+export async function checkResourceHealth(
+  url: string,
+): Promise<HealthCheckResult> {
+  const response = await authFetch(`${XAA_API_BASE}/health-check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+
+  const body = (await response.json().catch(() => null)) as
+    | (HealthCheckResult & { message?: string })
+    | null;
+
+  if (!response.ok || !body) {
+    throw new Error(
+      body?.message || `Health check failed (${response.status})`,
+    );
+  }
+
+  return body;
+}

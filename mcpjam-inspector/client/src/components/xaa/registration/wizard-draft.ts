@@ -15,6 +15,9 @@ export interface RegistrationDraft {
   targetClientId: string;
   /** Never pre-filled from the server; blank on edit means "keep stored". */
   secret: string;
+  /** Space-separated in the form; split into an array on save. */
+  scopes: string;
+  healthCheckUrl: string;
 }
 
 export const EMPTY_DRAFT: RegistrationDraft = {
@@ -26,6 +29,8 @@ export const EMPTY_DRAFT: RegistrationDraft = {
   issuer: "",
   targetClientId: "",
   secret: "",
+  scopes: "",
+  healthCheckUrl: "",
 };
 
 export function draftFromResourceApp(app: XaaResourceApp): RegistrationDraft {
@@ -38,6 +43,8 @@ export function draftFromResourceApp(app: XaaResourceApp): RegistrationDraft {
     issuer: app.issuer ?? "",
     targetClientId: app.targetClientId ?? "",
     secret: "",
+    scopes: (app.scopes ?? []).join(" "),
+    healthCheckUrl: app.healthCheckUrl ?? "",
   };
 }
 
@@ -76,6 +83,20 @@ export function validateAuthServer(draft: RegistrationDraft): string | null {
   return null;
 }
 
+export function validateScopesConfig(draft: RegistrationDraft): string | null {
+  if (draft.healthCheckUrl.trim() && !isHttpUrl(draft.healthCheckUrl.trim())) {
+    return "Health check URL must be a valid http(s) URL.";
+  }
+  return null;
+}
+
+export function parseScopes(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
 /** Map the draft to the upsert input; own-AS fields and the secret are only
  * sent when meaningful. */
 export function draftToInput(
@@ -83,6 +104,7 @@ export function draftToInput(
   editingId?: string,
 ): XaaResourceAppInput {
   const own = draft.authServerMode === "own";
+  const scopes = parseScopes(draft.scopes);
   return {
     ...(editingId ? { id: editingId } : {}),
     name: draft.name.trim(),
@@ -97,5 +119,9 @@ export function draftToInput(
       ? { targetClientId: draft.targetClientId.trim() }
       : {}),
     ...(own && draft.secret ? { secret: draft.secret } : {}),
+    ...(scopes.length > 0 ? { scopes } : {}),
+    ...(draft.healthCheckUrl.trim()
+      ? { healthCheckUrl: draft.healthCheckUrl.trim() }
+      : {}),
   };
 }

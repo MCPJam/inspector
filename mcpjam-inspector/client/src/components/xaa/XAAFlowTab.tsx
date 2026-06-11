@@ -12,6 +12,7 @@ import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
 import { XAABootstrapDialog } from "./XAABootstrapDialog";
 import { XAAIdpCard } from "./XAAIdpCard";
+import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
@@ -44,11 +45,13 @@ function buildFlowStateFromProfile(profile: XAADebugProfile): XAAFlowState {
 interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  organizationId?: string | null;
 }
 
 export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
+  organizationId,
 }: XAAFlowTabProps) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isBootstrapDialogOpen, setIsBootstrapDialogOpen] = useState(false);
@@ -165,6 +168,7 @@ export function XAAFlowTab({
   return (
     <div className="h-full flex flex-col bg-background">
       <XAAIdpCard />
+      <XAAResourceAppsSection organizationId={organizationId ?? null} />
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={52} minSize={30}>
