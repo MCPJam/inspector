@@ -210,22 +210,36 @@ export async function resolveOrgModelConfig(
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
 
-    const providers = data.providers ?? [];
-    // Hosted mode: reject org-supplied Bedrock endpoints that point at
+    let providers = data.providers ?? [];
+    // Hosted mode: drop org-supplied Bedrock endpoints that point at
     // private/internal address space before they are cached and handed to
     // the AI SDK. Uses the DNS-aware guard so a public hostname resolving
     // to a private IP (DNS rebinding) is rejected too — mirrors the check
-    // the local-runtime path applies in resolveOrgProviderRuntime.
+    // the local-runtime path applies in resolveOrgProviderRuntime. Only the
+    // offending provider is dropped (its own requests then fail with a
+    // clear missing-config error) so one bad endpoint can't block every
+    // other provider in the org config.
     if (HOSTED_MODE) {
+      const safeProviders: ResolvedProviderConfig[] = [];
       for (const provider of providers) {
         if (
           provider.providerKey === "bedrock" &&
           typeof provider.baseUrl === "string" &&
           provider.baseUrl.length > 0
         ) {
-          await assertSafeHostedOutboundUrl(provider.baseUrl);
+          try {
+            await assertSafeHostedOutboundUrl(provider.baseUrl);
+          } catch (error) {
+            console.warn(
+              "[org-model-config] Dropping bedrock provider with blocked baseUrl:",
+              error instanceof Error ? error.message : String(error),
+            );
+            continue;
+          }
         }
+        safeProviders.push(provider);
       }
+      providers = safeProviders;
     }
 
     const result: ResolvedOrgModelConfig = { providers };
