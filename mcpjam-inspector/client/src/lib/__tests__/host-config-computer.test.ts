@@ -6,6 +6,7 @@ import {
   detachComputerPatch,
   sanitizeHostConfigForEvalSuite,
   shouldShowComputerToggle,
+  visibleBuiltInToolCatalog,
 } from "../host-config-computer";
 import { emptyHostConfigInputV2 } from "../client-config-v2";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -118,6 +119,44 @@ describe("shouldShowComputerToggle", () => {
         disallowed: true,
       })
     ).toBe(false);
+  });
+});
+
+describe("visibleBuiltInToolCatalog", () => {
+  it("returns the catalog unchanged when the computers flag is on", () => {
+    expect(
+      visibleBuiltInToolCatalog(CATALOG, {
+        computersEnabled: true,
+        selectedIds: [],
+      })
+    ).toBe(CATALOG);
+  });
+
+  it("hides computer-backed rows when the flag is off (enabled bash row stays invisible pre-rollout)", () => {
+    expect(
+      visibleBuiltInToolCatalog(CATALOG, {
+        computersEnabled: false,
+        selectedIds: [],
+      })
+    ).toEqual([CATALOG[0]]);
+  });
+
+  it("keeps a computer-backed row that is already selected, so a stale id stays removable", () => {
+    expect(
+      visibleBuiltInToolCatalog(CATALOG, {
+        computersEnabled: false,
+        selectedIds: ["bash"],
+      })
+    ).toEqual(CATALOG);
+  });
+
+  it("passes `undefined` through (catalog still loading)", () => {
+    expect(
+      visibleBuiltInToolCatalog(undefined, {
+        computersEnabled: false,
+        selectedIds: [],
+      })
+    ).toBeUndefined();
   });
 });
 

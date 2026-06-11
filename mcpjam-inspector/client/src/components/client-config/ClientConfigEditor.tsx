@@ -63,6 +63,7 @@ import {
   catalogHasComputerBackedTool,
   detachComputerPatch,
   shouldShowComputerToggle,
+  visibleBuiltInToolCatalog,
 } from "@/lib/host-config-computer";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
@@ -164,8 +165,15 @@ export function ClientConfigEditor({
   // (loading → undefined → hidden) so empty installs don't show a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
   const computersEnabled = useComputersEnabled();
+  // Render only the rows this user may see: with `computers-enabled` off,
+  // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
+  // already-selected id, which must remain visible to stay removable.
+  const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
+    computersEnabled,
+    selectedIds: value.builtInToolIds,
+  });
   const showBuiltInToolsSection =
-    owner !== "connection-only" && (builtInToolCatalog?.length ?? 0) > 0;
+    owner !== "connection-only" && (visibleBuiltInTools?.length ?? 0) > 0;
   // Eval suites can never use a personal computer: the backend aborts eval
   // runs whose resolved host config carries one. So hide the toggle and mark
   // computer-backed tools disallowed (they render blocked, but a stale id
@@ -408,7 +416,7 @@ export function ClientConfigEditor({
               <BuiltInToolCheckboxList
                 label="Built-in tools"
                 selected={value.builtInToolIds}
-                available={builtInToolCatalog ?? []}
+                available={visibleBuiltInTools ?? []}
                 computerAttached={value.computer !== undefined}
                 computerToolsDisallowed={computerToolsDisallowed}
                 onChange={(builtInToolIds) => update({ builtInToolIds })}
