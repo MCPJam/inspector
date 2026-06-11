@@ -578,8 +578,10 @@ async function resolveSuite(
 
 /**
  * Resolve the servers a run connects to. Explicit selectors resolve by id or
- * unique name (deduplicated); with none given, every enabled HTTP server in
- * the project is used — stdio servers can't run on the hosted platform.
+ * unique name (deduplicated) and must be hosted-runnable HTTP servers;
+ * disabled servers stay selectable, since naming one is an explicit choice.
+ * With no selectors, every enabled HTTP server in the project is used —
+ * stdio servers can't run on the hosted platform.
  */
 async function resolveRunServers(
   client: PlatformApiClient,
@@ -601,12 +603,26 @@ async function resolveRunServers(
         "Server",
         `project "${project.name}"`
       );
+      // Fail deterministically here rather than downstream at run creation:
+      // the hosted runner can never connect to these.
+      if (server.transportType === "stdio" || !server.url) {
+        throw resolutionError(
+          `Server "${selector.trim()}" can't run hosted evals: ${
+            server.transportType === "stdio"
+              ? "stdio servers are not supported on the hosted platform"
+              : "it has no URL"
+          }. Select an HTTP server instead.`
+        );
+      }
       resolved.set(server.id, server);
     }
     return [...resolved.values()];
   }
 
-  const defaults = page.items.filter((server) => server.enabled && server.url);
+  const defaults = page.items.filter(
+    (server) =>
+      server.enabled && server.transportType !== "stdio" && server.url
+  );
   if (defaults.length === 0) {
     throw resolutionError(
       `Project "${project.name}" has no enabled HTTP servers to run against. Pass servers explicitly or add one in the hosted inspector.`

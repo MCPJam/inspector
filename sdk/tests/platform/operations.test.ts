@@ -421,6 +421,25 @@ describe("runEvalSuiteOperation", () => {
     });
   });
 
+  it("rejects explicitly selected stdio servers before creating the run", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await runEvalSuiteOperation
+      .execute({ suite: "Smoke", servers: ["Docs"] }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain(
+      'Server "Docs" can\'t run hosted evals'
+    );
+    expect((error as PlatformApiError).message).toContain("stdio");
+    // The deterministic failure happens before any run is created.
+    const createCalls = fetchMock.mock.calls.filter(([target]) =>
+      String(target).endsWith("/eval-runs")
+    );
+    expect(createCalls).toHaveLength(0);
+  });
+
   it("fails with the available servers when a selector misses", async () => {
     const { client } = makeClient({ servers: HTTP_SERVERS });
 
