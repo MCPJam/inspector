@@ -63,21 +63,39 @@ export function isMcpjamToolId(id: string): id is McpjamToolId {
  * authorization/transport failures, which the tools translate to `{ error }`.
  */
 export interface McpjamLiveOps {
-  doctor(serverId: string): Promise<unknown>;
-  listTools(serverId: string, cursor?: string): Promise<unknown>;
+  doctor(serverId: string, abortSignal?: AbortSignal): Promise<unknown>;
+  listTools(
+    serverId: string,
+    cursor?: string,
+    abortSignal?: AbortSignal
+  ): Promise<unknown>;
   callTool(
     serverId: string,
     toolName: string,
-    parameters: Record<string, unknown>
+    parameters: Record<string, unknown>,
+    abortSignal?: AbortSignal
   ): Promise<unknown>;
-  listPrompts(serverId: string, cursor?: string): Promise<unknown>;
+  listPrompts(
+    serverId: string,
+    cursor?: string,
+    abortSignal?: AbortSignal
+  ): Promise<unknown>;
   getPrompt(
     serverId: string,
     name: string,
-    args?: Record<string, string>
+    args?: Record<string, string | number | boolean>,
+    abortSignal?: AbortSignal
   ): Promise<unknown>;
-  listResources(serverId: string, cursor?: string): Promise<unknown>;
-  readResource(serverId: string, uri: string): Promise<unknown>;
+  listResources(
+    serverId: string,
+    cursor?: string,
+    abortSignal?: AbortSignal
+  ): Promise<unknown>;
+  readResource(
+    serverId: string,
+    uri: string,
+    abortSignal?: AbortSignal
+  ): Promise<unknown>;
 }
 
 export interface McpjamToolOptions {
@@ -114,6 +132,10 @@ async function runLiveOp<T>(
   abortSignal: AbortSignal | undefined,
   what: string
 ): Promise<T | { error: string }> {
+  // The signal is also threaded into the op itself (McpjamLiveOps methods
+  // accept it) — this pre-check just avoids starting work the chat runtime
+  // already cancelled.
+  if (abortSignal?.aborted) return { error: `${what} was cancelled.` };
   try {
     return await op();
   } catch (error) {
@@ -211,7 +233,7 @@ function buildDiagnoseServerTool(liveOps: McpjamLiveOps): ToolSet[string] {
       "which step failed and why.",
     inputSchema: z.object({ serverId: serverIdField }),
     execute: async ({ serverId }, { abortSignal }) =>
-      runLiveOp(() => liveOps.doctor(serverId), abortSignal, "Diagnosis"),
+      runLiveOp(() => liveOps.doctor(serverId, abortSignal), abortSignal, "Diagnosis"),
   });
 }
 
@@ -225,7 +247,7 @@ function buildListToolsTool(liveOps: McpjamLiveOps): ToolSet[string] {
     inputSchema: z.object({ serverId: serverIdField, cursor: cursorField }),
     execute: async ({ serverId, cursor }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.listTools(serverId, cursor),
+        () => liveOps.listTools(serverId, cursor, abortSignal),
         abortSignal,
         "Listing tools"
       ),
@@ -257,7 +279,7 @@ function buildCallToolTool(
     needsApproval: opts.requireToolApproval === true,
     execute: async ({ serverId, toolName, parameters }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.callTool(serverId, toolName, parameters ?? {}),
+        () => liveOps.callTool(serverId, toolName, parameters ?? {}, abortSignal),
         abortSignal,
         "Tool execution"
       ),
@@ -272,7 +294,7 @@ function buildListPromptsTool(liveOps: McpjamLiveOps): ToolSet[string] {
     inputSchema: z.object({ serverId: serverIdField, cursor: cursorField }),
     execute: async ({ serverId, cursor }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.listPrompts(serverId, cursor),
+        () => liveOps.listPrompts(serverId, cursor, abortSignal),
         abortSignal,
         "Listing prompts"
       ),
@@ -288,13 +310,13 @@ function buildGetPromptTool(liveOps: McpjamLiveOps): ToolSet[string] {
       serverId: serverIdField,
       name: z.string().min(1).describe("Exact prompt name on the server"),
       arguments: z
-        .record(z.string())
+        .record(z.union([z.string(), z.number(), z.boolean()]))
         .optional()
-        .describe("Prompt arguments (string values)"),
+        .describe("Prompt arguments (string, number, or boolean values)"),
     }),
     execute: async ({ serverId, name, arguments: args }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.getPrompt(serverId, name, args),
+        () => liveOps.getPrompt(serverId, name, args, abortSignal),
         abortSignal,
         "Rendering the prompt"
       ),
@@ -309,7 +331,7 @@ function buildListResourcesTool(liveOps: McpjamLiveOps): ToolSet[string] {
     inputSchema: z.object({ serverId: serverIdField, cursor: cursorField }),
     execute: async ({ serverId, cursor }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.listResources(serverId, cursor),
+        () => liveOps.listResources(serverId, cursor, abortSignal),
         abortSignal,
         "Listing resources"
       ),
@@ -327,7 +349,7 @@ function buildReadResourceTool(liveOps: McpjamLiveOps): ToolSet[string] {
     }),
     execute: async ({ serverId, uri }, { abortSignal }) =>
       runLiveOp(
-        () => liveOps.readResource(serverId, uri),
+        () => liveOps.readResource(serverId, uri, abortSignal),
         abortSignal,
         "Reading the resource"
       ),

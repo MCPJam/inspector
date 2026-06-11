@@ -83,20 +83,30 @@ import type { Context } from "hono";
 
 export function buildMcpjamLiveOps(c: Context, projectId: string): McpjamLiveOps {
   return {
-    doctor: (serverId) =>
+    doctor: (serverId, _abortSignal) =>
       runHostedDoctor(c, { projectId, serverId }, WEB_CONNECT_TIMEOUT_MS),
-    listTools: (serverId, cursor) =>
+    listTools: (serverId, cursor, _abortSignal) =>
       runEphemeralConnection(c, { projectId, serverId, cursor }, toolsListSchema,
         (manager, body) => listTools(manager, body)),
-    callTool: (serverId, toolName, parameters) =>
+    callTool: (serverId, toolName, parameters, _abortSignal) =>
       runEphemeralConnection(c, { projectId, serverId, toolName, parameters },
         toolsExecuteSchema,
         (manager, body) => manager.executeTool(body.serverId, body.toolName, body.parameters)),
-    // listPrompts / getPrompt / listResources / readResource: same shape with
-    // promptsListSchema/promptsGetSchema/resourcesListSchema/resourcesReadSchema.
+    getPrompt: (serverId, name, args, _abortSignal) =>
+      runEphemeralConnection(c, { projectId, serverId, promptName: name, arguments: args },
+        promptsGetSchema,                       // NB: schema field is `promptName`, not `name`
+        (manager, body) => getPrompt(manager, body)),
+    // listPrompts / listResources / readResource: same shape with
+    // promptsListSchema/resourcesListSchema/resourcesReadSchema.
   };
 }
 ```
+
+Abort semantics (Bugbot round 1): every `McpjamLiveOps` method takes a trailing
+`abortSignal?: AbortSignal`, and the tool layer pre-checks `aborted` before
+dispatching. `runEphemeralConnection` has no signal parameter today, so the
+factory can ignore the signal initially (`_abortSignal`) — threading it into the
+manager/timeout layer is optional hardening, not required for slice 1.
 
 Reference implementations: `server/routes/v1/{tools,prompts,resources,servers}.ts`
 call the identical cores via `runV1ServerOp` (`server/routes/v1/adapter.ts`). Notes:
