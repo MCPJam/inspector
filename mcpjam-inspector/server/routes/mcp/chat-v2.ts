@@ -64,7 +64,7 @@ import {
 } from "../../utils/direct-chat-turn";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
-import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -201,11 +201,7 @@ function streamDirectChatWithLiveTrace(options: {
       // reading `abortSignal?.aborted` directly here — `handle` may be
       // undefined and `isAbortError` only matches the throw shape, not
       // a generic provider error that arrived after the signal flipped.
-      if (
-        abortSignal?.aborted ||
-        handle?.isAborted() ||
-        isAbortError(error)
-      ) {
+      if (abortSignal?.aborted || handle?.isAborted() || isAbortError(error)) {
         return "";
       }
       logger.error("[mcp/chat-v2] stream error", error);
@@ -369,7 +365,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -378,7 +374,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -387,7 +383,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       }
     }
@@ -536,8 +532,8 @@ chatV2.post("/", async (c) => {
     // requests without either (anonymous local mode, no project) omit the
     // tools — same degradation as a host that never enabled them.
     const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
-    const builtInTools = safeResolveBuiltInTools(
-      resolvedExecution.builtInToolIds,
+    const builtInTools = resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInAuthHeader && typeof body.projectId === "string" && body.projectId
         ? {
             authHeader: builtInAuthHeader,
