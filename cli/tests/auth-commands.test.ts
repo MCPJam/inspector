@@ -3,7 +3,12 @@ import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { main } from "../src/index.js";
 
-const telemetryDisabled = { enabled: false } as const;
+const telemetryDisabled = {
+  env: {
+    ...process.env,
+    MCPJAM_TELEMETRY_DISABLED: "1",
+  },
+};
 
 async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   result: T;
