@@ -779,6 +779,17 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
 };
 
 /**
+ * Amazon Bedrock foundation-model / inference-profile ids are bare strings
+ * like "us.anthropic.claude-sonnet-4-5-20250929-v1:0" — an optional geo
+ * prefix (us./eu./apac./us-gov./global/...), a known vendor segment, a model
+ * name, and a ":N" revision suffix. Ollama ids (the other bare-id provider)
+ * never carry a `vendor.` segment from this list, so the pattern safely
+ * disambiguates the two (e.g. "llama3.1:8b" or "mistral:latest" don't match).
+ */
+const BEDROCK_BARE_MODEL_ID_PATTERN =
+  /^(?:[a-z]{2,6}(?:-[a-z]+)?\.)?(?:ai21|amazon|anthropic|cohere|deepseek|luma|meta|minimax|mistral|moonshot|nvidia|openai|qwen|stability|twelvelabs|writer)\.[A-Za-z0-9][\w.-]*:\d+$/;
+
+/**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
  *
@@ -791,7 +802,10 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
  *      `ollama/...`, etc.) — provider is derived from the prefix via
  *      ID_PREFIX_TO_PROVIDER.
- *   4. Bare id with no recognized prefix — fall back to "ollama" since
+ *   4. Bedrock-shaped bare id (`[geo.]vendor.name...:N`) — provider
+ *      "bedrock". Org Bedrock models surface bare inference-profile ids
+ *      in the picker, so chatbox runtime configs store them unprefixed.
+ *   5. Bare id with no recognized shape — fall back to "ollama" since
  *      bare ids are how Ollama BYOK models are typically stored on
  *      chatbox runtime configs (no catalog ID uses a bare shape).
  *
@@ -832,11 +846,19 @@ export function buildSyntheticModelDefinition(
     }
   }
 
-  // Bare id (no `/`) — Ollama BYOK is the only realistic case today since
-  // no catalog id is bare. If the org has a different bare-id provider in
-  // the future, deriveOrgProviderKey will produce "ollama" and the
-  // resolver round-trip will fail with a clearer error than the
-  // previously-fatal catalog-miss path.
+  if (BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)) {
+    return {
+      id: modelId,
+      name: modelId,
+      provider: "bedrock",
+    };
+  }
+
+  // Bare id (no `/`, not Bedrock-shaped) — Ollama BYOK is the remaining
+  // realistic case since no catalog id is bare. If the org has a different
+  // bare-id provider in the future, deriveOrgProviderKey will produce
+  // "ollama" and the resolver round-trip will fail with a clearer error
+  // than the previously-fatal catalog-miss path.
   return {
     id: modelId,
     name: modelId,

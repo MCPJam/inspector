@@ -111,6 +111,30 @@ describe("buildSyntheticModelDefinition", () => {
     ).toBe("ollama");
   });
 
+  it("derives provider='bedrock' for bare Bedrock-shaped ids", () => {
+    // Org Bedrock models surface bare inference-profile ids in the picker,
+    // so chatbox runtime configs store them without a "bedrock/" prefix.
+    expect(
+      buildSyntheticModelDefinition(
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      ),
+    ).toEqual({
+      id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      provider: "bedrock",
+    });
+    // No geo prefix
+    expect(
+      buildSyntheticModelDefinition("amazon.nova-pro-v1:0").provider,
+    ).toBe("bedrock");
+    // Hyphenated geo prefix
+    expect(
+      buildSyntheticModelDefinition(
+        "us-gov.anthropic.claude-3-5-haiku-20241022-v1:0",
+      ).provider,
+    ).toBe("bedrock");
+  });
+
   it("falls back to provider='ollama' for bare ids (no slash, no recognized prefix)", () => {
     // Catalog never carries bare ids today, so the realistic BYOK case is
     // an Ollama-style local model stored on a chatbox runtime config.
@@ -120,6 +144,16 @@ describe("buildSyntheticModelDefinition", () => {
       name: "llama-3:8b",
       provider: "ollama",
     });
+    // Ollama ids with dots/tags must not be mistaken for Bedrock ids.
+    expect(buildSyntheticModelDefinition("llama3.1:8b").provider).toBe(
+      "ollama",
+    );
+    expect(buildSyntheticModelDefinition("qwen2.5:7b-instruct").provider).toBe(
+      "ollama",
+    );
+    expect(buildSyntheticModelDefinition("mistral:latest").provider).toBe(
+      "ollama",
+    );
   });
 
   it("falls back to provider='ollama' when the prefix isn't in the catalog map", () => {
