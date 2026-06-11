@@ -105,6 +105,7 @@
               "cli/oauth-login",
               "cli/apps-conformance",
               "cli/tools-resources-prompts",
+              "cli/projects",
               "cli/ci",
               "cli/telemetry"
             ]
