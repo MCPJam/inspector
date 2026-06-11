@@ -162,7 +162,7 @@ const READY_DOCTOR = {
   error: null,
 };
 
-async function startCloudFixture(): Promise<{
+async function startPlatformFixture(): Promise<{
   baseUrl: string;
   authHeaders: string[];
   close: () => Promise<void>;
@@ -275,11 +275,11 @@ async function startDelayedProjectsFixture(delayMs: number): Promise<{
   };
 }
 
-function cloudArgv(fixtureUrl: string, ...args: string[]): string[] {
+function projectsArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
-    "cloud",
+    "projects",
     ...args,
     "--api-key",
     "sk_test",
@@ -288,13 +288,13 @@ function cloudArgv(fixtureUrl: string, ...args: string[]): string[] {
   ];
 }
 
-test("cloud commands honor the global timeout option", async () => {
+test("projects commands honor the global timeout option", async () => {
   const fixture = await startDelayedProjectsFixture(100);
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "projects", "list"),
+          ...projectsArgv(fixture.baseUrl, "list"),
           "--timeout",
           "20",
           "--format",
@@ -345,7 +345,7 @@ test("command-level deadline spanning multiple requests still reports TIMEOUT", 
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(baseUrl, "servers", "status"),
+          ...projectsArgv(baseUrl, "status"),
           "--timeout",
           "150",
           "--format",
@@ -364,12 +364,12 @@ test("command-level deadline spanning multiple requests still reports TIMEOUT", 
   }
 });
 
-test("cloud projects list emits items as JSON and a table as human output", async () => {
-  const fixture = await startCloudFixture();
+test("projects list emits items as JSON and a table as human output", async () => {
+  const fixture = await startPlatformFixture();
   try {
     const jsonRun = await captureProcessOutput(() =>
       main(
-        [...cloudArgv(fixture.baseUrl, "projects", "list"), "--format", "json"],
+        [...projectsArgv(fixture.baseUrl, "list"), "--format", "json"],
         {
           telemetry: telemetryDisabled,
         },
@@ -389,7 +389,7 @@ test("cloud projects list emits items as JSON and a table as human output", asyn
     const humanRun = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "projects", "list"),
+          ...projectsArgv(fixture.baseUrl, "list"),
           "--format",
           "human",
         ],
@@ -405,16 +405,15 @@ test("cloud projects list emits items as JSON and a table as human output", asyn
   }
 });
 
-test("cloud servers list resolves the project by name", async () => {
-  const fixture = await startCloudFixture();
+test("projects servers resolves the project by name", async () => {
+  const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(
+          ...projectsArgv(
             fixture.baseUrl,
             "servers",
-            "list",
             "--project",
             "alpha",
           ),
@@ -437,13 +436,13 @@ test("cloud servers list resolves the project by name", async () => {
   }
 });
 
-test("cloud servers list surfaces unknown projects as NOT_FOUND", async () => {
-  const fixture = await startCloudFixture();
+test("projects servers surfaces unknown projects as NOT_FOUND", async () => {
+  const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "servers", "list", "--project", "nope"),
+          ...projectsArgv(fixture.baseUrl, "servers", "--project", "nope"),
           "--format",
           "json",
         ],
@@ -460,13 +459,13 @@ test("cloud servers list surfaces unknown projects as NOT_FOUND", async () => {
   }
 });
 
-test("cloud servers status maps doctor outcomes onto per-server statuses", async () => {
-  const fixture = await startCloudFixture();
+test("projects status maps doctor outcomes onto per-server statuses", async () => {
+  const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "servers", "status"),
+          ...projectsArgv(fixture.baseUrl, "status"),
           "--format",
           "json",
         ],
@@ -510,13 +509,13 @@ test("cloud servers status maps doctor outcomes onto per-server statuses", async
   }
 });
 
-test("cloud servers status renders a human summary", async () => {
-  const fixture = await startCloudFixture();
+test("projects status renders a human summary", async () => {
+  const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "servers", "status"),
+          ...projectsArgv(fixture.baseUrl, "status"),
           "--format",
           "human",
         ],

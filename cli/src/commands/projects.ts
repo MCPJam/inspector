@@ -9,18 +9,18 @@ import {
   formatProjectServersHuman,
   formatProjectsHuman,
   formatShowServersHuman,
-} from "../lib/cloud-render.js";
+} from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
-type CloudOptions = {
+type PlatformOptions = {
   apiKey?: string;
   apiUrl?: string;
   project?: string;
 };
 
-function addCloudOptions(command: Command): Command {
+function addPlatformOptions(command: Command): Command {
   return command
     .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
     .option(
@@ -29,8 +29,8 @@ function addCloudOptions(command: Command): Command {
     );
 }
 
-async function runCloudCommand<TOutput>(
-  options: CloudOptions,
+async function runPlatformCommand<TOutput>(
+  options: PlatformOptions,
   timeoutMs: number,
   execute: (context: {
     client: ReturnType<typeof buildPlatformClient>["client"];
@@ -70,22 +70,16 @@ async function runCloudCommand<TOutput>(
   }
 }
 
-export function registerCloudCommands(program: Command): void {
-  const cloud = program
-    .command("cloud")
-    .description(
-      "Operate the MCP servers saved in your hosted MCPJam projects",
-    );
-
-  const projects = cloud
+export function registerProjectsCommands(program: Command): void {
+  const projects = program
     .command("projects")
-    .description("Work with hosted MCPJam projects");
+    .description("Operate the MCP servers saved in your hosted MCPJam projects");
 
-  addCloudOptions(
+  addPlatformOptions(
     projects.command("list").description("List the projects you can access"),
-  ).action(async (options: CloudOptions, command) => {
+  ).action(async (options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const result = await runCloudCommand(
+    const result = await runPlatformCommand(
       options,
       globalOptions.timeout,
       ({ client, signal }) =>
@@ -101,21 +95,17 @@ export function registerCloudCommands(program: Command): void {
     }
   });
 
-  const servers = cloud
-    .command("servers")
-    .description("Work with the MCP servers saved in a project");
-
-  addCloudOptions(
-    servers
-      .command("list")
+  addPlatformOptions(
+    projects
+      .command("servers")
       .description("List the servers saved in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)",
       ),
-  ).action(async (options: CloudOptions, command) => {
+  ).action(async (options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const result = await runCloudCommand(
+    const result = await runPlatformCommand(
       options,
       globalOptions.timeout,
       ({ client, signal }) =>
@@ -132,8 +122,8 @@ export function registerCloudCommands(program: Command): void {
     }
   });
 
-  addCloudOptions(
-    servers
+  addPlatformOptions(
+    projects
       .command("status")
       .description(
         "Health-check every server in a project (hosted doctor per server)",
@@ -142,9 +132,9 @@ export function registerCloudCommands(program: Command): void {
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)",
       ),
-  ).action(async (options: CloudOptions, command) => {
+  ).action(async (options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const payload = await runCloudCommand(
+    const payload = await runPlatformCommand(
       options,
       globalOptions.timeout,
       ({ client, signal }) =>

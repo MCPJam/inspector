@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerAuthCommands } from "./commands/auth.js";
-import { registerCloudCommands } from "./commands/cloud.js";
+import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerPromptCommands } from "./commands/prompts.js";
@@ -72,7 +72,7 @@ export async function main(
   registerOAuthCommands(program);
   registerProtocolCommands(program);
   registerAuthCommands(program);
-  registerCloudCommands(program);
+  registerProjectsCommands(program);
   registerInspectorCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 
