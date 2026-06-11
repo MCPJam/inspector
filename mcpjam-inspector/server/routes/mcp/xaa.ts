@@ -18,9 +18,17 @@ import {
 } from "../../services/xaa-idjag-signer.js";
 import {
   executeOAuthProxy,
+  fetchOAuthMetadata,
   OAuthProxyError,
+  validateUrl,
 } from "../../utils/oauth-proxy.js";
+import {
+  buildDiscoveryCandidates,
+  evaluateDiscovery,
+} from "../../services/xaa-discovery.js";
 import { logger } from "../../utils/logger.js";
+
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 
 const authenticateSchema = z.object({
   userId: z.string().trim().min(1).optional(),
@@ -35,6 +43,19 @@ const tokenExchangeSchema = z.object({
   clientId: z.string().trim().min(1),
   scope: z.string().trim().min(1).optional(),
   negativeTestMode: z.string().trim().optional(),
+});
+
+const discoverAsSchema = z
+  .object({
+    issuer: z.string().trim().min(1).optional(),
+    tokenEndpoint: z.string().trim().min(1).optional(),
+  })
+  .refine((data) => data.issuer || data.tokenEndpoint, {
+    message: "issuer or tokenEndpoint is required",
+  });
+
+const healthCheckSchema = z.object({
+  url: z.string().trim().min(1),
 });
 
 const proxyTokenSchema = z.object({
@@ -155,6 +176,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.use("/authenticate", ...protectedMiddlewares);
     router.use("/token-exchange", ...protectedMiddlewares);
     router.use("/proxy/token", ...protectedMiddlewares);
+    router.use("/discover-as", ...protectedMiddlewares);
+    router.use("/health-check", ...protectedMiddlewares);
   }
 
   router.get("/.well-known/jwks.json", (c) => {
@@ -312,6 +335,138 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         error instanceof Error ? error.message : "Unknown proxy error",
         { status: 500, code: "INTERNAL_ERROR" },
       );
+    }
+  });
+
+  router.post("/discover-as", async (c) => {
+    let parsed;
+    try {
+      parsed = parseRequest(discoverAsSchema, await c.req.json());
+    } catch (error) {
+      return toJsonError(
+        error instanceof Error ? error.message : "Invalid discovery request",
+        { status: 400, code: "VALIDATION_ERROR" },
+      );
+    }
+
+    const requestedIssuer = (parsed.issuer ?? parsed.tokenEndpoint) as string;
+
+    let candidates: string[];
+    try {
+      candidates = buildDiscoveryCandidates(requestedIssuer);
+    } catch {
+      return toJsonError("issuer or tokenEndpoint is not a valid URL", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    try {
+      const triedStatuses: Array<{ url: string; status: number }> = [];
+      for (const candidate of candidates) {
+        const result = await fetchOAuthMetadata(
+          candidate,
+          options.httpsOnlyProxy,
+        );
+        if ("metadata" in result) {
+          return c.json(
+            evaluateDiscovery(result.metadata, {
+              requestedIssuer,
+              metadataUrl: candidate,
+            }),
+          );
+        }
+        triedStatuses.push({ url: candidate, status: result.status });
+      }
+
+      return toJsonError(
+        "No authorization server metadata found at the well-known endpoints",
+        {
+          status: 404,
+          code: "DISCOVERY_NOT_FOUND",
+          details: { tried: triedStatuses },
+        },
+      );
+    } catch (error) {
+      // validateUrl inside fetchOAuthMetadata rejects disallowed outbound URLs
+      // (e.g. private/reserved hosts, or http in hosted mode). Every candidate
+      // shares the same host, so a guard rejection is terminal.
+      if (error instanceof OAuthProxyError) {
+        return toJsonError("URL not allowed", {
+          status: error.status,
+          code: "VALIDATION_ERROR",
+        });
+      }
+      logger.error("[XAA Discover AS] Error", error);
+      return toJsonError(
+        error instanceof Error ? error.message : "Discovery failed",
+        { status: 502, code: "SERVER_UNREACHABLE" },
+      );
+    }
+  });
+
+  router.post("/health-check", async (c) => {
+    let parsed;
+    try {
+      parsed = parseRequest(healthCheckSchema, await c.req.json());
+    } catch (error) {
+      return toJsonError(
+        error instanceof Error ? error.message : "Invalid health check request",
+        { status: 400, code: "VALIDATION_ERROR" },
+      );
+    }
+
+    let validatedUrl: URL;
+    try {
+      ({ url: validatedUrl } = await validateUrl(
+        parsed.url,
+        options.httpsOnlyProxy,
+      ));
+    } catch (error) {
+      if (error instanceof OAuthProxyError) {
+        return toJsonError("URL not allowed", {
+          status: error.status,
+          code: "VALIDATION_ERROR",
+        });
+      }
+      return toJsonError("URL not allowed", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const startedAt = Date.now();
+    try {
+      const response = await fetch(validatedUrl.toString(), {
+        method: "GET",
+        // In hosted mode redirects are not followed, so a redirect to an
+        // internal address can never be fetched.
+        redirect: options.httpsOnlyProxy ? "manual" : "follow",
+        signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+        headers: { "User-Agent": "MCP-Inspector/1.0" },
+      });
+
+      const redirected =
+        options.httpsOnlyProxy &&
+        response.status >= 300 &&
+        response.status < 400;
+
+      return c.json({
+        ok: !redirected && response.status < 400,
+        status: response.status,
+        statusText: response.statusText,
+        durationMs: Date.now() - startedAt,
+        ...(redirected ? { reason: "redirect_not_followed" } : {}),
+      });
+    } catch (error) {
+      const isTimeout =
+        error instanceof Error &&
+        (error.name === "TimeoutError" || error.name === "AbortError");
+      return c.json({
+        ok: false,
+        reason: isTimeout ? "timeout" : "unreachable",
+        durationMs: Date.now() - startedAt,
+      });
     }
   });
 
