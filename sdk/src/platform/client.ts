@@ -1,7 +1,12 @@
 import { PlatformApiError } from "./errors.js";
 import type {
+  PlatformChatbox,
+  PlatformChatboxDetail,
   PlatformChatSession,
   PlatformDoctorReport,
+  PlatformEvalIteration,
+  PlatformEvalRun,
+  PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformMe,
   PlatformPage,
@@ -126,6 +131,112 @@ export class PlatformApiClient {
           before: params.before,
         },
       },
+      options
+    );
+  }
+
+  listChatboxes(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformChatbox>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/chatboxes`,
+      {},
+      options
+    );
+  }
+
+  getChatbox(
+    params: { projectId: string; chatboxId: string },
+    options?: RequestOptions
+  ): Promise<PlatformChatboxDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/chatboxes/${encodeURIComponent(params.chatboxId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-runs` — validates and creates the run, then
+   * detaches execution and responds 202. Poll `getEvalRun` until terminal.
+   */
+  createEvalRun(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
+      { body: params.body },
+      options
+    );
+  }
+
+  getEvalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options
+    );
+  }
+
+  listEvalRunIterations(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalIteration>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/iterations`,
+      { query: { cursor: params.cursor, limit: params.limit } },
+      options
+    );
+  }
+
+  /** Full trace envelope (messages + analysis) for one iteration. */
+  getEvalIterationTrace(
+    params: { projectId: string; runId: string; iterationId: string },
+    options?: RequestOptions
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(
+        params.runId
+      )}/iterations/${encodeURIComponent(params.iterationId)}/trace`,
+      {},
+      options
+    );
+  }
+
+  listEvalSuiteRuns(
+    params: { projectId: string; suiteId: string; limit?: number },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/runs`,
+      { query: { limit: params.limit } },
       options
     );
   }

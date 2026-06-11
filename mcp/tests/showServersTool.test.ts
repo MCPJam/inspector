@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listProjectsOperation } from "@mcpjam/sdk/platform";
 import {
-  registerListProjectsTool,
-  registerListProjectServersTool,
-  registerShowServersTool,
+  PLAIN_PLATFORM_OPERATIONS,
+  registerPlainPlatformTools,
   runPlatformOperation,
+} from "../src/tools/platformTools.js";
+import {
+  registerShowServersTool,
   SHOW_SERVERS_RESOURCE_URI,
 } from "../src/tools/showServers.js";
 import type { McpJamMcpServer } from "../src/server.js";
@@ -12,7 +14,16 @@ import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js"
 
 type CapturedRegistration = {
   name: string;
-  config: { title?: string; description?: string; inputSchema?: unknown };
+  config: {
+    title?: string;
+    description?: string;
+    inputSchema?: unknown;
+    annotations?: {
+      readOnlyHint?: boolean;
+      destructiveHint?: boolean;
+      idempotentHint?: boolean;
+    };
+  };
   callback: (input: unknown) => Promise<unknown>;
   ui?: { resourceUri: string; html: string };
 };
@@ -62,24 +73,53 @@ describe("platform tool registration", () => {
     expect(registrations).toHaveLength(1);
     const registration = registrations[0]!;
     expect(registration.name).toBe("show_servers");
+    expect(registration.config.annotations?.readOnlyHint).toBe(true);
     expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
     expect(registration.ui?.html).toContain("<html");
   });
 
-  it("registers the listing tools as plain tools without UI", () => {
+  it("registers the whole plain operation catalog without UI", () => {
     const { registrar, registrations } = fakeRegistrar();
-    const agent = fakeAgent({ bearerToken: "jwt" });
 
-    registerListProjectsTool(registrar, agent);
-    registerListProjectServersTool(registrar, agent);
+    registerPlainPlatformTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
     expect(registrations.map((registration) => registration.name)).toEqual([
       "list_projects",
       "list_project_servers",
+      "list_eval_suites",
+      "list_eval_suite_runs",
+      "run_eval_suite",
+      "get_eval_run",
+      "list_eval_run_iterations",
+      "get_eval_iteration_trace",
+      "list_chatboxes",
+      "get_chatbox",
+      "list_chat_sessions",
     ]);
+    expect(registrations).toHaveLength(PLAIN_PLATFORM_OPERATIONS.length);
     for (const registration of registrations) {
       expect(registration.ui).toBeUndefined();
       expect(registration.config.description).toBeTruthy();
+    }
+  });
+
+  it("marks read tools read-only and the eval-run starter as non-destructive write", () => {
+    const { registrar, registrations } = fakeRegistrar();
+
+    registerPlainPlatformTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+
+    for (const registration of registrations) {
+      if (registration.name === "run_eval_suite") {
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+        });
+      } else {
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: true,
+        });
+      }
     }
   });
 });

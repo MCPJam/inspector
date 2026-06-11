@@ -7,11 +7,8 @@ import {
   createSessionToolRegistrar,
   type SessionToolRegistrar,
 } from "./tools/sessionToolRegistrar.js";
-import {
-  registerListProjectsTool,
-  registerListProjectServersTool,
-  registerShowServersTool,
-} from "./tools/showServers.js";
+import { registerPlainPlatformTools } from "./tools/platformTools.js";
+import { registerShowServersTool } from "./tools/showServers.js";
 
 interface McpProps extends Record<string, unknown> {
   bearerToken: string;
@@ -23,7 +20,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
 
   server = new McpServer({
     name: "MCPJam MCP",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   get runtimeEnv(): Required<Env> {
@@ -46,8 +43,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
     this.sessionToolRegistrar = registrar;
 
     registerShowServersTool(registrar, this);
-    registerListProjectsTool(registrar, this);
-    registerListProjectServersTool(registrar, this);
+    registerPlainPlatformTools(registrar, this);
   }
 
   override async onConnect(conn: any, context: { request: Request }): Promise<void> {

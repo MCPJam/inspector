@@ -88,6 +88,112 @@ export interface PlatformChatSession {
 }
 
 /**
+ * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
+ * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
+ * the condensed latest-run projection embedded in `PlatformEvalSuite`.
+ */
+export interface PlatformEvalRun {
+  id: string;
+  suiteId: string;
+  runNumber: number | null;
+  /** Poll until terminal: "completed" | "failed" | "cancelled". */
+  status: string;
+  /** Pass/fail verdict once terminal: "passed" | "failed" | null. */
+  result: string | null;
+  summary: {
+    total?: number;
+    passed?: number;
+    failed?: number;
+    passRate?: number;
+  } | null;
+  /** Run origin: "ui" | "api" | "sdk". */
+  source: string;
+  notes: string | null;
+  createdAt: number;
+  completedAt: number | null;
+}
+
+/** `202` response of `POST /projects/{p}/eval-runs`. */
+export interface PlatformEvalRunCreated {
+  runId: string;
+  suiteId: string;
+  status: string;
+  /** Per-case upsert outcomes for inline tests; empty on plain reruns. */
+  caseUpsert: {
+    committed?: Array<{ id?: string; name?: string }>;
+    failed?: Array<{ id?: string; name?: string; error?: string }>;
+  };
+}
+
+export interface PlatformEvalIteration {
+  id: string;
+  testCaseId: string | null;
+  title: string | null;
+  iterationNumber: number;
+  status: string;
+  result: string | null;
+  model: string | null;
+  provider: string | null;
+  startedAt: number | null;
+  /** Wall-clock duration; null until terminal. */
+  durationMs: number | null;
+  tokensUsed: number | null;
+  /** Structured token usage (input/output/cached/reasoning) when available. */
+  usage: Record<string, unknown> | null;
+  actualToolCalls: Array<Record<string, unknown>>;
+  expectedToolCalls: Array<Record<string, unknown>>;
+  error: string | null;
+}
+
+/**
+ * Share link for a chatbox. The URL embeds the access token; it is visible
+ * to any caller who can read the chatbox (same audience as the hosted UI).
+ */
+export interface PlatformChatboxLink {
+  /** App-relative share path. */
+  path: string;
+  /** Absolute share URL. */
+  url: string;
+}
+
+/** A server attached to a chatbox (HTTP servers only). */
+export interface PlatformChatboxServer {
+  id: string;
+  name: string;
+  url: string | null;
+  useOAuth: boolean;
+}
+
+/** Summary of a published chatbox, as returned by the list endpoint. */
+export interface PlatformChatbox {
+  id: string;
+  projectId: string | null;
+  name: string;
+  description: string | null;
+  /** Who can use it: "project_members" | "invited_only" | "anyone_with_link". */
+  mode: string | null;
+  /** Chat surface style the chatbox renders (e.g. "claude", "chatgpt"). */
+  hostStyle: string | null;
+  hostId: string | null;
+  hostName: string | null;
+  serverCount: number;
+  serverNames: string[];
+  link: PlatformChatboxLink | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+/** A chatbox's full read-only settings: summary plus host execution config. */
+export interface PlatformChatboxDetail extends PlatformChatbox {
+  /** Model the chatbox chats with. */
+  modelId: string | null;
+  systemPrompt: string | null;
+  temperature: number | null;
+  requireToolApproval: boolean;
+  servers: PlatformChatboxServer[];
+}
+
+/**
  * Response of `POST /projects/{p}/servers/{s}/doctor` — the hosted doctor
  * result, passed through verbatim by the API. Includes the probe outcome,
  * connection state, and full tools/resources/prompts listings with
