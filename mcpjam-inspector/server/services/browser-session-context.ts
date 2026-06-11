@@ -261,16 +261,20 @@ export function createBrowserSessionContext(
     event: MCPJamToolResultEvent,
   ): Promise<void> => {
     const { toolCallId, toolName, serverId } = event;
+    // Feed the real tool-call args to the widget shim so the engine-path
+    // render matches what the local runners (and post-turn snapshot
+    // capture) inject. The entry is consumed here — once the call's result
+    // has arrived nothing reads it again, so release it on every exit path
+    // to keep the cache bounded over long sessions (CodeRabbit, PR 2610).
+    const toolInput = inputByToolCallId.get(toolCallId);
+    inputByToolCallId.delete(toolCallId);
     if (!serverId || !toolName) return;
     if (event.isError) return;
     await renderIfRenderable({
       toolCallId,
       toolName,
       serverId,
-      // Feed the real tool-call args to the widget shim so the engine-path
-      // render matches what the local runners (and post-turn snapshot
-      // capture) inject.
-      toolInput: inputByToolCallId.get(toolCallId),
+      toolInput,
       // `rawResult` is the unscrubbed implementation result; `output` on the
       // event is the LLM-facing view with `_meta` / `structuredContent`
       // scrubbed, which would starve the widget shim of its data.

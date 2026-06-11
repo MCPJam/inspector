@@ -290,6 +290,13 @@ export async function driveHostedEvalTurn(
     // Non-abort runtime error from the engine. Map to `iterationError` for
     // the post-loop verdict gate; preserve a truncated message and, when
     // available, a `responseBody` for `errorDetails`.
+    //
+    // Drain this turn's tool-instrumentation spans first so the persisted
+    // iteration (and the stream sink's failure snapshot, which reads the
+    // same array) keeps whatever tool executions completed before the throw
+    // — aligning the catch with the (a)/(b)/(c) failure branches below,
+    // which drain before failing (CodeRabbit, PR 2610).
+    acc.capturedSpans.push(...traceCtx.recordedSpans);
     let iterationError: string;
     let iterationErrorDetails: string | undefined;
     if (error instanceof Error) {

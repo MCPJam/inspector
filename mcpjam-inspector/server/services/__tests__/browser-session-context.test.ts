@@ -214,6 +214,44 @@ describe("createBrowserSessionContext — render hook", () => {
     expect(ctx.widgetRenderObservations).toEqual([]);
   });
 
+  it("releases the cached tool input once the call's result has been handled", async () => {
+    const manager = {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ show_widget: { "mcpjam/widget": true } }),
+    } as never;
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "show_widget",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 123,
+    });
+
+    const ctx = createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: manager,
+    });
+    ctx.noteToolCallInput({ toolCallId: "tc-1", input: { city: "lisbon" } });
+
+    await ctx.handleEngineToolResult(baseEvent);
+    expect(
+      (renderMcpAppToolResult.mock.calls[0]![0] as { toolInput?: unknown })
+        .toolInput,
+    ).toEqual({ city: "lisbon" });
+
+    // The entry was consumed; a second result for the same id no longer
+    // sees the input (cache stays bounded over long sessions).
+    await ctx.handleEngineToolResult(baseEvent);
+    expect(
+      (renderMcpAppToolResult.mock.calls[1]![0] as { toolInput?: unknown })
+        .toolInput,
+    ).toBeUndefined();
+  });
+
   it("renders for non-Claude drivers too (observations without Computer Use)", async () => {
     const manager = {
       executeTool: vi.fn(),

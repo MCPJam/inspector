@@ -635,7 +635,16 @@ async function runOneSession(args: {
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
 
-      if (!turnTrace) continue;
+      if (!turnTrace) {
+        // No-trace turns skip persistence (today only the aborted local-BYOK
+        // path reaches here — failed turns throw above). Discard whatever the
+        // browser context collected during this turn: a later turn's drain
+        // would otherwise sweep these rows up and persist them under ITS
+        // batch promptIndex, misattributing artifacts across turns
+        // (CodeRabbit, PR 2610).
+        browser.drainNewArtifacts();
+        continue;
+      }
 
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
