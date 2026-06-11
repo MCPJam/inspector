@@ -8,10 +8,38 @@ published to npm — clients connect to it remotely via URL.
 
 ## Status
 
-Protected by WorkOS AuthKit and ships one `show_servers` tool. The tool lists
-the authenticated user's MCPJam workspace servers, resolves a workspace by name
-or ID, performs a lightweight hosted health probe for HTTPS servers, and can
-render the result as an MCP UI widget when the client supports MCP Apps.
+Protected by WorkOS AuthKit. Tools are thin adapters over the shared platform
+operation catalog in `@mcpjam/sdk/platform`; every call hits the Platform API
+(`/api/v1`) with the session's own AuthKit JWT, so results respect the
+caller's project access.
+
+| Tool | What it does |
+| --- | --- |
+| `show_servers` | Project servers with hosted doctor health probes; renders as an MCP Apps widget when the client supports it |
+| `list_projects` | Projects the caller can access, most recently updated first |
+| `list_project_servers` | Servers saved in a project (no probes) |
+| `list_eval_suites` | Eval suites in a project, with latest-run summaries |
+| `list_eval_suite_runs` | Recent runs of a suite (by name or ID), newest first |
+| `run_eval_suite` | Start an async rerun of a suite; returns `runId` immediately |
+| `get_eval_run` | Run status/result/summary — poll until terminal |
+| `list_eval_run_iterations` | Per-iteration results: tool calls, token usage, latency |
+| `get_eval_iteration_trace` | Full trace for one iteration (can be large) |
+| `list_chatboxes` | Chatboxes published from a project |
+| `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers |
+| `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter |
+
+Listing tools take an optional `project` (name or ID) and default to the most
+recently updated accessible project. The eval-run polling tools
+(`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`)
+require the project the run belongs to — `run_eval_suite` and
+`list_eval_suite_runs` return it, so the loop is self-contained.
+`run_eval_suite` is the only non-read tool: it starts LLM iterations that
+consume the organization's credits, and is annotated `readOnlyHint: false`
+(but non-destructive) so hosts can gate it accordingly. Its server defaults
+exclude disabled servers, but naming a disabled server explicitly runs it —
+the platform authorizes eval runs by project membership, and the `enabled`
+toggle only shapes the default connection set. stdio servers never run
+hosted, explicitly named or not.
 
 ## Auth
 
@@ -29,10 +57,10 @@ tenant's JWKS and exposes discovery metadata:
 Unauthenticated requests to `/mcp` get a `401` with a `WWW-Authenticate` header
 pointing at the PRM URL, which MCP clients use to kick off the OAuth flow.
 
-The verified bearer token is forwarded to Convex via `ConvexHttpClient.setAuth`
-so Convex sees the same WorkOS identity the main app does. `show_servers` uses
-that identity to load accessible workspaces and authorize server probes through
-the hosted Convex HTTP authorization endpoint.
+The verified bearer token is forwarded to the Platform API
+(`PLATFORM_API_URL`, the Inspector `/api/v1` surface) on every tool call, so
+the API sees the same WorkOS identity the main app does and applies its own
+per-project authorization to listings, probes, and eval runs.
 
 ### AuthKit domains
 
@@ -87,7 +115,7 @@ curl -s http://localhost:8787/.well-known/oauth-protected-resource/mcp | jq
 To hit `show_servers`, connect the MCPJam Inspector (or any MCP client that
 supports OAuth discovery) to `http://localhost:8787/mcp`; the client will
 auto-discover the AuthKit issuer, run the OAuth flow, and call `show_servers`
-with either no arguments or `{ "workspace": "<workspace name or id>" }`.
+with either no arguments or `{ "project": "<project name or id>" }`.
 
 ## Delivery model
 
@@ -133,7 +161,13 @@ GitHub Environment UI.
 - `src/auth.ts` — JWKS-backed JWT verification (`jose`) and the
   `WWW-Authenticate` / 401 helpers.
 - `src/server.ts` — `McpJamMcpServer` (extends `McpAgent` from `agents`). Reads
-  `this.props.bearerToken` inside each tool handler and forwards it to Convex.
+  `this.props.bearerToken` inside each tool handler and forwards it to the
+  Platform API via `PlatformApiClient`.
+- `src/tools/platformTools.ts` — registers the plain (no-UI) tools from the
+  `@mcpjam/sdk/platform` operation catalog and houses the shared
+  operation-to-tool adapter.
+- `src/tools/showServers.ts` — the `show_servers` tool with its MCP Apps
+  widget resource.
 
 Modeled after the WorkOS AuthKit MCP pattern used in
 [`examples/mcp-apps/sip-cocktails`](../examples/mcp-apps/sip-cocktails/server-utils.ts),
