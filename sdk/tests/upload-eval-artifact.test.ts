@@ -30,7 +30,7 @@ describe("uploadEvalArtifact", () => {
   it("captures once when artifact parsing fails", async () => {
     await expect(
       uploadEvalArtifact({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         artifact: "{}",
         format: "custom",
         suiteName: "parse-failure",
@@ -41,7 +41,7 @@ describe("uploadEvalArtifact", () => {
     expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         artifactFormat: "custom",
         entrypoint: "uploadEvalArtifact",
         suiteName: "parse-failure",
@@ -56,7 +56,7 @@ describe("uploadEvalArtifact", () => {
 
     await expect(
       uploadEvalArtifact({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         artifact: {},
         customParser: () => [{ caseTitle: "case-1", passed: true }],
         format: "custom",
@@ -68,7 +68,7 @@ describe("uploadEvalArtifact", () => {
     expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         artifactFormat: "custom",
         entrypoint: "uploadEvalArtifact",
         suiteName: "report-failure",

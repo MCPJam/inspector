@@ -60,7 +60,7 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "chunked-reporter",
     });
@@ -118,7 +118,7 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "widget-flush",
     });
@@ -193,7 +193,7 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "chunked-reporter",
       serverReplayConfigs: [
@@ -246,7 +246,7 @@ describe("createEvalRunReporter", () => {
     };
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "one-shot-reporter",
       agent,
@@ -304,7 +304,7 @@ describe("createEvalRunReporter", () => {
     };
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "chunked-manager-replay",
       agent,
@@ -360,7 +360,7 @@ describe("createEvalRunReporter", () => {
     };
 
     const reporter = createEvalRunReporter({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "filtered-reporter",
       serverNames: ["asana"],
@@ -383,7 +383,7 @@ describe("createEvalRunReporter", () => {
   describe("getAddedCount", () => {
     it("tracks total added results", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "count-test",
       });
@@ -396,7 +396,7 @@ describe("createEvalRunReporter", () => {
 
     it("counts results provided in constructor", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "count-test",
         results: [
@@ -412,7 +412,7 @@ describe("createEvalRunReporter", () => {
   describe("addFromPrompt / recordFromPrompt", () => {
     it("addFromPrompt converts and adds a PromptResult", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "prompt-test",
       });
@@ -435,7 +435,7 @@ describe("createEvalRunReporter", () => {
 
     it("addFromPrompt uses prompt metadata as defaults", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "prompt-test",
       });
@@ -506,7 +506,7 @@ describe("createEvalRunReporter", () => {
 
     it("addFromRun converts all iterations", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "run-test",
       });
@@ -519,7 +519,7 @@ describe("createEvalRunReporter", () => {
 
     it("addFromSuiteRun converts all tests and iterations", () => {
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "suite-test",
       });
@@ -594,7 +594,7 @@ describe("createEvalRunReporter", () => {
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "record-run-test",
       });
@@ -616,7 +616,7 @@ describe("createEvalRunReporter", () => {
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "record-suite-test",
       });
@@ -646,7 +646,7 @@ describe("createEvalRunReporter", () => {
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "autoflush-test",
       });
@@ -700,7 +700,7 @@ describe("createEvalRunReporter", () => {
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         strict: false,
         suiteName: "flush-error",
@@ -715,7 +715,7 @@ describe("createEvalRunReporter", () => {
       expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
         expect.any(Error),
         expect.objectContaining({
-          apiKey: "mcpjam_test_key",
+          apiKey: "sk_test_key",
           baseUrl: "https://example.com",
           bufferedCount: 2,
           entrypoint: "evalRunReporter.flush",
@@ -748,7 +748,7 @@ describe("createEvalRunReporter", () => {
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         strict: false,
         suiteName: "finalize-error",
@@ -769,7 +769,7 @@ describe("createEvalRunReporter", () => {
       expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
         expect.any(Error),
         expect.objectContaining({
-          apiKey: "mcpjam_test_key",
+          apiKey: "sk_test_key",
           baseUrl: "https://example.com",
           bufferedCount: 0,
           entrypoint: "evalRunReporter.finalize",

@@ -70,7 +70,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       suiteName: "SDK smoke",
       results: [{ caseTitle: "happy-path", passed: true }],
     });
@@ -158,7 +158,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       suiteName: "SDK smoke",
       results: [{ caseTitle: "happy-path", passed: true }],
     });
@@ -182,7 +182,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const result = await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       results: [{ caseTitle: "happy-path", passed: true }],
@@ -208,7 +208,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       serverNames: ["asana"],
@@ -278,7 +278,7 @@ describe("reportEvalResults", () => {
     };
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       serverNames: ["asana"],
@@ -319,7 +319,7 @@ describe("reportEvalResults", () => {
     };
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       agent,
@@ -369,7 +369,7 @@ describe("reportEvalResults", () => {
     };
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       agent,
@@ -415,7 +415,7 @@ describe("reportEvalResults", () => {
     };
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       agent,
@@ -458,7 +458,7 @@ describe("reportEvalResults", () => {
     };
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
       mcpClientManager: mcpClientManager as any,
@@ -494,7 +494,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "one-shot-idempotent",
       results: [
@@ -551,7 +551,7 @@ describe("reportEvalResults", () => {
     }));
 
     const output = await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "chunked",
       results,
@@ -593,7 +593,7 @@ describe("reportEvalResults", () => {
     const largeTrace = "x".repeat(1024 * 1024);
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "chunked-replay",
       serverReplayConfigs: [
@@ -644,7 +644,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "widget-snapshots",
       results: [
@@ -717,7 +717,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const result = await reportEvalResults({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "widget-snapshots-best-effort",
       results: [
@@ -780,7 +780,7 @@ describe("reportEvalResults", () => {
 
     await expect(
       reportEvalResults({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "direct-failure",
         results: [{ caseTitle: "case-1", passed: true }],
@@ -796,7 +796,7 @@ describe("reportEvalResults", () => {
     expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         entrypoint: "reportEvalResults",
         framework: undefined,
@@ -820,7 +820,7 @@ describe("reportEvalResults", () => {
 
     await expect(
       reportEvalResults({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "quota-failure",
         results: [{ caseTitle: "case-1", passed: true }],
@@ -847,7 +847,7 @@ describe("reportEvalResults", () => {
 
     await expect(
       reportEvalResults({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         suiteName: "quota-failure",
         results: [{ caseTitle: "case-1", passed: true }],
@@ -871,7 +871,7 @@ describe("reportEvalResults", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const output = await reportEvalResultsSafely({
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       suiteName: "safe-mode",
       strict: false,
@@ -884,7 +884,7 @@ describe("reportEvalResults", () => {
     expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         baseUrl: "https://example.com",
         entrypoint: "reportEvalResultsSafely",
         resultCount: 1,
