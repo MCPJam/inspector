@@ -61,10 +61,13 @@ const UNPROTECTED_PREFIXES = [
 
 /**
  * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token query parameter values with [REDACTED].
+ * Replaces _token (session token) and k (tunnel bearer secret) query
+ * parameter values with [REDACTED].
  */
 export function scrubTokenFromUrl(url: string): string {
-  return url.replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]");
+  return url
+    .replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]")
+    .replace(/([?&])k=[^&]*/g, "$1k=[REDACTED]");
 }
 
 // Routes that typically use query param auth (SSE endpoints)
@@ -88,7 +91,7 @@ function isSSERoute(path: string): boolean {
  */
 export async function sessionAuthMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   const path = c.req.path;
   const method = c.req.method;
@@ -150,7 +153,7 @@ export async function sessionAuthMiddleware(
           ? "SSE endpoints require ?_token=<token> query parameter"
           : "Include X-MCP-Session-Auth: Bearer <token> header",
       },
-      401,
+      401
     );
   }
 
@@ -162,7 +165,7 @@ export async function sessionAuthMiddleware(
         message: "Invalid session token.",
         hint: "Try refreshing the page to get a new token.",
       },
-      401,
+      401
     );
   }
 

@@ -45,6 +45,72 @@ export function isLocalhostRequest(hostHeader: string | undefined): boolean {
 }
 
 /**
+ * ngrok-controlled host suffixes. Matching is suffix-based so any reserved
+ * subdomain (e.g. "x7d9j2m1p9k3.ngrok.app") is covered.
+ */
+const TUNNEL_HOST_SUFFIXES = [
+  ".ngrok.app",
+  ".ngrok.dev",
+  ".ngrok-free.app",
+  ".ngrok-free.dev",
+  ".ngrok.io",
+];
+
+/**
+ * Check whether the Host header belongs to a tunnel (ngrok) domain.
+ *
+ * SECURITY INVARIANT: the session token must NEVER be served or injected
+ * for a tunnel host — tunnels expose the MCP adapter surface to the public
+ * internet, and the bearer secret in the tunnel URL is the only credential
+ * remote clients are meant to hold. This check is enforced independently of
+ * `isAllowedHost` so a future config that allowlists an ngrok domain cannot
+ * silently start leaking the session token through the tunnel.
+ *
+ * @param hostHeader - The Host header value from the request (the original
+ *   ngrok host survives forwarding via the X-Forwarded-Host header the
+ *   tunnel listener injects; callers should check both).
+ * @param extraTunnelHosts - Exact additional tunnel hostnames to treat as
+ *   tunnels (e.g. the domains of currently active listeners).
+ */
+export function isTunnelHost(
+  hostHeader: string | undefined,
+  extraTunnelHosts: string[] = []
+): boolean {
+  if (!hostHeader) {
+    return false;
+  }
+  const host = hostHeader.toLowerCase().split(":")[0];
+  if (TUNNEL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+    return true;
+  }
+  return extraTunnelHosts.some((tunnel) => tunnel.toLowerCase() === host);
+}
+
+/**
+ * Single decision point for serving/injecting the session token.
+ *
+ * Tunnel hosts are denied BEFORE the allowlist is consulted, so even a
+ * misconfiguration that adds an ngrok domain to MCPJAM_ALLOWED_HOSTS can
+ * never leak the session token through a tunnel.
+ */
+export function mayServeSessionToken(options: {
+  host: string | undefined;
+  forwardedHost?: string | undefined;
+  allowedHosts: string[];
+  hostedMode: boolean;
+  activeTunnelDomains?: string[];
+}): boolean {
+  const tunnelDomains = options.activeTunnelDomains ?? [];
+  if (
+    isTunnelHost(options.host, tunnelDomains) ||
+    isTunnelHost(options.forwardedHost, tunnelDomains)
+  ) {
+    return false;
+  }
+  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+}
+
+/**
  * Check if the request is from an allowed host.
  *
  * In hosted mode (cloud deployments), this allows both localhost and
@@ -60,7 +126,7 @@ export function isLocalhostRequest(hostHeader: string | undefined): boolean {
 export function isAllowedHost(
   hostHeader: string | undefined,
   allowedHosts: string[],
-  hostedMode: boolean,
+  hostedMode: boolean
 ): boolean {
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {

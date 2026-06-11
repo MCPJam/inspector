@@ -1,8 +1,12 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { tunnelManager } from "../../services/tunnel-manager";
+import { withTunnelLock } from "../../services/tunnel-locks";
+import {
+  clearTunnelRequests,
+  getTunnelRequests,
+} from "../../services/tunnel-request-log";
 import { LOCAL_SERVER_ADDR } from "../../config";
-import { cleanupOrphanedTunnels } from "../../services/tunnel-cleanup";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
@@ -10,29 +14,55 @@ import { classifyTunnelError } from "../../utils/error-classify";
 
 const tunnels = new Hono();
 
-// Fetch ngrok token from Convex backend
-async function fetchNgrokToken(authHeader?: string): Promise<{
+interface NgrokTokenResponse {
   token: string;
   credentialId: string;
   domain: string;
   domainId: string;
-}> {
+  // Edge-security fields (present when the backend provisioned a
+  // per-server tunnel): bearer URL with ?k= secret, the Traffic Policy to
+  // bind at listen time, and rotation bookkeeping.
+  secret?: string;
+  secretVersion?: number;
+  url?: string;
+  trafficPolicy?: string;
+  secretHash?: string;
+}
+
+function convexHeaders(authHeader?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (authHeader) {
+    headers["Authorization"] = authHeader;
+  }
+  return headers;
+}
+
+function requireConvexUrl(): string {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_HTTP_URL not configured");
   }
+  return convexUrl;
+}
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+// Fetch ngrok token from Convex backend. Passing a serverId makes the
+// backend reuse this user+server's persistent reserved domain and return
+// the edge-enforcement material (secret-bearing URL + Traffic Policy).
+async function fetchNgrokToken(
+  authHeader?: string,
+  serverId?: string
+): Promise<NgrokTokenResponse> {
+  const convexUrl = requireConvexUrl();
 
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  }
+  const tokenUrl = serverId
+    ? `${convexUrl}/tunnels/token?serverId=${encodeURIComponent(serverId)}`
+    : `${convexUrl}/tunnels/token`;
 
-  const response = await fetch(`${convexUrl}/tunnels/token`, {
+  const response = await fetch(tokenUrl, {
     method: "GET",
-    headers,
+    headers: convexHeaders(authHeader),
   });
 
   if (!response.ok) {
@@ -40,12 +70,8 @@ async function fetchNgrokToken(authHeader?: string): Promise<{
     throw new Error(error.error || "Failed to fetch ngrok token");
   }
 
-  const data = (await response.json()) as {
+  const data = (await response.json()) as Partial<NgrokTokenResponse> & {
     ok?: boolean;
-    token?: string;
-    credentialId?: string;
-    domain?: string;
-    domainId?: string;
   };
   if (
     !data.ok ||
@@ -57,12 +83,66 @@ async function fetchNgrokToken(authHeader?: string): Promise<{
     throw new Error("Invalid response from tunnel service");
   }
 
-  return {
-    token: data.token,
-    credentialId: data.credentialId,
-    domain: data.domain,
-    domainId: data.domainId,
+  return data as NgrokTokenResponse;
+}
+
+// Stage a secret rotation with the Convex backend (phase A of the
+// two-phase rotation; the commit happens via recordTunnel after the local
+// listener is re-established with the new policy).
+async function stageRotation(
+  serverId: string,
+  full: boolean,
+  authHeader?: string
+): Promise<NgrokTokenResponse> {
+  const convexUrl = requireConvexUrl();
+
+  const response = await fetch(`${convexUrl}/tunnels/rotate`, {
+    method: "POST",
+    headers: convexHeaders(authHeader),
+    body: JSON.stringify({ serverId, full }),
+  });
+
+  if (!response.ok) {
+    const error = (await response.json()) as { error?: string };
+    throw new Error(error.error || "Failed to rotate tunnel");
+  }
+
+  const data = (await response.json()) as Partial<NgrokTokenResponse> & {
+    ok?: boolean;
   };
+  if (
+    !data.ok ||
+    !data.token ||
+    !data.credentialId ||
+    !data.domain ||
+    !data.domainId
+  ) {
+    throw new Error("Invalid response from tunnel service");
+  }
+
+  return data as NgrokTokenResponse;
+}
+
+// Abort a staged rotation whose local re-listen failed so the backend can
+// revoke the pending credential and surface an explicit error state.
+async function reportRotationFailed(
+  serverId: string,
+  errorMessage: string,
+  authHeader?: string
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    return;
+  }
+  try {
+    await fetch(`${convexUrl}/tunnels/rotate-failed`, {
+      method: "POST",
+      headers: convexHeaders(authHeader),
+      body: JSON.stringify({ serverId, errorMessage }),
+    });
+  } catch (error) {
+    logger.error("Failed to report rotation failure", error, { serverId });
+  }
 }
 
 function safeHostname(url: string): string {
@@ -73,7 +153,14 @@ function safeHostname(url: string): string {
   }
 }
 
-// Report tunnel creation to Convex backend
+// The secret-less base URL is the only shape ever reported for
+// persistence; the bearer URL stays in tunnel-manager memory.
+function stripBearerSecret(url: string): string {
+  return url.split("?")[0];
+}
+
+// Report tunnel state to Convex backend (also the phase-B commit of a
+// rotation when secretHash/secretVersion are present).
 async function recordTunnel(
   serverId: string,
   url: string,
@@ -82,6 +169,8 @@ async function recordTunnel(
   domain?: string,
   authHeader?: string,
   c?: Context,
+  secretHash?: string,
+  secretVersion?: number
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -89,19 +178,19 @@ async function recordTunnel(
     return;
   }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  }
-
   try {
     await fetch(`${convexUrl}/tunnels/record`, {
       method: "POST",
-      headers,
-      body: JSON.stringify({ serverId, url, credentialId, domainId, domain }),
+      headers: convexHeaders(authHeader),
+      body: JSON.stringify({
+        serverId,
+        url: stripBearerSecret(url),
+        credentialId,
+        domainId,
+        domain,
+        secretHash,
+        secretVersion,
+      }),
     });
   } catch (error) {
     const tunnelKind = serverId === "shared" ? "shared" : "server";
@@ -117,28 +206,21 @@ async function recordTunnel(
   }
 }
 
-// Report tunnel closure to Convex backend
+// Report tunnel closure to Convex backend (which also revokes the
+// tunnel's ngrok credentials; the reserved domain is kept for reuse).
 async function reportTunnelClosure(
   serverId: string,
-  authHeader?: string,
+  authHeader?: string
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     return;
   }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  }
-
   try {
     await fetch(`${convexUrl}/tunnels/close`, {
       method: "POST",
-      headers,
+      headers: convexHeaders(authHeader),
       body: JSON.stringify({ serverId }),
     });
   } catch (error) {
@@ -146,169 +228,259 @@ async function reportTunnelClosure(
   }
 }
 
-// Cleanup ngrok credential and domain
-async function cleanupCredential(
-  credentialId: string,
-  domainId?: string,
-  authHeader?: string,
-): Promise<void> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    return;
-  }
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  }
-
-  try {
-    await fetch(`${convexUrl}/tunnels/cleanup`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ credentialId, domainId }),
-    });
-  } catch (error) {
-    logger.error("Failed to cleanup credential", error, {
-      credentialId,
-      domainId,
-    });
-  }
-}
-
-// Create a shared tunnel
+// Create a shared tunnel (legacy whole-app tunnel; no per-server scoping)
 tunnels.post("/create", async (c) => {
   const authHeader = c.req.header("authorization");
 
-  try {
-    // Check if tunnel already exists
-    const existingUrl = tunnelManager.getTunnelUrl();
-    if (existingUrl) {
+  // Serialized per tunnel id: the existence check below must observe any
+  // concurrent create's listener instead of double-provisioning.
+  return withTunnelLock("shared", async () => {
+    try {
+      // Check if tunnel already exists
+      const existingUrl = tunnelManager.getTunnelUrl();
+      if (existingUrl) {
+        getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
+          tunnelKind: "shared",
+          tunnelDomain: safeHostname(existingUrl),
+          existed: true,
+        });
+        return c.json({
+          url: existingUrl,
+          existed: true,
+        });
+      }
+
+      const { token, credentialId, domain, domainId } = await fetchNgrokToken(
+        authHeader
+      );
+      const url = await tunnelManager.createTunnel("shared", {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: token,
+        credentialId,
+        domainId,
+        domain,
+      });
+      await recordTunnel(
+        "shared",
+        url,
+        credentialId,
+        domainId,
+        domain,
+        authHeader,
+        c
+      );
+
       getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
         tunnelKind: "shared",
-        tunnelDomain: safeHostname(existingUrl),
-        existed: true,
+        tunnelDomain: domain,
+        existed: false,
+        credentialIdPresent: !!credentialId,
       });
       return c.json({
-        url: existingUrl,
-        existed: true,
+        url,
+        existed: false,
       });
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.creation_failed",
+        {
+          tunnelKind: "shared",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error creating tunnel", error);
+      return c.json(
+        {
+          error: error.message || "Failed to create tunnel",
+        },
+        500
+      );
     }
-
-    const { token, credentialId, domain, domainId } =
-      await fetchNgrokToken(authHeader);
-    const url = await tunnelManager.createTunnel("shared", {
-      localAddr: LOCAL_SERVER_ADDR,
-      ngrokToken: token,
-      credentialId,
-      domainId,
-      domain,
-    });
-    await recordTunnel(
-      "shared",
-      url,
-      credentialId,
-      domainId,
-      domain,
-      authHeader,
-      c,
-    );
-
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
-      tunnelKind: "shared",
-      tunnelDomain: domain,
-      existed: false,
-      credentialIdPresent: !!credentialId,
-    });
-    return c.json({
-      url,
-      existed: false,
-    });
-  } catch (error: any) {
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.creation_failed", {
-      tunnelKind: "shared",
-      errorCode: classifyTunnelError(error),
-    });
-    logger.error("Error creating tunnel", error);
-    return c.json(
-      {
-        error: error.message || "Failed to create tunnel",
-      },
-      500,
-    );
-  }
+  });
 });
 
-// Create a server-specific tunnel
+// Create a server-specific tunnel, secured at the ngrok edge: the bearer
+// secret in the returned URL and the per-server path scope are enforced by
+// the Traffic Policy bound at listen time.
 tunnels.post("/create/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
 
-  try {
-    const existingUrl = tunnelManager.getServerTunnelUrl(serverId);
-    if (existingUrl) {
+  // Serialized per server: token minting revokes the previous credential
+  // and listening binds a fresh secret, so overlapping creates would leave
+  // the listener and persistence on different secrets. Inside the lock the
+  // existence check observes any concurrent create's finished listener.
+  return withTunnelLock(serverId, async () => {
+    try {
+      const existingUrl = tunnelManager.getServerTunnelUrl(serverId);
+      if (existingUrl) {
+        getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
+          tunnelKind: "server",
+          tunnelDomain: safeHostname(existingUrl),
+          existed: true,
+        });
+        return c.json({
+          url: existingUrl,
+          existed: true,
+        });
+      }
+
+      const data = await fetchNgrokToken(authHeader, serverId);
+      const baseUrl = await tunnelManager.createTunnel(serverId, {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: data.token,
+        credentialId: data.credentialId,
+        domainId: data.domainId,
+        domain: data.domain,
+        trafficPolicy: data.trafficPolicy,
+        publicUrl: data.url,
+        secretVersion: data.secretVersion,
+      });
+      await recordTunnel(
+        serverId,
+        data.url ?? baseUrl,
+        data.credentialId,
+        data.domainId,
+        data.domain,
+        authHeader,
+        c,
+        data.secretHash,
+        data.secretVersion
+      );
+
+      const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
+      if (!serverTunnelUrl) {
+        throw new Error("Failed to build server tunnel URL");
+      }
+
       getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
         tunnelKind: "server",
-        tunnelDomain: safeHostname(existingUrl),
-        existed: true,
+        tunnelDomain: data.domain,
+        existed: false,
+        credentialIdPresent: !!data.credentialId,
       });
       return c.json({
-        url: existingUrl,
-        existed: true,
+        url: serverTunnelUrl,
+        serverId,
+        domain: data.domain,
+        secretVersion: data.secretVersion,
+        existed: false,
       });
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.creation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error creating server-specific tunnel", error, {
+        serverId,
+      });
+      return c.json(
+        {
+          error: error.message || "Failed to create server-specific tunnel",
+        },
+        500
+      );
+    }
+  });
+});
+
+// Rotate a server tunnel's bearer secret (two-phase). The base domain is
+// stable; only the ?k= secret (and agent credential) change. `full: true`
+// additionally swaps the reserved domain — a rare escape hatch.
+tunnels.post("/rotate/:serverId", async (c) => {
+  const authHeader = c.req.header("authorization");
+  const serverId = c.req.param("serverId");
+
+  let full = false;
+  try {
+    const body = await c.req.json();
+    full = body?.full === true;
+  } catch {}
+
+  // Serialized with create/close for this server so a rotation can never
+  // interleave with another lifecycle operation's mint/listen steps.
+  return withTunnelLock(serverId, async () => {
+    let data: NgrokTokenResponse;
+    try {
+      // Phase A: backend mints the new secret/credential as PENDING state.
+      data = await stageRotation(serverId, full, authHeader);
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.rotation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error staging tunnel rotation", error, { serverId });
+      return c.json({ error: error.message || "Failed to rotate tunnel" }, 500);
     }
 
-    const { token, credentialId, domain, domainId } =
-      await fetchNgrokToken(authHeader);
-    const baseUrl = await tunnelManager.createTunnel(serverId, {
-      localAddr: LOCAL_SERVER_ADDR,
-      ngrokToken: token,
-      credentialId,
-      domainId,
-      domain,
-    });
+    try {
+      // Re-listen with the new authtoken + traffic policy. The old secret
+      // dies here: the previous listener is closed before the new one binds.
+      await tunnelManager.rotateTunnel(serverId, {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: data.token,
+        credentialId: data.credentialId,
+        domainId: data.domainId,
+        domain: data.domain,
+        trafficPolicy: data.trafficPolicy,
+        publicUrl: data.url,
+        secretVersion: data.secretVersion,
+      });
+    } catch (error: any) {
+      // Phase B (abort): land in an explicit error state; the backend
+      // revokes the pending credential.
+      await reportRotationFailed(
+        serverId,
+        error?.message || "Failed to re-establish tunnel listener",
+        authHeader
+      );
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.rotation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+          tunnelDomain: data.domain,
+        }
+      );
+      logger.error("Error re-establishing rotated tunnel", error, { serverId });
+      return c.json(
+        { error: error.message || "Failed to re-establish rotated tunnel" },
+        500
+      );
+    }
+
+    // Phase B (commit): promote the pending secret/credential to active;
+    // the backend revokes the superseded credential.
     await recordTunnel(
       serverId,
-      baseUrl,
-      credentialId,
-      domainId,
-      domain,
+      data.url ?? `https://${data.domain}`,
+      data.credentialId,
+      data.domainId,
+      data.domain,
       authHeader,
       c,
+      data.secretHash,
+      data.secretVersion
     );
 
-    const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
-    if (!serverTunnelUrl) {
-      throw new Error("Failed to build server tunnel URL");
-    }
-
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
+    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.rotated", {
       tunnelKind: "server",
-      tunnelDomain: domain,
-      existed: false,
-      credentialIdPresent: !!credentialId,
+      tunnelDomain: data.domain,
+      full,
     });
     return c.json({
-      url: serverTunnelUrl,
+      url: tunnelManager.getServerTunnelUrl(serverId) ?? data.url,
       serverId,
-      existed: false,
+      domain: data.domain,
+      secretVersion: data.secretVersion,
     });
-  } catch (error: any) {
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.creation_failed", {
-      tunnelKind: "server",
-      errorCode: classifyTunnelError(error),
-    });
-    logger.error("Error creating server-specific tunnel", error, { serverId });
-    return c.json(
-      {
-        error: error.message || "Failed to create server-specific tunnel",
-      },
-      500,
-    );
-  }
+  });
 });
 
 // Get existing tunnel URL
@@ -322,7 +494,9 @@ tunnels.get("/", async (c) => {
   return c.json({ url });
 });
 
-// Get server-specific tunnel URL
+// Get server-specific tunnel URL (in-memory bearer URL — this protected
+// route is how the UI re-shows the full URL after a reload; the persisted
+// record never contains the secret).
 tunnels.get("/server/:serverId", async (c) => {
   const serverId = c.req.param("serverId");
   const url = tunnelManager.getServerTunnelUrl(serverId);
@@ -334,32 +508,34 @@ tunnels.get("/server/:serverId", async (c) => {
   return c.json({ url, serverId });
 });
 
+// Recent requests that arrived through this server's tunnel (for the UI's
+// observability panel). Session-auth protected like the rest of /tunnels.
+tunnels.get("/requests/:serverId", async (c) => {
+  const serverId = c.req.param("serverId");
+  return c.json({ serverId, requests: getTunnelRequests(serverId) });
+});
+
 // Close the tunnel
 tunnels.delete("/", async (c) => {
   const authHeader = c.req.header("authorization");
 
-  try {
-    const credentialId = tunnelManager.getCredentialId("shared");
-    const domainId = tunnelManager.getDomainId("shared");
-
-    await tunnelManager.closeTunnel("shared");
-    await reportTunnelClosure("shared", authHeader);
-
-    if (credentialId) {
-      await cleanupCredential(credentialId, domainId || undefined, authHeader);
+  return withTunnelLock("shared", async () => {
+    try {
+      await tunnelManager.closeTunnel("shared");
+      // Backend revokes the tunnel's credentials; the domain is kept.
+      await reportTunnelClosure("shared", authHeader);
+      tunnelManager.clearCredentials("shared");
+      return c.json({ success: true });
+    } catch (error: any) {
+      logger.error("Error closing tunnel", error);
+      return c.json(
+        {
+          error: error.message || "Failed to close tunnel",
+        },
+        500
+      );
     }
-
-    tunnelManager.clearCredentials("shared");
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error("Error closing tunnel", error);
-    return c.json(
-      {
-        error: error.message || "Failed to close tunnel",
-      },
-      500,
-    );
-  }
+  });
 });
 
 // Close a server-specific tunnel
@@ -367,46 +543,27 @@ tunnels.delete("/server/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
 
-  try {
-    const credentialId = tunnelManager.getCredentialId(serverId);
-    const domainId = tunnelManager.getDomainId(serverId);
-
-    await tunnelManager.closeTunnel(serverId);
-    await reportTunnelClosure(serverId, authHeader);
-
-    if (credentialId) {
-      await cleanupCredential(credentialId, domainId || undefined, authHeader);
+  return withTunnelLock(serverId, async () => {
+    try {
+      await tunnelManager.closeTunnel(serverId);
+      // Backend revokes the tunnel's credentials; the domain is kept so the
+      // URL stays stable when the tunnel is recreated.
+      await reportTunnelClosure(serverId, authHeader);
+      tunnelManager.clearCredentials(serverId);
+      // The observability panel describes the closed listener — drop it so a
+      // future tunnel for this server starts with a clean history.
+      clearTunnelRequests(serverId);
+      return c.json({ success: true, serverId });
+    } catch (error: any) {
+      logger.error("Error closing server-specific tunnel", error, { serverId });
+      return c.json(
+        {
+          error: error.message || "Failed to close server-specific tunnel",
+        },
+        500
+      );
     }
-
-    tunnelManager.clearCredentials(serverId);
-    return c.json({ success: true, serverId });
-  } catch (error: any) {
-    logger.error("Error closing server-specific tunnel", error, { serverId });
-    return c.json(
-      {
-        error: error.message || "Failed to close server-specific tunnel",
-      },
-      500,
-    );
-  }
-});
-
-// Cleanup all orphaned tunnels for the current user
-tunnels.post("/cleanup-orphaned", async (c) => {
-  const authHeader = c.req.header("authorization");
-
-  try {
-    await cleanupOrphanedTunnels(authHeader);
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error("Error cleaning up orphaned tunnels", error);
-    return c.json(
-      {
-        error: error.message || "Failed to cleanup orphaned tunnels",
-      },
-      500,
-    );
-  }
+  });
 });
 
 export default tunnels;

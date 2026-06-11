@@ -25,7 +25,8 @@ import {
   getSessionToken,
 } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import { isAllowedHost } from "./utils/localhost-check";
+import { mayServeSessionToken } from "./utils/localhost-check";
+import { getActiveTunnelDomains } from "./services/tunnel-registry";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -423,10 +424,23 @@ app.get("/api/session-token", (c) => {
   }
 
   const host = c.req.header("Host");
+  const forwardedHost = c.req.header("X-Forwarded-Host");
 
-  if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+  // SECURITY INVARIANT: tunnel hosts never receive the session token, even
+  // if a tunnel domain is ever allowlisted — see mayServeSessionToken.
+  if (
+    !mayServeSessionToken({
+      host,
+      forwardedHost,
+      allowedHosts: ALLOWED_HOSTS,
+      hostedMode: HOSTED_MODE,
+      activeTunnelDomains: getActiveTunnelDomains(),
+    })
+  ) {
     appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${host}`
+      `[Security] Token request denied - non-allowed Host: ${
+        forwardedHost || host
+      }`
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
@@ -479,10 +493,21 @@ if (process.env.NODE_ENV === "production") {
       let htmlContent = readFileSync(indexPath, "utf-8");
 
       // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
-      // This prevents token leakage when bound to 0.0.0.0
+      // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
+      // NEVER receive the token, even if a tunnel domain is ever
+      // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
+      const forwardedHost = c.req.header("X-Forwarded-Host");
 
-      if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+      if (
+        mayServeSessionToken({
+          host,
+          forwardedHost,
+          allowedHosts: ALLOWED_HOSTS,
+          hostedMode: HOSTED_MODE,
+          activeTunnelDomains: getActiveTunnelDomains(),
+        })
+      ) {
         const token = getSessionToken();
         const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
         htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);

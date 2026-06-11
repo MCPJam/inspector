@@ -9,7 +9,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { AlertTriangle, Cable, Copy, FlaskConical } from "lucide-react";
+import { AlertTriangle, Copy, FlaskConical, KeyRound } from "lucide-react";
 
 export const TUNNEL_EXPLANATION_DISMISSED_KEY =
   "mcpjam_tunnel_explanation_dismissed";
@@ -68,23 +68,26 @@ export function TunnelExplanationModal({
               <Copy className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">No Setup Required</h4>
+              <h4 className="font-medium text-sm mb-1">Just Paste the URL</h4>
               <p className="text-sm text-muted-foreground">
                 Copy the tunnel URL and paste it directly into ChatGPT settings.
-                No authentication configuration needed.
+                The URL contains a secret key that authenticates the connection
+                — no extra setup needed.
               </p>
             </div>
           </div>
 
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-full bg-primary/10 p-2">
-              <Cable className="h-4 w-4 text-primary" />
+              <KeyRound className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">Close When Done</h4>
+              <h4 className="font-medium text-sm mb-1">Secured at the Edge</h4>
               <p className="text-sm text-muted-foreground">
-                Close the tunnel when you're finished testing to disable remote
-                access.
+                Requests without the secret key are rejected before they reach
+                your machine, and the tunnel only exposes this one server. Use
+                Rotate to revoke the current URL, or close the tunnel when
+                you're done.
               </p>
             </div>
           </div>
@@ -92,7 +95,8 @@ export function TunnelExplanationModal({
 
         <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Anyone with the tunnel URL can access your MCP servers. Close the
+          Anyone with the full URL (including its secret key) can use this
+          server. Share it carefully, rotate it if it leaks, and close the
           tunnel when done.
         </p>
 
