@@ -210,7 +210,11 @@ jobs:
         if: steps.preview_domain.outputs.url != ''
         continue-on-error: true
         env:
-          CONVEX_HTTP: ${{ env.STAGING_CONVEX_HTTP_URL }}
+          # The script posts to <url>/api/query, which only exists on the
+          # .convex.cloud (client API) domain. The .convex.site HTTP-router
+          # domain 404s every probe ("No matching routes found"), which made
+          # this check report staging as down on every PR.
+          CONVEX_HTTP: ${{ env.STAGING_VITE_CONVEX_URL }}
         run: |
           .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
 
@@ -714,7 +718,9 @@ jobs:
         if: steps.preview_domain.outputs.url != ''
         continue-on-error: true
         env:
-          CONVEX_HTTP: ${{ steps.backend_target.outputs.convex_http_url }}
+          # /api/query lives on the .convex.cloud client-API domain, not the
+          # .convex.site HTTP-router domain (see initial_health above).
+          CONVEX_HTTP: ${{ steps.backend_target.outputs.vite_convex_url }}
         run: |
           .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
 
