@@ -118,19 +118,30 @@ Expand **Additional Configuration** to override the request timeout (default `10
 
 Expose your local MCP servers over HTTPS for remote access. This lets you share your servers with external clients and applications without deploying them.
 
+Each tunnel is scoped to a single server and secured at the network edge: the tunnel URL contains a secret key (`?k=…`) that is enforced before any traffic reaches your machine. Requests without the correct key are rejected with a 401 at the edge.
+
 ### Create a tunnel
 
-1. Go to the **MCP Servers** tab
-2. Click **Create Tunnel** in the header
-3. The tunnel URL is automatically copied to your clipboard
+1. Go to the **MCP Servers** tab.
+2. Click **Create Tunnel** on the server card you want to expose.
+3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
 
-Once created, each connected server gets its own tunnel URL. Click **Copy Tunnel Url** on any server card to copy its specific endpoint.
+The tunnel URL is stable — the base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
+
+### Rotate the secret
+
+Click the **Rotate** button (refresh icon) on the tunnel pill to issue a new secret key. The base domain does not change, but the old URL stops working immediately. Use this if you shared the URL with someone who should no longer have access.
+
+### Recent requests
+
+Click the **log icon** on the tunnel pill to open the recent-requests panel. It shows the last 20 JSON-RPC method calls that arrived through the tunnel, refreshing every 4 seconds. The panel closes automatically when you close the tunnel.
 
 ### Close a tunnel
 
-Click **Close Tunnel** in the header to stop remote access. The tunnel closes immediately and all remote connections are terminated.
+Click the **close (×) button** on the tunnel pill to stop remote access. The tunnel closes immediately and all remote connections are terminated. The domain is reserved so a future tunnel for the same server reuses it.
 
 <Warning>
-  Tunnel URLs are publicly accessible without authentication. Only create
-  tunnels when you need remote access, and close them when done.
+  Anyone with the full tunnel URL — including its secret key — can access this
+  server. Share it carefully, rotate it if it leaks, and close the tunnel when
+  you are done.
 </Warning>
