@@ -28,6 +28,7 @@ import {
   catalogHasComputerBackedTool,
   detachComputerPatch,
   shouldShowComputerToggle,
+  visibleBuiltInToolCatalog,
 } from "@/lib/host-config-computer";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
@@ -97,12 +98,19 @@ export function BehaviorTab({
   // deployed; `[]` on populated deployments with no enabled rows. Hide the
   // FocusBlock entirely in both cases so empty installs don't render a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
-  const showBuiltInTools = (builtInToolCatalog?.length ?? 0) > 0;
+  const computersEnabled = useComputersEnabled();
+  // Render only the rows this user may see: with `computers-enabled` off,
+  // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
+  // already-selected id, which must remain visible to stay removable.
+  const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
+    computersEnabled,
+    selectedIds: draft.builtInToolIds,
+  });
+  const showBuiltInTools = (visibleBuiltInTools?.length ?? 0) > 0;
   // The personal-computer toggle appears once the deployment exposes a
   // computer-backed tool (the `bash` row ships disabled until launch) OR when
   // the host already has a computer attached, so an existing attachment is
   // always detachable even if no computer-backed tool is in the catalog.
-  const computersEnabled = useComputersEnabled();
   const showComputerToggle =
     computersEnabled &&
     shouldShowComputerToggle({
@@ -299,7 +307,7 @@ export function BehaviorTab({
             <BuiltInToolCheckboxList
               label="Attached"
               selected={draft.builtInToolIds}
-              available={builtInToolCatalog ?? []}
+              available={visibleBuiltInTools ?? []}
               computerAttached={draft.computer !== undefined}
               readOnly={readOnly}
               onChange={(builtInToolIds) => update({ builtInToolIds })}
