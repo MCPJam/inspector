@@ -10,18 +10,46 @@
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
+/**
+ * Built-in tool ids the inspector implements as computer-backed. The catalog's
+ * `requiresComputer` flag is authoritative for AVAILABILITY (which tools the
+ * deployment exposes), but it can be `undefined` while loading and OMITS
+ * disabled rows — and `bash` ships disabled until launch. So the CLEANUP paths
+ * (detach, eval-suite sanitize) union this known floor with the catalog, to
+ * guarantee a computer-dependent id never survives without its resource even
+ * when the catalog can't identify it. Mirrors the server resolver's hardcoded
+ * `BASH_TOOL_NAME` (server/utils/built-in-tools/registry.ts). This floor is
+ * NOT used to decide whether to offer attaching a computer — see
+ * `catalogHasComputerBackedTool`, which stays catalog-only so a disabled tool
+ * never resurrects a dead pre-launch toggle.
+ */
+const KNOWN_COMPUTER_BACKED_TOOL_IDS: readonly string[] = ["bash"];
+
+/**
+ * Whether the catalog currently exposes a computer-backed tool. Catalog-only
+ * (no floor) — this gates OFFERING a computer attachment, which must follow
+ * what the deployment has actually enabled.
+ */
 export function catalogHasComputerBackedTool(
   catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
 ): boolean {
   return (catalog ?? []).some((t) => t.requiresComputer);
 }
 
+/**
+ * The set of computer-backed built-in tool ids for CLEANUP purposes: the
+ * catalog's `requiresComputer` ids unioned with the known floor, so detaching
+ * a computer always strips e.g. `bash` regardless of catalog load state or a
+ * disabled row.
+ */
 export function computerBackedToolIds(
   catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
 ): Set<string> {
-  return new Set(
-    (catalog ?? []).filter((t) => t.requiresComputer).map((t) => t.id)
-  );
+  const ids = new Set<string>(KNOWN_COMPUTER_BACKED_TOOL_IDS);
+  for (const tool of catalog ?? []) {
+    if (tool.requiresComputer) ids.add(tool.id);
+  }
+  return ids;
 }
 
 /** Patch that attaches a personal computer (the only MVP resource shape). */

@@ -61,6 +61,25 @@ describe("host-config-computer helpers", () => {
       builtInToolIds: ["web_search"],
     });
   });
+
+  it("detachComputerPatch strips bash even when the catalog is undefined or omits it (disabled/loading)", () => {
+    // The bot's case: catalog hasn't loaded (or omits the disabled `bash`
+    // row), so the live `requiresComputer` flag can't identify it — the known
+    // floor must still clear it so the draft can't violate requiresComputer.
+    const value = emptyHostConfigInputV2({
+      builtInToolIds: ["web_search", "bash"],
+      computer: { kind: "personal" },
+    });
+    expect(detachComputerPatch(value, undefined)).toEqual({
+      computer: undefined,
+      builtInToolIds: ["web_search"],
+    });
+    // Same when the catalog is present but excludes bash (only web_search).
+    expect(detachComputerPatch(value, [CATALOG[0]])).toEqual({
+      computer: undefined,
+      builtInToolIds: ["web_search"],
+    });
+  });
 });
 
 describe("shouldShowComputerToggle", () => {
@@ -113,17 +132,15 @@ describe("sanitizeHostConfigForEvalSuite", () => {
     expect(out.builtInToolIds).toEqual(["web_search"]);
   });
 
-  it("clears the computer even before the catalog has loaded (catalog-independent)", () => {
+  it("clears the computer AND strips known computer-backed ids even before the catalog loads", () => {
     const value = emptyHostConfigInputV2({
       builtInToolIds: ["web_search", "bash"],
       computer: { kind: "personal" },
     });
     const out = sanitizeHostConfigForEvalSuite(value, undefined);
     expect(out.computer).toBeUndefined();
-    // bash not stripped without the catalog, but it's inert in evals (the
-    // resolver skips it without a computer, and the run-start guard keys on
-    // `computer`, now cleared).
-    expect(out.builtInToolIds).toEqual(["web_search", "bash"]);
+    // `bash` is stripped via the known floor even with no catalog loaded.
+    expect(out.builtInToolIds).toEqual(["web_search"]);
   });
 
   it("returns the same reference when already clean (no spurious dirty state)", () => {
