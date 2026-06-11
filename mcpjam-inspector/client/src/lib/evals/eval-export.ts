@@ -189,7 +189,6 @@ export function buildSdkEnvSnippet(
   );
 
   const lines = [
-    "export MCPJAM_API_KEY=<project-api-key>",
     "export EVAL_MODEL=<provider/model-id>",
     "# Use the API key variable your provider expects; rename in the test file if needed.",
     "export LLM_API_KEY=<your-llm-api-key>",
@@ -479,7 +478,6 @@ function buildCaseTestBlock(
     "",
     `      await evalTest.run(agent, {`,
     `        iterations: ${testCase.runs || 1},`,
-    `        mcpjam: { suiteName: SUITE_NAME, serverNames: SERVER_IDS },`,
     `      });`,
     "      expect(evalTest.accuracy()).toBe(1);",
   );
