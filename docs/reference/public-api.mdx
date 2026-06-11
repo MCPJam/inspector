@@ -257,7 +257,7 @@ RUN_ID=$(curl -fsS -X POST \
       "title": "echo works",
       "query": "Use the echo tool to say hi",
       "runs": 1,
-      "model": "claude-sonnet-4-6",
+      "model": "anthropic/claude-haiku-4.5",
       "provider": "anthropic",
       "expectedToolCalls": [{ "toolName": "echo", "arguments": { "text": "hi" } }]
     }]
@@ -271,6 +271,13 @@ curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
 curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 ```
+
+`model` takes an id from the hosted catalog — `provider/name` form, e.g.
+`anthropic/claude-haiku-4.5` — and runs on your organization's credits.
+Provider-native ids (e.g. `claude-sonnet-4-5`) are bring-your-own-key: pass
+the key in `modelApiKeys`. A model the API can't execute is rejected at
+create time with `VALIDATION_ERROR`; `details.hostedModels` lists the valid
+hosted ids for that provider.
 
 Reruns are even shorter: `{ "suiteId": "...", "serverIds": ["..."] }` reruns
 the suite exactly as configured. Per-organization concurrency is capped
