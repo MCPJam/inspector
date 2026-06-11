@@ -66,6 +66,7 @@ import {
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
@@ -908,6 +909,10 @@ function OrganizationPage({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
+        <SettingsNav
+          active="organization"
+          activeOrganizationId={organization._id}
+        />
         <Card className="overflow-hidden border-border/60">
           <CardContent className="space-y-5 p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
@@ -1068,14 +1073,17 @@ function OrganizationPage({
                             billingStatus={billingStatus}
                             planCatalog={planCatalog}
                             isLoadingPlanCatalog={isLoadingPlanCatalog}
-                            onChangeBillingInterval={handleChangeBillingInterval}
+                            onChangeBillingInterval={
+                              handleChangeBillingInterval
+                            }
                             onCancelScheduledBillingChange={
                               scheduledBillingChangeCancellation
                                 ? handleOpenScheduledBillingChangeCancelDialog
                                 : undefined
                             }
                             cancelScheduledBillingChangeLabel={
-                              scheduledBillingChangeCancellation?.ctaLabel ?? null
+                              scheduledBillingChangeCancellation?.ctaLabel ??
+                              null
                             }
                             onManageBilling={handleManageBilling}
                             isOpeningPortal={isOpeningPortal}
@@ -1438,8 +1446,8 @@ function OrganizationPage({
                     , after which the organization returns to Free.
                   </span>
                   <span className="block">
-                    Once cancellation is scheduled, you can't change your billing
-                    interval (monthly or annual) until you reactivate.
+                    Once cancellation is scheduled, you can't change your
+                    billing interval (monthly or annual) until you reactivate.
                   </span>
                 </>
               ) : (

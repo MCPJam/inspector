@@ -20,7 +20,6 @@ import {
   UserPlus,
   ShieldCheck,
   Loader2,
-  Key,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
@@ -73,7 +72,6 @@ import {
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
-import { NotificationBell } from "@/components/notifications/NotificationBell";
 import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
@@ -84,7 +82,7 @@ import type { OrganizationRouteSection } from "@/lib/app-navigation";
 interface NavItem {
   title: string;
   url: string;
-  icon: React.ComponentType;
+  icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
   /** Only show this item when the named feature flag is enabled */
@@ -329,25 +327,21 @@ const navigationSections: NavSection[] = [
       },
     ],
   },
+];
+
+// Footer utility icons for users without an account menu (signed-out): the
+// account dropdown normally hosts Settings/Support, so signed-in users only
+// see the notification bell here. Same list for local and hosted guests.
+const signedOutUtilityItems: NavItem[] = [
   {
-    id: "settings",
-    items: [
-      {
-        title: "Support",
-        url: "/support",
-        icon: MessageCircleQuestionIcon,
-      },
-      {
-        title: "API Keys",
-        url: "/settings/api-keys",
-        icon: Key,
-      },
-      {
-        title: "Settings",
-        url: "/settings",
-        icon: Settings,
-      },
-    ],
+    title: "Support",
+    url: "/support",
+    icon: MessageCircleQuestionIcon,
+  },
+  {
+    title: "Settings",
+    url: "/settings",
+    icon: Settings,
   },
 ];
 
@@ -682,6 +676,16 @@ export function MCPSidebar({
     featureFlags
   );
 
+  // Signed-in users reach Settings/Support via the account menu; only
+  // signed-out users (no account menu) get utility icons in the footer.
+  const utilityItems = user ? [] : signedOutUtilityItems;
+
+  const isNavItemActive = (item: NavItem) =>
+    normalizeHostedHashTab(
+      item.url.replace(/^[#/]+/, "").split("/")[0] || "servers"
+    ) === activeTab ||
+    (activeTab !== undefined && (item.matchTabs?.includes(activeTab) ?? false));
+
   return (
     <>
       <Sidebar collapsible="icon" {...props}>
@@ -787,16 +791,20 @@ export function MCPSidebar({
             </div>
           )}
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="gap-0">
           {visibleNavigationSections.map((section, sectionIndex) => {
-            const rawEvalsEntry = section.items.find((item) => item.evalsSubnav);
+            const rawEvalsEntry = section.items.find(
+              (item) => item.evalsSubnav
+            );
             // Only render Evaluate through the SidebarEvalsNavGroup wrapper
             // (which adds its own SidebarGroup padding) when there's actually
             // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
             // so it sits flush with Views and matches sibling spacing.
             const useEvalsSubnavWrapper =
               !!rawEvalsEntry && evaluateRunsEnabled === true;
-            const evalsEntry = useEvalsSubnavWrapper ? rawEvalsEntry : undefined;
+            const evalsEntry = useEvalsSubnavWrapper
+              ? rawEvalsEntry
+              : undefined;
             const flatItems = section.items
               .map((item) => {
                 if (!item.evalsSubnav) return item;
@@ -817,13 +825,7 @@ export function MCPSidebar({
                 <NavMain
                   items={flatItems.map((item) => ({
                     ...item,
-                    isActive:
-                      normalizeHostedHashTab(
-                        item.url.replace(/^[#/]+/, "").split("/")[0] ||
-                          "servers"
-                      ) === activeTab ||
-                      (activeTab !== undefined &&
-                        (item.matchTabs?.includes(activeTab) ?? false)),
+                    isActive: isNavItemActive(item),
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={
@@ -832,14 +834,6 @@ export function MCPSidebar({
                           onExpand: learnMore.openExpandedModal,
                         }
                       : null
-                  }
-                  renderSlotAfter={
-                    section.id === "settings"
-                      ? (itemTitle) =>
-                          itemTitle === "Support" ? (
-                            <NotificationBell variant="sidebar" />
-                          ) : null
-                      : undefined
                   }
                 />
                 {evalsEntry ? (
@@ -855,13 +849,36 @@ export function MCPSidebar({
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}
                 {sectionIndex < visibleNavigationSections.length - 1 && (
-                  <div className="mx-4 my-2 border-t border-border/50" />
+                  <div className="mx-4 my-1 border-t border-border/50" />
                 )}
               </React.Fragment>
             );
           })}
         </SidebarContent>
         <SidebarFooter>
+          {utilityItems.length > 0 ? (
+            <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
+              {utilityItems.map((item) => (
+                <Tooltip key={item.title}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={item.title}
+                      onClick={() => handleNavClick(item.url)}
+                      className={cn(
+                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        isNavItemActive(item) &&
+                          "bg-sidebar-accent text-sidebar-accent-foreground"
+                      )}
+                    >
+                      {item.icon ? <item.icon className="size-4" /> : null}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{item.title}</TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          ) : null}
           {shouldShowInviteCta ? (
             <SidebarMenu>
               <SidebarMenuItem>

@@ -29,6 +29,7 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -1140,6 +1141,11 @@ export function SettingsRoute() {
       onNavigate={handleNavigate}
     />
   );
+}
+
+export function ApiKeysSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
 export function SupportRoute() {

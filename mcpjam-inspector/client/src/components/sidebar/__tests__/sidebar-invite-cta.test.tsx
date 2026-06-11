@@ -90,7 +90,9 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarFooter: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  SidebarGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SidebarGroup: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   SidebarGroupContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -157,7 +159,9 @@ function makeProject(id: string, name: string) {
   };
 }
 
-function renderSidebar(overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {}) {
+function renderSidebar(
+  overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {}
+) {
   return render(
     <MCPSidebar
       projects={{
@@ -170,7 +174,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof MCPSidebar
       onDeleteProject={vi.fn()}
       onProjectShared={vi.fn()}
       {...overrides}
-    />,
+    />
   );
 }
 
@@ -197,7 +201,7 @@ describe("sidebar invite CTA", () => {
           <div data-testid="share-project-dialog">
             Share dialog for {projectName}
           </div>
-        ) : null,
+        ) : null
     );
   });
 
@@ -213,7 +217,7 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.queryByRole("button", { name: "Invite team members" }),
+      screen.queryByRole("button", { name: "Invite team members" })
     ).not.toBeInTheDocument();
   });
 
@@ -221,10 +225,10 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" }),
+      screen.getByRole("button", { name: "Invite team members" })
     ).toBeInTheDocument();
     expect(screen.getByText("Invite team members")).toHaveClass(
-      "group-data-[collapsible=icon]:hidden",
+      "group-data-[collapsible=icon]:hidden"
     );
   });
 
@@ -236,10 +240,12 @@ describe("sidebar invite CTA", () => {
     });
     const sidebarUser = screen.getByTestId("sidebar-user");
 
-    expect(screen.queryByTestId("sidebar-credit-usage")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("sidebar-credit-usage")
+    ).not.toBeInTheDocument();
     expect(
       inviteButton.compareDocumentPosition(sidebarUser) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
   });
 
@@ -261,17 +267,56 @@ describe("sidebar invite CTA", () => {
     expect(creditUsage).toHaveClass("px-1");
     expect(
       creditUsage.compareDocumentPosition(sidebarUser) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
+  });
+
+  it("signed-in footer has no utility strip (everything lives in the account menu)", () => {
+    renderSidebar();
+
+    expect(
+      screen.queryByRole("button", { name: "Support" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Settings" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "API Keys" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Notifications/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("signed-out footer strip offers Support and Settings icons (no account menu to host them)", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+
+    renderSidebar();
+
+    expect(screen.getByRole("button", { name: "Support" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Settings" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "API Keys" })
+    ).not.toBeInTheDocument();
   });
 
   it("opens the share dialog for the active project", () => {
     renderSidebar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Invite team members" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Invite team members" })
+    );
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme",
+      "Share dialog for Acme"
     );
   });
 
@@ -289,12 +334,11 @@ describe("sidebar invite CTA", () => {
         onCreateProject={vi.fn(async () => "project-created")}
         onDeleteProject={vi.fn()}
         onProjectShared={vi.fn()}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" }),
+      screen.getByRole("button", { name: "Invite team members" })
     ).toBeInTheDocument();
   });
-
 });

@@ -50,16 +50,9 @@ interface NavMainProps {
   onItemClick?: (url: string) => void;
   /** Learn more hover card integration */
   learnMore?: LearnMoreProps | null;
-  /** Optional slot rendered immediately after a nav row, keyed by item title. */
-  renderSlotAfter?: (itemTitle: string) => React.ReactNode;
 }
 
-export function NavMain({
-  items,
-  onItemClick,
-  learnMore,
-  renderSlotAfter,
-}: NavMainProps) {
+export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
   const { open: sidebarOpen } = useSidebar();
 
   const handleClick = (url: string) => {
@@ -75,8 +68,8 @@ export function NavMain({
       item.disabled
         ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
         : isItemActive(item)
-          ? "[&[data-active=true]]:bg-accent cursor-pointer"
-          : "cursor-pointer",
+        ? "[&[data-active=true]]:bg-accent cursor-pointer"
+        : "cursor-pointer"
     );
 
   const shouldShowHoverCard = (item: NavMainItem): boolean => {
@@ -104,7 +97,7 @@ export function NavMain({
 
   const renderButton = (
     item: NavMainItem,
-    options: { suppressTooltip?: boolean; badge?: React.ReactNode } = {},
+    options: { suppressTooltip?: boolean; badge?: React.ReactNode } = {}
   ) => (
     <SidebarMenuButton
       tooltip={
@@ -129,22 +122,18 @@ export function NavMain({
   );
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className="py-1">
       <SidebarGroupContent>
-        <SidebarMenu>
+        <SidebarMenu className="gap-0.5">
           {items.map((item) => {
-            const slotAfter = renderSlotAfter?.(item.title) ?? null;
-
             if (item.announcement && !item.disabled) {
               return (
-                <React.Fragment key={item.title}>
-                  <AnnouncementNavRow
-                    item={{ ...item, announcement: item.announcement }}
-                    sidebarOpen={sidebarOpen}
-                    renderButton={renderButton}
-                  />
-                  {slotAfter}
-                </React.Fragment>
+                <AnnouncementNavRow
+                  key={item.title}
+                  item={{ ...item, announcement: item.announcement }}
+                  sidebarOpen={sidebarOpen}
+                  renderButton={renderButton}
+                />
               );
             }
 
@@ -153,44 +142,35 @@ export function NavMain({
             if (item.disabled) {
               if (shouldShowHoverCard(item)) {
                 return (
-                  <React.Fragment key={item.title}>
-                    <SidebarMenuItem>
-                      {wrapWithHoverCard(
-                        item,
-                        <div className="w-full cursor-not-allowed">{button}</div>,
-                      )}
-                    </SidebarMenuItem>
-                    {slotAfter}
-                  </React.Fragment>
+                  <SidebarMenuItem key={item.title}>
+                    {wrapWithHoverCard(
+                      item,
+                      <div className="w-full cursor-not-allowed">{button}</div>
+                    )}
+                  </SidebarMenuItem>
                 );
               }
 
               return (
-                <React.Fragment key={item.title}>
-                  <SidebarMenuItem>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="w-full cursor-not-allowed">{button}</div>
-                      </TooltipTrigger>
-                      {item.disabledTooltip && (
-                        <TooltipContent side="right" align="center">
-                          {item.disabledTooltip}
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  </SidebarMenuItem>
-                  {slotAfter}
-                </React.Fragment>
+                <SidebarMenuItem key={item.title}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="w-full cursor-not-allowed">{button}</div>
+                    </TooltipTrigger>
+                    {item.disabledTooltip && (
+                      <TooltipContent side="right" align="center">
+                        {item.disabledTooltip}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </SidebarMenuItem>
               );
             }
 
             return (
-              <React.Fragment key={item.title}>
-                <SidebarMenuItem>
-                  {wrapWithHoverCard(item, button)}
-                </SidebarMenuItem>
-                {slotAfter}
-              </React.Fragment>
+              <SidebarMenuItem key={item.title}>
+                {wrapWithHoverCard(item, button)}
+              </SidebarMenuItem>
             );
           })}
         </SidebarMenu>
@@ -204,7 +184,7 @@ interface AnnouncementNavRowProps {
   sidebarOpen: boolean;
   renderButton: (
     item: NavMainItem,
-    options?: { suppressTooltip?: boolean; badge?: React.ReactNode },
+    options?: { suppressTooltip?: boolean; badge?: React.ReactNode }
   ) => React.ReactNode;
 }
 
