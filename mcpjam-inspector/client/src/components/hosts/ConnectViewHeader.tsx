@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
-export type ConnectViewValue = "servers" | "host" | "compare";
+export type ConnectViewValue = "servers" | "host" | "compare" | "computer";
 
 interface ConnectViewHeaderProps {
   value: ConnectViewValue;
@@ -23,6 +24,9 @@ export function ConnectViewHeader({
   rightSlot,
   testId = "hosts-tab-header-chrome",
 }: ConnectViewHeaderProps) {
+  // The Computer tab only appears for users the `computers-enabled` flag is
+  // rolled out to (also keeps it hidden pre-launch).
+  const computersEnabled = useComputersEnabled();
   return (
     <div
       className="relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
@@ -43,6 +47,9 @@ export function ConnectViewHeader({
                 disabled: !previewedHostId,
               },
               { value: "compare", label: "Compare" },
+              ...(computersEnabled
+                ? ([{ value: "computer", label: "Computer" }] as const)
+                : []),
             ]}
           />
         </div>

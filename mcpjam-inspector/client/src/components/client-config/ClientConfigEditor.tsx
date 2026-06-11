@@ -64,6 +64,7 @@ import {
   detachComputerPatch,
   shouldShowComputerToggle,
 } from "@/lib/host-config-computer";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -162,6 +163,7 @@ export function ClientConfigEditor({
   // attach surface here. Hide entirely on deployments whose catalog is empty
   // (loading → undefined → hidden) so empty installs don't show a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
+  const computersEnabled = useComputersEnabled();
   const showBuiltInToolsSection =
     owner !== "connection-only" && (builtInToolCatalog?.length ?? 0) > 0;
   // Eval suites can never use a personal computer: the backend aborts eval
@@ -176,6 +178,7 @@ export function ClientConfigEditor({
   // attachment is always detachable even if no computer-backed tool is
   // currently in the catalog. Never on connection-only or eval surfaces.
   const showComputerToggle =
+    computersEnabled &&
     owner !== "connection-only" &&
     shouldShowComputerToggle({
       catalogHasComputerBackedTool:

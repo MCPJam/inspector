@@ -33,6 +33,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import {
   hasBlockingErrors,
   useHostDraftValidation,
@@ -67,12 +68,13 @@ export function HostBuilderViewRedesigned({
     hostId,
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
+  const computersEnabled = useComputersEnabled();
   const { updateHost } = useHostMutations();
   const { createServer } = useServerMutations();
 
   const [draftName, setDraftName] = useState("");
   const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(
-    null,
+    null
   );
   const [isSaving, setIsSaving] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -162,7 +164,7 @@ export function HostBuilderViewRedesigned({
       host
         ? { ...hostConfigDtoToInput(host.config), optionalServerIds: [] }
         : null,
-    [host],
+    [host]
   );
 
   const isDirty = useMemo(() => {
@@ -172,7 +174,7 @@ export function HostBuilderViewRedesigned({
       !hostConfigInputsEqual(draftConfig, savedConfig) ||
       !serverConnectionOverridesEqual(
         draftConfig.serverConnectionOverrides,
-        savedConfig.serverConnectionOverrides,
+        savedConfig.serverConnectionOverrides
       )
     );
   }, [host, draftName, draftConfig, savedConfig]);
@@ -180,7 +182,7 @@ export function HostBuilderViewRedesigned({
   // Validation: recompute issues whenever draft or host display name changes.
   const attention = useHostDraftValidation(
     draftConfig ?? emptyHostConfigInputV2(),
-    draftName,
+    draftName
   );
 
   // Runtime connection state lives in `appState.servers` keyed by server
@@ -225,7 +227,7 @@ export function HostBuilderViewRedesigned({
         connectionStatus:
           connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
       })),
-    [servers, connectionStatusByName],
+    [servers, connectionStatusByName]
   );
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -237,10 +239,10 @@ export function HostBuilderViewRedesigned({
         ? getChatboxShellStyle(
             draftConfig.hostStyle,
             themeMode,
-            draftConfig.chatUiOverride,
+            draftConfig.chatUiOverride
           )
         : undefined,
-    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode],
+    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode]
   );
   const liveSnapshotId = host?.config?.id ?? "";
   if (liveSnapshotId) lastSnapshotIdRef.current = liveSnapshotId;
@@ -257,7 +259,7 @@ export function HostBuilderViewRedesigned({
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
       },
-      attention,
+      attention
     );
   }, [
     draftName,
@@ -273,7 +275,7 @@ export function HostBuilderViewRedesigned({
     (
       tab: HostFocusTabId,
       selectedServerId: string | null = null,
-      focusSubKey?: SandboxConfigSubKey,
+      focusSubKey?: SandboxConfigSubKey
     ) => {
       setFocusState({
         open: true,
@@ -282,7 +284,7 @@ export function HostBuilderViewRedesigned({
         ...(focusSubKey ? { focusSubKey } : {}),
       });
     },
-    [],
+    []
   );
 
   const closeFocus = useCallback(() => {
@@ -296,7 +298,7 @@ export function HostBuilderViewRedesigned({
       if (target)
         openFocus(target.tab, target.selectedServerId, target.focusSubKey);
     },
-    [openFocus],
+    [openFocus]
   );
 
   const handleSave = useCallback(async () => {
@@ -307,7 +309,7 @@ export function HostBuilderViewRedesigned({
         ? (Object.keys(draftConfig) as Array<keyof HostConfigInputV2>).filter(
             (key) =>
               JSON.stringify(draftConfig[key]) !==
-              JSON.stringify(savedConfig[key]),
+              JSON.stringify(savedConfig[key])
           )
         : [];
       const { hostConfigId } = await updateHost({
@@ -334,9 +336,7 @@ export function HostBuilderViewRedesigned({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to save host",
-      );
+      toast.error(err instanceof Error ? err.message : "Failed to save host");
     } finally {
       setIsSaving(false);
     }
@@ -371,7 +371,7 @@ export function HostBuilderViewRedesigned({
         toast.error(getBillingErrorMessage(err, "Failed to add server"));
       }
     },
-    [createServer, projectId],
+    [createServer, projectId]
   );
 
   // Only show the skeleton on the very first mount when there's nothing
@@ -432,12 +432,17 @@ export function HostBuilderViewRedesigned({
                   navigate("/servers");
                 } else if (next === "compare") {
                   navigate("/host-compare");
+                } else if (next === "computer") {
+                  navigate("/computer");
                 }
               }}
               options={[
                 { value: "servers", label: "Servers" },
                 { value: "host", label: "Host" },
                 { value: "compare", label: "Compare" },
+                ...(computersEnabled
+                  ? [{ value: "computer", label: "Computer" }]
+                  : []),
               ]}
             />
           </div>
@@ -448,72 +453,72 @@ export function HostBuilderViewRedesigned({
         className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
         style={canvasShellStyle}
       >
-      {/* Canvas + side focus panel (mirrors the ChatboxBuilderView layout:
+        {/* Canvas + side focus panel (mirrors the ChatboxBuilderView layout:
           left = canvas, right = setup/focus rail). Resizable so the user
           can grow the editor without losing the canvas context. */}
-      <div className="min-h-0 flex-1 p-4">
-        {/*
+        <div className="min-h-0 flex-1 p-4">
+          {/*
           Remount when the right pane mounts/unmounts so react-resizable-panels
           recomputes layout. Otherwise defaultSize only applies on first mount
           and the focus panel can render at ~0 width after opening.
         */}
-        <ResizablePanelGroup
-          key={focusState.open ? "host-builder-split" : "host-builder-canvas"}
-          direction="horizontal"
-          className="h-full"
-        >
-          <ResizablePanel
-            defaultSize={focusState.open ? 55 : 100}
-            minSize={30}
+          <ResizablePanelGroup
+            key={focusState.open ? "host-builder-split" : "host-builder-canvas"}
+            direction="horizontal"
+            className="h-full"
           >
-            <div className="h-full min-h-0 pr-2">
-              <ReactFlowProvider>
-                <RedesignedHostCanvas
-                  viewModel={viewModel}
-                  selectedNodeId={selectedNodeId}
-                  onSelectNode={handleSelectNode}
-                  onClearSelection={() => setSelectedNodeId(null)}
-                  onAddServer={() => setShowAddServer(true)}
-                  shellStyle={canvasShellStyle}
-                />
-              </ReactFlowProvider>
-            </div>
-          </ResizablePanel>
-          {focusState.open ? (
-            <>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize={45} minSize={35} maxSize={70}>
-                <HostFocusPanel
-                  hostId={hostId}
-                  tab={focusState.tab}
-                  onTabChange={(next) =>
-                    setFocusState((prev) =>
-                      prev.open ? { ...prev, tab: next } : prev,
-                    )
-                  }
-                  focusSubKey={focusState.focusSubKey}
-                  hostDisplayName={draftName}
-                  onHostDisplayNameChange={setDraftName}
-                  draft={draftConfig}
-                  onDraftChange={(updater) =>
-                    setDraftConfig((prev) => (prev ? updater(prev) : prev))
-                  }
-                  attention={attention}
-                  onClose={closeFocus}
-                />
-              </ResizablePanel>
-            </>
-          ) : null}
-        </ResizablePanelGroup>
-      </div>
+            <ResizablePanel
+              defaultSize={focusState.open ? 55 : 100}
+              minSize={30}
+            >
+              <div className="h-full min-h-0 pr-2">
+                <ReactFlowProvider>
+                  <RedesignedHostCanvas
+                    viewModel={viewModel}
+                    selectedNodeId={selectedNodeId}
+                    onSelectNode={handleSelectNode}
+                    onClearSelection={() => setSelectedNodeId(null)}
+                    onAddServer={() => setShowAddServer(true)}
+                    shellStyle={canvasShellStyle}
+                  />
+                </ReactFlowProvider>
+              </div>
+            </ResizablePanel>
+            {focusState.open ? (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={45} minSize={35} maxSize={70}>
+                  <HostFocusPanel
+                    hostId={hostId}
+                    tab={focusState.tab}
+                    onTabChange={(next) =>
+                      setFocusState((prev) =>
+                        prev.open ? { ...prev, tab: next } : prev
+                      )
+                    }
+                    focusSubKey={focusState.focusSubKey}
+                    hostDisplayName={draftName}
+                    onHostDisplayNameChange={setDraftName}
+                    draft={draftConfig}
+                    onDraftChange={(updater) =>
+                      setDraftConfig((prev) => (prev ? updater(prev) : prev))
+                    }
+                    attention={attention}
+                    onClose={closeFocus}
+                  />
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
+        </div>
 
-      {showAddServer && (
-        <AddServerModal
-          isOpen={showAddServer}
-          onClose={() => setShowAddServer(false)}
-          onSubmit={handleAddServer}
-        />
-      )}
+        {showAddServer && (
+          <AddServerModal
+            isOpen={showAddServer}
+            onClose={() => setShowAddServer(false)}
+            onSubmit={handleAddServer}
+          />
+        )}
       </div>
     </div>
   );
