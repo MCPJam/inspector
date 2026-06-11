@@ -12,9 +12,20 @@ export interface TunnelResponse {
 }
 
 export interface ServerTunnelResponse {
+  // Full bearer URL (contains the ?k= secret enforced at the ngrok edge).
+  // Only ever returned from the local inspector server's in-memory state
+  // or a create/rotate response — never from persisted backend records.
   url: string;
   serverId: string;
   existed?: boolean;
+  domain?: string;
+  secretVersion?: number;
+}
+
+export interface TunnelRequestLogEntry {
+  ts: number;
+  method: string;
+  path: string;
 }
 
 export interface TunnelError {
@@ -26,7 +37,7 @@ export interface TunnelError {
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
 export async function createTunnel(
-  accessToken?: string,
+  accessToken?: string
 ): Promise<TunnelResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -56,7 +67,7 @@ export async function createTunnel(
  */
 export async function createServerTunnel(
   serverId: string,
-  accessToken?: string,
+  accessToken?: string
 ): Promise<ServerTunnelResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -71,7 +82,7 @@ export async function createServerTunnel(
     {
       method: "POST",
       headers,
-    },
+    }
   );
 
   if (!response.ok) {
@@ -87,7 +98,7 @@ export async function createServerTunnel(
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
 export async function getTunnel(
-  accessToken?: string,
+  accessToken?: string
 ): Promise<TunnelResponse | null> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -121,7 +132,7 @@ export async function getTunnel(
  */
 export async function getServerTunnel(
   serverId: string,
-  accessToken?: string,
+  accessToken?: string
 ): Promise<ServerTunnelResponse | null> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -136,7 +147,7 @@ export async function getServerTunnel(
     {
       method: "GET",
       headers,
-    },
+    }
   );
 
   if (response.status === 404) {
@@ -182,7 +193,7 @@ export async function closeTunnel(accessToken?: string): Promise<void> {
  */
 export async function closeServerTunnel(
   serverId: string,
-  accessToken?: string,
+  accessToken?: string
 ): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -197,7 +208,7 @@ export async function closeServerTunnel(
     {
       method: "DELETE",
       headers,
-    },
+    }
   );
 
   if (!response.ok) {
@@ -207,12 +218,17 @@ export async function closeServerTunnel(
 }
 
 /**
- * Cleanup all orphaned tunnels for the current user
+ * Rotate a server tunnel's bearer secret. The base domain stays the same;
+ * the returned URL carries the new secret and the old URL stops working.
+ * @param serverId - The MCP server ID
  * @param accessToken - Optional WorkOS access token for authenticated requests
+ * @param full - Also rotate the reserved domain (new base URL). Rare.
  */
-export async function cleanupOrphanedTunnels(
+export async function rotateServerTunnel(
+  serverId: string,
   accessToken?: string,
-): Promise<void> {
+  full = false
+): Promise<ServerTunnelResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -221,22 +237,65 @@ export async function cleanupOrphanedTunnels(
     headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  try {
-    const response = await authFetch(
-      `${API_BASE}/api/mcp/tunnels/cleanup-orphaned`,
-      {
-        method: "POST",
-        headers,
-      },
-    );
-
-    if (response.ok) {
-      console.log("[tunnels] Orphaned tunnels cleanup completed");
-    } else {
-      console.warn("[tunnels] Failed to cleanup orphaned tunnels");
+  const response = await authFetch(
+    `${API_BASE}/api/mcp/tunnels/rotate/${encodeURIComponent(serverId)}`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ full }),
     }
-  } catch (error) {
-    console.error("[tunnels] Error during tunnel cleanup:", error);
-    // Don't throw - cleanup is best-effort
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to rotate server tunnel");
   }
+
+  return response.json();
+}
+
+/**
+ * Recent requests that arrived through this server's tunnel (newest first).
+ * @param serverId - The MCP server ID
+ * @param accessToken - Optional WorkOS access token for authenticated requests
+ */
+export async function getTunnelRequests(
+  serverId: string,
+  accessToken?: string
+): Promise<TunnelRequestLogEntry[]> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+
+  const response = await authFetch(
+    `${API_BASE}/api/mcp/tunnels/requests/${encodeURIComponent(serverId)}`,
+    {
+      method: "GET",
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    // Throw rather than return [] so the polling caller can keep its last
+    // good snapshot instead of flashing an empty list on a transient error.
+    let message = "Failed to fetch tunnel requests";
+    try {
+      const error = (await response.json()) as { error?: string };
+      if (typeof error?.error === "string") {
+        message = error.error;
+      }
+    } catch {
+      // keep default message
+    }
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as {
+    requests?: TunnelRequestLogEntry[];
+  };
+  return data.requests ?? [];
 }

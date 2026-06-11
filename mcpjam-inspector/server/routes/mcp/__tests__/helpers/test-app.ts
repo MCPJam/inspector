@@ -156,7 +156,10 @@ export async function deleteJson(app: Hono, path: string): Promise<Response> {
  * expect(status).toBe(200);
  * expect(data.success).toBe(true);
  */
-export async function expectJson<T = unknown>(
+// `data` defaults to `any`: every call site in the suite asserts into the
+// parsed body (`data.result.x`, `data.error.code`, ...) and a default of
+// `unknown` just generates TS18046 noise in test files.
+export async function expectJson<T = any>(
   response: Response,
 ): Promise<{ status: number; data: T }> {
   return {

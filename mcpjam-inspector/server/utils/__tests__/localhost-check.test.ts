@@ -6,7 +6,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isLocalhostRequest } from "../localhost-check.js";
+import {
+  isLocalhostRequest,
+  isTunnelHost,
+  mayServeSessionToken,
+} from "../localhost-check.js";
 
 describe("isLocalhostRequest", () => {
   describe("valid localhost values", () => {
@@ -175,5 +179,104 @@ describe("isLocalhostRequest", () => {
       expect(isLocalhostRequest("localhost:6274")).toBe(true);
       expect(isLocalhostRequest("127.0.0.1:6274")).toBe(true);
     });
+  });
+});
+
+describe("isTunnelHost", () => {
+  it("matches ngrok-controlled suffixes regardless of subdomain", () => {
+    expect(isTunnelHost("x7d9j2m1p9k3.ngrok.app")).toBe(true);
+    expect(isTunnelHost("foo.ngrok.dev")).toBe(true);
+    expect(isTunnelHost("foo.ngrok-free.app")).toBe(true);
+    expect(isTunnelHost("foo.ngrok.io")).toBe(true);
+  });
+
+  it("matches with a port and mixed case", () => {
+    expect(isTunnelHost("Foo.NGROK.app:443")).toBe(true);
+  });
+
+  it("matches explicitly registered active tunnel domains", () => {
+    expect(isTunnelHost("tunnel.example.com", ["tunnel.example.com"])).toBe(
+      true
+    );
+  });
+
+  it("does not match localhost or ordinary hosts", () => {
+    expect(isTunnelHost("localhost:6274")).toBe(false);
+    expect(isTunnelHost("127.0.0.1")).toBe(false);
+    expect(isTunnelHost("example.com")).toBe(false);
+    expect(isTunnelHost(undefined)).toBe(false);
+  });
+
+  it("does not match lookalike domains", () => {
+    expect(isTunnelHost("evilngrok.app")).toBe(false);
+    expect(isTunnelHost("ngrok.app.evil.com")).toBe(false);
+  });
+});
+
+describe("mayServeSessionToken", () => {
+  it("allows localhost", () => {
+    expect(
+      mayServeSessionToken({
+        host: "localhost:6274",
+        allowedHosts: [],
+        hostedMode: false,
+      })
+    ).toBe(true);
+  });
+
+  it("denies tunnel hosts via the Host header", () => {
+    expect(
+      mayServeSessionToken({
+        host: "abc123.ngrok.app",
+        allowedHosts: [],
+        hostedMode: false,
+      })
+    ).toBe(false);
+  });
+
+  it("denies tunnel hosts via X-Forwarded-Host even when Host is localhost", () => {
+    // This is the real tunnel shape: ngrok forwards to localhost with the
+    // public domain carried in X-Forwarded-Host.
+    expect(
+      mayServeSessionToken({
+        host: "localhost:6274",
+        forwardedHost: "abc123.ngrok.app",
+        allowedHosts: [],
+        hostedMode: false,
+      })
+    ).toBe(false);
+  });
+
+  it("SECURITY INVARIANT: denies a tunnel host even when allowlisted", () => {
+    // A future config mistake that allowlists an ngrok domain must not
+    // start leaking the session token through the tunnel.
+    expect(
+      mayServeSessionToken({
+        host: "abc123.ngrok.app",
+        allowedHosts: ["abc123.ngrok.app", "*.ngrok.app"],
+        hostedMode: true,
+      })
+    ).toBe(false);
+  });
+
+  it("denies active custom tunnel domains", () => {
+    expect(
+      mayServeSessionToken({
+        host: "tunnel.example.com",
+        allowedHosts: ["tunnel.example.com"],
+        hostedMode: true,
+        activeTunnelDomains: ["tunnel.example.com"],
+      })
+    ).toBe(false);
+  });
+
+  it("still honors the hosted-mode allowlist for non-tunnel hosts", () => {
+    expect(
+      mayServeSessionToken({
+        host: "myapp.railway.app",
+        allowedHosts: ["*.railway.app"],
+        hostedMode: true,
+      })
+    ).toBe(true);
   });
 });

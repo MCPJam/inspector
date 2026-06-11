@@ -32,7 +32,11 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
     serverId: "test-server",
   }),
   closeServerTunnel: vi.fn().mockResolvedValue(undefined),
-  cleanupOrphanedTunnels: vi.fn().mockResolvedValue(undefined),
+  rotateServerTunnel: vi.fn().mockResolvedValue({
+    url: "https://rotated.ngrok.app/api/mcp/adapter-http/test-server?k=newsecret",
+    serverId: "test-server",
+  }),
+  getTunnelRequests: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -531,6 +535,201 @@ describe("ServerConnectionCard", () => {
       );
 
       expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("tunnel rotate", () => {
+    const seedUrl =
+      "https://old.ngrok.app/api/mcp/adapter-http/test-server?k=old";
+
+    it("calls rotate and surfaces success", async () => {
+      const { rotateServerTunnel, getServerTunnel } = await import(
+        "@/lib/apis/mcp-tunnels-api"
+      );
+      // Keep the mount effect from clearing the prop-seeded URL.
+      (getServerTunnel as Mock).mockResolvedValue({
+        url: seedUrl,
+        serverId: "test-server",
+      });
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Rotate tunnel secret (revokes the current URL)",
+        })
+      );
+
+      await waitFor(() => {
+        expect(rotateServerTunnel).toHaveBeenCalledWith(
+          "test-server",
+          "test-token"
+        );
+      });
+      await waitFor(() => {
+        expect(toast.success as Mock).toHaveBeenCalledWith(
+          "Tunnel secret rotated — the old URL no longer works"
+        );
+      });
+    });
+
+    it("re-syncs the URL from the server when a rotation fails", async () => {
+      const { rotateServerTunnel, getServerTunnel } = await import(
+        "@/lib/apis/mcp-tunnels-api"
+      );
+      (rotateServerTunnel as Mock).mockRejectedValueOnce(
+        new Error("listener died")
+      );
+      // The mount hydration returns the live tunnel; the post-failure
+      // re-sync then finds the listener already gone (null).
+      (getServerTunnel as Mock)
+        .mockResolvedValueOnce({ url: seedUrl, serverId: "test-server" })
+        .mockResolvedValue(null);
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Rotate tunnel secret (revokes the current URL)",
+        })
+      );
+
+      await waitFor(() => {
+        expect(toast.error as Mock).toHaveBeenCalled();
+      });
+      // The stale, copyable URL is dropped — the create pill is shown instead.
+      await waitFor(() => {
+        expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
+      });
+    });
+
+    it("disables rotate while a close is in flight (mutually exclusive)", async () => {
+      const { rotateServerTunnel, closeServerTunnel, getServerTunnel } =
+        await import("@/lib/apis/mcp-tunnels-api");
+      (getServerTunnel as Mock).mockResolvedValue({
+        url: seedUrl,
+        serverId: "test-server",
+      });
+      let resolveClose: (() => void) | undefined;
+      (closeServerTunnel as Mock).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (resolveClose = resolve))
+      );
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      const rotateBtn = screen.getByRole("button", {
+        name: "Rotate tunnel secret (revokes the current URL)",
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Close tunnel" }));
+
+      // Once the close is in flight the rotate control is disabled, so the
+      // two lifecycle mutations can't run concurrently.
+      await waitFor(() => expect(rotateBtn).toBeDisabled());
+      fireEvent.click(rotateBtn);
+      expect(rotateServerTunnel).not.toHaveBeenCalled();
+
+      resolveClose?.();
+      await waitFor(() => {
+        expect(closeServerTunnel).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe("tunnel recent-requests panel", () => {
+    const seedUrl = "https://t.ngrok.app/api/mcp/adapter-http/test-server?k=s";
+
+    it("polls and renders recent requests when opened", async () => {
+      const { getServerTunnel, getTunnelRequests } = await import(
+        "@/lib/apis/mcp-tunnels-api"
+      );
+      (getServerTunnel as Mock).mockResolvedValue({
+        url: seedUrl,
+        serverId: "test-server",
+      });
+      (getTunnelRequests as Mock).mockResolvedValue([
+        { ts: 1_700_000_000_000, method: "tools/list", path: "/api/x" },
+      ]);
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Recent tunnel requests" })
+      );
+
+      await waitFor(() => {
+        expect(getTunnelRequests).toHaveBeenCalledWith(
+          "test-server",
+          "test-token"
+        );
+      });
+      expect(await screen.findByText("tools/list")).toBeInTheDocument();
+    });
+
+    it("keeps the last snapshot when a poll fails", async () => {
+      const { getServerTunnel, getTunnelRequests } = await import(
+        "@/lib/apis/mcp-tunnels-api"
+      );
+      (getServerTunnel as Mock).mockResolvedValue({
+        url: seedUrl,
+        serverId: "test-server",
+      });
+      (getTunnelRequests as Mock)
+        .mockResolvedValueOnce([
+          { ts: 1_700_000_000_000, method: "initialize", path: "/api/x" },
+        ])
+        .mockRejectedValue(new Error("boom"));
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      const panelToggle = screen.getByRole("button", {
+        name: "Recent tunnel requests",
+      });
+
+      // First fetch renders the snapshot.
+      fireEvent.click(panelToggle);
+      expect(await screen.findByText("initialize")).toBeInTheDocument();
+
+      // Re-opening the panel re-runs the polling effect immediately, which
+      // deterministically fires the rejecting second fetch (no need to wait
+      // out the 4s interval).
+      fireEvent.click(panelToggle);
+      fireEvent.click(panelToggle);
+      await waitFor(() => {
+        expect(getTunnelRequests).toHaveBeenCalledTimes(2);
+      });
+
+      // The rejected poll must not clear the retained snapshot or crash.
+      expect(await screen.findByText("initialize")).toBeInTheDocument();
     });
   });
 });
