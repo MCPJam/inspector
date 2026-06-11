@@ -1,4 +1,9 @@
 // LOCAL-DEV ONLY — minimal streamable-HTTP MCP server with one echo tool.
+//
+// Logging exception (AGENTS.md): standalone dev scripts under scripts/ write
+// to the terminal with console.* like their siblings (dev-worktree.mjs,
+// verify-local-sdk-link.mjs) — the server logger (Sentry, --verbose gating)
+// is for server/ runtime code and doesn't apply to a throwaway local tool.
 import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
