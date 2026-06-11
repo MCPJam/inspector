@@ -6,7 +6,10 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
-import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  startSuiteRunWithRecorder,
+  type SuiteRunRecorder,
+} from "../../services/evals/recorder";
 import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
@@ -165,6 +168,8 @@ export const RunEvalsRequestSchema = z.object({
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
+  /** Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api'. */
+  source?: "ui" | "api";
 };
 
 export const RunTestCaseRequestSchema = z.object({
@@ -512,10 +517,37 @@ function buildPersistedSuiteEnvironment(args: {
   };
 }
 
-export async function runEvalsWithManager(
+export type PreparedEvalRun = {
+  suiteId: string;
+  runId: string;
+  caseUpsert: {
+    committed: Array<{ id?: string; name: string }>;
+    failed: Array<{ id?: string; name: string; error: string }>;
+  };
+  recorder: SuiteRunRecorder;
+  /**
+   * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
+   * terminal run status (completed/failed/cancelled); callers that detach
+   * this (the async /api/v1 route) should still catch and defensively
+   * finalize via `recorder` for errors thrown outside the runner's own
+   * try.
+   */
+  execute: () => Promise<void>;
+};
+
+/**
+ * Prepare phase of a suite run: validate, upsert suite + cases, create the
+ * run record (status 'running'), store replay configs, and resolve model
+ * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
+ * callers choose whether to await execution inline (`runEvalsWithManager`,
+ * the /api/web path) or detach it and respond immediately with the runId
+ * (the async public /api/v1 path). All request/quota validation errors
+ * surface here, synchronously, before any caller responds.
+ */
+export async function prepareEvalRun(
   clientManager: MCPClientManager,
   request: RunEvalsWithManagerRequest,
-) {
+): Promise<PreparedEvalRun> {
   const {
     suiteId,
     projectId,
@@ -538,6 +570,7 @@ export async function runEvalsWithManager(
     namedHostId,
     refreshSnapshot,
     runGroupId,
+    source,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -877,6 +910,7 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     runGroupId,
+    source,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -950,36 +984,54 @@ export async function runEvalsWithManager(
     }
   }
 
-  await runEvalSuiteWithAiSdk({
-    suiteId: resolvedSuiteId,
-    runId,
-    config,
-    modelApiKeys: resolvedModelApiKeys ?? undefined,
-    orgModelConfig: resolvedOrgModelConfig,
-    orgModelConfigTarget: resolvedOrgModelConfigTarget,
-    convexClient,
-    convexHttpUrl,
-    convexAuthToken,
-    mcpClientManager: clientManager,
-    recorder,
-    suiteInjectOpenAiCompat,
-    hostExecutionPolicy: suiteHostPolicy,
-    // PR 4d: thread the raw suite hostConfig record into the runner so
-    // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
-    // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
-    // is the POLICY subset extracted upstream; this is the rest.
-    suiteHostConfig,
-  });
+  const execute = async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: resolvedSuiteId,
+      runId,
+      config,
+      modelApiKeys: resolvedModelApiKeys ?? undefined,
+      orgModelConfig: resolvedOrgModelConfig,
+      orgModelConfigTarget: resolvedOrgModelConfigTarget,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+      mcpClientManager: clientManager,
+      recorder,
+      suiteInjectOpenAiCompat,
+      hostExecutionPolicy: suiteHostPolicy,
+      // PR 4d: thread the raw suite hostConfig record into the runner so
+      // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
+      // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
+      // is the POLICY subset extracted upstream; this is the rest.
+      suiteHostConfig,
+    });
+  };
 
   return {
-    success: true,
     suiteId: resolvedSuiteId,
     runId,
-    message: "Evals completed successfully. Check the Evals tab for results.",
     caseUpsert: {
       committed: committedCases,
       failed: failedCases,
     },
+    recorder,
+    execute,
+  };
+}
+
+export async function runEvalsWithManager(
+  clientManager: MCPClientManager,
+  request: RunEvalsWithManagerRequest,
+) {
+  const prepared = await prepareEvalRun(clientManager, request);
+  await prepared.execute();
+
+  return {
+    success: true,
+    suiteId: prepared.suiteId,
+    runId: prepared.runId,
+    message: "Evals completed successfully. Check the Evals tab for results.",
+    caseUpsert: prepared.caseUpsert,
   };
 }
 

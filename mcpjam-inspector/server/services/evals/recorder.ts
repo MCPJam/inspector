@@ -276,6 +276,7 @@ export const startSuiteRunWithRecorder = async ({
   matchOptionsOverride,
   namedHostId,
   runGroupId,
+  source,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -321,6 +322,12 @@ export const startSuiteRunWithRecorder = async ({
    * single-host launches.
    */
   runGroupId?: string;
+  /**
+   * Run origin persisted on `testSuiteRun.source` for audit attribution.
+   * Omitted means 'ui' (backend default); the public /api/v1 surface
+   * passes 'api'.
+   */
+  source?: "ui" | "api";
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -337,6 +344,7 @@ export const startSuiteRunWithRecorder = async ({
       matchOptionsOverride,
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
+      ...(source ? { source } : {}),
     },
   );
 
