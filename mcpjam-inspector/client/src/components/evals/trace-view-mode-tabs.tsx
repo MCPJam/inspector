@@ -133,15 +133,26 @@ export function TraceViewModeTabs({
 /**
  * Full-width Trace / Chat / Raw strip used in {@link ChatTabV2} and compare cards —
  * matches `bg-background/80 … border-b` + `px-4 py-2.5` + {@link TraceViewModeTabs} `layout="fullWidth"`.
+ *
+ * The optional Browser tab rides the same out-of-union props as
+ * {@link TraceViewModeTabs} (see the module doc): the Sessions viewer shows it
+ * when a session carries browser-rendered MCP App artifacts; chat / compare
+ * surfaces omit it.
  */
 export function ChatTraceViewModeHeaderBar({
   mode,
   onModeChange,
   className,
+  showBrowserTab = false,
+  browserActive = false,
+  onSelectBrowser,
 }: {
   mode: TraceViewMode;
   onModeChange: (mode: TraceViewMode) => void;
   className?: string;
+  showBrowserTab?: boolean;
+  browserActive?: boolean;
+  onSelectBrowser?: () => void;
 }) {
   return (
     <div
@@ -156,6 +167,9 @@ export function ChatTraceViewModeHeaderBar({
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}
+          showBrowserTab={showBrowserTab}
+          browserActive={browserActive}
+          onSelectBrowser={onSelectBrowser}
         />
       </div>
     </div>

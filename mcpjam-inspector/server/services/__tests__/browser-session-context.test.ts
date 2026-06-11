@@ -1,18 +1,19 @@
 /**
- * browser-eval-context.test.ts — hosted-path browser eval context (PR 14).
+ * browser-session-context.test.ts — shared browser session context.
  *
- * Covers the engine-attachment surface the hosted runners
- * (`runIterationViaBackend` / `streamIterationViaBackend`) wire into
- * `runAssistantTurn`: Computer Use tool construction (wire format), the
- * advertised-tool gate, the render hook (engine `onToolResult`), input
- * caching, prompt-index stamping, and disposal.
+ * Covers the attachment surface every "mock a user session" runner (eval
+ * iterations, synthetic chatbox sessions) wires into its turn driver:
+ * Computer Use tool construction (wire format), the advertised-tool gate,
+ * both render hooks (engine `onToolResult` + local AI-SDK
+ * `onToolResultChunk`), input caching, prompt-index stamping, incremental
+ * artifact draining, and disposal.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renderMcpAppToolResult = vi.fn();
 const isRenderableMcpAppTool = vi.fn();
 
-vi.mock("../../../utils/mcp-app-render-observation", () => ({
+vi.mock("../../utils/mcp-app-render-observation", () => ({
   renderMcpAppToolResult: (...args: unknown[]) =>
     renderMcpAppToolResult(...args),
   isRenderableMcpAppTool: (...args: unknown[]) =>
@@ -26,10 +27,10 @@ const harnessInstances: Array<{
   executeAction: ReturnType<typeof vi.fn>;
 }> = [];
 
-vi.mock("../../../utils/mcp-app-browser-harness", async () => {
+vi.mock("../../utils/mcp-app-browser-harness", async () => {
   const actual = await vi.importActual<
-    typeof import("../../../utils/mcp-app-browser-harness")
-  >("../../../utils/mcp-app-browser-harness");
+    typeof import("../../utils/mcp-app-browser-harness")
+  >("../../utils/mcp-app-browser-harness");
   return {
     ...actual,
     McpAppBrowserHarness: vi.fn().mockImplementation(() => {
@@ -45,7 +46,7 @@ vi.mock("../../../utils/mcp-app-browser-harness", async () => {
   };
 });
 
-import { createEvalBrowserContext } from "../browser-eval-context";
+import { createBrowserSessionContext } from "../browser-session-context";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
 const NON_CLAUDE_MODEL = "gpt-5-mini";
@@ -63,9 +64,9 @@ beforeEach(() => {
   isRenderableMcpAppTool.mockReturnValue(false);
 });
 
-describe("createEvalBrowserContext — Computer Use surface", () => {
+describe("createBrowserSessionContext — Computer Use surface", () => {
   it("builds wire-format computer tools + gate for Claude drivers", () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -83,7 +84,7 @@ describe("createEvalBrowserContext — Computer Use surface", () => {
   });
 
   it("builds no computer tools and no gate for non-Claude drivers", () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -96,7 +97,7 @@ describe("createEvalBrowserContext — Computer Use surface", () => {
   });
 
   it("gate hides computer tools until a widget is mounted, then reveals", () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -114,7 +115,7 @@ describe("createEvalBrowserContext — Computer Use surface", () => {
   });
 });
 
-describe("createEvalBrowserContext — render hook", () => {
+describe("createBrowserSessionContext — render hook", () => {
   const baseEvent = {
     toolCallId: "tc-1",
     toolName: "show_widget",
@@ -143,7 +144,7 @@ describe("createEvalBrowserContext — render hook", () => {
       ts: 123,
     });
 
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
       injectOpenAiCompat: true,
@@ -180,7 +181,7 @@ describe("createEvalBrowserContext — render hook", () => {
       executeTool: vi.fn(),
       getAllToolsMetadata: vi.fn().mockReturnValue({ show_widget: {} }),
     } as never;
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -204,13 +205,51 @@ describe("createEvalBrowserContext — render hook", () => {
     isRenderableMcpAppTool.mockReturnValue(true);
     renderMcpAppToolResult.mockRejectedValue(new Error("chromium exploded"));
 
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
 
     await expect(ctx.handleEngineToolResult(baseEvent)).resolves.toBeUndefined();
     expect(ctx.widgetRenderObservations).toEqual([]);
+  });
+
+  it("releases the cached tool input once the call's result has been handled", async () => {
+    const manager = {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ show_widget: { "mcpjam/widget": true } }),
+    } as never;
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "show_widget",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 123,
+    });
+
+    const ctx = createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: manager,
+    });
+    ctx.noteToolCallInput({ toolCallId: "tc-1", input: { city: "lisbon" } });
+
+    await ctx.handleEngineToolResult(baseEvent);
+    expect(
+      (renderMcpAppToolResult.mock.calls[0]![0] as { toolInput?: unknown })
+        .toolInput,
+    ).toEqual({ city: "lisbon" });
+
+    // The entry was consumed; a second result for the same id no longer
+    // sees the input (cache stays bounded over long sessions).
+    await ctx.handleEngineToolResult(baseEvent);
+    expect(
+      (renderMcpAppToolResult.mock.calls[1]![0] as { toolInput?: unknown })
+        .toolInput,
+    ).toBeUndefined();
   });
 
   it("renders for non-Claude drivers too (observations without Computer Use)", async () => {
@@ -230,7 +269,7 @@ describe("createEvalBrowserContext — render hook", () => {
       ts: 123,
     });
 
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -245,9 +284,9 @@ describe("createEvalBrowserContext — render hook", () => {
   });
 });
 
-describe("createEvalBrowserContext — interaction steps", () => {
+describe("createBrowserSessionContext — interaction steps", () => {
   it("collects browserInteractionSteps from computer-tool actions with per-widget step ordinals", async () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -282,7 +321,7 @@ describe("createEvalBrowserContext — interaction steps", () => {
   });
 
   it("narrows unknown harness notes instead of dropping the step", async () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -305,9 +344,9 @@ describe("createEvalBrowserContext — interaction steps", () => {
   });
 });
 
-describe("createEvalBrowserContext — lifecycle", () => {
+describe("createBrowserSessionContext — lifecycle", () => {
   it("dismissCarriedWidget dismisses only when a widget is mounted", async () => {
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -322,14 +361,14 @@ describe("createEvalBrowserContext — lifecycle", () => {
   });
 
   it("dispose tears down the harness; no-op when never constructed", async () => {
-    const claudeCtx = createEvalBrowserContext({
+    const claudeCtx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
     await claudeCtx.dispose();
     expect(harnessInstances[0]!.dispose).toHaveBeenCalledTimes(1);
 
-    const plainCtx = createEvalBrowserContext({
+    const plainCtx = createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -353,7 +392,7 @@ describe("createEvalBrowserContext — lifecycle", () => {
       ts: 1,
     });
 
-    const ctx = createEvalBrowserContext({
+    const ctx = createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -374,5 +413,142 @@ describe("createEvalBrowserContext — lifecycle", () => {
       (renderMcpAppToolResult.mock.calls[0]![0] as { toolInput?: unknown })
         .toolInput,
     ).toBeUndefined();
+  });
+});
+
+describe("createBrowserSessionContext — direct (local AI-SDK) render hook", () => {
+  const baseChunk = {
+    toolCallId: "tc-1",
+    toolName: "show_widget",
+    input: { city: "porto" },
+    output: { content: [], structuredContent: { full: true } },
+    serverId: "srv-1",
+  };
+
+  it("renders renderable results with the chunk's inline input (no cache)", async () => {
+    const manager = {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ show_widget: { "mcpjam/widget": true } }),
+    } as never;
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "show_widget",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 123,
+    });
+
+    const ctx = createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: manager,
+    });
+    ctx.setActivePromptIndex(3);
+
+    await ctx.handleDirectToolResultChunk(baseChunk);
+
+    expect(renderMcpAppToolResult).toHaveBeenCalledTimes(1);
+    const params = renderMcpAppToolResult.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(params.toolInput).toEqual({ city: "porto" });
+    expect(params.output).toBe(baseChunk.output);
+    expect(params.keepMounted).toBe(true);
+    expect(ctx.widgetRenderObservations).toEqual([
+      expect.objectContaining({ toolCallId: "tc-1", promptIndex: 3 }),
+    ]);
+  });
+
+  it("skips chunks without serverId and contains a throwing render", async () => {
+    const manager = {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ show_widget: { "mcpjam/widget": true } }),
+    } as never;
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockRejectedValue(new Error("chromium exploded"));
+
+    const ctx = createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: manager,
+    });
+
+    await ctx.handleDirectToolResultChunk({ ...baseChunk, serverId: undefined });
+    expect(renderMcpAppToolResult).not.toHaveBeenCalled();
+
+    await expect(
+      ctx.handleDirectToolResultChunk(baseChunk),
+    ).resolves.toBeUndefined();
+    expect(ctx.widgetRenderObservations).toEqual([]);
+  });
+});
+
+describe("createBrowserSessionContext — drainNewArtifacts", () => {
+  it("returns only rows appended since the previous drain; arrays stay intact", async () => {
+    const manager = {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ show_widget: { "mcpjam/widget": true } }),
+    } as never;
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockImplementation(
+      async (args: { toolCallId: string }) => ({
+        toolCallId: args.toolCallId,
+        toolName: "show_widget",
+        serverId: "srv-1",
+        status: "rendered",
+        elapsedMs: 5,
+        ts: 123,
+      }),
+    );
+
+    const ctx = createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: manager,
+    });
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-a");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "screenshot" },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+
+    // Nothing yet.
+    expect(ctx.drainNewArtifacts()).toEqual({ observations: [], steps: [] });
+
+    await ctx.handleDirectToolResultChunk({
+      toolCallId: "tc-a",
+      toolName: "show_widget",
+      input: {},
+      output: {},
+      serverId: "srv-1",
+    });
+    await computer.execute({ action: "screenshot" }, {});
+
+    const first = ctx.drainNewArtifacts();
+    expect(first.observations.map((o) => o.toolCallId)).toEqual(["tc-a"]);
+    expect(first.steps.map((s) => s.stepIndex)).toEqual([0]);
+
+    // A second drain with nothing new is empty.
+    expect(ctx.drainNewArtifacts()).toEqual({ observations: [], steps: [] });
+
+    await computer.execute({ action: "screenshot" }, {});
+    const second = ctx.drainNewArtifacts();
+    expect(second.observations).toEqual([]);
+    expect(second.steps.map((s) => s.stepIndex)).toEqual([1]);
+
+    // End-of-run consumers still see everything.
+    expect(ctx.widgetRenderObservations).toHaveLength(1);
+    expect(ctx.browserInteractionSteps).toHaveLength(2);
   });
 });

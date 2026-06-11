@@ -40,9 +40,13 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
 import {
+  consumeDirectChatTurnHeadless,
   runDirectChatTurn,
+  type DirectChatTurnPersistEvent,
+  type DirectChatTurnTraceEvents,
   type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
+import type { PrepareAdvertisedTools } from "./advertised-tools.js";
 import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -232,23 +236,16 @@ export function handleLocalOrgChatModel(
 ): Response {
   const {
     provider,
-    projectId,
     modelId,
-    chatSessionId,
-    sourceType,
     messages,
     systemPrompt,
     temperature,
     tools,
     requireToolApproval,
-    authHeader,
-    chatboxId,
-    accessVersion,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
     onLiveTextDelta,
-    synthesisRunId,
   } = options;
 
   if (requireToolApproval && Object.keys(tools).length > 0) {
@@ -296,19 +293,7 @@ export function handleLocalOrgChatModel(
     return createUIMessageStreamResponse({ stream });
   }
 
-  // `maxSteps`: legacy route 3 defaulted to 30 + accepted caller
-  // override. CodeRabbit PR-review fix (Major "Do not silently drop
-  // maxSteps"): thread `options.maxSteps ?? 30` through
-  // `RunDirectChatTurnOptions.maxSteps` so the wrapper honors the
-  // caller-supplied ceiling AND preserves the legacy default. Route 4
-  // and eval headless still get the engine default (20) because they
-  // omit the option.
-  const resolvedMaxSteps =
-    typeof options.maxSteps === "number" &&
-    Number.isFinite(options.maxSteps) &&
-    options.maxSteps > 0
-      ? Math.floor(options.maxSteps)
-      : 30;
+  const resolvedMaxSteps = resolveLocalOrgMaxSteps(options.maxSteps);
 
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
@@ -385,56 +370,11 @@ export function handleLocalOrgChatModel(
         // is enforced by `runDirectChatTurn` — `onPersist` only fires on
         // non-aborted completion, preserving the legacy `postLocalUsage`
         // semantics (success only, never on abort).
-        onPersist: async (event) => {
-          // Post usage to Convex (best-effort, non-blocking on failure).
-          // Preserves the legacy fire-and-forget behavior so an
-          // ingestion failure can't block the usage writeback or vice
-          // versa.
-          postLocalUsage({
-            projectId,
-            providerKey: provider.providerKey,
-            model: modelId,
-            usage: event.usage,
-            finishReason: event.finishReason,
-            chatSessionId,
-            sourceType,
-            turnId: event.turnTrace.turnId,
-            promptIndex: event.turnTrace.promptIndex,
-            authHeader,
-            chatboxId,
-            accessVersion,
-            selectedServers: options.selectedServers,
-            serverIds: options.serverIds,
-            synthesisRunId,
-          }).catch((err) => {
-            logger.warn("[org/local] Failed to post local usage", {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-
-          // Cursor PR-review fix (Medium "Failed turns persist sessions"):
-          // skip ingestion when the stream errored mid-flight; matches
-          // legacy `if (!streamErrored)` gate at the old
-          // `onConversationComplete` site. Billing already happened
-          // above so the only thing we're suppressing is persistence
-          // of a partial transcript.
-          if (streamErrored || !onConversationComplete) return;
-
-          // Cursor PR-review fix (Medium "History rebuild skips
-          // deduplication"): legacy code did
-          // `appendDedupedModelMessages(traceHistory, responseMessages)`
-          // against the FULL prefix (initial messages + accumulated
-          // responses). The engine dedupes `responseMessages` against
-          // itself across steps; the wrapper now dedupes again against
-          // the initial-messages prefix so messages that overlap by
-          // id / JSON identity don't double-write into the persisted
-          // transcript. Real-world impact is low (AI SDK rarely emits
-          // overlapping content with the prompt prefix), but restores
-          // the legacy defensive-dedup semantics.
-          const fullHistory: ModelMessage[] = [...messages];
-          appendDedupedModelMessages(fullHistory, event.responseMessages);
-          await onConversationComplete(fullHistory, event.turnTrace);
-        },
+        onPersist: buildLocalOrgOnPersist({
+          options,
+          isStreamErrored: () => streamErrored,
+          onConversationComplete,
+        }),
         onPersistError: (err) => {
           logger.warn("[org/local] onFinish ingestion error", {
             error: err instanceof Error ? err.message : String(err),
@@ -472,6 +412,211 @@ export function handleLocalOrgChatModel(
   });
 
   return createUIMessageStreamResponse({ stream });
+}
+
+// ---------------------------------------------------------------------------
+// Shared local-runtime turn pieces (SSE handler + headless variant)
+// ---------------------------------------------------------------------------
+
+/**
+ * `maxSteps`: legacy route 3 defaulted to 30 + accepted caller override.
+ * CodeRabbit PR-review fix (Major "Do not silently drop maxSteps"): honor the
+ * caller-supplied ceiling AND preserve the legacy default. Route 4 and eval
+ * headless still get the engine default (20) because they omit the option.
+ */
+function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
+  return typeof maxSteps === "number" &&
+    Number.isFinite(maxSteps) &&
+    maxSteps > 0
+    ? Math.floor(maxSteps)
+    : 30;
+}
+
+/**
+ * Route-3 persistence wrapper shared by the SSE handler and the headless
+ * variant: post usage back to Convex AND fire `onConversationComplete`
+ * (chat ingestion / transcript capture). Silent-cancel is enforced by
+ * `runDirectChatTurn` — `onPersist` only fires on non-aborted completion,
+ * preserving the legacy `postLocalUsage` semantics (success only, never on
+ * abort).
+ */
+function buildLocalOrgOnPersist(params: {
+  options: OrgLocalModelHandlerOptions;
+  isStreamErrored: () => boolean;
+  onConversationComplete: OrgLocalModelHandlerOptions["onConversationComplete"];
+}): (event: DirectChatTurnPersistEvent) => Promise<void> {
+  const { options, isStreamErrored, onConversationComplete } = params;
+  return async (event) => {
+    // Post usage to Convex (best-effort, non-blocking on failure).
+    // Preserves the legacy fire-and-forget behavior so an ingestion
+    // failure can't block the usage writeback or vice versa.
+    postLocalUsage({
+      projectId: options.projectId,
+      providerKey: options.provider.providerKey,
+      model: options.modelId,
+      usage: event.usage,
+      finishReason: event.finishReason,
+      chatSessionId: options.chatSessionId,
+      sourceType: options.sourceType,
+      turnId: event.turnTrace.turnId,
+      promptIndex: event.turnTrace.promptIndex,
+      authHeader: options.authHeader,
+      chatboxId: options.chatboxId,
+      accessVersion: options.accessVersion,
+      selectedServers: options.selectedServers,
+      serverIds: options.serverIds,
+      synthesisRunId: options.synthesisRunId,
+    }).catch((err) => {
+      logger.warn("[org/local] Failed to post local usage", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+    // skip ingestion when the stream errored mid-flight; matches
+    // legacy `if (!streamErrored)` gate at the old
+    // `onConversationComplete` site. Billing already happened
+    // above so the only thing we're suppressing is persistence
+    // of a partial transcript.
+    if (isStreamErrored() || !onConversationComplete) return;
+
+    // Cursor PR-review fix (Medium "History rebuild skips
+    // deduplication"): legacy code did
+    // `appendDedupedModelMessages(traceHistory, responseMessages)`
+    // against the FULL prefix (initial messages + accumulated
+    // responses). The engine dedupes `responseMessages` against
+    // itself across steps; the wrapper now dedupes again against
+    // the initial-messages prefix so messages that overlap by
+    // id / JSON identity don't double-write into the persisted
+    // transcript. Real-world impact is low (AI SDK rarely emits
+    // overlapping content with the prompt prefix), but restores
+    // the legacy defensive-dedup semantics.
+    const fullHistory: ModelMessage[] = [...options.messages];
+    appendDedupedModelMessages(fullHistory, event.responseMessages);
+    await onConversationComplete(fullHistory, event.turnTrace);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Headless local org BYOK turn (synthetic-session runner)
+// ---------------------------------------------------------------------------
+
+export interface RunLocalOrgChatTurnHeadlessOptions
+  extends Omit<
+    OrgLocalModelHandlerOptions,
+    "onConversationComplete" | "onStreamComplete" | "onStreamWriterReady" | "onLiveTextDelta"
+  > {
+  /** Per-step advertised-tool narrowing (browser session context gate). */
+  prepareAdvertisedTools?: PrepareAdvertisedTools;
+  /** Awaited per tool result (browser session context render hook). */
+  onToolResultChunk?: DirectChatTurnTraceEvents["onToolResultChunk"];
+}
+
+/**
+ * Headless sibling of {@link handleLocalOrgChatModel} for callers with no SSE
+ * consumer (the synthetic-session runner). Drives `runDirectChatTurn` via
+ * `consumeDirectChatTurnHeadless` — no `createUIMessageStream`, no Response
+ * to drain — and shares the SSE handler's route-3 invariants through the
+ * helpers above: model validation, the 30-step default, the unconditional
+ * `postLocalUsage` writeback, the `streamErrored` ingestion gate, and the
+ * deduped history rebuild.
+ *
+ * Error contract: where the SSE handler writes error chunks into the stream,
+ * this variant THROWS — config/allowlist failures, the
+ * `tool_approval_unsupported` guard, and mid-turn engine errors all surface
+ * to the caller (usage writeback for completed steps has already fired via
+ * `onPersist` where the engine ran far enough to produce one).
+ */
+export async function runLocalOrgChatTurnHeadless(
+  options: RunLocalOrgChatTurnHeadlessOptions
+): Promise<{
+  messages: ModelMessage[];
+  turnTrace?: PersistedTurnTrace;
+  aborted: boolean;
+}> {
+  const { provider, modelId, messages, systemPrompt, temperature, tools } =
+    options;
+
+  if (options.requireToolApproval && Object.keys(tools).length > 0) {
+    throw new Error(
+      "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime."
+    );
+  }
+
+  // Same validation the SSE handler runs before opening its stream; headless
+  // callers get the typed error (OrgProviderConfigError) instead of a
+  // formatted error chunk.
+  assertOrgModelAllowed(provider, modelId);
+  const llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+
+  let streamErrored = false;
+  let engineErrorText: string | undefined;
+  let capturedHistory: ModelMessage[] | undefined;
+  let capturedTrace: PersistedTurnTrace | undefined;
+
+  const handle = runDirectChatTurn({
+    // Same typing bridge as the SSE handler: the org-resolved model is the
+    // AI SDK `LanguageModel` union; the engine option is the narrower
+    // `createLlmModel` return. Both reach the same `streamText` slot.
+    llmModel: llmModel as unknown as Parameters<
+      typeof runDirectChatTurn
+    >[0]["llmModel"],
+    modelId,
+    messageHistory: messages,
+    systemPrompt,
+    ...(temperature !== undefined ? { temperature } : {}),
+    tools,
+    progressivePlan: options.progressivePlan,
+    discoveryState: options.discoveryState,
+    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    maxSteps: resolveLocalOrgMaxSteps(options.maxSteps),
+    ...(options.prepareAdvertisedTools
+      ? { prepareAdvertisedTools: options.prepareAdvertisedTools }
+      : {}),
+    ...(options.onToolResultChunk
+      ? { traceEvents: { onToolResultChunk: options.onToolResultChunk } }
+      : {}),
+    onEngineError: (event) => {
+      streamErrored = true;
+      engineErrorText = event.message;
+    },
+    onPersist: buildLocalOrgOnPersist({
+      options,
+      isStreamErrored: () => streamErrored,
+      onConversationComplete: (fullHistory, turnTrace) => {
+        capturedHistory = fullHistory;
+        capturedTrace = turnTrace;
+      },
+    }),
+    onPersistError: (err) => {
+      logger.warn("[org/local] headless onPersist error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const headless = await consumeDirectChatTurnHeadless(handle);
+  if (headless.aborted) {
+    return { messages, aborted: true };
+  }
+  if (streamErrored) {
+    throw new Error(
+      engineErrorText ?? "Local org-BYOK turn failed mid-stream."
+    );
+  }
+
+  // `onPersist` fired on every non-aborted completion, so `capturedHistory`
+  // is normally set; the rebuild below is a defensive fallback with the same
+  // dedup semantics.
+  if (!capturedHistory) {
+    capturedHistory = [...messages];
+    appendDedupedModelMessages(capturedHistory, headless.messages);
+  }
+  return {
+    messages: capturedHistory,
+    ...(capturedTrace ? { turnTrace: capturedTrace } : {}),
+    aborted: false,
+  };
 }
 
 async function postLocalUsage(params: {

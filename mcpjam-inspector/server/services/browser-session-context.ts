@@ -1,12 +1,13 @@
 /**
- * browser-eval-context.ts — per-iteration browser-rendered MCP App context for
- * the HOSTED eval runner paths (PR 14).
+ * browser-session-context.ts — per-session browser-rendered MCP App context for
+ * any runner that mocks a user session (eval iterations, synthetic chatbox
+ * sessions).
  *
- * `runIterationViaBackend` / `streamIterationViaBackend` drive their turns
- * through the shared engine (`runAssistantTurn` → `runChatEngineLoop`), so the
- * harness wiring that the local AI-SDK runners inline (PR 5/6b/9) attaches via
- * the engine's extension points instead:
+ * Grown out of the eval-only `browser-eval-context.ts` (PR 14): the harness
+ * wiring is surface-neutral, so the same context now serves every consumer
+ * through two attachment styles:
  *
+ *   Engine paths (`runAssistantTurn` → `runChatEngineLoop`):
  *   - `computerWidgetTools` — wire-format `computer` + `finish_widget` tools
  *     (regular function tools; the provider-native factory's lazy schema
  *     serializes to an empty object on the Convex `/stream` wire). Merged into
@@ -15,8 +16,8 @@
  *     image content via the tool's `toModelOutput` (honored by the shared
  *     executor since PR 14).
  *   - `prepareAdvertisedTools` — hides both tools until a widget is actually
- *     mounted in the harness (same gate the local runners use; the engine
- *     additionally enforces execution against the advertised subset).
+ *     mounted in the harness (the engine additionally enforces execution
+ *     against the advertised subset).
  *   - `handleEngineToolResult` — the engine's `onToolResult` hook (awaited by
  *     `emitToolResults` since PR 14, so a rendered widget is mounted before the
  *     next step's gate runs). Renders MCP App tool results in the harness and
@@ -25,8 +26,18 @@
  *     inputs so the render hook can feed the OpenAI-compat shim the same
  *     `toolInput` the live widget would have received.
  *
- * One context per iteration; `dispose()` MUST run (callers wrap the iteration
- * body in try/finally) so a launched Chromium never outlives its iteration.
+ *   Local AI-SDK paths (`runDirectChatTurn`):
+ *   - `handleDirectToolResultChunk` — the `traceEvents.onToolResultChunk`
+ *     hook (awaited by the helper). The chunk already carries the normalized
+ *     tool input, so no input cache is involved.
+ *   - The same `computerWidgetTools` / `prepareAdvertisedTools` attach to the
+ *     helper's tool map and prepareStep gate. Note the tools stay wire-format
+ *     here too: the local consumers (eval local-BYOK, simulation local org
+ *     BYOK) share finalize/persistence paths with hosted runs, and the
+ *     function-tool surface works on every provider.
+ *
+ * One context per session/iteration; `dispose()` MUST run (callers wrap the
+ * body in try/finally) so a launched Chromium never outlives its session.
  */
 
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -34,32 +45,35 @@ import type { ToolSet } from "ai";
 import {
   DEFAULT_VIEWPORT,
   McpAppBrowserHarness,
-} from "../../utils/mcp-app-browser-harness";
+} from "../utils/mcp-app-browser-harness";
 import {
   buildComputerUseTools,
   resolveComputerUseToolVersion,
-} from "../../utils/computer-use-tool";
+} from "../utils/computer-use-tool";
 import {
   isRenderableMcpAppTool,
   renderMcpAppToolResult,
-} from "../../utils/mcp-app-render-observation";
-import type { MCPJamToolResultEvent } from "../../utils/mcpjam-stream-handler.js";
-import type { PrepareAdvertisedTools } from "../../utils/advertised-tools";
+} from "../utils/mcp-app-render-observation";
+import type { MCPJamToolResultEvent } from "../utils/mcpjam-stream-handler.js";
+import type { DirectChatTurnToolResultChunk } from "../utils/direct-chat-turn.js";
+import type { PrepareAdvertisedTools } from "../utils/advertised-tools";
 import {
   isEvalTraceBrowserStepNote,
   type RunnerBrowserInteractionStep,
   type RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
-import { logger } from "../../utils/logger";
+import { logger } from "../utils/logger";
 
-export interface CreateEvalBrowserContextParams {
-  /** Driver model id (`test.model`) — decides Computer Use availability. */
+export interface CreateBrowserSessionContextParams {
+  /** Driver model id — decides Computer Use availability (Claude-only). */
   model: string;
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
+  /** Log prefix so each surface stays greppable. Defaults to `"evals"`. */
+  logScope?: "evals" | "sessionSimulation";
 }
 
-export interface EvalBrowserContext {
+export interface BrowserSessionContext {
   /** Non-null exactly when the driver model supports Computer Use. */
   readonly computerUseVersion: ReturnType<typeof resolveComputerUseToolVersion>;
   /** Wire-format `computer` + `finish_widget`, or `{}` for non-Claude drivers. */
@@ -76,6 +90,23 @@ export interface EvalBrowserContext {
   noteToolCallInput(event: { toolCallId: string; input: unknown }): void;
   /** Engine `onToolResult` hook — renders MCP App results in the harness. */
   handleEngineToolResult(event: MCPJamToolResultEvent): Promise<void>;
+  /** Local AI-SDK `traceEvents.onToolResultChunk` hook — same render path,
+   *  with the tool input taken from the chunk instead of the call cache. */
+  handleDirectToolResultChunk(
+    chunk: Pick<
+      DirectChatTurnToolResultChunk,
+      "toolCallId" | "toolName" | "input" | "output" | "serverId"
+    >,
+  ): Promise<void>;
+  /**
+   * Return artifacts appended since the previous drain (both arrays stay
+   * intact for end-of-run consumers like `finalizeEvalIteration`). Lets
+   * per-turn persisters (the simulation runner) upload incrementally.
+   */
+  drainNewArtifacts(): {
+    observations: RunnerWidgetRenderObservation[];
+    steps: RunnerBrowserInteractionStep[];
+  };
   /** Start-of-turn hygiene: a widget kept mounted by a previous prompt turn
    *  must not bleed into this one. */
   dismissCarriedWidget(): Promise<void>;
@@ -83,10 +114,11 @@ export interface EvalBrowserContext {
   dispose(): Promise<void>;
 }
 
-export function createEvalBrowserContext(
-  params: CreateEvalBrowserContextParams,
-): EvalBrowserContext {
+export function createBrowserSessionContext(
+  params: CreateBrowserSessionContextParams,
+): BrowserSessionContext {
   const { mcpClientManager, injectOpenAiCompat } = params;
+  const scope = params.logScope ?? "evals";
   const computerUseVersion = resolveComputerUseToolVersion(params.model);
 
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
@@ -97,6 +129,8 @@ export function createEvalBrowserContext(
   const stepIndexByToolCallId = new Map<string, number>();
   const inputByToolCallId = new Map<string, Record<string, unknown>>();
   let activePromptIndex = 0;
+  let drainedObservationCount = 0;
+  let drainedStepCount = 0;
 
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
@@ -126,8 +160,8 @@ export function createEvalBrowserContext(
         // `/stream` request; the provider-native factory can't ride that wire.
         wireFormat: true,
         // One browserInteractionStep per executeAction. The screenshot stays
-        // base64 here; finalizeEvalIteration uploads it once for both the W2
-        // and W1 persistence paths.
+        // base64 here; the persisters upload it (finalizeEvalIteration for
+        // evals, the per-turn artifact write for synthetic sessions).
         onAction: (result, { toolCallId }) => {
           const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
           stepIndexByToolCallId.set(toolCallId, stepIndex);
@@ -139,7 +173,7 @@ export function createEvalBrowserContext(
             if (isEvalTraceBrowserStepNote(result.note)) {
               note = result.note;
             } else {
-              logger.warn("[evals] dropping unknown browser-step note", {
+              logger.warn(`[${scope}] dropping unknown browser-step note`, {
                 note: result.note,
                 toolCallId,
               });
@@ -179,28 +213,27 @@ export function createEvalBrowserContext(
               )
       : undefined;
 
-  const handleEngineToolResult = async (
-    event: MCPJamToolResultEvent,
-  ): Promise<void> => {
-    const { toolCallId, toolName, serverId } = event;
-    if (!serverId || !toolName) return;
-    if (event.isError) return;
-    const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[toolName];
+  /** Shared render path: read the widget resource, mount it in the harness,
+   *  record the observation. Containment contract: never throws. */
+  const renderIfRenderable = async (args: {
+    toolCallId: string;
+    toolName: string;
+    serverId: string;
+    toolInput: Record<string, unknown> | undefined;
+    output: unknown;
+  }): Promise<void> => {
+    const meta = mcpClientManager.getAllToolsMetadata(args.serverId)?.[
+      args.toolName
+    ];
     if (!isRenderableMcpAppTool(meta)) return;
     try {
       const obs = await renderMcpAppToolResult({
-        toolCallId,
-        toolName,
-        serverId,
+        toolCallId: args.toolCallId,
+        toolName: args.toolName,
+        serverId: args.serverId,
         toolMetadata: meta,
-        // Feed the real tool-call args to the widget shim so the hosted-path
-        // render matches what the local runners (and post-turn snapshot
-        // capture) inject.
-        toolInput: inputByToolCallId.get(toolCallId),
-        // `rawResult` is the unscrubbed implementation result; `output` on the
-        // event is the LLM-facing view with `_meta` / `structuredContent`
-        // scrubbed, which would starve the widget shim of its data.
-        output: event.rawResult ?? event.output,
+        toolInput: args.toolInput,
+        output: args.output,
         mcpClientManager,
         injectOpenAiCompat,
         harness: ensureWidgetHarness(),
@@ -212,16 +245,58 @@ export function createEvalBrowserContext(
         ...obs,
         promptIndex: activePromptIndex,
       });
-      logger.debug("[evals] widget render observation (hosted path)", {
-        toolName,
+      logger.debug(`[${scope}] widget render observation`, {
+        toolName: args.toolName,
         status: obs.status,
       });
     } catch (err) {
-      logger.warn("[evals] widget render failed (hosted path)", {
-        toolName,
+      logger.warn(`[${scope}] widget render failed`, {
+        toolName: args.toolName,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  };
+
+  const handleEngineToolResult = async (
+    event: MCPJamToolResultEvent,
+  ): Promise<void> => {
+    const { toolCallId, toolName, serverId } = event;
+    // Feed the real tool-call args to the widget shim so the engine-path
+    // render matches what the local runners (and post-turn snapshot
+    // capture) inject. The entry is consumed here — once the call's result
+    // has arrived nothing reads it again, so release it on every exit path
+    // to keep the cache bounded over long sessions (CodeRabbit, PR 2610).
+    const toolInput = inputByToolCallId.get(toolCallId);
+    inputByToolCallId.delete(toolCallId);
+    if (!serverId || !toolName) return;
+    if (event.isError) return;
+    await renderIfRenderable({
+      toolCallId,
+      toolName,
+      serverId,
+      toolInput,
+      // `rawResult` is the unscrubbed implementation result; `output` on the
+      // event is the LLM-facing view with `_meta` / `structuredContent`
+      // scrubbed, which would starve the widget shim of its data.
+      output: event.rawResult ?? event.output,
+    });
+  };
+
+  const handleDirectToolResultChunk = async (
+    chunk: Pick<
+      DirectChatTurnToolResultChunk,
+      "toolCallId" | "toolName" | "input" | "output" | "serverId"
+    >,
+  ): Promise<void> => {
+    if (!chunk.serverId) return;
+    await renderIfRenderable({
+      toolCallId: chunk.toolCallId,
+      toolName: chunk.toolName,
+      serverId: chunk.serverId,
+      // The chunk carries the already-normalized tool input inline.
+      toolInput: chunk.input,
+      output: chunk.output,
+    });
   };
 
   return {
@@ -246,6 +321,16 @@ export function createEvalBrowserContext(
       }
     },
     handleEngineToolResult,
+    handleDirectToolResultChunk,
+    drainNewArtifacts() {
+      const observations = widgetRenderObservations.slice(
+        drainedObservationCount,
+      );
+      const steps = browserInteractionSteps.slice(drainedStepCount);
+      drainedObservationCount = widgetRenderObservations.length;
+      drainedStepCount = browserInteractionSteps.length;
+      return { observations, steps };
+    },
     async dismissCarriedWidget(): Promise<void> {
       const carriedWidgetId =
         widgetHarnessRef.current?.getMountedWidgetId() ?? null;
@@ -256,7 +341,7 @@ export function createEvalBrowserContext(
     async dispose(): Promise<void> {
       await widgetHarnessRef.current?.dispose();
       if (widgetRenderObservations.length > 0) {
-        logger.debug("[evals] widget render observations (hosted path)", {
+        logger.debug(`[${scope}] widget render observations`, {
           count: widgetRenderObservations.length,
           statuses: widgetRenderObservations.map((o) => o.status),
         });
