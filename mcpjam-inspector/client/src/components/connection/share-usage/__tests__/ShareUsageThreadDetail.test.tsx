@@ -184,4 +184,51 @@ describe("ShareUsageThreadDetail", () => {
     expect(screen.getByText("Computer Use timeline")).toBeInTheDocument();
     expect(screen.getByText("Left click (10, 20)")).toBeInTheDocument();
   });
+
+  it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {
+    // Cursor Bugbot (PR 2610): viewMode is component state that survives a
+    // threadId switch; with the Browser tab hidden, a stale "browser" mode
+    // must not strand the user on an orphaned empty panel.
+    mockBrowserArtifactsState.artifacts = {
+      widgetRenderObservations: [
+        {
+          toolCallId: "tc-1",
+          toolName: "create_view",
+          serverId: "server-1",
+          promptIndex: 0,
+          status: "rendered",
+          screenshotUrl: null,
+          elapsedMs: 1200,
+          ts: 1,
+        },
+      ],
+      browserInteractionSteps: [],
+    };
+
+    const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Browser" }),
+    );
+    expect(
+      await screen.findByTestId("browser-artifacts-view"),
+    ).toBeInTheDocument();
+
+    // The next session has no artifacts (same mounted component instance).
+    mockBrowserArtifactsState.artifacts = {
+      widgetRenderObservations: [],
+      browserInteractionSteps: [],
+    };
+    rerender(<ShareUsageThreadDetail threadId="thread-2" />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("browser-artifacts-view"),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Browser" }),
+    ).not.toBeInTheDocument();
+    // Chat content renders instead of a blank panel.
+    expect(screen.getByTestId("message-view")).toBeInTheDocument();
+  });
 });
