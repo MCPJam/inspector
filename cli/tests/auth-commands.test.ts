@@ -160,6 +160,20 @@ test("whoami surfaces UNAUTHORIZED with login guidance", async () => {
   }
 });
 
+test("login hard-errors on an invalid --api-url before any network call", async () => {
+  const run = await captureProcessOutput(() =>
+    main(
+      ["node", "mcpjam", "login", "--api-url", "not-a-url"],
+      { telemetry: telemetryDisabled },
+    ),
+  );
+
+  assert.equal(run.result.exitCode, 2);
+  const payload = JSON.parse(run.stderr);
+  assert.equal(payload.error.code, "USAGE_ERROR");
+  assert.match(payload.error.message, /--api-url/);
+});
+
 test("whoami hard-errors on an explicit legacy key", async () => {
   const run = await captureProcessOutput(() =>
     main(

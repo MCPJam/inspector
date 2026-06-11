@@ -7,6 +7,7 @@ import {
 } from "../lib/platform-auth.js";
 import {
   buildPlatformClient,
+  resolvePlatformBaseUrl,
   resolvePlatformOrigin,
   toCliError,
 } from "../lib/platform-client.js";
@@ -27,9 +28,10 @@ export function registerAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
+      const apiUrl = resolvePlatformBaseUrl(options);
       const origin = resolvePlatformOrigin(options);
 
-      const result = await runPlatformLogin(origin, {
+      const result = await runPlatformLogin({ origin, apiUrl }, {
         ...(options.browser === false
           ? {
               openUrl: async (url: string) => {

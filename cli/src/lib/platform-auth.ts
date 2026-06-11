@@ -130,6 +130,7 @@ async function refreshStoredAuth(
     },
     deps.fetchFn ?? fetch,
     "Token refresh failed. Run `mcpjam login` again.",
+    deps.now,
   );
 
   const refreshed: StoredPlatformAuth = {
@@ -160,6 +161,16 @@ export interface PlatformLoginResult {
   expiresAt?: number;
 }
 
+export interface PlatformLoginTarget {
+  /** Origin hosting the CLI auth bridge, e.g. `https://app.mcpjam.com`. */
+  origin: string;
+  /**
+   * Platform API base URL this login is for, persisted with the session so
+   * later cloud commands talk to the same deployment by default.
+   */
+  apiUrl: string;
+}
+
 interface CliAuthConfig {
   issuer: string;
   clientId: string;
@@ -169,11 +180,11 @@ interface CliAuthConfig {
 }
 
 export async function runPlatformLogin(
-  platformOrigin: string,
+  target: PlatformLoginTarget,
   deps: PlatformLoginDependencies = {},
 ): Promise<PlatformLoginResult> {
   const fetchFn = deps.fetchFn ?? fetch;
-  const config = await fetchCliAuthConfig(platformOrigin, fetchFn);
+  const config = await fetchCliAuthConfig(target.origin, fetchFn);
 
   const codeVerifier = generateRandomString(64);
   const state = generateRandomString(32);
@@ -228,6 +239,7 @@ export async function runPlatformLogin(
       issuer: config.issuer,
       clientId: config.clientId,
       tokenEndpoint: config.tokenEndpoint,
+      apiUrl: target.apiUrl,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       ...(tokens.expiresAt !== undefined

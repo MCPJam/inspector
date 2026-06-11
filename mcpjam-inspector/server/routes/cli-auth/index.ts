@@ -17,8 +17,11 @@
  *
  * Requires BOTH `CLI_AUTH_STATE_SECRET` (state HMAC key) and
  * `CLI_AUTH_PUBLIC_ORIGIN` (this deployment's public origin — explicit env
- * rather than forwarded-header reconstruction, which is spoofable). Without
- * either, every route answers 501 so self-hosted Inspectors degrade cleanly.
+ * rather than forwarded-header reconstruction, which is spoofable). The
+ * value is origin-only by design: any path component is stripped, because
+ * these routes always mount at `/api/cli/auth` on the app root. Without
+ * either env, every route answers 501 so self-hosted Inspectors degrade
+ * cleanly.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -59,6 +62,9 @@ function resolveCliAuthConfig(
 
   let publicOrigin: string;
   try {
+    // Origin-only by design: a path component in CLI_AUTH_PUBLIC_ORIGIN is
+    // intentionally stripped — the bridge routes always mount at
+    // /api/cli/auth on the app root.
     publicOrigin = new URL(rawOrigin).origin;
   } catch {
     return null;

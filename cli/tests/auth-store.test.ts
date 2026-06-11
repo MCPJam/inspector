@@ -108,3 +108,25 @@ test("readStoredAuth tolerates absent optional fields", async () => {
 
   assert.deepEqual(readStoredAuth(filePath), minimal);
 });
+
+test("readStoredAuth round-trips apiUrl and drops a non-URL value", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
+  const filePath = path.join(directory, "auth.json");
+  const withApiUrl = storedAuth({
+    apiUrl: "https://staging.mcpjam.com/api/v1",
+  });
+
+  await writeStoredAuth(withApiUrl, filePath);
+  assert.deepEqual(readStoredAuth(filePath), withApiUrl);
+
+  // A hand-edited, unparseable apiUrl is dropped rather than handed to the
+  // HTTP client, so readers fall back to the default deployment.
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    filePath,
+    JSON.stringify({ ...storedAuth(), apiUrl: "not a url" }),
+    "utf8",
+  );
+  assert.equal(readStoredAuth(filePath)?.apiUrl, undefined);
+  assert.equal(readStoredAuth(filePath)?.accessToken, "access-token");
+});
