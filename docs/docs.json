@@ -162,7 +162,7 @@
           {
             "group": "API Guides",
             "icon": "map",
-            "pages": ["reference/public-api", "reference/api-keys"]
+            "pages": ["reference/public-api", "reference/api-keys", "reference/mcp-worker"]
           },
           {
             "group": "Endpoints",
