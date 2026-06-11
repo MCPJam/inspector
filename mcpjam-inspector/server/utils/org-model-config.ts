@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
   getModelById,
+  isBedrockModelId,
   isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
@@ -209,7 +210,39 @@ export async function resolveOrgModelConfig(
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
 
-    const result: ResolvedOrgModelConfig = { providers: data.providers ?? [] };
+    let providers = data.providers ?? [];
+    // Hosted mode: drop org-supplied Bedrock endpoints that point at
+    // private/internal address space before they are cached and handed to
+    // the AI SDK. Uses the DNS-aware guard so a public hostname resolving
+    // to a private IP (DNS rebinding) is rejected too — mirrors the check
+    // the local-runtime path applies in resolveOrgProviderRuntime. Only the
+    // offending provider is dropped (its own requests then fail with a
+    // clear missing-config error) so one bad endpoint can't block every
+    // other provider in the org config.
+    if (HOSTED_MODE) {
+      const safeProviders: ResolvedProviderConfig[] = [];
+      for (const provider of providers) {
+        if (
+          provider.providerKey === "bedrock" &&
+          typeof provider.baseUrl === "string" &&
+          provider.baseUrl.length > 0
+        ) {
+          try {
+            await assertSafeHostedOutboundUrl(provider.baseUrl);
+          } catch (error) {
+            console.warn(
+              "[org-model-config] Dropping bedrock provider with blocked baseUrl:",
+              error instanceof Error ? error.message : String(error),
+            );
+            continue;
+          }
+        }
+        safeProviders.push(provider);
+      }
+      providers = safeProviders;
+    }
+
+    const result: ResolvedOrgModelConfig = { providers };
     resolveCache.set(cacheKey, {
       result,
       expiresAt: Date.now() + CACHE_TTL_MS,
@@ -290,6 +323,17 @@ export function buildLlmRuntimeConfigFromOrgConfig(
 
     if (provider.providerKey === "azure" && provider.baseUrl) {
       runtime.baseUrls.azure = provider.baseUrl;
+      continue;
+    }
+
+    if (provider.providerKey === "bedrock" && provider.baseUrl) {
+      // Hosted mode: don't promote a baseUrl that points at private/internal
+      // address space — eval-runner egress would otherwise follow it. Mirrors
+      // the guard the local-runtime path applies in resolveOrgProviderRuntime.
+      if (HOSTED_MODE && isUnsafeHostedOutboundUrl(provider.baseUrl)) {
+        continue;
+      }
+      runtime.baseUrls.bedrock = provider.baseUrl;
       continue;
     }
 
@@ -758,6 +802,7 @@ export async function resolveSyntheticModelSource(args: {
 const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
   anthropic: "anthropic",
   azure: "azure",
+  bedrock: "bedrock",
   deepseek: "deepseek",
   google: "google",
   "meta-llama": "meta",
@@ -785,7 +830,10 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
  *      `ollama/...`, etc.) — provider is derived from the prefix via
  *      ID_PREFIX_TO_PROVIDER.
- *   4. Bare id with no recognized prefix — fall back to "ollama" since
+ *   4. Bedrock-shaped bare id (`[geo.]vendor.name...:N`) — provider
+ *      "bedrock". Org Bedrock models surface bare inference-profile ids
+ *      in the picker, so chatbox runtime configs store them unprefixed.
+ *   5. Bare id with no recognized shape — fall back to "ollama" since
  *      bare ids are how Ollama BYOK models are typically stored on
  *      chatbox runtime configs (no catalog ID uses a bare shape).
  *
@@ -826,11 +874,19 @@ export function buildSyntheticModelDefinition(
     }
   }
 
-  // Bare id (no `/`) — Ollama BYOK is the only realistic case today since
-  // no catalog id is bare. If the org has a different bare-id provider in
-  // the future, deriveOrgProviderKey will produce "ollama" and the
-  // resolver round-trip will fail with a clearer error than the
-  // previously-fatal catalog-miss path.
+  if (isBedrockModelId(modelId)) {
+    return {
+      id: modelId,
+      name: modelId,
+      provider: "bedrock",
+    };
+  }
+
+  // Bare id (no `/`, not Bedrock-shaped) — Ollama BYOK is the remaining
+  // realistic case since no catalog id is bare. If the org has a different
+  // bare-id provider in the future, deriveOrgProviderKey will produce
+  // "ollama" and the resolver round-trip will fail with a clearer error
+  // than the previously-fatal catalog-miss path.
   return {
     id: modelId,
     name: modelId,

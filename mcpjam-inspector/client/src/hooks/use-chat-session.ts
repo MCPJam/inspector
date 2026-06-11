@@ -52,6 +52,7 @@ import {
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
+  isBedrockModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -199,7 +200,8 @@ function isOrgManagedModel(
   }
 
   if (
-    provider.providerKey === "openrouter" &&
+    (provider.providerKey === "openrouter" ||
+      provider.providerKey === "bedrock") &&
     provider.selectedModels &&
     provider.selectedModels.length > 0
   ) {
@@ -416,11 +418,18 @@ export interface UseChatSessionReturn {
 }
 
 function inferModelProviderFromId(modelId: string): ModelProvider {
+  // Org Bedrock models persist bare inference-profile ids (no "bedrock/"
+  // prefix), so recognize the id shape before prefix matching.
+  if (isBedrockModelId(modelId)) {
+    return "bedrock";
+  }
+
   const providerPrefix = modelId.split("/")[0];
 
   switch (providerPrefix) {
     case "anthropic":
     case "azure":
+    case "bedrock":
     case "openai":
     case "ollama":
     case "deepseek":

@@ -96,11 +96,11 @@
   "author": "MCPJam",
   "license": "MIT",
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@eslint/js": "^9.39.2",
     "@modelcontextprotocol/node": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "@modelcontextprotocol/server-everything": "^2026.1.26",
-    "@eslint/js": "^9.39.2",
     "@sentry/cli": "^2.58.4",
     "@sentry/node": "^8.55.0",
     "@types/jest": "^29.5.12",
@@ -120,6 +120,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^3.0.101",
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/azure": "^2.0.79",
     "@ai-sdk/deepseek": "^1.0.5",

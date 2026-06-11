@@ -4,7 +4,7 @@ description: "API reference for LLM provider configuration"
 icon: "book"
 ---
 
-The SDK supports 9 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
+The SDK supports 10 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
 
 ## Model String Format
 
@@ -103,6 +103,49 @@ const agent = new HostRunner({
   tools,
   model: "azure/gpt-4o",
   apiKey: process.env.AZURE_OPENAI_API_KEY,
+});
+```
+
+---
+
+### Amazon Bedrock
+
+| Property | Value |
+|----------|-------|
+| Prefix | `bedrock/` |
+| Environment Variables | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` |
+
+Authentication uses a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) (bearer token). The AWS region is read from `AWS_REGION` unless a full runtime endpoint is supplied via `baseUrls.bedrock` (e.g. `https://bedrock-runtime.us-east-1.amazonaws.com`).
+
+#### Models
+
+Use any Bedrock model or inference profile ID your AWS account has been granted access to:
+
+| Model ID | Description |
+|----------|-------------|
+| `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Claude Sonnet 4.5 (US inference profile) |
+| `anthropic.claude-3-5-haiku-20241022-v1:0` | Claude 3.5 Haiku |
+| `us.amazon.nova-pro-v1:0` | Amazon Nova Pro |
+| `meta.llama3-70b-instruct-v1:0` | Meta Llama 3 70B |
+
+#### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AWS_BEARER_TOKEN_BEDROCK` | Yes | Bedrock API key (bearer token) |
+| `AWS_REGION` | Yes | AWS region (e.g. `us-east-1`), unless `baseUrls.bedrock` is set |
+
+#### Example
+
+```typescript
+// Set environment variables first:
+// AWS_BEARER_TOKEN_BEDROCK=...
+// AWS_REGION=us-east-1
+
+const agent = new HostRunner({
+  tools,
+  model: "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  apiKey: process.env.AWS_BEARER_TOKEN_BEDROCK,
 });
 ```
 
@@ -437,6 +480,7 @@ const provider = createCustomProvider({
 | Anthropic | `ANTHROPIC_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` |
 | Azure | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
+| Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` |
 | Google | `GOOGLE_GENERATIVE_AI_API_KEY` |
 | Mistral | `MISTRAL_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |

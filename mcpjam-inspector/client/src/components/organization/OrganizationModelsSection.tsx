@@ -59,6 +59,7 @@ import {
 type ProviderKind =
   | "api-key-only"
   | "azure"
+  | "bedrock"
   | "ollama"
   | "openrouter"
   | "custom";
@@ -108,6 +109,12 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "azure",
     logo: "/azure_logo.png",
   },
+  {
+    key: "bedrock",
+    name: "Amazon Bedrock",
+    kind: "bedrock",
+    logo: "/bedrock_logo.svg",
+  },
   { key: "ollama", name: "Ollama", kind: "ollama", logo: "/ollama_logo.svg" },
   {
     key: "openrouter",
@@ -119,6 +126,26 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
 
 function findCatalogEntry(key: string): ProviderCatalogEntry | undefined {
   return PROVIDER_CATALOG.find((p) => p.key === key);
+}
+
+// Amazon Bedrock stores its regional runtime endpoint in `baseUrl`, but the
+// dialog asks for the friendlier AWS region (e.g. "us-east-1"). These helpers
+// convert between the two; a pasted full URL is passed through unchanged so
+// custom/proxy endpoints keep working.
+function bedrockEndpointFromRegionInput(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://bedrock-runtime.${trimmed}.amazonaws.com`;
+}
+
+function bedrockRegionFromEndpoint(baseUrl: string | undefined): string {
+  if (!baseUrl) return "";
+  const match = baseUrl.match(
+    /^https:\/\/bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com\/?$/i
+  );
+  return match ? match[1] : baseUrl;
 }
 
 function formatCount(value: number | undefined): string {
@@ -678,23 +705,39 @@ function KnownProviderConfigDialog({
   useEffect(() => {
     if (open) {
       setSecret("");
-      setBaseUrl(existing?.baseUrl ?? "");
+      setBaseUrl(
+        kind === "bedrock"
+          ? bedrockRegionFromEndpoint(existing?.baseUrl)
+          : existing?.baseUrl ?? ""
+      );
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
     }
-  }, [open, existing]);
+  }, [open, existing, kind]);
 
   const catalogEntry = findCatalogEntry(providerKey);
   const logo = catalogEntry?.logo;
 
+  // Parsed once so canSave and handleSave agree — comma-only input like
+  // ", , ," must not enable the save button with an empty model list.
+  const parsedSelectedModels = selectedModels
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const handleSave = () => {
     const args: Parameters<typeof onSave>[0] = { providerKey };
     if (secret.trim()) args.secret = secret.trim();
-    if (baseUrl.trim()) args.baseUrl = baseUrl.trim();
-    if (kind === "openrouter" && selectedModels.trim()) {
-      args.selectedModels = selectedModels
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+    if (kind === "bedrock") {
+      const endpoint = bedrockEndpointFromRegionInput(baseUrl);
+      if (endpoint) args.baseUrl = endpoint;
+    } else if (baseUrl.trim()) {
+      args.baseUrl = baseUrl.trim();
+    }
+    if (
+      (kind === "openrouter" || kind === "bedrock") &&
+      parsedSelectedModels.length > 0
+    ) {
+      args.selectedModels = parsedSelectedModels;
     }
     void onSave(args);
   };
@@ -705,11 +748,18 @@ function KnownProviderConfigDialog({
         return !!secret.trim() || existing?.hasSecret;
       case "azure":
         return (!!secret.trim() || existing?.hasSecret) && !!baseUrl.trim();
+      case "bedrock":
+        return (
+          (!!secret.trim() || existing?.hasSecret) &&
+          !!baseUrl.trim() &&
+          parsedSelectedModels.length > 0
+        );
       case "ollama":
         return !!baseUrl.trim();
       case "openrouter":
         return (
-          (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim()
+          (!!secret.trim() || existing?.hasSecret) &&
+          parsedSelectedModels.length > 0
         );
       default:
         return false;
@@ -761,9 +811,21 @@ function KnownProviderConfigDialog({
                 type="password"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
-                placeholder={existing?.hasSecret ? "********" : "sk-..."}
+                placeholder={
+                  existing?.hasSecret
+                    ? "********"
+                    : kind === "bedrock"
+                    ? "Bedrock API key"
+                    : "sk-..."
+                }
                 className="mt-1"
               />
+              {kind === "bedrock" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Generate an API key from the AWS console (Amazon Bedrock → API
+                  keys).
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -788,8 +850,32 @@ function KnownProviderConfigDialog({
             </div>
           ) : null}
 
-          {/* Selected models -- openrouter */}
-          {kind === "openrouter" ? (
+          {/* AWS region -- bedrock (stored as the runtime endpoint URL) */}
+          {kind === "bedrock" ? (
+            <div>
+              <label
+                htmlFor="org-provider-region"
+                className="text-sm font-medium"
+              >
+                AWS Region
+              </label>
+              <Input
+                id="org-provider-region"
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="us-east-1"
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Region of the Bedrock runtime endpoint. Paste a full URL instead
+                to use a custom endpoint.
+              </p>
+            </div>
+          ) : null}
+
+          {/* Selected models -- openrouter, bedrock */}
+          {kind === "openrouter" || kind === "bedrock" ? (
             <div>
               <label
                 htmlFor="org-provider-models"
@@ -805,9 +891,19 @@ function KnownProviderConfigDialog({
                 type="text"
                 value={selectedModels}
                 onChange={(e) => setSelectedModels(e.target.value)}
-                placeholder="openai/gpt-4o, anthropic/claude-3.5-sonnet"
+                placeholder={
+                  kind === "bedrock"
+                    ? "us.anthropic.claude-sonnet-4-5-20250929-v1:0, us.amazon.nova-pro-v1:0"
+                    : "openai/gpt-4o, anthropic/claude-3.5-sonnet"
+                }
                 className="mt-1"
               />
+              {kind === "bedrock" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Model or inference profile IDs your AWS account has been
+                  granted access to.
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -27,4 +27,55 @@ describe("org model helpers", () => {
       customProviderName: "local",
     });
   });
+
+  it("includes Amazon Bedrock selected models when configured with a secret", () => {
+    const orgConfig = {
+      providers: [
+        {
+          providerKey: "bedrock",
+          enabled: true,
+          baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          selectedModels: [
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.amazon.nova-pro-v1:0",
+          ],
+          hasSecret: true,
+        },
+      ],
+    };
+
+    expect(isOrgProviderAvailable(orgConfig, "bedrock")).toBe(true);
+    const models = buildAvailableModelsFromOrgConfig(orgConfig);
+    expect(models).toContainEqual({
+      id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      provider: "bedrock",
+    });
+    expect(models).toContainEqual({
+      id: "us.amazon.nova-pro-v1:0",
+      name: "us.amazon.nova-pro-v1:0",
+      provider: "bedrock",
+    });
+  });
+
+  it("omits Amazon Bedrock models when no secret is configured", () => {
+    const orgConfig = {
+      providers: [
+        {
+          providerKey: "bedrock",
+          enabled: true,
+          baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          selectedModels: ["us.amazon.nova-pro-v1:0"],
+          hasSecret: false,
+        },
+      ],
+    };
+
+    expect(isOrgProviderAvailable(orgConfig, "bedrock")).toBe(false);
+    expect(
+      buildAvailableModelsFromOrgConfig(orgConfig).some(
+        (m) => m.provider === "bedrock"
+      )
+    ).toBe(false);
+  });
 });

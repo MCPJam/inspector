@@ -34,6 +34,7 @@ export type LLMProvider =
   | "anthropic"
   | "openai"
   | "azure"
+  | "bedrock"
   | "deepseek"
   | "google"
   | "ollama"
