@@ -807,12 +807,18 @@ export class McpAppBrowserHarness {
     // exhausted the budget — otherwise `frame` stays null and we'd fail toward
     // "rendered", mislabeling a blank widget.
     do {
-      frame = await page.screenshot({ type: "png" }).catch(() => prev);
-      if (!frame) break;
-      const painted = !baseline || !framesEqual(frame, baseline);
-      const settled = framesEqual(frame, prev);
-      if (painted && settled) break;
-      prev = frame;
+      const shot = await page.screenshot({ type: "png" }).catch(() => null);
+      // A failed shot is transient: keep the last good frame and retry until the
+      // deadline rather than aborting (which would force a "rendered" verdict on
+      // an unseen frame). `frame` stays null only if EVERY shot failed — then the
+      // caller's screenshot also fails and the render is `screenshot_failed`.
+      if (shot) {
+        frame = shot;
+        const painted = !baseline || !framesEqual(shot, baseline);
+        const settled = framesEqual(shot, prev);
+        if (painted && settled) break;
+        prev = shot;
+      }
       await page.waitForTimeout(150);
     } while (Date.now() < deadline);
 
