@@ -149,12 +149,8 @@ export async function driveHostedEvalTurn(
   const logSuffix = params.logSuffix ?? "";
 
   // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
-  // this turn, and start the turn with a clean widget surface — a widget
-  // kept mounted by a previous prompt turn must not bleed into this one
-  // (otherwise Computer Use could be advertised against the prior turn's
-  // widget before this turn's own MCP App tool runs).
+  // this turn.
   browser.setActivePromptIndex(promptIndex);
-  await browser.dismissCarriedWidget();
 
   // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
   // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
@@ -187,15 +183,82 @@ export async function driveHostedEvalTurn(
   const promptToolsCalled: ToolCall[] = [];
   acc.toolsCalledByPrompt.push(promptToolsCalled);
 
-  const sinks =
-    params.buildSinks?.({
-      promptIndex,
-      baselineUsage,
-      traceCtx,
-      promptToolsCalled,
-    }) ?? {};
+  // Built inside the pre-turn try below; `{}` until then so the failure
+  // mapper can always call `sinks.onTurnFailure?.()` safely.
+  let sinks: HostedEvalTurnSinks = {};
 
-  sinks.onTurnStart?.();
+  // Shared throw → outcome mapping for the pre-turn setup AND the engine
+  // call. Cancellation: AbortError can surface either as a thrown exception
+  // (fetch aborted mid-flight) or as the engine's internal
+  // silent-cancellation path (handled by the `isAborted()` check after the
+  // success path below) — check `abortSignal.aborted` to catch BOTH paths
+  // consistently. Non-abort errors map to `iterationError` for the post-loop
+  // verdict gate, preserving a truncated message and, when available, a
+  // `responseBody` for `errorDetails`. The turn's tool-instrumentation spans
+  // are drained first so the persisted iteration (and the stream sink's
+  // failure snapshot, which reads the same array) keeps whatever tool
+  // executions completed before the throw — aligning with the (a)/(b)/(c)
+  // failure branches below (CodeRabbit, PR 2610).
+  const mapThrownTurnError = (
+    error: unknown,
+    failedStage: string
+  ): HostedEvalTurnOutcome => {
+    if (
+      isAborted() ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
+      logger.debug(
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`
+      );
+      return { kind: "cancelled" };
+    }
+
+    acc.capturedSpans.push(...traceCtx.recordedSpans);
+    let iterationError: string;
+    let iterationErrorDetails: string | undefined;
+    if (error instanceof Error) {
+      iterationError = error.message || error.toString();
+      const responseBody = (error as { responseBody?: unknown }).responseBody;
+      if (responseBody && typeof responseBody === "string") {
+        iterationErrorDetails = responseBody;
+      }
+    } else if (typeof error === "string") {
+      iterationError = error;
+    } else {
+      iterationError = String(error);
+    }
+    iterationError = truncateError(iterationError);
+    logger.error(`[evals] ${failedStage}${logSuffix} failed`, error);
+    const failure = {
+      iterationError,
+      ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
+    };
+    sinks.onTurnFailure?.(failure);
+    return { kind: "failed", ...failure };
+  };
+
+  // Pre-turn setup that can genuinely throw: the Chromium widget dismissal
+  // (start the turn with a clean surface — a widget kept mounted by a
+  // previous prompt turn must not bleed into this one, otherwise Computer
+  // Use could be advertised against the prior turn's widget before this
+  // turn's own MCP App tool runs), the caller-built SSE sinks, and the
+  // turn-start emit. Route their failures through the same mapping as the
+  // engine call so hosted callers always receive an outcome and run normal
+  // iteration persistence, instead of the throw escaping to the coarse
+  // iteration-abort path (CodeRabbit, PR 2610).
+  try {
+    await browser.dismissCarriedWidget();
+    sinks =
+      params.buildSinks?.({
+        promptIndex,
+        baselineUsage,
+        traceCtx,
+        promptToolsCalled,
+      }) ?? {};
+    sinks.onTurnStart?.();
+  } catch (error) {
+    return mapThrownTurnError(error, "pre-turn setup");
+  }
 
   // PR 5b-followup-2: capture the engine's structured-error event (429
   // daily-cap, hosted-model setup errors, …). The engine writes a generic
@@ -272,52 +335,7 @@ export async function driveHostedEvalTurn(
         : {}),
     });
   } catch (error) {
-    // Cancellation: bail without recording. AbortError can surface either as
-    // a thrown exception (fetch aborted mid-flight) or as the engine's
-    // internal silent-cancellation path (handled by the `isAborted()` check
-    // after the success path below). Check `abortSignal.aborted` to catch
-    // BOTH paths consistently.
-    if (
-      isAborted() ||
-      (error instanceof Error && error.name === "AbortError")
-    ) {
-      logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`
-      );
-      return { kind: "cancelled" };
-    }
-
-    // Non-abort runtime error from the engine. Map to `iterationError` for
-    // the post-loop verdict gate; preserve a truncated message and, when
-    // available, a `responseBody` for `errorDetails`.
-    //
-    // Drain this turn's tool-instrumentation spans first so the persisted
-    // iteration (and the stream sink's failure snapshot, which reads the
-    // same array) keeps whatever tool executions completed before the throw
-    // — aligning the catch with the (a)/(b)/(c) failure branches below,
-    // which drain before failing (CodeRabbit, PR 2610).
-    acc.capturedSpans.push(...traceCtx.recordedSpans);
-    let iterationError: string;
-    let iterationErrorDetails: string | undefined;
-    if (error instanceof Error) {
-      iterationError = error.message || error.toString();
-      const responseBody = (error as { responseBody?: unknown }).responseBody;
-      if (responseBody && typeof responseBody === "string") {
-        iterationErrorDetails = responseBody;
-      }
-    } else if (typeof error === "string") {
-      iterationError = error;
-    } else {
-      iterationError = String(error);
-    }
-    iterationError = truncateError(iterationError);
-    logger.error(`[evals] runAssistantTurn${logSuffix} failed`, error);
-    const failure = {
-      iterationError,
-      ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
-    };
-    sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    return mapThrownTurnError(error, "runAssistantTurn");
   }
 
   // Cancellation that fired DURING `runAssistantTurn` without surfacing as a
