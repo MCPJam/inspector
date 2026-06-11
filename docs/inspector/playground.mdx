@@ -235,6 +235,10 @@ Widget rendering is gated on the active Client's `clientCapabilities`. Hosts tha
 
 Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
 
+### Sign-in links
+
+When a computer-backed tool (such as Bash) runs a command that triggers a device-flow authentication prompt — for example, `gh auth login` — any sign-in URLs surfaced by the tool appear as clickable links directly in the chat thread under a **Sign-in link** heading. This saves you from hunting through scrollback for the URL. Only `https:` URLs are rendered as links; plain `http:` and non-web schemes are never shown.
+
 ### Data
 
 Raw tool input, output, and error details for the call.
