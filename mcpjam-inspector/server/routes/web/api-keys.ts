@@ -225,6 +225,9 @@ async function resolveWorkosOrgId(session: SessionContext): Promise<string> {
 async function userOwnsApiKey(userId: string, keyId: string): Promise<boolean> {
   let after: string | null = null;
   // Page cap is a runaway guard only — real users have a handful of keys.
+  // Exhausting it with pages still remaining means ownership is UNKNOWN,
+  // which must surface as an error: returning false here would read as a
+  // 404 and make keys beyond the cap silently unrevokeable.
   for (let page = 0; page < 10; page++) {
     const params = new URLSearchParams({ limit: "100" });
     if (after) {
@@ -249,7 +252,15 @@ async function userOwnsApiKey(userId: string, keyId: string): Promise<boolean> {
       return false;
     }
   }
-  return false;
+  logger.error("API key ownership check exhausted page cap", {
+    workos_user_id: userId,
+    workos_key_id: keyId,
+  });
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    "Could not verify API key ownership",
+  );
 }
 
 const createSchema = z.object({
