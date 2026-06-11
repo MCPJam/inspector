@@ -174,21 +174,49 @@ to be tuned during the preview.
 
 ## Endpoints
 
-All endpoints follow the pattern
-`POST /projects/{projectId}/servers/{serverId}/...`. Each one is fully
-documented — request and response schemas, examples, and an interactive
-playground — under **Endpoints** in the sidebar.
+Server operation endpoints follow the pattern
+`POST /projects/{projectId}/servers/{serverId}/...`. Eval endpoints are under
+`/projects/{projectId}/eval-runs/...` and `/projects/{projectId}/eval-suites/...`.
+Each endpoint is fully documented — request and response schemas, examples, and
+an interactive playground — under **Endpoints** in the sidebar.
+
+**Server diagnostics**
 
 | Endpoint | What it does |
 | --- | --- |
 | `POST .../validate` | Connect, initialize, and capture a capability snapshot |
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
+
+**Primitives**
+
+| Endpoint | What it does |
+| --- | --- |
 | `POST .../tools` | List the server's tools |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` directly |
 | `POST .../prompts` | List the server's prompts |
+| `POST .../prompts/get` | Render a prompt with arguments; returns `GetPromptResult` |
 | `POST .../resources` | List the server's resources |
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
+
+**Eval runs**
+
+Eval runs are async: `POST` creates the run and responds **202** immediately with a `runId`. Poll `GET .../eval-runs/:runId` until `status` is terminal (`completed`, `failed`, or `cancelled`).
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /projects/:projectId/eval-runs` | Start an eval run (rerun an existing suite and/or supply inline tests) |
+| `GET /projects/:projectId/eval-runs/:runId` | Run status, result, and summary |
+| `GET /projects/:projectId/eval-runs/:runId/iterations` | Paginated per-iteration results: tool calls, token usage, latency |
+| `GET /projects/:projectId/eval-runs/:runId/iterations/:iterationId/trace` | Full trace (messages + spans) for one iteration |
+| `GET /projects/:projectId/eval-suites/:suiteId/runs` | Recent runs for a suite |
+
+**OAuth**
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../oauth/import-tokens` | Push externally-obtained OAuth tokens so subsequent calls to that server succeed automatically |
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
