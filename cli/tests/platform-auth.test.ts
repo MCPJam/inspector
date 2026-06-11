@@ -230,6 +230,9 @@ test("getOAuthAccessToken refreshes within 60s of expiry and persists rotation",
     const persisted = readStoredAuth(authFilePath);
     assert.equal(persisted?.accessToken, "rotated-access");
     assert.equal(persisted?.refreshToken, "rotated-refresh");
+    // The rotated expiry is computed from the injected clock, so it is
+    // exactly NOW + expires_in.
+    assert.equal(persisted?.expiresAt, NOW + 1800 * 1000);
 
     const tokenRequest = fixture.requests.find((r) => r.path === "/oauth2/token");
     assert.equal(tokenRequest?.body.get("grant_type"), "refresh_token");
@@ -260,12 +263,15 @@ test("runPlatformLogin completes the PKCE flow end to end and stores tokens", as
   try {
     const authFilePath = await tempAuthFile();
 
-    const result = await runPlatformLogin(fixture.origin, {
-      openUrl: browserSimulator(),
-      authFilePath,
-      timeoutMs: 10_000,
-      now: () => NOW,
-    });
+    const result = await runPlatformLogin(
+      { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+      {
+        openUrl: browserSimulator(),
+        authFilePath,
+        timeoutMs: 10_000,
+        now: () => NOW,
+      },
+    );
 
     assert.equal(result.authFilePath, authFilePath);
     const persisted = readStoredAuth(authFilePath);
@@ -273,6 +279,9 @@ test("runPlatformLogin completes the PKCE flow end to end and stores tokens", as
     assert.equal(persisted?.refreshToken, "new-refresh");
     assert.equal(persisted?.expiresAt, NOW + 3600 * 1000);
     assert.equal(persisted?.tokenEndpoint, `${fixture.origin}/oauth2/token`);
+    // The API base URL of the deployment is stored with the session so later
+    // cloud commands default to it instead of prod.
+    assert.equal(persisted?.apiUrl, `${fixture.origin}/api/v1`);
 
     const tokenRequest = fixture.requests.find((r) => r.path === "/oauth2/token");
     assert.equal(tokenRequest?.body.get("grant_type"), "authorization_code");
@@ -297,11 +306,14 @@ test("runPlatformLogin fails actionably when no refresh token is returned", asyn
     const authFilePath = await tempAuthFile();
 
     await assert.rejects(
-      runPlatformLogin(fixture.origin, {
-        openUrl: browserSimulator(),
-        authFilePath,
-        timeoutMs: 10_000,
-      }),
+      runPlatformLogin(
+        { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+        {
+          openUrl: browserSimulator(),
+          authFilePath,
+          timeoutMs: 10_000,
+        },
+      ),
       (error: unknown) =>
         error instanceof CliError && /refresh token/i.test(error.message),
     );
@@ -315,7 +327,10 @@ test("runPlatformLogin reports a disabled hosted bridge actionably", async () =>
   const fixture = await startAuthFixture({ configStatus: 501 });
   try {
     await assert.rejects(
-      runPlatformLogin(fixture.origin, { timeoutMs: 1000 }),
+      runPlatformLogin(
+        { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+        { timeoutMs: 1000 },
+      ),
       (error: unknown) =>
         error instanceof CliError &&
         /not enabled/i.test(error.message) &&

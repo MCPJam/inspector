@@ -17,6 +17,14 @@ export interface StoredPlatformAuth {
   issuer: string;
   clientId: string;
   tokenEndpoint: string;
+  /**
+   * Platform API base URL the login was performed against (e.g.
+   * `https://staging.mcpjam.com/api/v1`). Cloud commands fall back to this
+   * when no `--api-url` / `MCPJAM_API_URL` is given, so a staging login
+   * never silently sends its token to prod. Optional for files written
+   * before this field existed.
+   */
+  apiUrl?: string;
   accessToken: string;
   refreshToken?: string;
   /** Access-token expiry, milliseconds since epoch. */
@@ -94,6 +102,11 @@ export function readStoredAuth(filePath: string): StoredPlatformAuth | null {
     clientId: record.clientId,
     tokenEndpoint: record.tokenEndpoint,
     accessToken: record.accessToken,
+    // Hand-edited files may hold a non-URL; dropping it here means readers
+    // fall back to the default base URL instead of producing broken requests.
+    ...(typeof record.apiUrl === "string" && URL.canParse(record.apiUrl)
+      ? { apiUrl: record.apiUrl }
+      : {}),
     ...(typeof record.refreshToken === "string"
       ? { refreshToken: record.refreshToken }
       : {}),
