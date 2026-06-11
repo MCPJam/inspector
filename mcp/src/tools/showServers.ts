@@ -1,15 +1,14 @@
-import { ConvexHttpClient } from "convex/browser";
-import { z } from "zod";
+import {
+  isPlatformApiError,
+  listProjectsOperation,
+  listProjectServersOperation,
+  PlatformApiClient,
+  showServersOperation,
+  type PlatformOperation,
+} from "@mcpjam/sdk/platform";
 import { SHOW_SERVERS_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
-import type { ShowServersPayload } from "../shared/show-servers.js";
 import type { McpJamMcpServer } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
-import {
-  buildShowServersPayload,
-  resolveProject,
-  type RemoteServer,
-  type RemoteProject,
-} from "./showServersCore.js";
 
 export const SHOW_SERVERS_RESOURCE_URI = "ui://mcpjam/show-servers.html";
 
@@ -18,16 +17,13 @@ export function registerShowServersTool(
   agent: McpJamMcpServer
 ): void {
   registrar.registerTool(
-    "show_servers",
+    showServersOperation.name,
     {
-      title: "Show MCPJam servers",
-      description:
-        "Show all MCP servers in a project with their health status. If no project is specified, shows the most recently updated accessible project and returns other project names for switching.",
-      inputSchema: z.object({
-        project: z.string().min(1).optional(),
-      }),
+      title: showServersOperation.title,
+      description: showServersOperation.description,
+      inputSchema: showServersOperation.inputSchema,
     },
-    async ({ project }) => getShowServersToolResult(agent, project),
+    async (input) => runPlatformOperation(agent, showServersOperation, input),
     {
       resourceUri: SHOW_SERVERS_RESOURCE_URI,
       html: SHOW_SERVERS_APP_HTML,
@@ -37,61 +33,76 @@ export function registerShowServersTool(
           prefersBorder: true,
         },
       },
-      callback: async ({ project }) =>
-        getShowServersToolResult(agent, project),
+      callback: async (input) =>
+        runPlatformOperation(agent, showServersOperation, input),
     }
   );
 }
 
-export async function getShowServersToolResult(
+export function registerListProjectsTool(
+  registrar: SessionToolRegistrar,
+  agent: McpJamMcpServer
+): void {
+  registerPlainOperationTool(registrar, agent, listProjectsOperation);
+}
+
+export function registerListProjectServersTool(
+  registrar: SessionToolRegistrar,
+  agent: McpJamMcpServer
+): void {
+  registerPlainOperationTool(registrar, agent, listProjectServersOperation);
+}
+
+function registerPlainOperationTool<TInput, TOutput extends object>(
+  registrar: SessionToolRegistrar,
   agent: McpJamMcpServer,
-  projectSelector?: string
+  operation: PlatformOperation<TInput, TOutput>
+): void {
+  registrar.registerTool(
+    operation.name,
+    {
+      title: operation.title,
+      description: operation.description,
+      inputSchema: operation.inputSchema,
+    },
+    async (input) => runPlatformOperation(agent, operation, input)
+  );
+}
+
+export async function runPlatformOperation<TInput, TOutput extends object>(
+  agent: McpJamMcpServer,
+  operation: PlatformOperation<TInput, TOutput>,
+  input: TInput
 ) {
   const token = agent.bearerToken;
   if (!token) {
     return toolError("No bearer token on the request.");
   }
 
-  const convex = new ConvexHttpClient(agent.runtimeEnv.CONVEX_URL);
-  convex.setAuth(token);
-
-  let projects: RemoteProject[];
-  try {
-    projects = (await convex.query(
-      "projects:getMyProjects" as any,
-      {}
-    )) as RemoteProject[];
-  } catch (error) {
-    return toolError(`Failed to load projects: ${parseErrorMessage(error)}`);
-  }
-
-  const resolution = resolveProject(projects, projectSelector);
-  if (!resolution.ok) {
-    return toolError(resolution.message);
-  }
-
-  let servers: RemoteServer[];
-  try {
-    servers = (await convex.query("servers:getProjectServers" as any, {
-      projectId: resolution.project._id,
-    })) as RemoteServer[];
-  } catch (error) {
-    return toolError(`Failed to load servers: ${parseErrorMessage(error)}`);
-  }
-
-  const payload = await buildShowServersPayload({
-    bearerToken: token,
-    convexHttpUrl: agent.runtimeEnv.CONVEX_HTTP_URL,
-    project: resolution.project,
-    projects: resolution.sortedProjects,
-    servers,
-    generatedAt: new Date().toISOString(),
+  const client = new PlatformApiClient({
+    baseUrl: agent.runtimeEnv.PLATFORM_API_URL,
+    getAuth: () => token,
+    userAgent: "mcpjam-mcp-worker/0.1.0",
   });
 
-  return toolSuccess(payload);
+  try {
+    const payload = await operation.execute(input, { client });
+    return toolSuccess(payload);
+  } catch (error) {
+    return toolError(describeOperationError(error));
+  }
 }
 
-function toolSuccess(payload: ShowServersPayload) {
+function describeOperationError(error: unknown): string {
+  if (isPlatformApiError(error)) {
+    // Wire errors keep their stable code for agent retry logic; synthesized
+    // client-side errors (status 0) are already self-explanatory messages.
+    return error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toolSuccess(payload: object) {
   return {
     content: [
       {
@@ -99,7 +110,7 @@ function toolSuccess(payload: ShowServersPayload) {
         text: JSON.stringify(payload, null, 2),
       },
     ],
-    structuredContent: payload,
+    structuredContent: payload as Record<string, unknown>,
   };
 }
 
@@ -108,8 +119,4 @@ function toolError(message: string) {
     isError: true,
     content: [{ type: "text" as const, text: message }],
   };
-}
-
-function parseErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
