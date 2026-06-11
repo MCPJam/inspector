@@ -23,7 +23,8 @@ function buildServer() {
 }
 
 const httpServer = createServer(async (req, res) => {
-  if (!req.url?.startsWith("/mcp")) {
+  const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  if (pathname !== "/mcp") {
     res.writeHead(404).end();
     return;
   }
@@ -34,8 +35,8 @@ const httpServer = createServer(async (req, res) => {
       sessionIdGenerator: undefined,
     });
     res.on("close", () => {
-      transport.close();
-      server.close();
+      void transport.close().catch(() => {});
+      void server.close().catch(() => {});
     });
     await server.connect(transport);
     const chunks = [];

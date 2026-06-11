@@ -206,7 +206,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST .../eval-runs` | Create a run from a `suiteId` and/or inline `tests`; responds `202` + `runId` |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun) or `suiteName` + inline `tests` (new suite); responds `202` + `runId` |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
@@ -221,8 +221,8 @@ for Postman, Swagger UI, or client generation.
 The shortest useful loop — create a run with one inline test, then poll:
 
 ```bash
-# 1. Create (responds 202 immediately)
-RUN_ID=$(curl -s -X POST \
+# 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
+RUN_ID=$(curl -fsS -X POST \
   "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
   -H "Authorization: Bearer $MCPJAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -237,7 +237,7 @@ RUN_ID=$(curl -s -X POST \
       "provider": "anthropic",
       "expectedToolCalls": [{ "toolName": "echo", "arguments": { "text": "hi" } }]
     }]
-  }' | jq -r .runId)
+  }' | jq -er .runId)
 
 # 2. Poll until status is completed | failed | cancelled
 curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \

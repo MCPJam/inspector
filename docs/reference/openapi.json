@@ -1134,8 +1134,15 @@
       },
       "EvalRunCreateRequest": {
         "type": "object",
-        "description": "Provide `suiteId` (rerun an existing suite), inline `tests` (create/update cases), or both. At least one is required.",
+        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), or `suiteName` + `tests` (create a new suite and run it). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.",
         "required": ["serverIds"],
+        "anyOf": [
+          { "required": ["suiteId"] },
+          {
+            "required": ["suiteName", "tests"],
+            "properties": { "tests": { "minItems": 1 } }
+          }
+        ],
         "properties": {
           "suiteId": {
             "type": "string",
@@ -1143,7 +1150,7 @@
           },
           "suiteName": {
             "type": "string",
-            "description": "Name for a new suite when no `suiteId` is given."
+            "description": "Name for a new suite. Required (non-empty) when no `suiteId` is given."
           },
           "suiteDescription": { "type": "string" },
           "tests": {
@@ -1326,23 +1333,23 @@
           },
           "clientInformation": {
             "type": "object",
-            "description": "OAuth client used to obtain the tokens. Required for server-side refresh.",
+            "description": "OAuth client used to obtain the tokens. Optional, but without it server-side refresh cannot run — always include it when you provide a `refresh_token`.",
             "required": ["clientId"],
             "properties": {
               "clientId": { "type": "string" },
-              "clientSecret": { "type": "string" }
+              "clientSecret": { "type": "string", "format": "password" }
             }
           },
           "tokens": {
             "type": "object",
             "required": ["access_token"],
             "properties": {
-              "access_token": { "type": "string" },
-              "refresh_token": { "type": "string" },
+              "access_token": { "type": "string", "format": "password" },
+              "refresh_token": { "type": "string", "format": "password" },
               "expires_in": { "type": "number", "description": "Seconds until the access token expires." },
               "token_type": { "type": "string" },
               "scope": { "type": "string" },
-              "id_token": { "type": "string" }
+              "id_token": { "type": "string", "format": "password" }
             }
           }
         }
