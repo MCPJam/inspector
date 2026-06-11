@@ -545,13 +545,49 @@ jobs:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
-      # Checkout is required so `.github/scripts/railway-retry.sh` is on disk.
+      # Checkout is required so the `.github/scripts/` helpers are on disk.
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
+
+      # The preview's public domain only exists as RAILWAY_PUBLIC_DOMAIN
+      # inside the Railway environment, so it must be read BEFORE the
+      # environment is deleted — it's what the upsert job registered with
+      # WorkOS staging. Unlike the upsert jobs' version of this step, the
+      # environment may legitimately not exist here (manual deletion, an
+      # upsert that never ran), and railway-retry replays CLI error text on
+      # stdout — so only accept values shaped like a hostname.
+      - name: Read preview public domain
+        id: preview_domain
+        continue-on-error: true
+        run: |
+          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
+          if [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Inverse of "Register preview URL with WorkOS staging" in the upsert
+      # job. Without this, the staging WorkOS app accumulates redirect URIs
+      # and CORS origins pointing at deleted (reclaimable) *.up.railway.app
+      # domains — an auth-code-interception hygiene issue. Best-effort: must
+      # never block PR close. Runs before the env delete so a cancelled run
+      # leaves the env (re-registered on reopen) rather than dangling
+      # WorkOS entries. Uses curl, not the workos CLI — the CLI has no
+      # `config redirect/cors remove` subcommand (see workos-cleanup.sh).
+      - name: Deregister preview URL from WorkOS staging
+        if: steps.preview_domain.outputs.url != ''
+        env:
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+        run: |
+          .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}" || true
 
       - name: Delete Railway preview environment
         run: |
@@ -583,15 +619,20 @@ jobs:
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
-      # Checkout is required so `.github/scripts/railway-retry.sh` is on disk.
+      # Checkout is required so the `.github/scripts/` helpers are on disk.
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
 
-      - name: Delete Railway backend-PR preview environment
+      # The validated environment name is shared by the read/deregister/
+      # delete steps below; a bad payload fails the job here, before
+      # anything is read or deleted.
+      - name: Resolve preview environment metadata
+        id: meta
         env:
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
         run: |
@@ -599,7 +640,33 @@ jobs:
             echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
             exit 1
           fi
-          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+          echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      # See destroy-preview above: the domain must be read before the
+      # environment is deleted, then its WorkOS registrations are removed.
+      - name: Read preview public domain
+        id: preview_domain
+        continue-on-error: true
+        run: |
+          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
+          if [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deregister preview URL from WorkOS staging
+        if: steps.preview_domain.outputs.url != ''
+        env:
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+        run: |
+          .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}" || true
+
+      - name: Delete Railway backend-PR preview environment
+        run: |
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${{ steps.meta.outputs.environment }}" \
             --yes || true
 
   sync-backend-preview:
