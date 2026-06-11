@@ -397,6 +397,39 @@ Persistently enables anonymous CLI telemetry. If no install ID exists yet, this 
 
 ---
 
+## `login` / `logout` / `whoami` commands
+
+These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
+
+### `login`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is persisted with the session so subsequent cloud commands target the same deployment without needing `--api-url` again. Must be a valid `http(s)` URL — an invalid value exits with code `2` before any network call. |
+| `--no-browser` | | Print the login URL to stderr instead of opening a browser. |
+
+The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`. An invalid value in either source is a hard error (exit 2).
+
+**URL resolution order for cloud commands after login:**
+
+1. Explicit `--api-url` flag
+2. `MCPJAM_API_URL` environment variable
+3. The `apiUrl` stored with the OAuth session (only when the stored login is the credential; `sk_` API keys do not inherit the stored URL)
+4. Production default (`https://app.mcpjam.com/api/v1`)
+
+### `logout`
+
+No additional flags. Removes the stored MCPJam session.
+
+### `whoami`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. |
+
+---
+
 ## Exit codes
 
 | Code | Meaning |
