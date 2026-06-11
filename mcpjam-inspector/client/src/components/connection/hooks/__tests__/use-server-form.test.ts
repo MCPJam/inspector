@@ -116,7 +116,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("does not replace hidden stored headers when editing auth without reveal", async () => {
+  it("asks for stored headers when editing auth with hidden headers and merges them into the patch", async () => {
     const server = {
       name: "Hidden header server",
       config: {
@@ -140,13 +140,117 @@ describe("useServerForm", () => {
       result.current.setBearerToken("new-token");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
-      headers: { Authorization: "Bearer new-token" },
-    });
+    // Without the stored headers the form can't build a safe replacement
+    // patch, so it withholds one and flags that a reveal is needed.
+    expect(result.current.needsStoredHeaderReveal).toBe(true);
     expect(result.current.buildFormData().secretPatch?.headers).toBeUndefined();
-    expect(result.current.validateForm()).toBe(
-      "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
-    );
+    expect(result.current.validateForm()).toBeNull();
+
+    // With the stored headers supplied at save time, the patch swaps the
+    // Authorization header and keeps the rest.
+    expect(
+      result.current.buildFormData({
+        revealedHeaders: {
+          Authorization: "Bearer old-token",
+          "X-Api-Key": "secret",
+        },
+      })
+    ).toMatchObject({
+      headers: {
+        Authorization: "Bearer new-token",
+        "X-Api-Key": "secret",
+      },
+      secretPatch: {
+        headers: {
+          Authorization: "Bearer new-token",
+          "X-Api-Key": "secret",
+        },
+      },
+    });
+  });
+
+  it("keeps the hidden Authorization header when only header rows change", async () => {
+    const server = {
+      name: "Hidden header server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.addCustomHeader();
+    });
+    act(() => {
+      result.current.updateCustomHeader(0, "key", "X-New");
+    });
+    act(() => {
+      result.current.updateCustomHeader(0, "value", "fresh");
+    });
+
+    expect(result.current.needsStoredHeaderReveal).toBe(true);
+    expect(
+      result.current.buildFormData({
+        revealedHeaders: {
+          Authorization: "Bearer keep-me",
+          "X-Api-Key": "secret",
+        },
+      }).secretPatch
+    ).toEqual({
+      headers: {
+        Authorization: "Bearer keep-me",
+        "X-Api-Key": "secret",
+        "X-New": "fresh",
+      },
+    });
+  });
+
+  it("drops the hidden Authorization header when auth switches away from bearer", async () => {
+    const server = {
+      name: "Hidden header server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.setAuthType("oauth");
+    });
+
+    expect(result.current.needsStoredHeaderReveal).toBe(true);
+    expect(
+      result.current.buildFormData({
+        revealedHeaders: {
+          Authorization: "Bearer old-token",
+          "X-Api-Key": "secret",
+        },
+      }).secretPatch
+    ).toEqual({
+      headers: {
+        "X-Api-Key": "secret",
+      },
+    });
   });
 
   it("sends a replacement header patch after stored headers are revealed", async () => {
