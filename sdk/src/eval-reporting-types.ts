@@ -120,6 +120,11 @@ export type MCPJamReportingConfig = {
   enabled?: boolean;
   apiKey?: string;
   baseUrl?: string;
+  /**
+   * MCPJam project id results are filed under (`MCPJAM_PROJECT_ID` env var
+   * works too). Defaults to the API key org's Default project.
+   */
+  project?: string;
   serverNames?: string[];
   serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;

@@ -22,8 +22,10 @@ export function AccountApiKeySection({
       </span>
       <span className="text-muted-foreground text-xs">
         Retired — project API keys (mcpjam_…) no longer work and can no longer
-        be generated. For programmatic access to the MCPJam API, create an
-        MCPJam API key (sk_…) under Settings → API keys.
+        be generated. Everything they did now runs on MCPJam API keys (sk_…)
+        from Settings → API keys, including saving SDK eval results: set
+        MCPJAM_API_KEY to an sk_… key and reports land in this project&apos;s
+        Evals dashboard.
       </span>
     </div>
   );

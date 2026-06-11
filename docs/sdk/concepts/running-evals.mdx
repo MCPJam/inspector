@@ -135,11 +135,19 @@ console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 
 ## Save Results to MCPJam
 
-<Warning>
-**Retired.** Project API keys (`mcpjam_…`) no longer work, so result uploads to MCPJam are disabled. Local eval execution and assertions are unaffected. See [API keys](/reference/api-keys).
-</Warning>
+Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` to an **MCPJam API key (`sk_…`)** from Settings → API keys and results are saved automatically:
 
-`EvalTest` and `EvalSuite` previously auto-saved results to MCPJam when `MCPJAM_API_KEY` was set. Don't wire this up in new code: the `mcpjam:` run options and the manual save APIs no longer upload anything (auto-save warns and continues; `strict` reporting throws). The [Save Results to MCPJam](/sdk/concepts/saving-results) guide documents the retired flow.
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    passCriteria: { minimumPassRate: 90 },
+  },
+});
+```
+
+Results are filed under the project in `MCPJAM_PROJECT_ID` (or the `project` option), defaulting to your organization's **Default** project. For manual save APIs, CI metadata, and artifact uploads, see the [Save Results to MCPJam](/sdk/concepts/saving-results) guide.
 
 ### Tool errors vs. `passed` on upload
 

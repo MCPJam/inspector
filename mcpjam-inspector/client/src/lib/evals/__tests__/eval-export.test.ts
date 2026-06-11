@@ -116,10 +116,23 @@ describe("eval-export", () => {
     expect(envSnippet.usedPlaceholderFallback).toBe(true);
     expect(envSnippet.missingServerIds).toEqual(["calendar"]);
     expect(envSnippet.snippet).toContain(
-      "export MCP_SERVER_URL_CALENDAR=<replace-with-server-url>",
+      "export MCP_SERVER_URL_CALENDAR=<replace-with-server-url>"
     );
     expect(envSnippet.snippet).toContain(
-      "export MCP_SERVER_URL_WEATHER=https://weather.example.com/mcp",
+      "export MCP_SERVER_URL_WEATHER=https://weather.example.com/mcp"
+    );
+    // Reporting runs on MCPJam API keys (sk_); the retired mcpjam_ project
+    // keys must never resurface in generated snippets.
+    expect(envSnippet.snippet).toContain("export MCPJAM_API_KEY=<your sk_");
+    expect(envSnippet.snippet).not.toContain("mcpjam_");
+    // No projectId given → no pin; uploads fall back to the Default project.
+    expect(envSnippet.snippet).not.toContain("MCPJAM_PROJECT_ID");
+  });
+
+  it("pins exported env snippets to the project the export came from", () => {
+    const envSnippet = buildSdkEnvSnippet([], {}, "jd7fromexport");
+    expect(envSnippet.snippet).toContain(
+      "export MCPJAM_PROJECT_ID=jd7fromexport",
     );
   });
 
@@ -157,6 +170,7 @@ describe("eval-export", () => {
 
     expect(sdkFile).toContain("new EvalTest(");
     expect(sdkFile).toContain("evalTest.run(agent");
+    expect(sdkFile).toContain("mcpjam: { suiteName: SUITE_NAME }");
     expect(sdkFile).toContain("evalTest.accuracy()");
     expect(sdkFile).toContain("expected.length === 0");
     expect(sdkFile).toContain('"prompt": "Just acknowledge"');

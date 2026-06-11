@@ -229,6 +229,16 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
 | `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
 
+**Eval result ingestion** (`/projects/{projectId}/eval-ingest/...`) — how `@mcpjam/sdk` saves results from eval runs executed outside the platform (local dev, CI). The `{projectId}` segment accepts the literal `default` for the key org's Default project. Most users never call these directly — set `MCPJAM_API_KEY` and the [SDK reporter](/sdk/concepts/saving-results) does:
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../eval-ingest/report` | One-shot: create a run from finished results and finalize it |
+| `POST .../eval-ingest/runs/start` | Chunked flow: create (or idempotently reuse) a run by `externalRunId` |
+| `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
+| `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
+| `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (JUnit XML, Jest/Vitest JSON) |
+
 **Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
 
 | Endpoint | What it does |
