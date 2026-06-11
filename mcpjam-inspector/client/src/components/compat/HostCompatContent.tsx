@@ -152,7 +152,9 @@ export function HostCompatContent({
                 <p className="mt-2 text-xs text-muted-foreground">
                   {report.verdict === "works"
                     ? "Everything this server uses is supported."
-                    : "No issues found in the data captured so far."}
+                    : report.verdict === "unknown"
+                      ? "No blockers found, but some dimensions couldn't be checked yet — connect and load tools for a complete report."
+                      : "No issues found in the data captured so far."}
                 </p>
               )}
             </div>

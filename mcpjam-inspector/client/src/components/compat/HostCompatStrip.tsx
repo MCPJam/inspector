@@ -21,7 +21,8 @@ const VERDICT_LABEL: Record<CompatVerdict, string> = {
   unknown: "Unknown",
 };
 
-function summarize(reports: HostCompatReport[]): string {
+export function summarizeReports(reports: HostCompatReport[]): string {
+  if (reports.length === 0) return "checking…";
   const counts = reports.reduce(
     (acc, report) => {
       acc[report.verdict] += 1;
@@ -33,7 +34,13 @@ function summarize(reports: HostCompatReport[]): string {
   if (counts.works > 0) parts.push(`works in ${counts.works}`);
   if (counts.degraded > 0) parts.push(`degraded in ${counts.degraded}`);
   if (counts.blocked > 0) parts.push(`blocked in ${counts.blocked}`);
-  if (parts.length === 0) return "checking…";
+  // Surface unknowns only when no host produced a definite verdict —
+  // otherwise the grey dots already carry it and a roll-up would just add
+  // noise. An all-unknown result is a real state (incomplete connect data),
+  // not "still checking".
+  if (parts.length === 0 && counts.unknown > 0) {
+    return `unknown in ${counts.unknown}`;
+  }
   return parts.join(" · ");
 }
 
@@ -63,7 +70,7 @@ export function HostCompatStripView({
         onClick={onOpenDetails}
         disabled={!onOpenDetails}
         aria-label={`Host compatibility for ${serverName}`}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 disabled:cursor-default cursor-pointer"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
       >
         <div className="flex items-center gap-1">
           {reports.map((report) => (
@@ -105,7 +112,7 @@ export function HostCompatStripView({
           ))}
         </div>
         <span className="text-[11px] text-muted-foreground">
-          {summarize(reports)}
+          {summarizeReports(reports)}
         </span>
       </button>
     </div>

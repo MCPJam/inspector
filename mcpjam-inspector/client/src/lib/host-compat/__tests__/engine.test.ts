@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveServerRequirements,
+  evaluateAllHosts,
   evaluateHostCompat,
 } from "../engine";
+import { summarizeReports } from "@/components/compat/HostCompatStrip";
 import {
   CHATGPT_COMPAT_PROFILE,
   CLAUDE_COMPAT_PROFILE,
@@ -146,5 +148,32 @@ describe("evaluateHostCompat", () => {
     expect(evaluateHostCompat(reqs, CURSOR_COMPAT_PROFILE).verdict).toBe(
       "works",
     );
+  });
+});
+
+describe("summarizeReports", () => {
+  it("labels an all-unknown result as unknown, not 'checking…'", () => {
+    // An http server (reachable by every host) with no capabilities and no
+    // tools loaded → no blockers, no degradations, but two unknown
+    // dimensions → every host is unknown.
+    const { reports } = evaluateAllHosts(baseServer({}));
+    expect(reports.every((r) => r.verdict === "unknown")).toBe(true);
+    const summary = summarizeReports(reports);
+    expect(summary).not.toBe("checking…");
+    expect(summary).toContain("unknown in");
+  });
+
+  it("reports 'checking…' only for the genuinely empty pre-eval state", () => {
+    expect(summarizeReports([])).toBe("checking…");
+  });
+
+  it("rolls up definite verdicts and omits unknown when something decided", () => {
+    const { reports } = evaluateAllHosts(
+      baseServer({ initializationInfo: connectedInfo }),
+      toolsWith({}),
+    );
+    const summary = summarizeReports(reports);
+    expect(summary).toMatch(/works in \d|degraded in \d/);
+    expect(summary).not.toContain("unknown in");
   });
 });
