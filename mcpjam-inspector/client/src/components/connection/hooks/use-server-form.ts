@@ -139,6 +139,10 @@ export function useServerForm(
   const [hasStoredHeaders, setHasStoredHeaders] = useState(false);
   const [envDirty, setEnvDirty] = useState(false);
   const [headersDirty, setHeadersDirty] = useState(false);
+  // Auth edits (auth type / bearer token) are tracked apart from header-row
+  // edits: when hidden stored headers are merged in at save time, the saved
+  // Authorization header must only be dropped if the user touched auth.
+  const [authDirty, setAuthDirty] = useState(false);
   const [envRevealed, setEnvRevealed] = useState(false);
   const [headersRevealed, setHeadersRevealed] = useState(false);
   const [requestTimeout, setRequestTimeout] = useState<string>("");
@@ -384,6 +388,7 @@ export function useServerForm(
       setHasStoredHeaders(hasStoredHeadersValue);
       setHeadersRevealed(headersArray.length > 0);
       setHeadersDirty(false);
+      setAuthDirty(false);
       setShowConfiguration(
         headersArray.length > 0 ||
           timeoutValue.trim() !== "" ||
@@ -467,10 +472,6 @@ export function useServerForm(
         urlObj.protocol !== "https:"
       ) {
         return "HTTPS is required";
-      }
-
-      if (hasStoredHeaders && !headersRevealed && headersDirty) {
-        return "Reveal saved headers before changing authentication so existing hidden headers aren't lost.";
       }
     }
 
@@ -600,7 +601,14 @@ export function useServerForm(
     }
   };
 
-  const buildFormData = (): ServerFormData => {
+  const buildFormData = (buildOptions?: {
+    /**
+     * Stored headers fetched from the secrets API at save time. Supplying
+     * them lets a server with hidden stored headers take an auth or header
+     * change without wiping the headers the form can't see.
+     */
+    revealedHeaders?: Record<string, string>;
+  }): ServerFormData => {
     const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
     const reqTimeout = Number.isFinite(parsedTimeout)
       ? parsedTimeout
@@ -645,7 +653,20 @@ export function useServerForm(
     }
 
     // Handle http-specific data
+    const revealedStoredHeaders = buildOptions?.revealedHeaders;
     const headers: Record<string, string> = {};
+
+    // Seed with the stored headers so the replacement patch keeps them. The
+    // saved Authorization header only carries over while auth is untouched —
+    // once the user edits auth, the auth section below is authoritative.
+    if (revealedStoredHeaders) {
+      for (const [key, value] of Object.entries(revealedStoredHeaders)) {
+        if (authDirty && isAuthorizationHeader(key)) {
+          continue;
+        }
+        headers[key] = value;
+      }
+    }
 
     // Add custom headers
     customHeaders.forEach(({ key, value }) => {
@@ -682,9 +703,10 @@ export function useServerForm(
     }
     const explicitHeaders =
       Object.keys(headers).length > 0 ? headers : undefined;
-    const canPatchHeaders = !hasStoredHeaders || headersRevealed;
+    const canPatchHeaders =
+      !hasStoredHeaders || headersRevealed || revealedStoredHeaders != null;
     const secretPatch =
-      headersDirty && canPatchHeaders ? { headers } : undefined;
+      (headersDirty || authDirty) && canPatchHeaders ? { headers } : undefined;
 
     return {
       name: name.trim(),
@@ -736,6 +758,7 @@ export function useServerForm(
     setHasStoredHeaders(false);
     setEnvDirty(false);
     setHeadersDirty(false);
+    setAuthDirty(false);
     setEnvRevealed(false);
     setHeadersRevealed(false);
     setRequestTimeout("");
@@ -777,6 +800,15 @@ export function useServerForm(
         JSON.stringify(iv.customHeaders)
     );
   })();
+
+  // Saving a header-affecting change replaces the whole stored header set,
+  // so when that set is hidden the caller must fetch it (secrets API) and
+  // pass it to buildFormData as `revealedHeaders` before submitting.
+  const needsStoredHeaderReveal =
+    type === "http" &&
+    hasStoredHeaders &&
+    !headersRevealed &&
+    (headersDirty || authDirty);
 
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
@@ -822,12 +854,12 @@ export function useServerForm(
     setClearClientSecret,
     bearerToken,
     setBearerToken: (value: string) => {
-      setHeadersDirty(true);
+      setAuthDirty(true);
       setBearerToken(value);
     },
     authType,
     setAuthType: (value: "oauth" | "bearer" | "none") => {
-      setHeadersDirty(true);
+      setAuthDirty(true);
       setAuthType(value);
     },
     useCustomClientId,
@@ -859,6 +891,7 @@ export function useServerForm(
     headersDirty,
     envRevealed,
     headersRevealed,
+    needsStoredHeaderReveal,
 
     // Toggle states
     showConfiguration,
