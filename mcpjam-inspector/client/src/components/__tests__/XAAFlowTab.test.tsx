@@ -4,6 +4,22 @@ import { describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const captureMock = vi.fn();
+vi.mock("posthog-js", () => ({
+  default: {
+    capture: (...args: unknown[]) => captureMock(...args),
+  },
+}));
+
+vi.mock("@/lib/PosthogUtils", () => ({
+  detectEnvironment: vi.fn().mockReturnValue("test"),
+  detectPlatform: vi.fn().mockReturnValue("web"),
+}));
+
+vi.mock("../xaa/XAAIdpCard", () => ({
+  XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
+}));
+
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
@@ -112,5 +128,17 @@ describe("XAAFlowTab", () => {
     expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
       "No target configured",
     );
+  });
+
+  it("fires xaa_tab_viewed once per mount", () => {
+    captureMock.mockClear();
+
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
+
+    const viewedCalls = captureMock.mock.calls.filter(
+      ([event]) => event === "xaa_tab_viewed",
+    );
+    expect(viewedCalls).toHaveLength(1);
+    expect(viewedCalls[0][1]).toMatchObject({ location: "xaa_flow_tab" });
   });
 });
