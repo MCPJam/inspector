@@ -633,13 +633,19 @@ export async function prepareChatV2(
   const availableToolNames = Object.keys(allTools);
 
   // 3. Anthropic tool name validation — meta-tool names are conforming and
-  // checked alongside real tools.
-  if (isAnthropicCompatibleModel(modelDefinition, customProviders)) {
+  // checked alongside real tools. Bedrock's Converse API enforces the same
+  // ^[a-zA-Z0-9_-]{1,64}$ tool-name shape as Anthropic, so it shares the gate.
+  if (
+    isAnthropicCompatibleModel(modelDefinition, customProviders) ||
+    modelDefinition.provider === "bedrock"
+  ) {
     const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
     if (invalidNames.length > 0) {
       const nameList = invalidNames.map((name) => `'${name}'`).join(", ");
+      const providerLabel =
+        modelDefinition.provider === "bedrock" ? "Amazon Bedrock" : "Anthropic";
       throw new Error(
-        `Invalid tool name(s) for Anthropic: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`
+        `Invalid tool name(s) for ${providerLabel}: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`
       );
     }
   }

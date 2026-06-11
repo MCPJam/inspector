@@ -717,6 +717,13 @@ function KnownProviderConfigDialog({
   const catalogEntry = findCatalogEntry(providerKey);
   const logo = catalogEntry?.logo;
 
+  // Parsed once so canSave and handleSave agree — comma-only input like
+  // ", , ," must not enable the save button with an empty model list.
+  const parsedSelectedModels = selectedModels
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const handleSave = () => {
     const args: Parameters<typeof onSave>[0] = { providerKey };
     if (secret.trim()) args.secret = secret.trim();
@@ -728,12 +735,9 @@ function KnownProviderConfigDialog({
     }
     if (
       (kind === "openrouter" || kind === "bedrock") &&
-      selectedModels.trim()
+      parsedSelectedModels.length > 0
     ) {
-      args.selectedModels = selectedModels
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      args.selectedModels = parsedSelectedModels;
     }
     void onSave(args);
   };
@@ -748,13 +752,14 @@ function KnownProviderConfigDialog({
         return (
           (!!secret.trim() || existing?.hasSecret) &&
           !!baseUrl.trim() &&
-          !!selectedModels.trim()
+          parsedSelectedModels.length > 0
         );
       case "ollama":
         return !!baseUrl.trim();
       case "openrouter":
         return (
-          (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim()
+          (!!secret.trim() || existing?.hasSecret) &&
+          parsedSelectedModels.length > 0
         );
       default:
         return false;

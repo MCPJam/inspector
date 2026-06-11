@@ -133,6 +133,19 @@ describe("buildSyntheticModelDefinition", () => {
         "us-gov.anthropic.claude-3-5-haiku-20241022-v1:0",
       ).provider,
     ).toBe("bedrock");
+    // Legacy ids without a ":N" revision suffix
+    expect(buildSyntheticModelDefinition("anthropic.claude-v2").provider).toBe(
+      "bedrock",
+    );
+    expect(
+      buildSyntheticModelDefinition("amazon.titan-tg1-large").provider,
+    ).toBe("bedrock");
+    // Bedrock ARNs (inference profiles, imported models)
+    expect(
+      buildSyntheticModelDefinition(
+        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0",
+      ).provider,
+    ).toBe("bedrock");
   });
 
   it("falls back to provider='ollama' for bare ids (no slash, no recognized prefix)", () => {

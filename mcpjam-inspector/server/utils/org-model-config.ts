@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
   getModelById,
+  isBedrockModelId,
   isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
@@ -209,7 +210,25 @@ export async function resolveOrgModelConfig(
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
 
-    const result: ResolvedOrgModelConfig = { providers: data.providers ?? [] };
+    const providers = data.providers ?? [];
+    // Hosted mode: reject org-supplied Bedrock endpoints that point at
+    // private/internal address space before they are cached and handed to
+    // the AI SDK. Uses the DNS-aware guard so a public hostname resolving
+    // to a private IP (DNS rebinding) is rejected too — mirrors the check
+    // the local-runtime path applies in resolveOrgProviderRuntime.
+    if (HOSTED_MODE) {
+      for (const provider of providers) {
+        if (
+          provider.providerKey === "bedrock" &&
+          typeof provider.baseUrl === "string" &&
+          provider.baseUrl.length > 0
+        ) {
+          await assertSafeHostedOutboundUrl(provider.baseUrl);
+        }
+      }
+    }
+
+    const result: ResolvedOrgModelConfig = { providers };
     resolveCache.set(cacheKey, {
       result,
       expiresAt: Date.now() + CACHE_TTL_MS,
@@ -294,6 +313,12 @@ export function buildLlmRuntimeConfigFromOrgConfig(
     }
 
     if (provider.providerKey === "bedrock" && provider.baseUrl) {
+      // Hosted mode: don't promote a baseUrl that points at private/internal
+      // address space — eval-runner egress would otherwise follow it. Mirrors
+      // the guard the local-runtime path applies in resolveOrgProviderRuntime.
+      if (HOSTED_MODE && isUnsafeHostedOutboundUrl(provider.baseUrl)) {
+        continue;
+      }
       runtime.baseUrls.bedrock = provider.baseUrl;
       continue;
     }
@@ -779,17 +804,6 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
 };
 
 /**
- * Amazon Bedrock foundation-model / inference-profile ids are bare strings
- * like "us.anthropic.claude-sonnet-4-5-20250929-v1:0" — an optional geo
- * prefix (us./eu./apac./us-gov./global/...), a known vendor segment, a model
- * name, and a ":N" revision suffix. Ollama ids (the other bare-id provider)
- * never carry a `vendor.` segment from this list, so the pattern safely
- * disambiguates the two (e.g. "llama3.1:8b" or "mistral:latest" don't match).
- */
-const BEDROCK_BARE_MODEL_ID_PATTERN =
-  /^(?:[a-z]{2,6}(?:-[a-z]+)?\.)?(?:ai21|amazon|anthropic|cohere|deepseek|luma|meta|minimax|mistral|moonshot|nvidia|openai|qwen|stability|twelvelabs|writer)\.[A-Za-z0-9][\w.-]*:\d+$/;
-
-/**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
  *
@@ -846,7 +860,7 @@ export function buildSyntheticModelDefinition(
     }
   }
 
-  if (BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)) {
+  if (isBedrockModelId(modelId)) {
     return {
       id: modelId,
       name: modelId,

@@ -750,6 +750,31 @@ export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
 };
 
+/**
+ * Amazon Bedrock model ids are bare strings like
+ * "us.anthropic.claude-sonnet-4-5-20250929-v1:0" — an optional geo prefix
+ * (us./eu./apac./us-gov./global/...), a known vendor segment, a model name,
+ * and an optional ":N" revision suffix (absent on legacy ids like
+ * "anthropic.claude-v2" or "amazon.titan-tg1-large"). Ollama ids (the other
+ * bare-id shape in the app) never carry a `vendor.` segment from this list,
+ * so the pattern safely disambiguates the two (e.g. "llama3.1:8b" or
+ * "mistral:latest" don't match).
+ */
+const BEDROCK_BARE_MODEL_ID_PATTERN =
+  /^(?:[a-z]{2,6}(?:-[a-z]+)?\.)?(?:ai21|amazon|anthropic|cohere|deepseek|luma|meta|minimax|mistral|moonshot|nvidia|openai|qwen|stability|twelvelabs|writer)\.[A-Za-z0-9][\w.-]*(?::\d+)?$/;
+
+/**
+ * True when a model id is recognizably Amazon Bedrock: a bare model /
+ * inference-profile id, or a Bedrock ARN (e.g.
+ * "arn:aws:bedrock:us-east-1:123456789012:inference-profile/...").
+ */
+export const isBedrockModelId = (modelId: string): boolean => {
+  return (
+    modelId.startsWith("arn:aws:bedrock:") ||
+    BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)
+  );
+};
+
 export type ServerFormOAuthProtocolMode =
   | "auto"
   | "2025-03-26"
