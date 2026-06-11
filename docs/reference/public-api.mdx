@@ -146,9 +146,9 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
-| `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `NOT_FOUND` | 404 | Unknown project, server, resource, eval run, or suite — also returned with `details.reason: "TRACE_NOT_AVAILABLE"` when a trace hasn't been stored for an iteration |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
-| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
+| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits); also returned with `details.reason: "CONCURRENT_RUN_LIMIT"` when the per-caller eval concurrency cap is reached |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
 | `INTERNAL_ERROR` | 500 | Something failed on our side |
