@@ -30,6 +30,22 @@ export function attachComputerPatch(): Partial<HostConfigInputV2> {
 }
 
 /**
+ * Whether the editor should render the personal-computer toggle. Shown when
+ * the catalog exposes a computer-backed tool (so the `bash` row stays hidden
+ * until launch) OR when a computer is already attached — so an existing
+ * attachment is always DETACHABLE even if no computer-backed tool is currently
+ * in the catalog. Never on surfaces that disallow computers (eval suites).
+ */
+export function shouldShowComputerToggle(opts: {
+  catalogHasComputerBackedTool: boolean;
+  computerAttached: boolean;
+  disallowed?: boolean;
+}): boolean {
+  if (opts.disallowed) return false;
+  return opts.catalogHasComputerBackedTool || opts.computerAttached;
+}
+
+/**
  * Patch that detaches the computer AND drops any computer-backed tool ids, so
  * the resulting draft can't fail the backend's requiresComputer invariant on
  * save (detaching the resource must take its dependent capabilities with it).

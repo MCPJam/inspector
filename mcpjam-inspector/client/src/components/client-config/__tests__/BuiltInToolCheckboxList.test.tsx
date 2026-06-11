@@ -103,6 +103,28 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
     expect(onChange).toHaveBeenCalledWith([]);
   });
 
+  it("readOnly disables every checkbox and blocks all edits", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <BuiltInToolCheckboxList
+        label="Built-in tools"
+        selected={["web_search"]}
+        available={[WEB_SEARCH, BASH]}
+        computerAttached
+        readOnly
+        onChange={onChange}
+      />
+    );
+    const webSearch = checkboxFor(container, "Web Search");
+    const bash = checkboxFor(container, "Bash");
+    expect(webSearch.disabled).toBe(true);
+    expect(bash.disabled).toBe(true);
+    // Even an unchecking action (selected tool) is blocked in read-only mode.
+    fireEvent.click(webSearch);
+    fireEvent.click(bash);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("disallows computer-backed tools entirely on eval suites, but stale ones stay removable", () => {
     const onChange = vi.fn();
     const { container, getByText, rerender } = render(

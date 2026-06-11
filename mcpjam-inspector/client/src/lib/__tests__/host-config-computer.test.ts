@@ -5,6 +5,7 @@ import {
   computerBackedToolIds,
   detachComputerPatch,
   sanitizeHostConfigForEvalSuite,
+  shouldShowComputerToggle,
 } from "../host-config-computer";
 import { emptyHostConfigInputV2 } from "../client-config-v2";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -59,6 +60,45 @@ describe("host-config-computer helpers", () => {
       computer: undefined,
       builtInToolIds: ["web_search"],
     });
+  });
+});
+
+describe("shouldShowComputerToggle", () => {
+  it("shows when the catalog has a computer-backed tool", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: true,
+        computerAttached: false,
+      })
+    ).toBe(true);
+  });
+
+  it("shows when a computer is already attached, even with no backed tool (so it's detachable)", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: false,
+        computerAttached: true,
+      })
+    ).toBe(true);
+  });
+
+  it("hides when neither holds", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: false,
+        computerAttached: false,
+      })
+    ).toBe(false);
+  });
+
+  it("always hides when disallowed (eval suites), even if a computer is attached", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: true,
+        computerAttached: true,
+        disallowed: true,
+      })
+    ).toBe(false);
   });
 });
 

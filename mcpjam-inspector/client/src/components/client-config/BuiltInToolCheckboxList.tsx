@@ -20,6 +20,7 @@ export function BuiltInToolCheckboxList({
   onChange,
   computerAttached = false,
   computerToolsDisallowed = false,
+  readOnly = false,
 }: {
   label: string;
   selected: string[];
@@ -33,6 +34,8 @@ export function BuiltInToolCheckboxList({
    * computer). They render blocked regardless of `computerAttached`.
    */
   computerToolsDisallowed?: boolean;
+  /** Disable every checkbox (no edits) — for read-only editor surfaces. */
+  readOnly?: boolean;
 }) {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const toggle = useCallback(
@@ -72,10 +75,11 @@ export function BuiltInToolCheckboxList({
             }
           }
           const blocked = blockReason !== null;
-          // A blocked tool that is already selected stays removable, so a
-          // stale invalid id (e.g. `bash` saved without a computer) can always
-          // be unchecked. Only adding a blocked tool is disabled.
-          const disabled = blocked && !isSelected;
+          // Read-only disables everything. Otherwise: a blocked tool that is
+          // already selected stays removable (so a stale invalid id like
+          // `bash` saved without a computer can always be unchecked) — only
+          // ADDING a blocked tool is disabled.
+          const disabled = readOnly || (blocked && !isSelected);
           return (
             <label
               key={tool.id}

@@ -27,6 +27,7 @@ import {
   attachComputerPatch,
   catalogHasComputerBackedTool,
   detachComputerPatch,
+  shouldShowComputerToggle,
 } from "@/lib/host-config-computer";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
@@ -96,10 +97,15 @@ export function BehaviorTab({
   // FocusBlock entirely in both cases so empty installs don't render a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
   const showBuiltInTools = (builtInToolCatalog?.length ?? 0) > 0;
-  // The personal-computer toggle appears only once the deployment exposes a
-  // computer-backed tool (the `bash` row ships disabled until launch).
-  const showComputerToggle =
-    showBuiltInTools && catalogHasComputerBackedTool(builtInToolCatalog);
+  // The personal-computer toggle appears once the deployment exposes a
+  // computer-backed tool (the `bash` row ships disabled until launch) OR when
+  // the host already has a computer attached, so an existing attachment is
+  // always detachable even if no computer-backed tool is in the catalog.
+  const showComputerToggle = shouldShowComputerToggle({
+    catalogHasComputerBackedTool:
+      catalogHasComputerBackedTool(builtInToolCatalog),
+    computerAttached: draft.computer !== undefined,
+  });
 
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
@@ -263,7 +269,7 @@ export function BehaviorTab({
         />
       </FocusBlock>
 
-      {showBuiltInTools ? (
+      {showBuiltInTools || showComputerToggle ? (
         <FocusBlock title="Built-in tools">
           {showComputerToggle ? (
             <FieldRow
@@ -285,13 +291,16 @@ export function BehaviorTab({
               }
             />
           ) : null}
-          <BuiltInToolCheckboxList
-            label="Attached"
-            selected={draft.builtInToolIds}
-            available={builtInToolCatalog ?? []}
-            computerAttached={draft.computer !== undefined}
-            onChange={(builtInToolIds) => update({ builtInToolIds })}
-          />
+          {showBuiltInTools ? (
+            <BuiltInToolCheckboxList
+              label="Attached"
+              selected={draft.builtInToolIds}
+              available={builtInToolCatalog ?? []}
+              computerAttached={draft.computer !== undefined}
+              readOnly={readOnly}
+              onChange={(builtInToolIds) => update({ builtInToolIds })}
+            />
+          ) : null}
         </FocusBlock>
       ) : null}
 

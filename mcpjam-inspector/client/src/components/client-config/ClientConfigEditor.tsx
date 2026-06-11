@@ -62,6 +62,7 @@ import {
   attachComputerPatch,
   catalogHasComputerBackedTool,
   detachComputerPatch,
+  shouldShowComputerToggle,
 } from "@/lib/host-config-computer";
 
 export type HostConfigEditorOwner =
@@ -168,14 +169,20 @@ export function ClientConfigEditor({
   // computer-backed tools disallowed (they render blocked, but a stale id
   // stays removable).
   const computerToolsDisallowed = owner === "eval-suite";
-  // The personal-computer toggle only appears once the deployment exposes a
+  // The personal-computer toggle appears once the deployment exposes a
   // computer-backed tool in the catalog (the `bash` row ships disabled until
-  // launch, so this stays hidden until then — no dead toggle pre-launch) and
-  // the surface actually allows a computer.
+  // launch, so this stays hidden until then — no dead toggle pre-launch) OR
+  // when the config already has a computer attached, so an existing
+  // attachment is always detachable even if no computer-backed tool is
+  // currently in the catalog. Never on connection-only or eval surfaces.
   const showComputerToggle =
-    showBuiltInToolsSection &&
-    !computerToolsDisallowed &&
-    catalogHasComputerBackedTool(builtInToolCatalog);
+    owner !== "connection-only" &&
+    shouldShowComputerToggle({
+      catalogHasComputerBackedTool:
+        catalogHasComputerBackedTool(builtInToolCatalog),
+      computerAttached: value.computer !== undefined,
+      disallowed: computerToolsDisallowed,
+    });
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 
@@ -367,7 +374,7 @@ export function ClientConfigEditor({
         </>
       ) : null}
 
-      {showBuiltInToolsSection ? (
+      {showBuiltInToolsSection || showComputerToggle ? (
         <>
           <section className="space-y-4">
             {showComputerToggle ? (
@@ -394,14 +401,16 @@ export function ClientConfigEditor({
                 />
               </div>
             ) : null}
-            <BuiltInToolCheckboxList
-              label="Built-in tools"
-              selected={value.builtInToolIds}
-              available={builtInToolCatalog ?? []}
-              computerAttached={value.computer !== undefined}
-              computerToolsDisallowed={computerToolsDisallowed}
-              onChange={(builtInToolIds) => update({ builtInToolIds })}
-            />
+            {showBuiltInToolsSection ? (
+              <BuiltInToolCheckboxList
+                label="Built-in tools"
+                selected={value.builtInToolIds}
+                available={builtInToolCatalog ?? []}
+                computerAttached={value.computer !== undefined}
+                computerToolsDisallowed={computerToolsDisallowed}
+                onChange={(builtInToolIds) => update({ builtInToolIds })}
+              />
+            ) : null}
           </section>
 
           <Separator className="my-6" />
