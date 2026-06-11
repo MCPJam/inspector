@@ -16,6 +16,7 @@ import {
   revokeApiKey,
 } from "@/lib/apis/web/api-keys";
 import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
+import { SettingsNav } from "./SettingsNav";
 
 /**
  * `/settings/api-keys` — manage WorkOS-issued `sk_…` API keys for the
@@ -26,7 +27,11 @@ import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path"
  * `sk_…` key. That means visiting this page over a session JWT is the
  * only way to mint/revoke — there is no privilege escalation path here.
  */
-export function ApiKeysRoute() {
+interface ApiKeysRouteProps {
+  activeOrganizationId?: string | null;
+}
+
+export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -137,18 +142,24 @@ export function ApiKeysRoute() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-10 space-y-8 max-w-3xl">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">API keys</h1>
-          <Button onClick={() => setCreateOpen(true)}>
+        <div className="space-y-4">
+          <h1 className="text-2xl font-semibold">Settings</h1>
+          <SettingsNav
+            active="api-keys"
+            activeOrganizationId={activeOrganizationId}
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            Use these keys to call the MCPJam v1 public API from CI, scripts, or
+            other non-browser contexts. Keys carry your account's permissions
+            and can be revoked any time.
+          </p>
+          <Button onClick={() => setCreateOpen(true)} className="shrink-0">
             <Plus className="mr-2 size-4" aria-hidden /> Create API key
           </Button>
         </div>
-
-        <p className="text-sm text-muted-foreground">
-          Use these keys to call the MCPJam v1 public API from CI, scripts, or
-          other non-browser contexts. Keys carry your account's permissions
-          and can be revoked any time.
-        </p>
 
         <SettingsSection title="Your keys">
           {loading ? (

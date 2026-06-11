@@ -1,16 +1,8 @@
-import { Bell, Building2, FolderKanban, Inbox } from "lucide-react";
+import { Building2, FolderKanban, Inbox } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
+import { PopoverContent } from "@mcpjam/design-system/popover";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import {
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
 import {
   useNotifications,
   useNotificationMutations,
@@ -76,7 +68,7 @@ function NotificationItem({
     <div
       className={cn(
         "flex items-start gap-3 p-3 border-b last:border-b-0 cursor-pointer transition-colors hover:bg-muted/50",
-        !notification.isRead && "bg-muted/30",
+        !notification.isRead && "bg-muted/30"
       )}
       onClick={handleClick}
     >
@@ -85,7 +77,7 @@ function NotificationItem({
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
           notification.type.includes("added")
             ? "bg-success/10 text-success"
-            : "bg-destructive/10 text-destructive",
+            : "bg-destructive/10 text-destructive"
         )}
       >
         {getNotificationIcon(notification.type)}
@@ -105,17 +97,27 @@ function NotificationItem({
   );
 }
 
-type NotificationBellProps = {
-  variant?: "header" | "sidebar";
-};
+interface NotificationsPanelContentProps {
+  side?: "top" | "right" | "bottom" | "left";
+  align?: "start" | "center" | "end";
+}
 
-export function NotificationBell({ variant = "header" }: NotificationBellProps) {
+/**
+ * The notifications inbox, rendered as a `PopoverContent`. The caller owns
+ * the `Popover` root and whatever trigger/anchor opens it (currently the
+ * account menu's Notifications item).
+ */
+export function NotificationsPanelContent({
+  side = "right",
+  align = "end",
+}: NotificationsPanelContentProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { notifications, unreadCount, isLoading } = useNotifications({
+  const { notifications, isLoading } = useNotifications({
     isAuthenticated,
   });
   const { markAsRead, markAllAsRead, clearAllNotifications } =
     useNotificationMutations();
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const handleMarkAsRead = async (notificationId: string) => {
     try {
@@ -141,54 +143,11 @@ export function NotificationBell({ variant = "header" }: NotificationBellProps) 
     }
   };
 
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  const displayCount = unreadCount > 9 ? "9+" : unreadCount;
-  const ariaLabel = `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ""}`;
-  const unreadBadge =
-    unreadCount > 0 ? (
-      <span
-        className={cn(
-          "flex items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-white",
-          variant === "sidebar"
-            ? "ml-auto h-4 min-w-4 group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:-top-0.5 group-data-[collapsible=icon]:-right-0.5 group-data-[collapsible=icon]:ml-0"
-            : "absolute -top-0.5 -right-0.5 h-4 min-w-4",
-        )}
-      >
-        {displayCount}
-      </span>
-    ) : null;
-
-  const trigger =
-    variant === "sidebar" ? (
-      <SidebarMenuButton
-        tooltip="Notifications"
-        className="relative cursor-pointer"
-        aria-label={ariaLabel}
-      >
-        <Bell className="h-4 w-4" />
-        <span className="truncate">Notifications</span>
-        {unreadBadge}
-      </SidebarMenuButton>
-    ) : (
-      <Button
-        variant="ghost"
-        size="icon"
-        className="relative"
-        aria-label={ariaLabel}
-      >
-        <Bell className="h-5 w-5" />
-        {unreadBadge}
-      </Button>
-    );
-
-  const panel = (
+  return (
     <PopoverContent
       className="w-80 p-0"
-      align={variant === "sidebar" ? "start" : "end"}
-      side={variant === "sidebar" ? "right" : "bottom"}
+      align={align}
+      side={side}
       sideOffset={8}
     >
       <div className="flex items-center justify-between p-3 border-b">
@@ -239,23 +198,5 @@ export function NotificationBell({ variant = "header" }: NotificationBellProps) 
         )}
       </ScrollArea>
     </PopoverContent>
-  );
-
-  if (variant === "sidebar") {
-    return (
-      <SidebarMenuItem>
-        <Popover>
-          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-          {panel}
-        </Popover>
-      </SidebarMenuItem>
-    );
-  }
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      {panel}
-    </Popover>
   );
 }

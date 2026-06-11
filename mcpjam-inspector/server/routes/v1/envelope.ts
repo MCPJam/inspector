@@ -64,6 +64,10 @@ export function mapErrorToV1(error: unknown): {
     const message = error instanceof Error ? error.message : String(error);
     return { code: "OAUTH_REQUIRED", message };
   }
+  if (isMcpMethodNotFound(error)) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { code: "FEATURE_NOT_SUPPORTED", message };
+  }
   const routeError = mapRuntimeError(error);
   if (
     routeError.code === ErrorCode.UNAUTHORIZED &&
@@ -88,6 +92,24 @@ function safeIsMcpAuthError(error: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * MCP JSON-RPC "Method not found" (-32601): the target server doesn't
+ * implement the requested primitive (e.g. `prompts/get` against a server
+ * that never declared the prompts capability). The public contract reserves
+ * FEATURE_NOT_SUPPORTED (422) for exactly this; without the branch it falls
+ * through the runtime classifier as a 500 INTERNAL_ERROR. Duck-typed on the
+ * numeric JSON-RPC code so it matches `McpError` across SDK copies.
+ */
+const JSONRPC_METHOD_NOT_FOUND = -32601;
+
+function isMcpMethodNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === JSONRPC_METHOD_NOT_FOUND
+  );
 }
 
 /** Hono onError handler for the v1 router. */

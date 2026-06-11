@@ -180,6 +180,100 @@ describe("v1 write routes", () => {
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
+    describe("inline test model validation", () => {
+      const inlineTest = (model: string, provider = "anthropic") => ({
+        title: "echo works",
+        query: "Use the echo tool to say hi",
+        runs: 1,
+        model,
+        provider,
+        expectedToolCalls: [],
+      });
+
+      function mockHappyCreate() {
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+      }
+
+      it("rejects a model the API cannot execute, naming the hosted ids", async () => {
+        // The exact failure mode that motivated this: a raw Anthropic API id
+        // is not hosted and has no BYOK key, so the run would 202 and then
+        // die with zero tokens and an opaque stream error.
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteName: "smoke", serverIds: ["s1"], tests: [inlineTest("claude-sonnet-4-6")] }
+        );
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          details?: { hostedModels?: string[] };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.details?.hostedModels).toContain(
+          "anthropic/claude-haiku-4.5"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("admits a hosted catalog id", async () => {
+        mockHappyCreate();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteName: "smoke",
+            serverIds: ["s1"],
+            tests: [inlineTest("anthropic/claude-haiku-4.5")],
+          }
+        );
+        expect(res.status).toBe(202);
+      });
+
+      it("admits an unknown id when the caller brings a provider key", async () => {
+        mockHappyCreate();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteName: "smoke",
+            serverIds: ["s1"],
+            tests: [inlineTest("claude-sonnet-4-6")],
+            modelApiKeys: { anthropic: "sk-ant-test" },
+          }
+        );
+        expect(res.status).toBe(202);
+      });
+
+      it("admits a cataloged BYOK id without a caller key (org keys may cover it)", async () => {
+        mockHappyCreate();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteName: "smoke",
+            serverIds: ["s1"],
+            tests: [inlineTest("claude-sonnet-4-5")],
+          }
+        );
+        expect(res.status).toBe(202);
+      });
+    });
+
     it("responds 202 with runId and detaches execution", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({
@@ -435,7 +529,7 @@ describe("v1 write routes", () => {
               title: "case",
               query: "do it",
               runs: 1,
-              model: "m",
+              model: "anthropic/claude-haiku-4.5",
               provider: "anthropic",
               expectedToolCalls: [],
             },

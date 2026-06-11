@@ -78,6 +78,32 @@ describe("mapErrorToV1 — OAUTH_REQUIRED promotion", () => {
   });
 });
 
+describe("mapErrorToV1 — FEATURE_NOT_SUPPORTED promotion", () => {
+  it("maps MCP -32601 Method-not-found errors to FEATURE_NOT_SUPPORTED", () => {
+    // Shape of the SDK's McpError: an Error carrying the numeric JSON-RPC
+    // code. prompts/get against a server with no prompts capability throws
+    // exactly this; it must NOT surface as a 500.
+    const err = Object.assign(new Error("MCP error -32601: Method not found"), {
+      code: -32601,
+    });
+
+    const result = mapErrorToV1(err);
+
+    expect(result.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(result.message).toContain("Method not found");
+  });
+
+  it("does not promote other JSON-RPC error codes", () => {
+    const err = Object.assign(new Error("MCP error -32602: Invalid params"), {
+      code: -32602,
+    });
+
+    const result = mapErrorToV1(err);
+
+    expect(result.code).toBe("INTERNAL_ERROR");
+  });
+});
+
 describe("mapErrorToV1 — passthrough", () => {
   it("maps a generic non-WebRouteError into INTERNAL_ERROR", () => {
     const result = mapErrorToV1(new Error("boom"));

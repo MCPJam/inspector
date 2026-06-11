@@ -225,6 +225,17 @@ export type {
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+// Loopback authorization-code capture + PKCE primitives, reused by the CLI's
+// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+export {
+  createInteractiveAuthorizationSession,
+  openUrlInBrowser,
+  type InteractiveAuthorizationSession,
+} from "./oauth-conformance/auth-strategies/interactive.js";
+export {
+  generateCodeChallenge,
+  generateRandomString,
+} from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 export type {
   OAuthAuthorizationRequestResult,

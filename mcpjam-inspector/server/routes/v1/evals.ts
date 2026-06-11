@@ -34,6 +34,12 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
+import {
+  getCanonicalModelId,
+  isMCPJamProvidedModel,
+  isModelSupported,
+  SUPPORTED_MODELS,
+} from "@/shared/types";
 
 const evals = new Hono();
 
@@ -58,6 +64,63 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   });
+
+// ── Model validation ─────────────────────────────────────────────────
+
+/**
+ * Providers whose model namespace we cannot enumerate (local/self-hosted
+ * runtimes). Tests targeting them skip catalog validation entirely.
+ */
+const OPEN_MODEL_PROVIDERS = new Set(["custom", "ollama"]);
+
+/**
+ * Reject inline tests whose model can never execute BEFORE creating the run.
+ * Without this, an unknown model id (e.g. a raw Anthropic API id like
+ * "claude-sonnet-4-6" instead of the catalog's hosted
+ * "anthropic/claude-haiku-4.5") is accepted with a 202, and the run
+ * "completes" as failed with zero tokens and an opaque stream error — the
+ * caller has no signal that the request itself was wrong.
+ *
+ * A test is admitted when any of these hold:
+ *  - it resolves to an MCPJam-provided (hosted) model — runs on org credits;
+ *  - the caller supplied a `modelApiKeys` entry for its provider — BYOK, the
+ *    provider validates the id itself;
+ *  - its provider's namespace is open (custom/ollama) — not enumerable;
+ *  - the id is in the shared catalog — org-level BYOK keys may cover it
+ *    (the runner resolves those; we can't see them at create time).
+ * Everything else is a VALIDATION_ERROR naming the test and suggesting the
+ * hosted ids for that provider.
+ */
+export function assertInlineTestModelsValid(
+  tests: ReadonlyArray<{ title: string; model: string; provider: string }>,
+  modelApiKeys: Record<string, string> | undefined
+): void {
+  for (const test of tests) {
+    const provider = test.provider.trim().toLowerCase();
+    if (OPEN_MODEL_PROVIDERS.has(provider)) continue;
+    const canonical = getCanonicalModelId(test.model, test.provider);
+    if (isMCPJamProvidedModel(canonical, test.provider)) continue;
+    if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
+    if (isModelSupported(canonical)) continue;
+
+    const hostedIds = SUPPORTED_MODELS.filter(
+      (m) =>
+        m.provider.toLowerCase() === provider &&
+        isMCPJamProvidedModel(String(m.id), m.provider)
+    ).map((m) => String(m.id));
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Unknown model "${test.model}" (provider "${test.provider}") in test "${test.title}". ` +
+        `Use a hosted model id, or pass modelApiKeys["${test.provider}"] to bring your own key.`,
+      {
+        model: test.model,
+        provider: test.provider,
+        ...(hostedIds.length > 0 ? { hostedModels: hostedIds } : {}),
+      }
+    );
+  }
+}
 
 // ── Concurrency gate ─────────────────────────────────────────────────
 
@@ -244,6 +307,10 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
       : (body.suiteRerun ?? false);
+
+  // Fail unknown models now, with a pointer to valid ids, rather than
+  // letting the detached run die later with an opaque stream error.
+  assertInlineTestModelsValid(body.tests, body.modelApiKeys);
 
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {

@@ -14,6 +14,7 @@ import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
+import cliAuthRoutes from "./routes/cli-auth/index.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -254,6 +255,13 @@ export function createHonoApp() {
     }),
   );
   app.route("/api/v1", v1Routes);
+
+  // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+  // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
+  // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
+  // set. Mirror of the mount in server/index.ts — both production entries
+  // must wire this up.
+  app.route("/api/cli/auth", cliAuthRoutes);
 
   // Health check
   app.get("/health", (c) => {

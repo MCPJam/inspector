@@ -149,9 +149,17 @@ catalog.get("/projects/:projectId/eval-suites", (c) =>
 // because the upstream merges personal + project-shared sessions and
 // `projectId` is an optional filter, not an owning scope.
 catalog.get("/chat-sessions", (c) =>
-  proxyConvexV1Read(c, "/v1/chat-sessions", (target) =>
-    forwardQueryParams(c, target, ["projectId", "status", "limit", "before"])
-  )
+  proxyConvexV1Read(c, "/v1/chat-sessions", (target) => {
+    forwardQueryParams(c, target, ["projectId", "status", "limit", "before"]);
+    // The public pagination contract is "pass the previous nextCursor as
+    // `cursor`"; the Convex upstream's parameter is `before`. Map it here —
+    // `cursor` wins over an explicit `before` so the documented pagination
+    // loop pages correctly instead of silently re-serving page one.
+    const cursor = c.req.query("cursor");
+    if (typeof cursor === "string" && cursor.length > 0) {
+      target.searchParams.set("before", cursor);
+    }
+  })
 );
 
 // GET /v1/projects/:projectId/chatboxes
