@@ -18,6 +18,7 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
+import { initElicitationCallback } from "./routes/mcp/elicitation";
 
 // Security imports
 import {
@@ -254,6 +255,12 @@ const mcpClientManager = new MCPClientManager(
     },
   }
 );
+// Register the global elicitation callback before any server connects.
+// buildCapabilities only advertises (and wires) elicitation when a handler
+// is already registered, so without this the first connections — including
+// ones with an explicit `clientCapabilities.elicitation` — silently drop
+// the capability, and task-augmented requests fail with "Method not found".
+initElicitationCallback(mcpClientManager);
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
