@@ -538,3 +538,171 @@ describe("registration-backed /proxy/token", () => {
     expect(body.message).toContain("no stored token endpoint");
   });
 });
+
+describe("POST /negative-tests", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-negtest-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  function buildApp(
+    resolver?: (args: {
+      registrationId: string;
+      bearerToken: string;
+    }) => Promise<{
+      clientSecret: string;
+      tokenEndpoint: string | null;
+      targetClientId: string | null;
+      scopes: string[] | null;
+    }>,
+  ) {
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: false,
+        resolveRegistrationSecret: resolver,
+      }),
+    );
+    return app;
+  }
+
+  const INLINE_BODY = {
+    audience: "https://auth.example.com",
+    resource: "https://mcp.example.com",
+    clientId: "mcpjam-debugger",
+    tokenEndpoint: "https://auth.example.com/oauth/token",
+  };
+
+  it("marks a case red when the auth server wrongly issues a token for a broken assertion", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(INLINE_BODY),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      results: Array<{ mode: string; verdict: string }>;
+      failures: number;
+    };
+    expect(body.results).toHaveLength(11);
+    expect(body.failures).toBe(11);
+    const expired = body.results.find((r) => r.mode === "expired");
+    expect(expired?.verdict).toBe("fail");
+  });
+
+  it("marks cases green when the auth server rejects broken assertions", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(INLINE_BODY),
+    });
+
+    const body = (await response.json()) as {
+      results: Array<{ verdict: string }>;
+      failures: number;
+    };
+    expect(body.failures).toBe(0);
+    expect(body.results.every((r) => r.verdict === "pass")).toBe(true);
+  });
+
+  it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return await new Promise<Response>((_resolve, reject) => {
+          setTimeout(() => {
+            const err = new Error("aborted");
+            err.name = "TimeoutError";
+            reject(err);
+          }, 5);
+        });
+      }
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(INLINE_BODY),
+    });
+
+    const body = (await response.json()) as {
+      results: Array<{ outcome: string; verdict: string }>;
+    };
+    expect(body.results).toHaveLength(11);
+    expect(body.results.some((r) => r.outcome === "timeout")).toBe(true);
+    expect(body.results.some((r) => r.verdict === "pass")).toBe(true);
+  });
+
+  it("rejects an mcpjam-issuer-only registration (no own auth server)", async () => {
+    const resolver = vi.fn(async () => ({
+      clientSecret: "x",
+      tokenEndpoint: null,
+      targetClientId: null,
+      scopes: null,
+    }));
+    const app = buildApp(resolver);
+
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        registrationId: "app_1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { message?: string };
+    expect(body.message).toContain("its own auth server");
+  });
+});

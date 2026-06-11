@@ -17,6 +17,8 @@ import { XAABootstrapDialog } from "./XAABootstrapDialog";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { XAARunChips } from "./XAARunChips";
+import { NegativeTestScorecard } from "./NegativeTestScorecard";
+import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
@@ -182,10 +184,20 @@ export function XAAFlowTab({
     [selectedRegistration, profile],
   );
 
+  // Target identity for the positive-run gate; "local-profile" is its own
+  // session-scoped key.
+  const targetKey = selectedRegistration?.id ?? "local-profile";
+
   // ── Telemetry (started / terminal completed, once per run) ─────────
   const completedFired = useRef(false);
   const authServerModeForTelemetry =
     selectedRegistration?.authServerMode ?? "own";
+
+  // In-memory: targets that have completed a successful flow this session.
+  // A page refresh clears it, re-locking the scorecard (§ negative-test gate).
+  const [positiveRunTargets, setPositiveRunTargets] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const fireFlowStarted = useCallback(() => {
     completedFired.current = false;
@@ -206,8 +218,77 @@ export function XAAFlowTab({
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
+      // A green run proves the user holds valid client credentials the AS
+      // issued — that authorizes broken-token testing against it.
+      setPositiveRunTargets((current) => {
+        if (current.has(targetKey)) return current;
+        const next = new Set(current);
+        next.add(targetKey);
+        return next;
+      });
     }
-  }, [flowState.currentStep, authServerModeForTelemetry]);
+  }, [flowState.currentStep, authServerModeForTelemetry, targetKey]);
+
+  // ── Negative-test scorecard input ───────────────────────────────────
+  const scorecard = useMemo((): {
+    input: NegativeTestsInput | null;
+    unavailableReason?: string;
+  } => {
+    const audience =
+      flowState.authzMetadata?.issuer ||
+      flowInput.authzServerIssuer ||
+      selectedRegistration?.issuer ||
+      "";
+    const resource =
+      flowState.resourceMetadata?.resource || flowInput.serverUrl || "";
+
+    if (selectedRegistration) {
+      if (selectedRegistration.authServerMode === "mcpjam") {
+        return {
+          input: null,
+          unavailableReason:
+            "The MCPJam test auth server validates its own assertions — there's nothing to fire broken tokens at.",
+        };
+      }
+      if (!audience || !resource) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run the flow once so the auth server issuer is known.",
+        };
+      }
+      return {
+        input: {
+          registrationId: selectedRegistration.id,
+          audience,
+          resource,
+          clientId: flowInput.clientId || undefined,
+          scope: flowInput.scope || undefined,
+        },
+      };
+    }
+
+    // Local profile: the token endpoint comes from discovery during a run.
+    if (!flowState.tokenEndpoint) {
+      return {
+        input: null,
+        unavailableReason:
+          "Run the flow first so the token endpoint is discovered.",
+      };
+    }
+    if (!audience || !resource) {
+      return { input: null };
+    }
+    return {
+      input: {
+        tokenEndpoint: flowState.tokenEndpoint,
+        audience,
+        resource,
+        clientId: flowInput.clientId || undefined,
+        scope: flowInput.scope || undefined,
+      },
+    };
+  }, [flowState, flowInput, selectedRegistration]);
 
   // ── Flow-state lifecycle ────────────────────────────────────────────
   useEffect(() => {
@@ -447,6 +528,12 @@ export function XAAFlowTab({
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+
+      <NegativeTestScorecard
+        input={scorecard.input}
+        unlocked={positiveRunTargets.has(targetKey)}
+        unavailableReason={scorecard.unavailableReason}
+      />
 
       <XAAConfigModal
         open={isConfigModalOpen}

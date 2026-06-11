@@ -67,6 +67,12 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
   XAAResourceAppsSection: () => <div data-testid="xaa-resource-apps-section" />,
 }));
 
+vi.mock("../xaa/NegativeTestScorecard", () => ({
+  NegativeTestScorecard: () => (
+    <div data-testid="xaa-negative-test-scorecard" />
+  ),
+}));
+
 vi.mock("../xaa/XAABootstrapDialog", () => ({
   XAABootstrapDialog: () => null,
 }));

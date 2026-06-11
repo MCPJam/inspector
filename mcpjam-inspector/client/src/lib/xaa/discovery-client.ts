@@ -79,3 +79,57 @@ export async function checkResourceHealth(
 
   return body;
 }
+
+export interface NegativeTestCase {
+  mode: string;
+  label: string;
+  expectedFailure: string;
+  outcome: "rejected" | "accepted" | "timeout" | "error";
+  verdict: "pass" | "fail" | "unknown";
+  status?: number;
+  detail?: string;
+}
+
+export interface NegativeTestsResult {
+  results: NegativeTestCase[];
+  failures: number;
+}
+
+export interface NegativeTestsInput {
+  audience: string;
+  resource: string;
+  subject?: string;
+  clientId?: string;
+  scope?: string;
+  tokenEndpoint?: string;
+  clientSecret?: string;
+  registrationId?: string;
+}
+
+/**
+ * Fire every deliberately-broken ID-JAG mode at the configured authorization
+ * server and report, per case, whether it correctly rejected the assertion.
+ * Registration-backed runs send only the registration id; the server resolves
+ * the stored secret and endpoint.
+ */
+export async function runNegativeTests(
+  input: NegativeTestsInput,
+): Promise<NegativeTestsResult> {
+  const response = await authFetch(`${XAA_API_BASE}/negative-tests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = (await response.json().catch(() => null)) as
+    | (NegativeTestsResult & { message?: string })
+    | null;
+
+  if (!response.ok || !body) {
+    throw new Error(
+      body?.message || `Negative tests failed (${response.status})`,
+    );
+  }
+
+  return body;
+}
