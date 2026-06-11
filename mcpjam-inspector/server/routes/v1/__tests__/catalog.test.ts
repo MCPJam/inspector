@@ -94,6 +94,24 @@ describe("v1 catalog read proxies", () => {
     }
   );
 
+  it("maps the public `cursor` param onto the upstream `before`", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await request(makeApp(), "/api/v1/chat-sessions?limit=2&cursor=999");
+    const [target] = fetchMock.mock.calls[0] as [URL];
+    expect(String(target)).toBe(
+      "https://convex-http.example.com/v1/chat-sessions?limit=2&before=999"
+    );
+  });
+
+  it("lets `cursor` win over an explicit `before`", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await request(makeApp(), "/api/v1/chat-sessions?before=123&cursor=999");
+    const [target] = fetchMock.mock.calls[0] as [URL];
+    expect(String(target)).toBe(
+      "https://convex-http.example.com/v1/chat-sessions?before=999"
+    );
+  });
+
   it("passes the upstream page body through verbatim", async () => {
     const page = {
       items: [{ id: "s_1", name: "echo", transportType: "http" }],

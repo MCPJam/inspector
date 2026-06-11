@@ -473,7 +473,7 @@
                     "title": "echo works",
                     "query": "Use the echo tool to say hi",
                     "runs": 1,
-                    "model": "claude-sonnet-4-6",
+                    "model": "anthropic/claude-haiku-4.5",
                     "provider": "anthropic",
                     "expectedToolCalls": [
                       { "toolName": "echo", "arguments": { "text": "hi" } }
@@ -1329,7 +1329,7 @@
           },
           "model": {
             "type": "string",
-            "description": "Model ID, e.g. `claude-sonnet-4-6`."
+            "description": "Model ID. Hosted-catalog ids use `provider/name` form (e.g. `anthropic/claude-haiku-4.5`) and run on org credits; provider-native ids require a matching `modelApiKeys` entry (BYOK). Unknown models are rejected with VALIDATION_ERROR at create time."
           },
           "provider": {
             "type": "string",
