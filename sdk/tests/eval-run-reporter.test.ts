@@ -147,16 +147,16 @@ describe("createEvalRunReporter", () => {
     await reporter.flush();
 
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/sdk/v1/evals/runs/start"
+      "https://example.com/api/v1/projects/default/eval-ingest/runs/start"
     );
     expect(fetchMock.mock.calls[1][0]).toBe(
-      "https://example.com/sdk/v1/evals/artifacts/upload-url"
+      "https://example.com/api/v1/projects/default/eval-ingest/artifacts/upload-url"
     );
     expect(fetchMock.mock.calls[2][0]).toBe(
       "https://upload.example.com/widget-1"
     );
     expect(fetchMock.mock.calls[3][0]).toBe(
-      "https://example.com/sdk/v1/evals/runs/iterations"
+      "https://example.com/api/v1/projects/default/eval-ingest/runs/iterations"
     );
 
     const appendBody = JSON.parse(fetchMock.mock.calls[3][1].body as string);

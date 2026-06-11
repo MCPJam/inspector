@@ -1,22 +1,30 @@
 ---
 title: "Save Results to MCPJam"
-description: "Retired — the legacy mcpjam_… key flow that uploaded eval results to the MCPJam dashboard"
+description: "Save eval results to the MCPJam dashboard with an MCPJam API key (sk_…) for tracking and CI visibility"
 icon: "cloud-upload"
 ---
 
 <Warning>
-**Retired.** Project API keys (`mcpjam_…`) have been shut down — existing keys no longer authenticate, new keys can't be generated, and the ingestion endpoints described on this page return `410 Gone`. Uploads will fail (the default auto-save path warns and continues) until reporting is re-built on **MCPJam API keys (`sk_…`)** — see [API keys](/reference/api-keys). Evals themselves still run and assert locally.
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys. The legacy project API keys (`mcpjam_…`) are retired and no longer work anywhere — see [API keys](/reference/api-keys).
 </Warning>
 
-Teams previously saved eval results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard. This page is kept as a reference for that retired flow.
+After running evals, you can save results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard.
 
 <Frame caption="CI Runs page showing eval suite accuracy, pass rate trends, per-model performance, and more">
   <img src="/images/ci-runs-overview.png" alt="CI Runs overview" />
 </Frame>
 
-## Setup (retired)
+## Setup
 
-Uploads were driven by the `MCPJAM_API_KEY` environment variable (a project API key, `mcpjam_…`). Those keys are retired and can no longer be created, so setting the variable no longer uploads anything — auto-save attempts fail with a warning and the run continues. Leave it unset in new code.
+Create an MCPJam API key (`sk_…`) under **Settings → API keys** and export it:
+
+```bash
+export MCPJAM_API_KEY=sk_...
+# Optional: file results under a specific project (defaults to your org's Default project).
+export MCPJAM_PROJECT_ID=<project id>
+```
+
+That's it — both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
@@ -25,7 +33,7 @@ Uploads were driven by the `MCPJAM_API_KEY` environment variable (a project API 
 
 ## Auto-Save from EvalTest
 
-When `MCPJAM_API_KEY` was set, `EvalTest.run()` automatically saved results (the `mcpjam:` options below now upload nothing — kept for reference):
+When `MCPJAM_API_KEY` is set, `EvalTest.run()` automatically saves results:
 
 ```typescript
 await test.run(agent, {

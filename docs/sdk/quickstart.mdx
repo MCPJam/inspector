@@ -199,9 +199,9 @@ You can also generate eval code directly from the MCPJam Inspector:
 
 The copied markdown is a ready-to-use prompt that includes your server's capabilities and the full `@mcpjam/sdk` API reference, so the LLM has everything it needs to write your eval tests.
 
-<Warning>
-Saving SDK eval results to MCPJam via `MCPJAM_API_KEY` is **retired** — project API keys (`mcpjam_…`) no longer work and the ingestion endpoints have been shut down. Evals still run and assert locally; see [API keys](/reference/api-keys) for details.
-</Warning>
+<Tip>
+To save results to the MCPJam Evals dashboard, set `MCPJAM_API_KEY` to an **MCPJam API key (`sk_…`)** from Settings → API keys and add a `mcpjam: { suiteName: "…" }` block to `run()`. The retired project API keys (`mcpjam_…`) no longer work — see [Saving Results](/sdk/concepts/saving-results).
+</Tip>
 
 ## Next Steps
 

@@ -55,7 +55,7 @@ describe("reportEvalResults", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses sdk.mcpjam.com when no baseUrl override is provided", async () => {
+  it("uses app.mcpjam.com when no baseUrl override is provided", async () => {
     delete process.env.MCPJAM_BASE_URL;
 
     const fetchMock = vi.fn().mockResolvedValue(
@@ -77,7 +77,64 @@ describe("reportEvalResults", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://sdk.mcpjam.com/sdk/v1/evals/report"
+      "https://app.mcpjam.com/api/v1/projects/default/eval-ingest/report"
+    );
+  });
+
+  it("files results under an explicit project id when provided", async () => {
+    delete process.env.MCPJAM_BASE_URL;
+    delete process.env.MCPJAM_PROJECT_ID;
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      project: "jd7abc123",
+      suiteName: "SDK smoke",
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://app.mcpjam.com/api/v1/projects/jd7abc123/eval-ingest/report"
+    );
+  });
+
+  it("falls back to MCPJAM_PROJECT_ID from the environment", async () => {
+    delete process.env.MCPJAM_BASE_URL;
+    process.env.MCPJAM_PROJECT_ID = "jd7envproj";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    try {
+      await reportEvalResults({
+        apiKey: "sk_test_key",
+        suiteName: "SDK smoke",
+        results: [{ caseTitle: "happy-path", passed: true }],
+      });
+    } finally {
+      delete process.env.MCPJAM_PROJECT_ID;
+    }
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://app.mcpjam.com/api/v1/projects/jd7envproj/eval-ingest/report"
     );
   });
 
@@ -103,7 +160,7 @@ describe("reportEvalResults", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://tough-cassowary-291.convex.site/sdk/v1/evals/report"
+      "https://tough-cassowary-291.convex.site/api/v1/projects/default/eval-ingest/report"
     );
   });
 
@@ -129,7 +186,7 @@ describe("reportEvalResults", () => {
     expect(result.runId).toBe("run_1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/sdk/v1/evals/report"
+      "https://example.com/api/v1/projects/default/eval-ingest/report"
     );
   });
 
@@ -498,10 +555,10 @@ describe("reportEvalResults", () => {
     expect(output.summary.total).toBe(201);
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/sdk/v1/evals/runs/start"
+      "https://example.com/api/v1/projects/default/eval-ingest/runs/start"
     );
     expect(fetchMock.mock.calls[3][0]).toBe(
-      "https://example.com/sdk/v1/evals/runs/finalize"
+      "https://example.com/api/v1/projects/default/eval-ingest/runs/finalize"
     );
   });
 
@@ -612,13 +669,13 @@ describe("reportEvalResults", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/sdk/v1/evals/artifacts/upload-url"
+      "https://example.com/api/v1/projects/default/eval-ingest/artifacts/upload-url"
     );
     expect(fetchMock.mock.calls[1][0]).toBe(
       "https://upload.example.com/widget-1"
     );
     expect(fetchMock.mock.calls[2][0]).toBe(
-      "https://example.com/sdk/v1/evals/report"
+      "https://example.com/api/v1/projects/default/eval-ingest/report"
     );
 
     const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
@@ -726,7 +783,7 @@ describe("reportEvalResults", () => {
     ).rejects.toMatchObject({
       attemptCount: 1,
       code: "EVAL_REPORTING_ERROR",
-      endpoint: "/sdk/v1/evals/report",
+      endpoint: "/api/v1/projects/default/eval-ingest/report",
       statusCode: 404,
     });
 
@@ -768,7 +825,7 @@ describe("reportEvalResults", () => {
         "Eval iteration limit reached. Resets at 2026-11-01T00:00:00.000Z.",
       attemptCount: 1,
       code: "EVAL_REPORTING_ERROR",
-      endpoint: "/sdk/v1/evals/report",
+      endpoint: "/api/v1/projects/default/eval-ingest/report",
       statusCode: 500,
     });
 
@@ -794,7 +851,7 @@ describe("reportEvalResults", () => {
       message: "Team plan billing limit reached.",
       attemptCount: 1,
       code: "EVAL_REPORTING_ERROR",
-      endpoint: "/sdk/v1/evals/report",
+      endpoint: "/api/v1/projects/default/eval-ingest/report",
       statusCode: 500,
     });
 

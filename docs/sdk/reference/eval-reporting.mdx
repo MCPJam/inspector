@@ -5,7 +5,7 @@ icon: "book"
 ---
 
 <Warning>
-**Retired.** Project API keys (`mcpjam_…`) have been shut down: the `/sdk/v1/evals/*` ingestion endpoints now return `410 Gone` for every request, keys can no longer be generated, and existing keys no longer authenticate. The APIs documented below still exist in the SDK but their uploads will fail until reporting is re-built on **MCPJam API keys (`sk_…`)** — see [API keys](/reference/api-keys). Evals themselves (`EvalTest`/`EvalSuite` runs and assertions) are unaffected.
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). The legacy project API keys (`mcpjam_…`) and their `/sdk/v1/evals/*` endpoints are retired — old SDK versions pointing there receive `410 Gone`. Upgrade `@mcpjam/sdk` to keep uploading.
 </Warning>
 
 The SDK provides APIs to save eval results to MCPJam for visualization in the CI Evals dashboard. Results can be saved automatically via `EvalTest`/`EvalSuite`, or manually using the APIs below.
@@ -14,8 +14,9 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MCPJAM_API_KEY` | Yes | - | Your MCPJam project API key |
-| `MCPJAM_BASE_URL` | No | `https://sdk.mcpjam.com` | MCPJam API base URL override |
+| `MCPJAM_API_KEY` | Yes | - | An MCPJam API key (`sk_…`) from Settings → API keys |
+| `MCPJAM_PROJECT_ID` | No | org's Default project | Project the results are filed under |
+| `MCPJAM_BASE_URL` | No | `https://app.mcpjam.com` | MCPJam API base URL override |
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
@@ -345,8 +346,9 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `enabled` | `boolean` | No | Enable/disable reporting (default: `true`) |
-| `apiKey` | `string` | No | MCPJam API key (falls back to `MCPJAM_API_KEY` env var) |
+| `apiKey` | `string` | No | MCPJam API key (`sk_…`; falls back to `MCPJAM_API_KEY` env var) |
 | `baseUrl` | `string` | No | MCPJam API base URL override (useful for internal development or tests) |
+| `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
 | `serverNames` | `string[]` | No | MCP server names being tested |

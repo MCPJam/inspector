@@ -3,17 +3,27 @@ import { CopyableCodeBlock } from "./copyable-code-block";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
-// Project API keys (mcpjam_…) are retired, so the quickstart no longer mints
-// a key or wires `mcpjam:` reporting into the demo test — evals run and
-// assert locally. Saving results to MCPJam returns once the SDK reporter
-// moves to sk_ keys.
+// Reporting uses MCPJam API keys (sk_…, Settings → API keys): set
+// MCPJAM_API_KEY and results auto-save to this project's Evals dashboard.
+// Leave it unset to run and assert purely locally. The retired project API
+// keys (mcpjam_…) no longer exist anywhere in this flow.
 export const SDK_EVAL_QUICKSTART_ENV = `export MCP_SERVER_URL=${LEARN_MCP_URL}
 export LLM_API_KEY=<your-llm-api-key>
-export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
+export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
+export MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam`;
 
-export const SDK_EVAL_QUICKSTART_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
+export function buildSdkEvalQuickstartDotenv(
+  projectId?: string | null
+): string {
+  return `MCP_SERVER_URL=${LEARN_MCP_URL}
 LLM_API_KEY=<your-llm-api-key>
-EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
+EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
+MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam${
+    projectId ? `\nMCPJAM_PROJECT_ID=${projectId} # this project` : ""
+  }`;
+}
+
+export const SDK_EVAL_QUICKSTART_DOTENV = buildSdkEvalQuickstartDotenv();
 
 /** Snippet strings exported for tests and consistency with copy targets. */
 export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
@@ -64,7 +74,12 @@ describe("MCP eval quickstart", () => {
           return r1.hasToolCall("greet") && r2.hasToolCall("greet");
         },
       });
-      await evalTest.run(agent, { iterations: 1 });
+      // With MCPJAM_API_KEY (sk_…) set, results auto-save to your MCPJam
+      // Evals dashboard; without it the run is purely local.
+      await evalTest.run(agent, {
+        iterations: 1,
+        mcpjam: { suiteName: "Learning server quickstart" },
+      });
       expect(evalTest.accuracy()).toBe(1);
     },
     90_000,
@@ -116,7 +131,7 @@ export type SdkEvalQuickstartProps = {
   projectId?: string | null;
 };
 
-export function SdkEvalQuickstart(_props: SdkEvalQuickstartProps) {
+export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
   return (
     <div className="w-full max-w-4xl space-y-3">
       {/* Step 1: Set up project */}
@@ -131,10 +146,15 @@ export function SdkEvalQuickstart(_props: SdkEvalQuickstartProps) {
       {/* Step 2: Set environment */}
       <StepCard step={2} title="Set environment">
         <CopyableCodeBlock
-          code={SDK_EVAL_QUICKSTART_DOTENV}
+          code={buildSdkEvalQuickstartDotenv(projectId)}
           copyLabel="Copy .env"
           toolbarLabel=".env"
         />
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          MCPJAM_API_KEY is an MCPJam API key (sk_…) from Settings → API keys.
+          Set it and eval results save to this project automatically — leave it
+          unset to run evals locally only.
+        </p>
         <div className="flex justify-end text-[11px] text-muted-foreground">
           <a
             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"

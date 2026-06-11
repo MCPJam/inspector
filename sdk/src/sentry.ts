@@ -40,6 +40,7 @@ export type EvalReportingFailureContext = {
   apiKey?: string;
   artifactFormat?: string;
   baseUrl?: string;
+  project?: string;
   bufferedCount?: number;
   entrypoint: string;
   framework?: string;
