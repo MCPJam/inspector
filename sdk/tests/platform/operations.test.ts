@@ -260,10 +260,7 @@ function makeClient(overrides: FixtureOverrides = {}): {
   return { client, fetchMock };
 }
 
-function callsTo(
-  fetchMock: ReturnType<typeof vi.fn>,
-  fragment: string
-): URL[] {
+function callsTo(fetchMock: ReturnType<typeof vi.fn>, fragment: string): URL[] {
   return fetchMock.mock.calls
     .map(([target]) => new URL(String(target)))
     .filter((url) => url.pathname.includes(fragment));
@@ -372,7 +369,9 @@ describe("listEvalSuiteRunsOperation", () => {
 
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).code).toBe("NOT_FOUND");
-    expect((error as PlatformApiError).message).toContain("Smoke (id: suite-1)");
+    expect((error as PlatformApiError).message).toContain(
+      "Smoke (id: suite-1)"
+    );
   });
 });
 
@@ -499,7 +498,7 @@ describe("eval run polling operations", () => {
     );
   });
 
-  it("requires the project the run belongs to", () => {
+  it("requires a non-blank project the run belongs to", () => {
     for (const operation of [
       getEvalRunOperation,
       listEvalRunIterationsOperation,
@@ -507,6 +506,12 @@ describe("eval run polling operations", () => {
       expect(operation.inputSchema.safeParse({ runId: "run-1" }).success).toBe(
         false
       );
+      // Whitespace-only must fail too — trimming it away would silently
+      // reintroduce the default-project guess this schema exists to prevent.
+      expect(
+        operation.inputSchema.safeParse({ project: "  ", runId: "run-1" })
+          .success
+      ).toBe(false);
     }
     expect(
       getEvalIterationTraceOperation.inputSchema.safeParse({
@@ -597,6 +602,27 @@ describe("listChatSessionsOperation", () => {
     expect(sessionsUrl?.searchParams.has("projectId")).toBe(false);
   });
 
+  it("treats a blank project filter as unfiltered instead of the default project", async () => {
+    const { client, fetchMock } = makeClient();
+
+    // The schema rejects blank selectors outright…
+    expect(
+      listChatSessionsOperation.inputSchema.safeParse({ project: "   " })
+        .success
+    ).toBe(false);
+
+    // …and raw execute() callers who bypass it still get the unfiltered
+    // listing rather than a silent most-recent-project filter.
+    const result = await listChatSessionsOperation.execute(
+      { project: "   " },
+      { client }
+    );
+
+    expect(result.project).toBeUndefined();
+    const sessionsUrl = callsTo(fetchMock, "/chat-sessions")[0];
+    expect(sessionsUrl?.searchParams.has("projectId")).toBe(false);
+  });
+
   it("resolves the project filter and maps cursor onto the wire", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -650,9 +676,7 @@ describe("operation catalog consistency", () => {
     expect(
       showServersOperation.inputSchema.safeParse({ project: "" }).success
     ).toBe(false);
-    expect(runEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
-      false
-    );
+    expect(runEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(false);
     expect(
       runEvalSuiteOperation.inputSchema.safeParse({ suite: "s", servers: [] })
         .success

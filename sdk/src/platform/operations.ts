@@ -54,6 +54,7 @@ const PROJECT_SELECTOR_DESCRIPTION =
 const listProjectsInput = z.object({
   organizationId: z
     .string()
+    .trim()
     .min(1)
     .optional()
     .describe("Restrict the listing to one organization."),
@@ -85,7 +86,12 @@ export const listProjectsOperation: PlatformOperation<
 };
 
 const projectScopedInput = z.object({
-  project: z.string().min(1).optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
 });
 
 export type ProjectScopedInput = z.infer<typeof projectScopedInput>;
@@ -296,8 +302,13 @@ export const listEvalSuitesOperation: PlatformOperation<
 };
 
 const evalSuiteScopedInput = z.object({
-  project: z.string().min(1).optional().describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   limit: z
     .number()
     .int()
@@ -345,10 +356,15 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
 };
 
 const runEvalSuiteInput = z.object({
-  project: z.string().min(1).optional().describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   servers: z
-    .array(z.string().min(1))
+    .array(z.string().trim().min(1))
     .min(1)
     .optional()
     .describe(
@@ -412,9 +428,10 @@ export const runEvalSuiteOperation: PlatformOperation<
 };
 
 const evalRunScopedInput = z.object({
-  project: z.string().min(1).describe(RUN_PROJECT_DESCRIPTION),
+  project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
   runId: z
     .string()
+    .trim()
     .min(1)
     .describe(
       "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
@@ -467,9 +484,7 @@ const evalRunIterationsInput = evalRunScopedInput.extend({
     .describe("Maximum number of iterations to return per page."),
 });
 
-export type ListEvalRunIterationsInput = z.infer<
-  typeof evalRunIterationsInput
->;
+export type ListEvalRunIterationsInput = z.infer<typeof evalRunIterationsInput>;
 
 export type ListEvalRunIterationsResult = {
   project: SelectedProjectInfo;
@@ -515,6 +530,7 @@ export const listEvalRunIterationsOperation: PlatformOperation<
 const evalIterationTraceInput = evalRunScopedInput.extend({
   iterationId: z
     .string()
+    .trim()
     .min(1)
     .describe("Iteration ID, as returned by list_eval_run_iterations."),
 });
@@ -625,8 +641,7 @@ async function resolveRunServers(
   }
 
   const defaults = page.items.filter(
-    (server) =>
-      server.enabled && server.transportType !== "stdio" && server.url
+    (server) => server.enabled && server.transportType !== "stdio" && server.url
   );
   if (defaults.length === 0) {
     throw resolutionError(
@@ -673,8 +688,13 @@ export const listChatboxesOperation: PlatformOperation<
 };
 
 const chatboxScopedInput = z.object({
-  project: z.string().min(1).optional().describe(PROJECT_SELECTOR_DESCRIPTION),
-  chatbox: z.string().min(1).describe("Chatbox name or ID."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  chatbox: z.string().trim().min(1).describe("Chatbox name or ID."),
 });
 
 export type GetChatboxInput = z.infer<typeof chatboxScopedInput>;
@@ -721,12 +741,18 @@ export const getChatboxOperation: PlatformOperation<
 const listChatSessionsInput = z.object({
   project: z
     .string()
+    .trim()
     .min(1)
     .optional()
     .describe(
       "Optional project filter (name or ID). When omitted, lists sessions across all accessible projects."
     ),
-  status: z.string().min(1).optional().describe("Filter by session status."),
+  status: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Filter by session status."),
   limit: z
     .number()
     .int()
@@ -763,8 +789,11 @@ export const listChatSessionsOperation: PlatformOperation<
     // Unlike the project-scoped reads, no default project is applied: the
     // unfiltered listing (personal + project-shared sessions) is the API's
     // own default and the more useful answer for "what was I working on?".
-    const project = input.project
-      ? (await resolveProjectOrThrow(client, input.project, signal)).project
+    // Trim again for raw execute() callers who bypass the schema — a blank
+    // selector must mean "unfiltered", never silently the default project.
+    const projectSelector = input.project?.trim();
+    const project = projectSelector
+      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
       : undefined;
     const page = await client.listChatSessions(
       {
