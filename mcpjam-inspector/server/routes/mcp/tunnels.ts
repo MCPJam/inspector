@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { tunnelManager } from "../../services/tunnel-manager";
-import { getTunnelRequests } from "../../services/tunnel-request-log";
+import {
+  clearTunnelRequests,
+  getTunnelRequests,
+} from "../../services/tunnel-request-log";
 import { LOCAL_SERVER_ADDR } from "../../config";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
@@ -327,7 +330,9 @@ tunnels.post("/create/:serverId", async (c) => {
       data.domainId,
       data.domain,
       authHeader,
-      c
+      c,
+      data.secretHash,
+      data.secretVersion
     );
 
     const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
@@ -513,6 +518,9 @@ tunnels.delete("/server/:serverId", async (c) => {
     // URL stays stable when the tunnel is recreated.
     await reportTunnelClosure(serverId, authHeader);
     tunnelManager.clearCredentials(serverId);
+    // The observability panel describes the closed listener — drop it so a
+    // future tunnel for this server starts with a clean history.
+    clearTunnelRequests(serverId);
     return c.json({ success: true, serverId });
   } catch (error: any) {
     logger.error("Error closing server-specific tunnel", error, { serverId });

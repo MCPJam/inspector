@@ -413,6 +413,16 @@ export function ServerConnectionCard({
       const errorMessage =
         error instanceof Error ? error.message : "Failed to rotate tunnel";
       toast.error(`Failed to rotate tunnel: ${errorMessage}`);
+      // A failed rotation may have already torn down the listener (the old
+      // secret dies at close). Re-sync with the server's live state so the
+      // card never offers a copyable URL that no longer works.
+      try {
+        const accessToken = await getAccessToken();
+        const liveTunnel = await getServerTunnel(server.name, accessToken);
+        setTunnelUrl(liveTunnel?.url ?? null);
+      } catch {
+        setTunnelUrl(null);
+      }
     } finally {
       setIsRotatingTunnel(false);
     }
