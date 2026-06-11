@@ -752,7 +752,7 @@ function lookupProviderApiKey(
 }
 
 function hasBaseUrls(baseUrls: BaseUrls): boolean {
-  return Boolean(baseUrls.ollama || baseUrls.azure);
+  return Boolean(baseUrls.ollama || baseUrls.azure || baseUrls.bedrock);
 }
 
 function resolveEvalModelRuntime(args: {

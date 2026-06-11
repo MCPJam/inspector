@@ -199,7 +199,8 @@ function isOrgManagedModel(
   }
 
   if (
-    provider.providerKey === "openrouter" &&
+    (provider.providerKey === "openrouter" ||
+      provider.providerKey === "bedrock") &&
     provider.selectedModels &&
     provider.selectedModels.length > 0
   ) {
@@ -421,6 +422,7 @@ function inferModelProviderFromId(modelId: string): ModelProvider {
   switch (providerPrefix) {
     case "anthropic":
     case "azure":
+    case "bedrock":
     case "openai":
     case "ollama":
     case "deepseek":

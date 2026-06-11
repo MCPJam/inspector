@@ -62,6 +62,7 @@ function formatToolCallsSummary(
 const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "anthropic",
   "azure",
+  "bedrock",
   "openai",
   "ollama",
   "deepseek",

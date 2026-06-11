@@ -155,6 +155,23 @@ export function buildAvailableModelsFromOrgConfig(
     models.push(...openRouterModels);
   }
 
+  // Amazon Bedrock: include selectedModels from org config. Like OpenRouter,
+  // the usable model set is org-specific (Bedrock model access is granted per
+  // AWS account), so SUPPORTED_MODELS has no static bedrock entries.
+  const bedrockConfig = orgConfig.providers.find(
+    (p) => p.providerKey === "bedrock" && p.enabled && p.hasSecret,
+  );
+  if (bedrockConfig?.selectedModels && bedrockConfig.selectedModels.length > 0) {
+    const bedrockModels: ModelDefinition[] = bedrockConfig.selectedModels.map(
+      (id) => ({
+        id,
+        name: id,
+        provider: "bedrock" as const,
+      }),
+    );
+    models.push(...bedrockModels);
+  }
+
   // Ollama: include configured modelIds so org-managed Ollama providers appear
   // in the model picker (SUPPORTED_MODELS has no static ollama entries since
   // models are dynamic and org-specific).
@@ -210,6 +227,8 @@ export function getProviderDisplayName(groupKey: string): string {
   switch (groupKey) {
     case "azure":
       return "Azure OpenAI";
+    case "bedrock":
+      return "Amazon Bedrock";
     case "anthropic":
       return "Anthropic";
     case "openai":

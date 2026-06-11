@@ -293,6 +293,11 @@ export function buildLlmRuntimeConfigFromOrgConfig(
       continue;
     }
 
+    if (provider.providerKey === "bedrock" && provider.baseUrl) {
+      runtime.baseUrls.bedrock = provider.baseUrl;
+      continue;
+    }
+
     if (
       provider.providerKey.startsWith("custom:") &&
       provider.baseUrl &&
@@ -758,6 +763,7 @@ export async function resolveSyntheticModelSource(args: {
 const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
   anthropic: "anthropic",
   azure: "azure",
+  bedrock: "bedrock",
   deepseek: "deepseek",
   google: "google",
   "meta-llama": "meta",

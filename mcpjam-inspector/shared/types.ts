@@ -95,6 +95,7 @@ export interface StreamingMessage {
 export type ModelProvider =
   | "anthropic"
   | "azure"
+  | "bedrock"
   | "openai"
   | "ollama"
   | "deepseek"

@@ -17,6 +17,7 @@ import type { TraceEnvelope } from "./trace-viewer-adapter";
 const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "anthropic",
   "azure",
+  "bedrock",
   "openai",
   "ollama",
   "deepseek",
