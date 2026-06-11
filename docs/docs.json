@@ -34,7 +34,6 @@
     "tabs": [
       {
         "tab": "Get Started",
-        "icon": "rocket",
         "pages": [
           "index",
           "getting-started",
@@ -47,7 +46,6 @@
       },
       {
         "tab": "Inspector",
-        "icon": "binoculars",
         "groups": [
           {
             "group": "Connect",
@@ -96,7 +94,6 @@
       },
       {
         "tab": "CLI",
-        "icon": "terminal",
         "groups": [
           {
             "group": "Guides",
@@ -121,7 +118,6 @@
       },
       {
         "tab": "SDK",
-        "icon": "code",
         "tag": "v1",
         "groups": [
           {
@@ -161,7 +157,6 @@
       },
       {
         "tab": "API",
-        "icon": "webhook",
         "tag": "Preview",
         "groups": [
           {
