@@ -23,6 +23,7 @@
  */
 
 import { existsSync } from "fs";
+import sharp from "sharp";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
   buildSandboxProxyWidgetCsp,
@@ -111,6 +112,16 @@ export interface HarnessBudgets {
   settleTimeoutMs: number;
   /** During render, wait this long for iframe load + bridge init. */
   renderTimeoutMs: number;
+  /**
+   * After the bridge handshakes, wait up to this long for the widget to
+   * actually PAINT before snapshotting. Handshaking is not painting:
+   * data-driven widgets (e.g. Excalidraw) only render after they receive tool
+   * data and fetch their code from a CDN, so without this the classifier races
+   * the first paint and renderability becomes a function of CDN cache warmth.
+   * Returns as soon as the widget paints, so only genuinely-blank widgets wait
+   * the full budget.
+   */
+  paintTimeoutMs: number;
   /** Circuit breaker: total screenshots per iteration. */
   totalScreenshotsPerIteration: number;
 }
@@ -120,6 +131,7 @@ export const DEFAULT_HARNESS_BUDGETS: HarnessBudgets = {
   screenshotMaxBytes: 256 * 1024,
   settleTimeoutMs: 2000,
   renderTimeoutMs: 3000,
+  paintTimeoutMs: 8000,
   totalScreenshotsPerIteration: 60,
 };
 
@@ -280,6 +292,26 @@ export function injectCspMeta(html: string, cspContent: string): string {
     return html.slice(0, at) + `<head>${tag}</head>` + html.slice(at);
   }
   return tag + html;
+}
+
+/**
+ * Pixel-level blank check: true when a screenshot is (near-)uniform, i.e. the
+ * widget has not painted any visible content. This is the ground truth the
+ * DOM-based `isDocumentBlank` cannot give — a `<canvas>` widget (Excalidraw)
+ * mounts its canvas element (a layout box, so "non-blank" to the DOM) well
+ * before it draws anything INTO it, so DOM-presence alone snapshots an empty
+ * canvas. A truly blank frame has per-channel stdev 0; any real content
+ * (even a single small button) pushes it well past the threshold.
+ */
+const PAINT_STDEV_THRESHOLD = 2;
+async function isScreenshotBlank(png: Buffer): Promise<boolean> {
+  try {
+    const { channels } = await sharp(png).stats();
+    return channels.every((c) => c.stdev < PAINT_STDEV_THRESHOLD);
+  } catch {
+    // If we can't analyze it, don't claim it's blank (fail toward "painted").
+    return false;
+  }
 }
 
 // SEP-1865 host capabilities are declared as OBJECTS (an empty `{}` means
@@ -651,6 +683,18 @@ export class McpAppBrowserHarness {
       };
     }
 
+    // `pageResult.blank` is a DOM check sampled the instant the bridge
+    // handshakes — but handshaking is not painting, and DOM-presence is not
+    // pixels. Data-driven / canvas widgets (Excalidraw) only draw after they
+    // receive tool data and fetch their code from a CDN, seconds later. Whenever
+    // the bridge is live, wait for an actual painted frame (up to the paint
+    // budget) BEFORE snapshotting, so the screenshot shows the rendered widget
+    // and classification doesn't hinge on CDN cache warmth or DOM timing.
+    let blank = pageResult.blank;
+    if (pageResult.bridgeInitialized) {
+      blank = await this.waitForWidgetPaint();
+    }
+
     let screenshotBase64: string | undefined;
     try {
       screenshotBase64 = await this.captureScreenshot();
@@ -675,7 +719,7 @@ export class McpAppBrowserHarness {
 
     let status: WidgetRenderStatus;
     if (!pageResult.bridgeInitialized) status = "bridge_timeout";
-    else if (pageResult.blank) status = "blank_screenshot";
+    else if (blank) status = "blank_screenshot";
     else status = "rendered";
 
     // Only a fully-rendered widget stays mounted for Computer Use. Any other
@@ -699,6 +743,41 @@ export class McpAppBrowserHarness {
         : undefined,
       elapsedMs: Date.now() - started,
     };
+  }
+
+  /**
+   * Wait until the widget has actually PAINTED pixels (not just mounted DOM),
+   * up to the paint budget; returns the final blank state. Polls real
+   * screenshots because `isDocumentBlank` reports a `<canvas>` widget as
+   * non-blank the moment its canvas element mounts — before it has drawn — so
+   * DOM-presence alone races the first real paint and snapshots an empty canvas.
+   * Returns as soon as the frame is non-blank, so a fast widget adds little
+   * latency and only a genuinely-blank one waits the whole budget.
+   */
+  private async waitForWidgetPaint(): Promise<boolean> {
+    const page = this.page;
+    if (!page) return true;
+    const deadline = Date.now() + this.budgets.paintTimeoutMs;
+    let blank = true;
+    while (Date.now() < deadline) {
+      const png = await page.screenshot({ type: "png" }).catch(() => null);
+      blank = png ? await isScreenshotBlank(png) : true;
+      if (!blank) break;
+      await page.waitForTimeout(150);
+    }
+    if (!blank) {
+      // The frame went non-blank on its FIRST visible pixels, but a widget like
+      // Excalidraw is still mid-draw then (fills appear before borders/text/
+      // arrows). Let outstanding subresource fetches settle, plus a short grace,
+      // so the snapshot is the finished widget — not a half-painted one.
+      await page
+        .waitForLoadState("networkidle", {
+          timeout: this.budgets.settleTimeoutMs,
+        })
+        .catch(() => {});
+      await page.waitForTimeout(400);
+    }
+    return blank;
   }
 
   /* ---- interact ---- */

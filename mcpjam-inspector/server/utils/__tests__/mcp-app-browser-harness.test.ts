@@ -56,15 +56,33 @@ const app = new App({ name: "fixture-blank", version: "1.0.0" });
 app.connect().catch(() => {});
 `;
 
+// A guest that handshakes immediately but only PAINTS after a delay — mimics a
+// data/CDN-driven widget (e.g. Excalidraw) that finishes loading well after the
+// bridge handshake completes. The blank-first-frame must not classify as blank.
+const DELAYED_PAINT_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-delayed", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  await new Promise((r) => setTimeout(r, 600));
+  const d = document.createElement("div");
+  d.textContent = "painted late";
+  d.style.cssText = "font-size:40px;padding:60px";
+  document.body.appendChild(d);
+})();
+`;
+
 // Plain HTML with no guest SDK: paints text but never handshakes -> bridge_timeout.
 const STATIC_NO_BRIDGE_HTML = `<!doctype html><html><head><meta charset="utf-8"></head><body><p style="font-size:24px;padding:20px">Static content, no bridge handshake</p></body></html>`;
 
 let buttonHtml = "";
 let blankHtml = "";
+let delayedHtml = "";
 
 beforeAll(async () => {
   buttonHtml = guestHtml(await bundleGuest(BUTTON_GUEST_SRC));
   blankHtml = guestHtml(await bundleGuest(BLANK_GUEST_SRC));
+  delayedHtml = guestHtml(await bundleGuest(DELAYED_PAINT_GUEST_SRC));
 }, 60_000);
 
 const harnesses: McpAppBrowserHarness[] = [];
@@ -80,7 +98,13 @@ function makeHarness(
   );
   const h = new McpAppBrowserHarness({
     callTool,
-    budgets: { renderTimeoutMs: 1200, settleTimeoutMs: 1200 },
+    // Small paintTimeoutMs keeps the genuinely-blank fixture fast (it waits the
+    // whole paint budget before concluding blank).
+    budgets: {
+      renderTimeoutMs: 1200,
+      settleTimeoutMs: 1200,
+      paintTimeoutMs: 800,
+    },
     ...overrides,
   }) as McpAppBrowserHarness & { calls: typeof calls };
   h.calls = calls;
@@ -163,6 +187,28 @@ describe("McpAppBrowserHarness — render classification", () => {
       html: blankHtml,
     });
     expect(obs.status).toBe("blank_screenshot");
+    expect(obs.bridgeInitialized).toBe(true);
+  }, 30_000);
+
+  it("waits for a late paint instead of snapshotting a blank first frame", async () => {
+    // The widget handshakes immediately but only paints ~600ms later. Sampling
+    // blankness the instant the bridge handshakes (the old behavior) would
+    // mislabel it blank_screenshot; the paint budget must let it settle so a
+    // data/CDN-driven widget isn't a false negative based on load timing.
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1500,
+        settleTimeoutMs: 1200,
+        paintTimeoutMs: 3000,
+      },
+    });
+    const obs = await h.renderWidget({
+      toolCallId: "tc-late",
+      toolName: "late",
+      serverId: "s1",
+      html: delayedHtml,
+    });
+    expect(obs.status).toBe("rendered");
     expect(obs.bridgeInitialized).toBe(true);
   }, 30_000);
 
