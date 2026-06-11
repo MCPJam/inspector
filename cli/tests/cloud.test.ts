@@ -184,11 +184,15 @@ async function startCloudFixture(): Promise<{
       res.end(JSON.stringify({ items: SERVERS }));
       return;
     }
-    if (url.pathname === "/api/v1/projects/proj-alpha/servers/srv-ready/doctor") {
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/servers/srv-ready/doctor"
+    ) {
       res.end(JSON.stringify(READY_DOCTOR));
       return;
     }
-    if (url.pathname === "/api/v1/projects/proj-alpha/servers/srv-oauth/doctor") {
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/servers/srv-oauth/doctor"
+    ) {
       res.statusCode = 401;
       res.end(
         JSON.stringify({
@@ -230,6 +234,47 @@ async function startCloudFixture(): Promise<{
   };
 }
 
+async function startDelayedProjectsFixture(delayMs: number): Promise<{
+  baseUrl: string;
+  close: () => Promise<void>;
+}> {
+  const server: Server = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+      // drain body
+    }
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+
+    if (url.pathname === "/api/v1/projects") {
+      setTimeout(() => {
+        if (!res.destroyed) {
+          res.end(JSON.stringify({ items: PROJECTS }));
+        }
+      }, delayMs);
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end(JSON.stringify({ code: "NOT_FOUND", message: "no route" }));
+  });
+
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
+}
+
 function cloudArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
@@ -243,13 +288,41 @@ function cloudArgv(fixtureUrl: string, ...args: string[]): string[] {
   ];
 }
 
+test("cloud commands honor the global timeout option", async () => {
+  const fixture = await startDelayedProjectsFixture(100);
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...cloudArgv(fixture.baseUrl, "projects", "list"),
+          "--timeout",
+          "20",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stderr);
+    assert.equal(payload.error.code, "TIMEOUT");
+    assert.match(payload.error.message, /20ms/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("cloud projects list emits items as JSON and a table as human output", async () => {
   const fixture = await startCloudFixture();
   try {
     const jsonRun = await captureProcessOutput(() =>
-      main([...cloudArgv(fixture.baseUrl, "projects", "list"), "--format", "json"], {
-        telemetry: telemetryDisabled,
-      }),
+      main(
+        [...cloudArgv(fixture.baseUrl, "projects", "list"), "--format", "json"],
+        {
+          telemetry: telemetryDisabled,
+        },
+      ),
     );
     assert.equal(jsonRun.result.exitCode, 0);
     const payload = JSON.parse(jsonRun.stdout);
@@ -262,7 +335,11 @@ test("cloud projects list emits items as JSON and a table as human output", asyn
 
     const humanRun = await captureProcessOutput(() =>
       main(
-        [...cloudArgv(fixture.baseUrl, "projects", "list"), "--format", "human"],
+        [
+          ...cloudArgv(fixture.baseUrl, "projects", "list"),
+          "--format",
+          "human",
+        ],
         { telemetry: telemetryDisabled },
       ),
     );
@@ -281,7 +358,13 @@ test("cloud servers list resolves the project by name", async () => {
     const run = await captureProcessOutput(() =>
       main(
         [
-          ...cloudArgv(fixture.baseUrl, "servers", "list", "--project", "alpha"),
+          ...cloudArgv(
+            fixture.baseUrl,
+            "servers",
+            "list",
+            "--project",
+            "alpha",
+          ),
           "--format",
           "json",
         ],
@@ -329,7 +412,11 @@ test("cloud servers status maps doctor outcomes onto per-server statuses", async
   try {
     const run = await captureProcessOutput(() =>
       main(
-        [...cloudArgv(fixture.baseUrl, "servers", "status"), "--format", "json"],
+        [
+          ...cloudArgv(fixture.baseUrl, "servers", "status"),
+          "--format",
+          "json",
+        ],
         { telemetry: telemetryDisabled },
       ),
     );
@@ -375,7 +462,11 @@ test("cloud servers status renders a human summary", async () => {
   try {
     const run = await captureProcessOutput(() =>
       main(
-        [...cloudArgv(fixture.baseUrl, "servers", "status"), "--format", "human"],
+        [
+          ...cloudArgv(fixture.baseUrl, "servers", "status"),
+          "--format",
+          "human",
+        ],
         { telemetry: telemetryDisabled },
       ),
     );

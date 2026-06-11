@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import {
   listProjectsOperation,
   listProjectServersOperation,
+  PlatformApiError,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
@@ -30,22 +31,42 @@ function addCloudOptions(command: Command): Command {
 
 async function runCloudCommand<TOutput>(
   options: CloudOptions,
+  timeoutMs: number,
   execute: (context: {
     client: ReturnType<typeof buildPlatformClient>["client"];
+    signal: AbortSignal;
   }) => Promise<TOutput>,
 ): Promise<TOutput> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort(
+      new PlatformApiError(
+        `Request timed out after ${timeoutMs}ms`,
+        "TIMEOUT",
+        {
+          status: 0,
+        },
+      ),
+    );
+  }, timeoutMs);
+  timeoutHandle.unref?.();
+
   try {
-    const { client } = buildPlatformClient(options);
-    return await execute({ client });
+    const { client } = buildPlatformClient({ ...options, timeoutMs });
+    return await execute({ client, signal: controller.signal });
   } catch (error) {
     throw toCliError(error);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
 export function registerCloudCommands(program: Command): void {
   const cloud = program
     .command("cloud")
-    .description("Operate the MCP servers saved in your hosted MCPJam projects");
+    .description(
+      "Operate the MCP servers saved in your hosted MCPJam projects",
+    );
 
   const projects = cloud
     .command("projects")
@@ -55,8 +76,11 @@ export function registerCloudCommands(program: Command): void {
     projects.command("list").description("List the projects you can access"),
   ).action(async (options: CloudOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const result = await runCloudCommand(options, ({ client }) =>
-      listProjectsOperation.execute({}, { client }),
+    const result = await runCloudCommand(
+      options,
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        listProjectsOperation.execute({}, { client, signal }),
     );
 
     if (globalOptions.format === "human") {
@@ -80,11 +104,14 @@ export function registerCloudCommands(program: Command): void {
       ),
   ).action(async (options: CloudOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const result = await runCloudCommand(options, ({ client }) =>
-      listProjectServersOperation.execute(
-        { project: options.project },
-        { client },
-      ),
+    const result = await runCloudCommand(
+      options,
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        listProjectServersOperation.execute(
+          { project: options.project },
+          { client, signal },
+        ),
     );
 
     if (globalOptions.format === "human") {
@@ -106,8 +133,14 @@ export function registerCloudCommands(program: Command): void {
       ),
   ).action(async (options: CloudOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const payload = await runCloudCommand(options, ({ client }) =>
-      showServersOperation.execute({ project: options.project }, { client }),
+    const payload = await runCloudCommand(
+      options,
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        showServersOperation.execute(
+          { project: options.project },
+          { client, signal },
+        ),
     );
 
     if (globalOptions.format === "human") {
