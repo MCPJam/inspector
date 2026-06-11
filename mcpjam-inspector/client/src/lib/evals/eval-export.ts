@@ -172,7 +172,8 @@ export function buildSdkInstallSnippet(): string {
 
 export function buildSdkEnvSnippet(
   serverIds: string[],
-  serverEntries: Record<string, ServerWithName | undefined>
+  serverEntries: Record<string, ServerWithName | undefined>,
+  projectId?: string | null
 ): SdkEnvSnippetResult {
   const serverConnections = buildServerConnections(serverIds, serverEntries);
   const httpConnections = serverConnections.filter(
@@ -194,6 +195,9 @@ export function buildSdkEnvSnippet(
     "export LLM_API_KEY=<your-llm-api-key>",
     "# Optional: an MCPJam API key (sk_…, Settings → API keys) auto-saves results to your Evals dashboard.",
     "export MCPJAM_API_KEY=<your sk_… key>",
+    // Pin uploads to the project this export came from; without it they
+    // land in the org's Default project.
+    ...(projectId ? [`export MCPJAM_PROJECT_ID=${projectId}`] : []),
   ];
 
   if (httpConnections.length > 0) {

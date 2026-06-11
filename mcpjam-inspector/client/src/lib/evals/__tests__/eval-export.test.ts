@@ -125,6 +125,15 @@ describe("eval-export", () => {
     // keys must never resurface in generated snippets.
     expect(envSnippet.snippet).toContain("export MCPJAM_API_KEY=<your sk_");
     expect(envSnippet.snippet).not.toContain("mcpjam_");
+    // No projectId given → no pin; uploads fall back to the Default project.
+    expect(envSnippet.snippet).not.toContain("MCPJAM_PROJECT_ID");
+  });
+
+  it("pins exported env snippets to the project the export came from", () => {
+    const envSnippet = buildSdkEnvSnippet([], {}, "jd7fromexport");
+    expect(envSnippet.snippet).toContain(
+      "export MCPJAM_PROJECT_ID=jd7fromexport",
+    );
   });
 
   it("exports multi-turn code where an unasserted first turn passes without tool calls", () => {

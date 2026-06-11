@@ -1279,6 +1279,7 @@ export function SuiteIterationsView({
           }
         }}
         scope={exportState?.scope ?? "suite"}
+        projectId={projectId}
         suite={suite}
         cases={exportState?.cases ?? []}
         serverEntries={appState.servers}
