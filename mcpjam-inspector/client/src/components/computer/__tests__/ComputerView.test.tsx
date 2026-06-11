@@ -91,4 +91,50 @@ describe("ComputerView", () => {
       expect(deleteComputer).toHaveBeenCalledWith({ projectId: "p1" })
     );
   });
+
+  it("does not offer Delete once the computer is deleted", () => {
+    mockStatus = { computerId: "c1", status: "deleted", provider: "e2b" };
+    const { queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByText("Delete")).toBeNull();
+  });
+
+  it("shows a retry/close pane (not a stuck spinner) when the computer errors with the terminal open", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByText, queryByTestId, rerender } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    expect(queryByTestId("terminal-stub")).toBeTruthy();
+
+    mockStatus = {
+      computerId: "c1",
+      status: "error",
+      provider: "e2b",
+      lastError: "kaboom",
+    };
+    rerender(<ComputerView projectId="p1" isAuthenticated />);
+
+    expect(queryByTestId("terminal-stub")).toBeNull();
+    expect(queryByText(/Starting your computer/i)).toBeNull();
+    expect(getByText("Try again")).toBeTruthy();
+    expect(getByText("Close")).toBeTruthy();
+  });
+
+  it("shows a 'no longer available' pane when the computer disappears with the terminal open", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByText, queryByTestId, rerender } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    expect(queryByTestId("terminal-stub")).toBeTruthy();
+
+    mockStatus = null; // removed out from under us (e.g. membership revoked)
+    rerender(<ComputerView projectId="p1" isAuthenticated />);
+
+    expect(queryByTestId("terminal-stub")).toBeNull();
+    expect(queryByText(/Starting your computer/i)).toBeNull();
+    expect(getByText(/no longer available/i)).toBeTruthy();
+  });
 });

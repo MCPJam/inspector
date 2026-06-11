@@ -456,6 +456,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <HostsRoute />;
     case "host-compare":
       return <HostCompareRoute />;
+    case "computer":
+      return <ComputerRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":

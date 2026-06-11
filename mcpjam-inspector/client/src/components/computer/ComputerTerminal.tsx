@@ -52,6 +52,11 @@ export function ComputerTerminal({
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Guards against a token mint resolving after the user navigated away.
   const disposedRef = useRef(false);
+  // Bumped on every (re)connect so callbacks from a superseded WebSocket —
+  // a late token mint, a buffered onOutput/onEvent, the old socket's onClose,
+  // or a stale ping tick — can detect they belong to a dead generation and
+  // bail before touching xterm or React state.
+  const connGenRef = useRef(0);
 
   const [state, setState] = useState<TerminalState>("connecting");
   const [detail, setDetail] = useState<string>("");
@@ -67,6 +72,12 @@ export function ComputerTerminal({
 
   const connect = useCallback(async () => {
     if (disposedRef.current) return;
+    // Claim this generation before tearing down the previous socket: the old
+    // connection's close() fires its onClose synchronously, and the bump makes
+    // that callback recognize itself as stale instead of flipping us to
+    // "disconnected" right as we start reconnecting.
+    const myGen = ++connGenRef.current;
+    const isStale = () => disposedRef.current || myGen !== connGenRef.current;
     teardownConnection();
     setState("connecting");
     setDetail("");
@@ -77,22 +88,26 @@ export function ComputerTerminal({
     try {
       token = await mintToken();
     } catch (err) {
-      if (disposedRef.current) return;
+      if (isStale()) return;
       setState("error");
       setDetail(
         err instanceof Error ? err.message : "Could not start the terminal."
       );
       return;
     }
-    if (disposedRef.current) return;
+    if (isStale()) return;
 
     fitRef.current?.fit();
     const conn = openTerminalConnection({
       token,
       cols: term.cols,
       rows: term.rows,
-      onOutput: (bytes) => term.write(bytes),
+      onOutput: (bytes) => {
+        if (isStale()) return;
+        term.write(bytes);
+      },
       onEvent: (event) => {
+        if (isStale()) return;
         if (event.type === "ready") {
           setState("connected");
           term.focus();
@@ -105,7 +120,7 @@ export function ComputerTerminal({
         }
       },
       onClose: (code, reason) => {
-        if (disposedRef.current) return;
+        if (isStale()) return;
         setState((prev) =>
           prev === "exited" || prev === "error" ? prev : "disconnected"
         );
@@ -113,7 +128,10 @@ export function ComputerTerminal({
       },
     });
     connRef.current = conn;
-    pingRef.current = setInterval(() => conn.ping(), PING_INTERVAL_MS);
+    pingRef.current = setInterval(() => {
+      if (isStale()) return;
+      conn.ping();
+    }, PING_INTERVAL_MS);
   }, [mintToken, teardownConnection]);
 
   // Create the xterm instance once; wire input + resize; auto-connect.

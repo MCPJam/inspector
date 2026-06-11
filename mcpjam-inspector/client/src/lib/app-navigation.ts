@@ -245,6 +245,11 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   // from "clients" so the sidebar's first-segment isActive resolution
   // doesn't light up Connect when this is the active route.
   "host-compare",
+  // Project Computers tab — a peer of the connect views (Servers/Host/
+  // Compare). Its own first segment so return-target normalization and
+  // activeTab resolution treat /computer as a known route, not a fallback
+  // to Servers.
+  "computer",
 ]);
 
 function isSpecialEntryPathname(pathname: string): boolean {

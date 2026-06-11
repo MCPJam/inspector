@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { Loader2, TerminalSquare, Trash2 } from "lucide-react";
+import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputerStatus,
@@ -40,7 +40,13 @@ export function ComputerView({
 
   const liveStatus = status === undefined ? undefined : status?.status ?? null;
   const isReady = liveStatus === "ready";
-  const hasComputer = liveStatus !== null && liveStatus !== undefined;
+  // "Gone" = no computer row, or one that's been (or is being) torn down.
+  // Nothing to delete and nothing for an open terminal to attach to.
+  const isGone =
+    liveStatus === null ||
+    liveStatus === "deleted" ||
+    liveStatus === "deleting";
+  const hasComputer = liveStatus !== undefined && !isGone;
 
   const mintToken = useCallback(async () => {
     if (!effectiveProjectId) throw new Error("No project selected.");
@@ -96,6 +102,82 @@ export function ComputerView({
       </Empty>
     );
   }
+
+  const renderTerminalPane = () => {
+    if (!terminalOpen) {
+      return (
+        <PaneMessage dashed>
+          Open the terminal to start using your computer.
+        </PaneMessage>
+      );
+    }
+    if (isReady) {
+      return (
+        <ComputerTerminal
+          mintToken={mintToken}
+          themeMode={terminalTheme}
+          className="h-full"
+        />
+      );
+    }
+    if (starting) {
+      return (
+        <PaneMessage>
+          <span className="inline-flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Starting your computer…
+          </span>
+        </PaneMessage>
+      );
+    }
+    if (liveStatus === "error") {
+      return (
+        <PaneMessage>
+          <span>{status?.lastError || "The computer hit an error."}</span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void openTerminal()}
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              Try again
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setTerminalOpen(false)}
+            >
+              Close
+            </Button>
+          </div>
+        </PaneMessage>
+      );
+    }
+    if (isGone) {
+      return (
+        <PaneMessage>
+          This computer is no longer available.
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setTerminalOpen(false)}
+          >
+            Close
+          </Button>
+        </PaneMessage>
+      );
+    }
+    // requested | provisioning | waking | hibernating | undefined (loading)
+    return (
+      <PaneMessage>
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Starting your computer…
+        </span>
+      </PaneMessage>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -168,26 +250,7 @@ export function ComputerView({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1">
-        {terminalOpen && isReady ? (
-          <ComputerTerminal
-            mintToken={mintToken}
-            themeMode={terminalTheme}
-            className="h-full"
-          />
-        ) : terminalOpen ? (
-          <div className="flex h-full items-center justify-center rounded-md border bg-muted/20 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Starting your computer…
-            </span>
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center rounded-md border border-dashed bg-muted/10 text-sm text-muted-foreground">
-            Open the terminal to start using your computer.
-          </div>
-        )}
-      </div>
+      <div className="min-h-0 flex-1">{renderTerminalPane()}</div>
     </div>
   );
 }
@@ -195,6 +258,24 @@ export function ComputerView({
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+function PaneMessage({
+  children,
+  dashed = false,
+}: {
+  children: React.ReactNode;
+  dashed?: boolean;
+}) {
+  return (
+    <div
+      className={`flex h-full flex-col items-center justify-center gap-3 rounded-md border text-sm text-muted-foreground ${
+        dashed ? "border-dashed bg-muted/10" : "bg-muted/20"
+      }`}
+    >
       {children}
     </div>
   );
