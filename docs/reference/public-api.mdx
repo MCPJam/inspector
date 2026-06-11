@@ -38,6 +38,9 @@ What you can do with it today:
 - **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **List a project's chatboxes** — name, access mode, attached servers, and
+  share link — and **read one chatbox's settings**: model, system prompt,
+  tool-approval policy, and resolved servers
 - **Run eval suites asynchronously** — create a run, get a `202` + `runId`
   immediately, then poll status, per-iteration results (tool calls, token
   usage, latency), and full traces. Runs appear live in the hosted UI,
@@ -211,6 +214,13 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
 | `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
+
+**Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../chatboxes` | List the project's published chatboxes: name, access mode, attached servers, share link |
+| `GET .../chatboxes/{chatboxId}` | One chatbox's settings: model, system prompt, tool-approval policy, resolved servers |
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)

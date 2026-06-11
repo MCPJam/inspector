@@ -17,6 +17,7 @@ import prompts from "./prompts.js";
 import resources from "./resources.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
+import chatboxes from "./chatboxes.js";
 import oauth from "./oauth.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
@@ -48,6 +49,7 @@ v1.route("/", prompts);
 v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
+v1.route("/", chatboxes);
 v1.route("/", oauth);
 
 v1.onError((error, c) => v1OnError(error, c));

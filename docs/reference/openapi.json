@@ -38,6 +38,10 @@
       "description": "Asynchronous eval suite runs: create with 202, poll status, iterations, and traces."
     },
     {
+      "name": "Chatboxes",
+      "description": "Read-only access to the chatboxes published from a project: listing, settings, attached servers, and share links."
+    },
+    {
       "name": "OAuth",
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     }
@@ -686,6 +690,56 @@
           "504": { "$ref": "#/components/responses/Timeout" }
         }
       }
+    },
+    "/projects/{projectId}/chatboxes": {
+      "get": {
+        "operationId": "listChatboxes",
+        "tags": ["Chatboxes"],
+        "summary": "List a project's chatboxes",
+        "description": "The chatboxes published from this project — name, access mode, attached servers, and share link. Read-only.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's chatboxes.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatboxPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/chatboxes/{chatboxId}": {
+      "get": {
+        "operationId": "getChatbox",
+        "tags": ["Chatboxes"],
+        "summary": "Get a chatbox",
+        "description": "One chatbox's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A chatbox that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/chatboxId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chatbox settings.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatboxDetail" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -730,6 +784,13 @@
         "in": "path",
         "required": true,
         "description": "Eval suite ID, as returned by `POST /eval-runs`.",
+        "schema": { "type": "string" }
+      },
+      "chatboxId": {
+        "name": "chatboxId",
+        "in": "path",
+        "required": true,
+        "description": "Chatbox ID, as returned by the project's chatbox list.",
         "schema": { "type": "string" }
       }
     },
@@ -1383,6 +1444,102 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/Prompt" }
           }
+        }
+      },
+      "ChatboxLink": {
+        "type": "object",
+        "description": "Share link for the chatbox. The URL embeds the access token; visible to any caller who can read the chatbox (the same audience that sees it in the hosted UI).",
+        "required": ["path", "url"],
+        "properties": {
+          "path": { "type": "string", "description": "App-relative share path." },
+          "url": { "type": "string", "description": "Absolute share URL." }
+        }
+      },
+      "ChatboxServer": {
+        "type": "object",
+        "description": "A server attached to the chatbox. Chatboxes attach HTTP servers only, so `url` is the server's endpoint.",
+        "required": ["id", "name", "useOAuth"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "url": { "type": ["string", "null"], "description": "HTTP endpoint of the server." },
+          "useOAuth": { "type": "boolean" }
+        }
+      },
+      "Chatbox": {
+        "type": "object",
+        "description": "Summary of a published chatbox, as returned by the list endpoint.",
+        "required": ["id", "name", "serverCount", "serverNames"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "mode": {
+            "type": ["string", "null"],
+            "description": "Who can use the chatbox.",
+            "enum": ["project_members", "invited_only", "anyone_with_link", null]
+          },
+          "hostStyle": {
+            "type": ["string", "null"],
+            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+          },
+          "hostId": {
+            "type": ["string", "null"],
+            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+          },
+          "hostName": { "type": ["string", "null"] },
+          "serverCount": { "type": "integer" },
+          "serverNames": { "type": "array", "items": { "type": "string" } },
+          "link": {
+            "oneOf": [{ "$ref": "#/components/schemas/ChatboxLink" }, { "type": "null" }]
+          },
+          "createdAt": { "type": ["number", "null"], "description": "Unix epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"], "description": "Unix epoch milliseconds." }
+        }
+      },
+      "ChatboxDetail": {
+        "type": "object",
+        "description": "A chatbox's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "required": ["id", "name", "serverCount", "serverNames", "requireToolApproval", "servers"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "mode": {
+            "type": ["string", "null"],
+            "description": "Who can use the chatbox.",
+            "enum": ["project_members", "invited_only", "anyone_with_link", null]
+          },
+          "hostStyle": {
+            "type": ["string", "null"],
+            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+          },
+          "hostId": {
+            "type": ["string", "null"],
+            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+          },
+          "hostName": { "type": ["string", "null"] },
+          "serverCount": { "type": "integer" },
+          "serverNames": { "type": "array", "items": { "type": "string" } },
+          "link": {
+            "oneOf": [{ "$ref": "#/components/schemas/ChatboxLink" }, { "type": "null" }]
+          },
+          "createdAt": { "type": ["number", "null"], "description": "Unix epoch milliseconds." },
+          "updatedAt": { "type": ["number", "null"], "description": "Unix epoch milliseconds." },
+          "modelId": { "type": ["string", "null"], "description": "Model the chatbox chats with." },
+          "systemPrompt": { "type": ["string", "null"] },
+          "temperature": { "type": ["number", "null"] },
+          "requireToolApproval": { "type": "boolean" },
+          "servers": { "type": "array", "items": { "$ref": "#/components/schemas/ChatboxServer" } }
+        }
+      },
+      "ChatboxPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Chatbox" } }
         }
       }
     },
