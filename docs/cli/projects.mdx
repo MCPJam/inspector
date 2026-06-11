@@ -1,0 +1,151 @@
+---
+title: "Hosted Projects"
+description: "List and health-check the MCP servers saved in your hosted MCPJam projects"
+icon: "folder"
+---
+
+The `projects` command group connects the CLI to your hosted MCPJam projects. Use it to list projects, inspect the servers saved in a project, and run per-server health checks — all from the terminal or CI.
+
+## Authentication
+
+Platform commands authenticate via `--api-key`, the `MCPJAM_API_KEY` environment variable, or a stored session from `mcpjam login`. The CLI tries them in that order.
+
+```bash
+# Explicit key
+mcpjam projects list --api-key sk_...
+
+# Environment variable
+MCPJAM_API_KEY=sk_... mcpjam projects list
+
+# Stored login session
+mcpjam login   # once
+mcpjam projects list
+```
+
+## Commands
+
+### `projects list`
+
+List all projects you can access.
+
+```bash
+mcpjam projects list
+```
+
+Human output renders a table with project ID, name, and last-updated timestamp. JSON output is the operation payload verbatim, including pagination fields such as `nextCursor`.
+
+```
+ID          NAME    UPDATED
+proj-alpha  Alpha   2026-06-11T00:03:20.000Z
+proj-beta   Beta    2026-06-11T00:01:40.000Z
+
+2 project(s).
+```
+
+### `projects servers`
+
+List the servers saved in a project.
+
+```bash
+# Most recently updated project (default)
+mcpjam projects servers
+
+# Specific project by name or ID
+mcpjam projects servers --project my-project
+mcpjam projects servers --project proj-abc123
+```
+
+Human output shows a table with server ID, name, transport type, URL, and enabled status. JSON output includes the resolved project and an `otherProjects` hint listing other accessible projects.
+
+### `projects status`
+
+Health-check every server in a project. The CLI calls the hosted doctor endpoint for each HTTP server concurrently and maps the results to per-server statuses.
+
+```bash
+# Most recently updated project (default)
+mcpjam projects status
+
+# Specific project
+mcpjam projects status --project my-project
+```
+
+Human output renders a per-server status line with a glyph, name, status label, URL, and optional detail, followed by a summary:
+
+```
+Project: Alpha (proj-alpha)
+
+✓ Ready Server [reachable] https://ready.example.com/mcp
+    Server: ready-server v2.0.0
+    Primitives: tools 1, resources 0, prompts 0
+✗ Unreachable Server [unreachable] https://down.example.com/mcp
+    Connection refused
+! Limited Server [error] https://limited.example.com/mcp
+    RATE_LIMITED — Retry after 7s
+- Stdio Server [skipped]
+
+Summary: 1 reachable, 1 unreachable, 1 skipped, 1 error(s).
+```
+
+Status glyphs:
+
+| Glyph | Status | Meaning |
+|-------|--------|---------|
+| `✓` | `reachable` | Server responded and initialized successfully |
+| `✗` | `unreachable` | Server did not respond |
+| `-` | `skipped` | Stdio servers are not health-checked remotely |
+| `!` | `error` | Doctor call failed (e.g. rate-limited, unexpected error) |
+
+JSON output is the `show_servers` operation payload verbatim. The `summary` field contains counts for each status, which you can use for CI gating:
+
+```bash
+# Parse the summary from JSON output
+mcpjam projects status --project my-project --format json \
+  | jq '.summary'
+```
+
+```json
+{
+  "reachable": 2,
+  "unreachable": 0,
+  "skipped": 1,
+  "error": 0
+}
+```
+
+<Note>
+`projects status` exits with code `0` even when servers are unreachable or errored — it is a status report, not an assertion. Use `jq` or similar to gate on the `summary` counts in CI.
+</Note>
+
+## Flags
+
+All `projects` commands accept these flags in addition to the [global flags](/cli/overview#global-flags):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL |
+
+`projects servers` and `projects status` also accept:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--project <id-or-name>` | Most recently updated project | Project name or ID |
+
+## CI usage
+
+Use `--format json` and parse `summary` to gate on project health in CI:
+
+```yaml
+- name: Check project status
+  run: |
+    STATUS=$(npx -y @mcpjam/cli@latest projects status \
+      --project my-project \
+      --format json)
+    UNREACHABLE=$(echo "$STATUS" | jq '.summary.unreachable')
+    if [ "$UNREACHABLE" -gt 0 ]; then
+      echo "::error::$UNREACHABLE server(s) unreachable"
+      exit 1
+    fi
+  env:
+    MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+```
