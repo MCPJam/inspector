@@ -476,8 +476,16 @@ export function PlaygroundMain({
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
 
-  // Device config for frame sizing
-  const deviceConfig = useMemo(() => {
+  // Device config for frame sizing. "fill" (the default) takes the whole
+  // panel — no host renders chat inside a fixed-size frame, so emulation
+  // presets are opt-in.
+  const deviceConfig = useMemo<{
+    width: number | string;
+    height: number | string;
+  }>(() => {
+    if (storeDeviceType === "fill") {
+      return { width: "100%", height: "100%" };
+    }
     if (storeDeviceType === "custom") {
       return {
         ...CUSTOM_DEVICE_BASE,
@@ -2759,7 +2767,9 @@ export function PlaygroundMain({
   const showFullscreenChatOverlay =
     displayMode === "fullscreen" &&
     isWidgetFullscreen &&
-    storeDeviceType === "desktop" &&
+    // "fill" is the desktop-like default layout — it keeps the overlay
+    // composer/chat affordance fullscreen widgets had under "desktop".
+    (storeDeviceType === "fill" || storeDeviceType === "desktop") &&
     !isWidgetFullTakeover;
 
   useEffect(() => {

@@ -2,7 +2,7 @@
  * Shared picker bodies for ClientContextHeader popovers.
  */
 
-import { Settings2 } from "lucide-react";
+import { Maximize2, Settings2 } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -17,11 +17,12 @@ import type {
   CustomViewport,
   CspMode,
   DeviceType,
+  PresetDeviceType,
 } from "@/stores/ui-playground-store";
 
 type PresetEntry = [
-  Exclude<DeviceType, "custom">,
-  (typeof PRESET_DEVICE_CONFIGS)[Exclude<DeviceType, "custom">],
+  PresetDeviceType,
+  (typeof PRESET_DEVICE_CONFIGS)[PresetDeviceType],
 ];
 
 export function DevicePickerBody({
@@ -43,6 +44,23 @@ export function DevicePickerBody({
 }) {
   return (
     <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => {
+          setDeviceType("fill");
+          onPickPreset?.();
+        }}
+        className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors hover:bg-accent ${
+          deviceType === "fill" ? "bg-accent text-accent-foreground" : ""
+        }`}
+      >
+        <Maximize2 className="h-3.5 w-3.5" />
+        <span>Fill</span>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          Full window
+        </span>
+      </button>
+
       {(Object.entries(PRESET_DEVICE_CONFIGS) as PresetEntry[]).map(
         ([type, config]) => {
           const Icon = config.icon;

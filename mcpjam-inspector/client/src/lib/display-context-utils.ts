@@ -14,7 +14,13 @@ export function useCurrentDisplayContext(): DisplayContext {
   return {
     theme: globals.theme,
     displayMode: globals.displayMode,
-    deviceType: deviceType === "custom" ? undefined : deviceType,
+    // "fill" and "custom" are playground-only sizing modes; the persisted
+    // DisplayContext union (and its Convex validator) only accepts the
+    // mobile/tablet/desktop presets, so they serialize as undefined.
+    deviceType:
+      deviceType === "custom" || deviceType === "fill"
+        ? undefined
+        : deviceType,
     viewport:
       deviceType === "custom"
         ? { width: customViewport.width, height: customViewport.height }

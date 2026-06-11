@@ -22,6 +22,7 @@ import {
   Cpu,
   Globe,
   Hand,
+  Maximize2,
   Moon,
   MousePointer2,
   Settings2,
@@ -74,6 +75,11 @@ export { PRESET_DEVICE_CONFIGS } from "@/components/shared/client-context-consta
 
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
+};
+
+const FILL_DEVICE_CONFIG = {
+  label: "Fill",
+  icon: Maximize2,
 };
 
 /** Muted toolbar hints (`design-system/tooltip`): popover chrome, avoids primary “CTA” orange. */
@@ -231,6 +237,9 @@ export function ClientContextHeader({
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
   const deviceConfig = useMemo(() => {
+    if (deviceType === "fill") {
+      return FILL_DEVICE_CONFIG;
+    }
     if (deviceType === "custom") {
       return {
         ...CUSTOM_DEVICE_BASE,
@@ -301,9 +310,11 @@ export function ClientContextHeader({
                 >
                   {DeviceIcon ? <DeviceIcon className="h-3.5 w-3.5" /> : null}
                   <span className="whitespace-nowrap">{deviceConfig.label}</span>
-                  <span className="text-[10px] text-muted-foreground @max-[1020px]/playground-header:hidden">
-                    {deviceConfig.width}x{deviceConfig.height}
-                  </span>
+                  {"width" in deviceConfig ? (
+                    <span className="text-[10px] text-muted-foreground @max-[1020px]/playground-header:hidden">
+                      {deviceConfig.width}x{deviceConfig.height}
+                    </span>
+                  ) : null}
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
