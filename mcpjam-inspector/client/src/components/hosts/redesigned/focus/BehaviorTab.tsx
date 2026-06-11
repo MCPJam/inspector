@@ -156,6 +156,7 @@ export function BehaviorTab({
                 onModelChange={(model) => update({ modelId: String(model.id) })}
                 disabled={readOnly}
                 align="end"
+                analyticsLocation="client_builder"
               />
             </div>
           }
