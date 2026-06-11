@@ -30,6 +30,16 @@ import {
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
+import {
+  createBrowserSessionContext,
+  type BrowserSessionContext,
+} from "../browser-session-context.js";
+import {
+  serializeBrowserStepsForBackend,
+  serializeRenderObservationsForBackend,
+  toBrowserStepPayload,
+  toObservationPayload,
+} from "../browser-artifact-serialization.js";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import {
   evalTraceSnapshotToPayload,
@@ -462,6 +472,11 @@ async function runOneSession(args: {
   const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
+  // Browser-rendered MCP App pipeline (same machinery as eval iterations):
+  // declared before the try so the finally can dispose a launched Chromium
+  // on every exit. Construction is cheap; Chromium launches lazily on the
+  // first widget render, so sessions that never touch an MCP App pay nothing.
+  let browser: BrowserSessionContext | undefined;
 
   try {
     const built = await managerFactory();
@@ -516,6 +531,18 @@ async function runOneSession(args: {
       ...(builtInTools ? { builtInTools } : {}),
     });
 
+    // One browser context per session: renders MCP App tool results in the
+    // headless harness (render observations for every model) and, for Claude
+    // assistant models, adds the `computer` / `finish_widget` tools so the
+    // simulated assistant can interact with rendered widgets (interaction
+    // steps). `injectOpenAiCompat` is omitted to match the snapshot capture
+    // below — the chatbox runtime config doesn't carry the flag.
+    browser = createBrowserSessionContext({
+      model: String(modelDefinition.id),
+      mcpClientManager: manager,
+      logScope: "sessionSimulation",
+    });
+
     let messageHistory: ModelMessage[] = [];
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
       [];
@@ -546,6 +573,13 @@ async function runOneSession(args: {
       } as ModelMessage);
       lastTranscript.push({ role: "user", content: next.message });
 
+      // Stamp artifacts with this persona turn and start it with a clean
+      // widget surface — a widget kept mounted by the previous turn must not
+      // be advertised/targeted before this turn's own MCP App tool runs
+      // (same per-turn hygiene as the eval runners).
+      browser.setActivePromptIndex(turn);
+      await browser.dismissCarriedWidget();
+
       const {
         history: updatedHistory,
         turnTrace,
@@ -558,7 +592,18 @@ async function runOneSession(args: {
         sourceType: "chatbox",
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
-        tools: prepared.allTools,
+        // `computer` / `finish_widget` merge into the advertised set; the
+        // prepareAdvertisedTools hook hides them until a widget is mounted.
+        tools: { ...prepared.allTools, ...browser.computerWidgetTools },
+        hooks: {
+          onToolCall: (event) => browser!.noteToolCallInput(event),
+          onToolResult: (event) => browser!.handleEngineToolResult(event),
+          ...(browser.prepareAdvertisedTools
+            ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
+            : {}),
+          onToolResultChunk: (chunk) =>
+            browser!.handleDirectToolResultChunk(chunk),
+        },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
         mcpClientManager: manager,
@@ -657,6 +702,20 @@ async function runOneSession(args: {
         chatboxId,
         accessVersion,
       });
+
+      // Persist this turn's browser-rendered artifacts (render observations
+      // + Computer Use steps) — additive to the inert HTML snapshots above,
+      // which keep powering the viewer's interactive Data/Sandbox iframe.
+      // Best-effort like the snapshot capture; the session row exists (the
+      // turn persist above just ran), so there's no /ingest-chat race here.
+      await persistBrowserArtifactsForTurn({
+        browser,
+        convexAuthToken,
+        chatSessionId,
+        chatboxId,
+        accessVersion,
+        promptIndex: turn,
+      });
     }
 
     if (!anyTurnPersisted) {
@@ -719,6 +778,19 @@ async function runOneSession(args: {
     });
     return "failed";
   } finally {
+    // Tear down the browser harness (and its headless Chromium, if launched)
+    // before the manager: the harness's widget bridge dispatches tools/call
+    // through the manager, so it must die first.
+    if (browser) {
+      try {
+        await browser.dispose();
+      } catch (err) {
+        logger.warn("[sessionSimulation.runner] browser dispose failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (dispose) {
       try {
         await dispose();
@@ -842,6 +914,83 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
       }
     })
   );
+}
+
+/**
+ * Drain the browser session context's artifacts collected during this turn
+ * (render observations + Computer Use interaction steps), upload screenshots,
+ * and persist via `chatSessions:recordBrowserArtifacts` — the synthetic
+ * sibling of the eval finalizer's artifact hand-off. Idempotent backend
+ * upserts (`(sessionId, toolCallId)` / `(sessionId, toolCallId, stepIndex)`)
+ * make a retried turn-write safe.
+ *
+ * Best-effort end-to-end, mirroring the widget-snapshot capture above: any
+ * failure is logged and swallowed — never aborts the synthetic run. (The
+ * drained rows are dropped on failure; the next turn's drain only carries
+ * new artifacts. Screenshots are the only loss — statuses for re-rendered
+ * widgets re-upsert on later renders.)
+ */
+async function persistBrowserArtifactsForTurn(args: {
+  browser: BrowserSessionContext;
+  convexAuthToken: string;
+  chatSessionId: string;
+  chatboxId: string;
+  accessVersion: number | undefined;
+  promptIndex: number;
+}): Promise<void> {
+  const { observations, steps } = args.browser.drainNewArtifacts();
+  if (observations.length === 0 && steps.length === 0) {
+    return;
+  }
+
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    logger.warn(
+      "[sessionSimulation.runner] CONVEX_URL not set; skipping browser artifact persist",
+      { chatSessionId: args.chatSessionId, chatboxId: args.chatboxId }
+    );
+    return;
+  }
+
+  try {
+    const convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(args.convexAuthToken);
+
+    // Serialize uploads the transient base64 screenshots → blob ids; the
+    // payload mappers strip the per-row promptIndex (the mutation stamps the
+    // batch-level value server-side).
+    const serializedObservations = (
+      await serializeRenderObservationsForBackend(observations, convexClient)
+    ).map(toObservationPayload);
+    const serializedSteps = (
+      await serializeBrowserStepsForBackend(steps, convexClient)
+    ).map(toBrowserStepPayload);
+
+    await convexClient.mutation(
+      "chatSessions:recordBrowserArtifacts" as any,
+      {
+        chatboxId: args.chatboxId,
+        ...(args.accessVersion !== undefined
+          ? { accessVersion: args.accessVersion }
+          : {}),
+        chatSessionId: args.chatSessionId,
+        promptIndex: args.promptIndex,
+        ...(serializedObservations.length
+          ? { widgetRenderObservations: serializedObservations }
+          : {}),
+        ...(serializedSteps.length
+          ? { browserInteractionSteps: serializedSteps }
+          : {}),
+      }
+    );
+  } catch (err) {
+    logger.warn("[sessionSimulation.runner] browser artifact persist failed", {
+      chatSessionId: args.chatSessionId,
+      observations: observations.length,
+      steps: steps.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 // `SyntheticModelSource` is imported from `org-model-config.ts` so the
