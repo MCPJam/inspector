@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { getModelById } from "@/shared/types";
+import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   validateAppToolEntries,
@@ -178,9 +178,11 @@ chatV2.post("/", async (c) => {
       }
     }
     // `modelId` stays a special case — the resolver yields the resolved
-    // string, but chat needs to lift it to a `ModelDefinition` via
-    // catalog lookup (built-in hit → full def; miss → swap id only,
-    // keep body provider fields).
+    // string, and `buildSyntheticModelDefinition` lifts it (catalog hit →
+    // full def; miss → provider inferred from the id shape). The provider
+    // must come from the host id, never the body model: org-only ids
+    // (Bedrock, custom:NAME) would otherwise inherit the body's provider
+    // and route to the wrong runtime.
     if (
       isChatboxSession &&
       hostRuntimeConfig &&
@@ -188,21 +190,14 @@ chatV2.post("/", async (c) => {
       resolvedExecution.modelId !== modelDefinition.id
     ) {
       const hostModelId = resolvedExecution.modelId;
-      const hostModel = getModelById(hostModelId);
-      if (hostModel) {
-        logger.warn(
-          "[chat-v2] client model differs from host; using host model",
-          { chatboxId, body: modelDefinition.id, host: hostModelId }
-        );
-        modelDefinition = hostModel;
-      } else {
-        logger.warn("[chat-v2] host model not in catalog; swapping id only", {
-          chatboxId,
-          body: modelDefinition.id,
-          host: hostModelId,
-        });
-        modelDefinition = { ...modelDefinition, id: hostModelId };
-      }
+      const hostModel = buildSyntheticModelDefinition(hostModelId);
+      logger.warn("[chat-v2] client model differs from host; using host model", {
+        chatboxId,
+        body: modelDefinition.id,
+        host: hostModelId,
+        provider: hostModel.provider,
+      });
+      modelDefinition = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
     const temperature = resolvedExecution.temperature;
