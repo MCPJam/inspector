@@ -26,6 +26,7 @@ export const routePaths = {
   servers: "/servers",
   hosts: "/hosts",
   hostCompare: "/host-compare",
+  computer: "/computer",
   registry: "/registry",
   tools: "/tools",
   resources: "/resources",
@@ -62,7 +63,7 @@ export function buildHostsPath(hostId?: string | null): string {
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */
 export function buildHostComparePath(
-  hostIds?: ReadonlyArray<string> | null,
+  hostIds?: ReadonlyArray<string> | null
 ): string {
   if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
   const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);

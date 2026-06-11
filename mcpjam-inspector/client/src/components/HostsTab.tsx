@@ -42,7 +42,7 @@ export function HostsTab({
     projectId,
   });
   const [addServerSlotEl, setAddServerSlotEl] = useState<HTMLDivElement | null>(
-    null,
+    null
   );
   // Brand shell variables apply to the server list body so cards match the
   // emulated host canvas; the tab chrome uses the app background (same as
@@ -60,10 +60,10 @@ export function HostsTab({
         ? getChatboxShellStyle(
             previewedHostStyle,
             themeMode,
-            previewedChatUiOverride,
+            previewedChatUiOverride
           )
         : undefined,
-    [previewedHostStyle, previewedChatUiOverride, themeMode],
+    [previewedHostStyle, previewedChatUiOverride, themeMode]
   );
   // Reset host selection only when the project actually changes mid-session,
   // not on first mount — otherwise a deep-link like `/hosts/:hostId` gets
@@ -117,70 +117,74 @@ export function HostsTab({
 
   return (
     <HostsConnectViewPhaseContext.Provider value={viewPhase}>
-    <LayoutGroup id="connect-servers-host">
-    <div className="relative h-full min-h-0 overflow-hidden">
-      <AnimatePresence initial={false} mode="sync">
-        {selectedHostId ? (
-          <motion.div
-            key="host-canvas"
-            initial={{ opacity: 0, y: 18, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 18, scale: 0.97 }}
-            transition={SNAPPY_RAIL}
-            className="absolute inset-0 [transform-origin:50%_30%]"
-          >
-            <HostBuilderView
-              hostId={selectedHostId}
-              projectId={projectId}
-            />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="host-browse"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={SNAPPY_RAIL}
-            className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
-          >
-            <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
-              <ConnectViewHeader
-                value="servers"
-                previewedHostId={previewedHostId}
-                onChange={(next) => {
-                  // `onSelectHost` is wired to `handleSelectHost` in
-                  // HostsRoute, which itself calls `navigate(buildHostsPath(...))`
-                  // — calling `navigate` here too pushes a duplicate
-                  // history entry, breaking the browser Back button.
-                  if (next === "host" && previewedHostId) {
-                    onSelectHost(previewedHostId);
-                  } else if (next === "servers") {
-                    navigate(routePaths.servers);
-                  } else if (next === "compare") {
-                    navigate(buildHostComparePath());
-                  }
-                }}
-                rightSlot={
-                  <div
-                    ref={setAddServerSlotEl}
-                    className="flex min-w-0 flex-wrap items-center justify-center gap-3 md:justify-end"
-                    data-testid="hosts-tab-add-server-slot"
-                  />
-                }
-              />
-              <div
-                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
-                style={browseShellStyle}
-                data-host-style={previewedHostStyle ?? undefined}
+      <LayoutGroup id="connect-servers-host">
+        <div className="relative h-full min-h-0 overflow-hidden">
+          <AnimatePresence initial={false} mode="sync">
+            {selectedHostId ? (
+              <motion.div
+                key="host-canvas"
+                initial={{ opacity: 0, y: 18, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 18, scale: 0.97 }}
+                transition={SNAPPY_RAIL}
+                className="absolute inset-0 [transform-origin:50%_30%]"
               >
-                <div className="min-h-0 flex-1">{serversTabElement}</div>
-              </div>
-            </HostsConnectAddServerSlotContext.Provider>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-    </LayoutGroup>
+                <HostBuilderView
+                  hostId={selectedHostId}
+                  projectId={projectId}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="host-browse"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={SNAPPY_RAIL}
+                className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
+              >
+                <HostsConnectAddServerSlotContext.Provider
+                  value={addServerSlotEl}
+                >
+                  <ConnectViewHeader
+                    value="servers"
+                    previewedHostId={previewedHostId}
+                    onChange={(next) => {
+                      // `onSelectHost` is wired to `handleSelectHost` in
+                      // HostsRoute, which itself calls `navigate(buildHostsPath(...))`
+                      // — calling `navigate` here too pushes a duplicate
+                      // history entry, breaking the browser Back button.
+                      if (next === "host" && previewedHostId) {
+                        onSelectHost(previewedHostId);
+                      } else if (next === "servers") {
+                        navigate(routePaths.servers);
+                      } else if (next === "compare") {
+                        navigate(buildHostComparePath());
+                      } else if (next === "computer") {
+                        navigate(routePaths.computer);
+                      }
+                    }}
+                    rightSlot={
+                      <div
+                        ref={setAddServerSlotEl}
+                        className="flex min-w-0 flex-wrap items-center justify-center gap-3 md:justify-end"
+                        data-testid="hosts-tab-add-server-slot"
+                      />
+                    }
+                  />
+                  <div
+                    className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+                    style={browseShellStyle}
+                    data-host-style={previewedHostStyle ?? undefined}
+                  >
+                    <div className="min-h-0 flex-1">{serversTabElement}</div>
+                  </div>
+                </HostsConnectAddServerSlotContext.Provider>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </LayoutGroup>
     </HostsConnectViewPhaseContext.Provider>
   );
 }
