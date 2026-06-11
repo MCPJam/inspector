@@ -546,6 +546,75 @@ describe("OrganizationsTab member management", () => {
     await waitFor(() => expect(cancelSeatPayment).toHaveBeenCalledWith());
   });
 
+  it("disables pending seat cancel while payment completion is in progress", () => {
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        organizationId: "org-1",
+        organizationName: "Acme Org",
+        plan: "team",
+        effectivePlan: "team",
+        source: "subscription",
+        billingInterval: "monthly",
+        billingConfigured: true,
+        subscriptionStatus: "active",
+        canManageBilling: true,
+        isOwner: true,
+        hasCustomer: true,
+        stripeScheduledPlan: null,
+        stripeScheduledBillingInterval: null,
+        stripeScheduledPriceId: null,
+        stripeScheduledEffectiveAt: null,
+        stripeCancelAtPeriodEnd: false,
+        stripeCancelAt: null,
+        stripeCanceledAt: null,
+        stripeCurrentPeriodEnd: null,
+        stripePriceId: "price_team_monthly",
+        trialStatus: "none",
+        trialPlan: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+        decisionRequired: false,
+        trialDecision: null,
+      },
+      organizationPremiumness: undefined,
+      activeSeatPaymentIntent: {
+        _id: "seat-payment-1",
+        organizationId: "org-1",
+        userId: "user-new",
+        email: "new@example.com",
+        role: "member",
+        source: "organization",
+        status: "requires_action",
+        targetSeatQuantity: 4,
+        stripeInvoiceId: "in_123",
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      isLoadingBilling: false,
+      isStartingPlanChange: false,
+      pendingPlanChangeTarget: null,
+      isOpeningPortal: false,
+      isCancelingScheduledBillingChange: false,
+      isFinishingSeatPayment: true,
+      isCompletingSeatPayment: true,
+      isCancelingSeatPayment: false,
+      isHandlingSeatPayment: true,
+      error: null,
+      startPlanChange: vi.fn(),
+      openPortal: vi.fn(),
+      openIntervalChangePortal: vi.fn(),
+      cancelScheduledBillingChange: vi.fn(),
+      selectFreeAfterTrial: vi.fn(),
+      finishSeatPayment: vi.fn(),
+      cancelSeatPayment: vi.fn(),
+    });
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
   it("starts seat payment from the direct admin add-member action", async () => {
     const finishSeatPayment = vi
       .fn()

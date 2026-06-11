@@ -293,8 +293,10 @@ export function useOrganizationBilling(
   const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
     useState(false);
   const [isFinishingSeatPayment, setIsFinishingSeatPayment] = useState(false);
+  const [isCompletingSeatPayment, setIsCompletingSeatPayment] = useState(false);
   const [isCancelingSeatPayment, setIsCancelingSeatPayment] = useState(false);
   const seatPaymentCancelVersionRef = useRef(0);
+  const seatPaymentCompletionInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const startPlanChange = useCallback(
@@ -493,14 +495,24 @@ export function useOrganizationBilling(
             return { status: "noop", reason: "seat_payment_canceled" };
           }
 
-          const completeResult = await completeSeatPaymentAction({
-            seatPaymentIntentId: activeSeatPaymentIntentId,
-            stripeInvoiceId: startResult.stripeInvoiceId,
-          } as any);
-          if (completeResult.status !== "paid") {
-            throw new Error("Payment was not completed");
+          seatPaymentCompletionInFlightRef.current = true;
+          setIsCompletingSeatPayment(true);
+          try {
+            const completeResult = (await completeSeatPaymentAction({
+              seatPaymentIntentId: activeSeatPaymentIntentId,
+              stripeInvoiceId: startResult.stripeInvoiceId,
+            } as any)) as SeatPaymentResult;
+            if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+              return { status: "noop", reason: "seat_payment_canceled" };
+            }
+            if (completeResult.status !== "paid") {
+              throw new Error("Payment was not completed");
+            }
+            return completeResult;
+          } finally {
+            seatPaymentCompletionInFlightRef.current = false;
+            setIsCompletingSeatPayment(false);
           }
-          return completeResult as SeatPaymentResult;
         }
 
         if (startResult.status === "failed") {
@@ -539,6 +551,9 @@ export function useOrganizationBilling(
       if (!activeSeatPaymentIntentId) {
         return;
       }
+      if (seatPaymentCompletionInFlightRef.current) {
+        return;
+      }
 
       setIsCancelingSeatPayment(true);
       seatPaymentCancelVersionRef.current += 1;
@@ -547,7 +562,8 @@ export function useOrganizationBilling(
         await cancelSeatPaymentAction({
           organizationId,
           seatPaymentIntentId: activeSeatPaymentIntentId,
-          stripeInvoiceId: activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
+          stripeInvoiceId:
+            activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
         } as any);
       } catch (err) {
         const message =
@@ -590,8 +606,12 @@ export function useOrganizationBilling(
     isCancelingScheduledBillingChange,
     isSelectingFreeAfterTrial,
     isFinishingSeatPayment,
+    isCompletingSeatPayment,
     isCancelingSeatPayment,
-    isHandlingSeatPayment: isFinishingSeatPayment || isCancelingSeatPayment,
+    isHandlingSeatPayment:
+      isFinishingSeatPayment ||
+      isCompletingSeatPayment ||
+      isCancelingSeatPayment,
     error,
     startPlanChange,
     openPortal,

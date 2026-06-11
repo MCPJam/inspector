@@ -197,12 +197,14 @@ function getScheduledBillingChangeCancellationState(
 function PendingSeatPaymentNotice({
   intent,
   isFinishingSeatPayment,
+  isCompletingSeatPayment,
   isCancelingSeatPayment,
   onFinish,
   onCancel,
 }: {
   intent: OrganizationSeatPaymentIntent;
   isFinishingSeatPayment: boolean;
+  isCompletingSeatPayment: boolean;
   isCancelingSeatPayment: boolean;
   onFinish: () => void;
   onCancel: () => void;
@@ -238,7 +240,7 @@ function PendingSeatPaymentNotice({
             size="sm"
             variant="outline"
             onClick={onCancel}
-            disabled={isCancelingSeatPayment}
+            disabled={isCompletingSeatPayment || isCancelingSeatPayment}
           >
             {isCancelingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
@@ -435,6 +437,7 @@ function OrganizationPage({
     isCancelingScheduledBillingChange,
     activeSeatPaymentIntent,
     isFinishingSeatPayment,
+    isCompletingSeatPayment,
     isCancelingSeatPayment,
     isHandlingSeatPayment,
     error: billingError,
@@ -1016,6 +1019,7 @@ function OrganizationPage({
       <PendingSeatPaymentNotice
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
+        isCompletingSeatPayment={isCompletingSeatPayment}
         isCancelingSeatPayment={isCancelingSeatPayment}
         onFinish={() => void handleFinishSeatPayment()}
         onCancel={() => void handleCancelSeatPayment()}
