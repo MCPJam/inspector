@@ -14,17 +14,9 @@ After running evals, you can save results to MCPJam to track accuracy over time,
   <img src="/images/ci-runs-overview.png" alt="CI Runs overview" />
 </Frame>
 
-## Setup
+## Setup (retired)
 
-Set your MCPJam API key as an environment variable:
-
-```bash
-export MCPJAM_API_KEY=mcpjam_...
-```
-
-That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
-
-`MCPJAM_API_KEY` enables result uploads.
+Uploads were driven by the `MCPJAM_API_KEY` environment variable (a project API key, `mcpjam_…`). Those keys are retired and can no longer be created, so setting the variable no longer uploads anything — auto-save attempts fail with a warning and the run continues. Leave it unset in new code.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
@@ -33,7 +25,7 @@ That's it — both `EvalTest` and `EvalSuite` will auto-save results when this k
 
 ## Auto-Save from EvalTest
 
-When `MCPJAM_API_KEY` is set, `EvalTest.run()` automatically saves results:
+When `MCPJAM_API_KEY` was set, `EvalTest.run()` automatically saved results (the `mcpjam:` options below now upload nothing — kept for reference):
 
 ```typescript
 await test.run(agent, {
