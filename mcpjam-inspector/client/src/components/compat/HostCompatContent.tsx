@@ -75,10 +75,7 @@ export function HostCompatContent({
 }) {
   // Resolve tunnel state the same way the card does, so a tunneled stdio
   // server isn't blocked here while the card strip shows it reachable.
-  const hasActiveTunnel = useActiveServerTunnel(
-    server.name,
-    server.connectionStatus === "connected",
-  );
+  const hasActiveTunnel = useActiveServerTunnel(server.name);
   const { requirements, reports } = useMemo(
     () => evaluateAllHosts(server, toolsData, { hasActiveTunnel }),
     [server, toolsData, hasActiveTunnel],

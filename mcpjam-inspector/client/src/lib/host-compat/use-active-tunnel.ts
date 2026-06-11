@@ -10,20 +10,21 @@ import { HOSTED_MODE } from "@/lib/config";
  * that state. Keeps the card strip and the modal tab in agreement on
  * transport reachability for a tunneled stdio server.
  *
- * Tunnels are a local-mode feature, so this is always `false` in hosted
- * mode and while disconnected.
+ * Probed regardless of the MCP session state: a live tunnel keeps a stdio
+ * server remotely reachable even while the inspector's own session is
+ * disconnected. Tunnels are a local-mode feature, so this is always `false`
+ * in hosted mode.
  */
-export function useActiveServerTunnel(
-  serverName: string,
-  enabled: boolean,
-): boolean {
+export function useActiveServerTunnel(serverName: string): boolean {
   const { getAccessToken } = useAuth();
   const [hasTunnel, setHasTunnel] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    if (!enabled || HOSTED_MODE) {
-      setHasTunnel(false);
+    // Reset up front so switching servers never briefly inherits the
+    // previous server's tunnel state while the new probe is in flight.
+    setHasTunnel(false);
+    if (HOSTED_MODE) {
       return;
     }
     (async () => {
@@ -38,7 +39,7 @@ export function useActiveServerTunnel(
     return () => {
       cancelled = true;
     };
-  }, [serverName, enabled, getAccessToken]);
+  }, [serverName, getAccessToken]);
 
   return hasTunnel;
 }
