@@ -45,7 +45,8 @@ type ServerScope = {
  * Minimal fetch-based client for the MCPJam Platform API. Runtime-agnostic
  * by construction (Workers/browser/Node): native fetch only, no Node
  * built-ins, no ambient environment reads — credentials and base URL are
- * injected. Tolerant reader: unknown response fields pass through untouched.
+ * injected. Tolerant reader: unknown response fields pass through untouched,
+ * and empty success bodies (204) resolve to `undefined`.
  */
 export class PlatformApiClient {
   private readonly baseUrl: string;
@@ -248,21 +249,42 @@ export class PlatformApiClient {
       externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
-    let parsed: unknown;
+    let raw: string;
     try {
-      parsed = await response.json();
+      raw = await response.text();
     } catch (error) {
       throw new PlatformApiError(
-        `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
+        `Failed to read the MCPJam API response (${response.status}) for ${path}`,
         "INTERNAL_ERROR",
         { status: response.status, endpoint: path, cause: error }
       );
     }
 
+    let parsed: unknown;
+    let parseError: unknown;
+    if (raw.length > 0) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch (error) {
+        parseError = error;
+      }
+    }
+
     if (!response.ok) {
+      // Empty and non-JSON error bodies (bare 429s, proxy HTML) still map to
+      // a PlatformApiError keyed off the status, with Retry-After preserved.
       throw this.toApiError(response, parsed, path);
     }
 
+    if (parseError !== undefined) {
+      throw new PlatformApiError(
+        `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
+        "INTERNAL_ERROR",
+        { status: response.status, endpoint: path, cause: parseError }
+      );
+    }
+
+    // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }
 
@@ -278,7 +300,7 @@ export class PlatformApiClient {
     const code =
       typeof envelope?.code === "string" && envelope.code.length > 0
         ? envelope.code
-        : "INTERNAL_ERROR";
+        : fallbackCodeForStatus(response.status);
     const message =
       typeof envelope?.message === "string" && envelope.message.length > 0
         ? envelope.message
@@ -297,6 +319,20 @@ export class PlatformApiClient {
       endpoint: path,
     });
   }
+}
+
+// Wire codes assumed when an error response carries no `{ code }` envelope
+// (empty bodies, upstream proxy HTML). Statuses without an unambiguous v1
+// code fall back to INTERNAL_ERROR.
+const STATUS_FALLBACK_CODES: Record<number, string> = {
+  401: "UNAUTHORIZED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  429: "RATE_LIMITED",
+};
+
+function fallbackCodeForStatus(status: number): string {
+  return STATUS_FALLBACK_CODES[status] ?? "INTERNAL_ERROR";
 }
 
 function parseRetryAfter(

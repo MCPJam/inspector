@@ -207,6 +207,58 @@ describe("PlatformApiClient", () => {
     expect((error as PlatformApiError).status).toBe(502);
   });
 
+  it("resolves empty success bodies to undefined", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+
+    await expect(makeClient(fetchMock).getMe()).resolves.toBeUndefined();
+  });
+
+  it("keeps non-JSON success bodies as INTERNAL_ERROR", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response("<html>not json</html>", { status: 200 })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("INTERNAL_ERROR");
+    expect((error as PlatformApiError).status).toBe(200);
+  });
+
+  it("derives status-based codes for envelope-less error bodies", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, { status: 429, headers: { "retry-after": "12" } })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("RATE_LIMITED");
+    expect((error as PlatformApiError).status).toBe(429);
+    expect((error as PlatformApiError).retryAfter).toBe(12);
+  });
+
+  it("derives UNAUTHORIZED from a bare 401 with a non-JSON body", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response("Unauthorized", { status: 401 })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("UNAUTHORIZED");
+    expect((error as PlatformApiError).message).toBe(
+      "Request to /me failed (401)"
+    );
+  });
+
   it("synthesizes NETWORK_ERROR for fetch-level failures", async () => {
     const fetchMock = vi.fn(async () => {
       throw new Error("getaddrinfo ENOTFOUND");
