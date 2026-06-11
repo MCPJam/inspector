@@ -26,6 +26,9 @@ export type PlatformV1ErrorCode = (typeof PLATFORM_V1_ERROR_CODES)[number];
  * envelope above; `NETWORK_ERROR` and `TIMEOUT` are also synthesized
  * client-side (with `status: 0`) when the request never produced a wire
  * envelope — fetch-level failures and client-side timeouts respectively.
+ * Error responses with no envelope (empty bodies, proxy HTML) derive the
+ * code from the HTTP status when unambiguous (401/403/404/429), else
+ * `INTERNAL_ERROR`.
  */
 export type PlatformApiErrorCode = PlatformV1ErrorCode | "NETWORK_ERROR";
 
