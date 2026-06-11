@@ -463,4 +463,231 @@ describe("createXAAStateMachine", () => {
       ).toBe(true);
     });
   });
+
+  describe("discovery is a fallback, not a mandatory step", () => {
+    const idToken = makeJwt(
+      { iss: "https://issuer.example/api/web/xaa", sub: "user-12345" },
+      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+    );
+    const idJag = makeJwt({
+      iss: "https://issuer.example/api/web/xaa",
+      sub: "user-12345",
+      aud: "https://auth.example.com",
+      resource: "https://mcp.example.com/mcp",
+      client_id: "mcpjam-debugger",
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+
+    function tokenAndMcpExecutor() {
+      const externalUrls: string[] = [];
+      const executor = {
+        externalRequest: vi.fn(async (url: string) => {
+          externalUrls.push(url);
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { result: { serverInfo: { name: "demo" } } },
+            ok: true,
+          };
+        }),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path === "/authenticate") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { id_token: idToken },
+              ok: true,
+            };
+          }
+          if (path === "/token-exchange") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { id_jag: idJag },
+              ok: true,
+            };
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: "access-token",
+                token_type: "Bearer",
+                expires_in: 300,
+              },
+            },
+            ok: true,
+          };
+        }),
+      };
+      return { executor, externalUrls };
+    }
+
+    it("skips resource AND AS discovery for a registration-backed run", async () => {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com/mcp",
+        authzServerIssuer: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+      });
+      const { executor, externalUrls } = tokenAndMcpExecutor();
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (u) => {
+          state = { ...state, ...u };
+        },
+        serverUrl: "https://mcp.example.com/mcp",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        authzServerIssuer: "https://auth.example.com",
+        registrationId: "app_1",
+      });
+
+      await machine.runAll();
+
+      expect(state.currentStep).toBe("complete");
+      // No protected-resource or auth-server metadata probe was ever fired.
+      expect(
+        externalUrls.some((u) => u.includes("oauth-protected-resource")),
+      ).toBe(false);
+      expect(
+        externalUrls.some((u) => u.includes("oauth-authorization-server")),
+      ).toBe(false);
+    });
+
+    it("skips resource discovery when the issuer is configured but still discovers the token endpoint", async () => {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com/mcp",
+        authzServerIssuer: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+      });
+      const externalUrls: string[] = [];
+      const executor = {
+        externalRequest: vi.fn(async (url: string) => {
+          externalUrls.push(url);
+          if (url.includes("oauth-authorization-server")) {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                issuer: "https://auth.example.com",
+                token_endpoint: "https://auth.example.com/oauth/token",
+              },
+              ok: true,
+            };
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {},
+            ok: true,
+          };
+        }),
+        internalRequest: vi.fn(async () => ({
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { id_token: idToken },
+          ok: true,
+        })),
+      };
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (u) => {
+          state = { ...state, ...u };
+        },
+        serverUrl: "https://mcp.example.com/mcp",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        authzServerIssuer: "https://auth.example.com",
+      });
+
+      // idle -> (skip resource) -> received_resource_metadata
+      await machine.proceedToNextStep();
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(
+        externalUrls.some((u) => u.includes("oauth-protected-resource")),
+      ).toBe(false);
+
+      // received_resource_metadata -> AS discovery (RFC 8414) actually runs
+      await machine.proceedToNextStep();
+      expect(state.currentStep).toBe("received_authz_metadata");
+      expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
+      expect(
+        externalUrls.some((u) => u.includes("oauth-authorization-server")),
+      ).toBe(true);
+    });
+
+    it("falls back to the root protected-resource form when path-insertion 404s", async () => {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com/mcp",
+      });
+      const externalUrls: string[] = [];
+      const executor = {
+        externalRequest: vi.fn(async (url: string) => {
+          externalUrls.push(url);
+          // Path-insertion form 404s; only the root form is served.
+          if (url.endsWith("/.well-known/oauth-protected-resource/mcp")) {
+            return {
+              status: 404,
+              statusText: "Not Found",
+              headers: {},
+              body: {},
+              ok: false,
+            };
+          }
+          if (url.endsWith("/.well-known/oauth-protected-resource")) {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                resource: "https://mcp.example.com/mcp",
+                authorization_servers: ["https://auth.example.com"],
+              },
+              ok: true,
+            };
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {},
+            ok: true,
+          };
+        }),
+        internalRequest: vi.fn(),
+      };
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (u) => {
+          state = { ...state, ...u };
+        },
+        serverUrl: "https://mcp.example.com/mcp",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.authzServerIssuer).toBe("https://auth.example.com");
+      // Both forms were attempted, path-insertion first.
+      expect(externalUrls).toEqual([
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+        "https://mcp.example.com/.well-known/oauth-protected-resource",
+      ]);
+    });
+  });
 });
