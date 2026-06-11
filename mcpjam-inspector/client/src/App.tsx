@@ -1187,12 +1187,20 @@ export function ServersRedirectRoute() {
 }
 
 export function HomeRoute() {
-  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
+  const { activeOrganizationId, activeProjectId, activeProject } =
+    useAppRouteContext();
   const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
   if (!homeEnabled) return <ServersRoute />;
   return (
     <HomeTab
-      organizationId={activeOrganizationId ?? null}
+      // `/home` carries no org segment, so `activeOrganizationId` (set only
+      // from the route) is undefined here. Fall back to the active project's
+      // org — mirroring how billing resolves its org context above — so a
+      // signed-in user with an org-linked project sees their home, not the
+      // empty "Join or create an organization" state.
+      organizationId={
+        activeOrganizationId ?? activeProject?.organizationId ?? null
+      }
       projectId={activeProjectId ?? null}
     />
   );
