@@ -5,6 +5,7 @@ import {
   RunEvalsRequestSchema,
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
+  buildCapEntriesFromPersistedCases,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
   filterAndRemapReplayConfigs,
@@ -344,5 +345,63 @@ describe("filterAndRemapReplayConfigs", () => {
         accessToken: "at_123",
       },
     ]);
+  });
+});
+
+describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
+  it("fans out one cap entry per case x model with runs and prompt turns", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "Multi-model",
+        runs: 3,
+        models: [
+          { model: "a", provider: "p1" },
+          { model: "b", provider: "p2" },
+        ],
+        promptTurns: [
+          { id: "t1", prompt: "one", expectedToolCalls: [] },
+          { id: "t2", prompt: "two", expectedToolCalls: [] },
+        ],
+      },
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].runs).toBe(3);
+    expect(entries[0].promptTurns).toHaveLength(2);
+    // 2 models x 3 runs x 2 turns = 12 LLM calls
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).not.toThrow();
+  });
+
+  it("counts model-less prompt cases once (suite-default substitution)", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      { title: "No models", runs: 2, models: [] },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].runs).toBe(2);
+  });
+
+  it("marks widget probes so the cap reducer excludes them", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      { title: "Probe", runs: 10, caseType: "widget_probe" },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].caseType).toBe("widget_probe");
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).not.toThrow();
+  });
+
+  it("a persisted suite over the cap is rejected (the scheduled-run gap)", () => {
+    // 31 cases x 1 model x 10 runs x 1 turn = 310 > 300
+    const cases = Array.from({ length: 31 }, (_, i) => ({
+      title: `case-${i}`,
+      runs: 10,
+      models: [{ model: "m", provider: "p" }],
+    }));
+    const entries = buildCapEntriesFromPersistedCases(cases);
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).toThrow(WebRouteError);
   });
 });

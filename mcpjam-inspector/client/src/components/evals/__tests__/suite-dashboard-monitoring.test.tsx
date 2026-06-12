@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalCase, EvalSuite } from "../types";
 
@@ -112,5 +112,41 @@ describe("SuiteDashboard monitoring tab gating", () => {
     flagState.enabled = true;
     renderDashboard(makeSuite(), [makeProbeCase()]);
     expect(screen.getByRole("tab", { name: /monitoring/i })).toBeTruthy();
+  });
+
+  it("falls back to a visible tab when monitoring is selected and then hidden", async () => {
+    flagState.enabled = true;
+    const scheduledSuite = makeSuite({
+      schedule: { intervalMinutes: 15, enabled: true, state: "active" },
+    });
+    const view = renderDashboard(scheduledSuite, []);
+    fireEvent.click(screen.getByRole("tab", { name: /monitoring/i }));
+    expect(
+      screen
+        .getByRole("tab", { name: /monitoring/i })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+
+    // Flag turns off: the tab disappears AND the selection must resolve to
+    // a visible tab instead of leaving nothing highlighted.
+    flagState.enabled = false;
+    view.rerender(
+      <SuiteDashboard
+        suite={scheduledSuite}
+        cases={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        runTrendData={[]}
+        modelStats={[]}
+        onTestCaseClick={() => {}}
+        onRunClick={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: /monitoring/i })).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: /cases/i }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(screen.getByTestId("cases-overview")).toBeTruthy();
   });
 });

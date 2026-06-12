@@ -97,6 +97,15 @@ export function SuiteDashboard({
     syntheticMonitorsEnabled &&
     (Boolean(suite.schedule) ||
       cases.some((testCase) => testCase.caseType === "widget_probe"));
+  // A stale "monitoring" selection (flag toggled off, schedule/probes
+  // removed) must not strand the tab strip with nothing highlighted —
+  // resolve it to the default tab for both highlighting and content.
+  const effectiveTab: SuiteDashboardTab =
+    activeTab === "monitoring" && !showMonitoringTab
+      ? hasRuns
+        ? "runs"
+        : "cases"
+      : activeTab;
 
   const testCasesSection = (
     <TestCasesOverview
@@ -143,7 +152,7 @@ export function SuiteDashboard({
     label: string,
     count?: number
   ) => {
-    const active = activeTab === next;
+    const active = effectiveTab === next;
     return (
       <button
         key={next}
@@ -189,9 +198,9 @@ export function SuiteDashboard({
         {showMonitoringTab ? renderTab("monitoring", "Monitoring") : null}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        {activeTab === "runs" ? (
+        {effectiveTab === "runs" ? (
           runsSection
-        ) : activeTab === "monitoring" && showMonitoringTab ? (
+        ) : effectiveTab === "monitoring" ? (
           <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
         ) : (
           testCasesSection

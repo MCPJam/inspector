@@ -836,6 +836,17 @@ export function IterationDetails({
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
+      ) : error ? (
+        // A failed artifact load must not masquerade as "no observation" —
+        // reuse the trace section's error panel (with retry) since the probe
+        // layout hides that section.
+        <TraceBlobLoadErrorPanel
+          error={error}
+          layoutMode={layoutMode}
+          onRetry={() => setBlobRetryTick((n) => n + 1)}
+          isDetailsOpen={isBlobErrorDetailsOpen}
+          onDetailsOpenChange={setIsBlobErrorDetailsOpen}
+        />
       ) : probeObservations.length > 0 ? (
         <BrowserArtifactsView observations={probeObservations} steps={[]} />
       ) : (

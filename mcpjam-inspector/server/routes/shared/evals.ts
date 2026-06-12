@@ -298,6 +298,51 @@ export function assertSuiteRunWithinCap(
 }
 
 /**
+ * Synthesize cap-math entries from PERSISTED suite cases for bare suite
+ * reruns (`suiteId` + empty wire `tests`: the scheduled-evals worker and the
+ * /api/v1 suiteId-only rerun). Without this, `assertSuiteRunWithinCap` sums
+ * an empty list and unattended runs bypass the cap interactive launches
+ * enforce. One entry per (case × model) mirrors the interactive fan-out;
+ * model-less prompt cases count once (suite-default substitution); widget
+ * probes carry `caseType` so the cap reducer excludes them.
+ */
+export function buildCapEntriesFromPersistedCases(
+  cases: Array<{
+    title?: string;
+    runs?: number;
+    models?: Array<{ model: string; provider: string }>;
+    promptTurns?: unknown;
+    caseType?: string;
+  }>,
+): RunEvalsRequest["tests"] {
+  const entries: RunEvalsRequest["tests"] = [];
+  for (const testCase of cases ?? []) {
+    const promptTurns = Array.isArray(testCase.promptTurns)
+      ? (testCase.promptTurns as RunEvalsRequest["tests"][number]["promptTurns"])
+      : undefined;
+    const fanout =
+      testCase.caseType === "widget_probe"
+        ? 1
+        : Math.max(testCase.models?.length ?? 0, 1);
+    for (let i = 0; i < fanout; i++) {
+      entries.push({
+        title: testCase.title ?? "",
+        query: "",
+        runs: Math.max(1, Math.floor(testCase.runs ?? 1)),
+        model: "cap-check",
+        provider: "none",
+        expectedToolCalls: [],
+        ...(promptTurns ? { promptTurns } : {}),
+        ...(testCase.caseType === "widget_probe"
+          ? { caseType: "widget_probe" as const }
+          : {}),
+      });
+    }
+  }
+  return entries;
+}
+
+/**
  * Counts override prompt-turns when present, then falls back to the
  * persisted case's prompt-turns count. Callers that have already loaded
  * the persisted test case should pass it via `resolved` — without it, a
@@ -612,7 +657,23 @@ export async function prepareEvalRun(
     );
   }
 
-  assertSuiteRunWithinCap(request);
+  // Bare suite reruns (scheduled worker, /api/v1 suiteId-only) carry no wire
+  // tests — cap-math over the empty list would let unattended runs bypass
+  // MAX_TOTAL_LLM_CALLS. Assert over the persisted cases instead; the wired
+  // path below re-derives the same cases for execution.
+  if (suiteId && tests.length === 0) {
+    const { convexClient: capClient } = createConvexClients(convexAuthToken);
+    const persistedCases = (await capClient.query(
+      "testSuites:listTestCases" as any,
+      { suiteId },
+    )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
+    assertSuiteRunWithinCap({
+      ...request,
+      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
+    });
+  } else {
+    assertSuiteRunWithinCap(request);
+  }
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -781,11 +842,17 @@ export async function prepareEvalRun(
             normalizeForComparison(existingTestCase.predicates),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.predicates));
+        // caseType is immutable after create and updateTestCase rejects
+        // probeConfig on prompt cases — a wire probe entry that collides
+        // with an existing PROMPT case by title+query must not push probe
+        // fields at it (the category mismatch is unresolvable here).
+        const existingIsProbe = existingTestCase.caseType === "widget_probe";
         const probeConfigChanged =
+          existingIsProbe &&
           JSON.stringify(
             normalizeForComparison(existingTestCase.probeConfig),
           ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.probeConfig));
+            JSON.stringify(normalizeForComparison(testCaseData.probeConfig));
 
         const hasChanges =
           modelsChanged ||
@@ -818,10 +885,9 @@ export async function prepareEvalRun(
             ),
             matchOptions: testCaseData.matchOptions,
             predicates: testCaseData.predicates,
-            // updateTestCase rejects probeConfig on prompt cases — only
-            // thread it when the wire entry is a probe.
-            ...(testCaseData.caseType === "widget_probe" &&
-            testCaseData.probeConfig
+            // Threaded only when the PERSISTED case is a probe (see
+            // existingIsProbe above).
+            ...(existingIsProbe && testCaseData.probeConfig
               ? {
                   probeConfig: sanitizeForConvexTransport(
                     testCaseData.probeConfig,
