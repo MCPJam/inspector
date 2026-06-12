@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
+import {
+  ClipboardAddon,
+  type IClipboardProvider,
+} from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -20,6 +24,19 @@ type TerminalState =
   | "error";
 
 const PING_INTERVAL_MS = 30_000;
+
+/**
+ * OSC 52 clipboard provider that only allows writes. The addon's default
+ * BrowserClipboardProvider answers OSC 52 *reads* with
+ * navigator.clipboard.readText(), which would let any program in the sandbox
+ * query the user's real clipboard — sandbox code isn't trusted that far.
+ * Reads get an empty string; writes go to the system clipboard.
+ */
+const WRITE_ONLY_CLIPBOARD: IClipboardProvider = {
+  readText: () => Promise.resolve(""),
+  writeText: (selection, text) =>
+    selection === "c" ? navigator.clipboard.writeText(text) : Promise.resolve(),
+};
 
 const DARK_THEME: ITheme = {
   background: "#1a1916",
@@ -239,6 +256,9 @@ export function ComputerTerminal({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    // OSC 52 support: lets programs in the sandbox (claude /export, the
+    // template's xclip shim) write to the user's real clipboard.
+    term.loadAddon(new ClipboardAddon(undefined, WRITE_ONLY_CLIPBOARD));
     term.open(container);
 
     // GPU-accelerated renderer; falls back to canvas automatically.
