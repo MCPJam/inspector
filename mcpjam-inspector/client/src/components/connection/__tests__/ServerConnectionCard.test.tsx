@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -60,6 +66,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    warning: vi.fn(),
     loading: vi.fn().mockReturnValue("toast-id"),
   },
 }));
@@ -650,6 +657,81 @@ describe("ServerConnectionCard", () => {
       await waitFor(() => {
         expect(closeServerTunnel).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  describe("tunnel revalidation", () => {
+    const seedUrl =
+      "https://r00000000001.tunnels.mcpjam.com/api/mcp/adapter-http/test-server?k=s";
+
+    it("clears the displayed URL once the server reports the tunnel ended", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getServerTunnel } = await import("@/lib/apis/mcp-tunnels-api");
+        // Mount sees a live tunnel; the relay then ends it server-side
+        // (e.g. taken over by another inspector), so revalidation gets null.
+        // Stateful (not call-ordered) so StrictMode's double-mount fetch
+        // can't consume the "alive" answer early.
+        let tunnelAlive = true;
+        (getServerTunnel as Mock).mockImplementation(async () =>
+          tunnelAlive ? { url: seedUrl, serverId: "test-server" } : null
+        );
+
+        render(
+          <ServerConnectionCard
+            server={createServer({ connectionStatus: "connected" })}
+            {...defaultProps}
+          />
+        );
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+
+        tunnelAlive = false;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000);
+        });
+        // Dead URL is no longer copyable; the user is told why it vanished.
+        expect(screen.queryByText("Copy tunnel URL")).not.toBeInTheDocument();
+        expect(toast.warning as Mock).toHaveBeenCalledWith(
+          expect.stringContaining("Tunnel for test-server ended")
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the URL on transient revalidation errors", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getServerTunnel } = await import("@/lib/apis/mcp-tunnels-api");
+        let failing = false;
+        (getServerTunnel as Mock).mockImplementation(async () => {
+          if (failing) throw new Error("network blip");
+          return { url: seedUrl, serverId: "test-server" };
+        });
+
+        render(
+          <ServerConnectionCard
+            server={createServer({ connectionStatus: "connected" })}
+            {...defaultProps}
+          />
+        );
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        failing = true;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000);
+        });
+        expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+        expect(toast.warning as Mock).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

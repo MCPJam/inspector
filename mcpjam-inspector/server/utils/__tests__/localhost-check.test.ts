@@ -240,11 +240,18 @@ describe("mayServeSessionToken", () => {
         hostedMode: false,
       })
     ).toBe(false);
+    expect(
+      mayServeSessionToken({
+        host: "abc123.tunnels.mcpjam.com",
+        allowedHosts: [],
+        hostedMode: false,
+      })
+    ).toBe(false);
   });
 
   it("denies tunnel hosts via X-Forwarded-Host even when Host is localhost", () => {
-    // This is the real tunnel shape: ngrok forwards to localhost with the
-    // public domain carried in X-Forwarded-Host.
+    // This is the real tunnel shape: the relay edge forwards to localhost
+    // with the public domain carried in X-Forwarded-Host.
     expect(
       mayServeSessionToken({
         host: "localhost:6274",
@@ -253,15 +260,30 @@ describe("mayServeSessionToken", () => {
         hostedMode: false,
       })
     ).toBe(false);
+    expect(
+      mayServeSessionToken({
+        host: "localhost:6274",
+        forwardedHost: "abc123.tunnels.mcpjam.com",
+        allowedHosts: [],
+        hostedMode: false,
+      })
+    ).toBe(false);
   });
 
   it("SECURITY INVARIANT: denies a tunnel host even when allowlisted", () => {
-    // A future config mistake that allowlists an ngrok domain must not
+    // A future config mistake that allowlists a tunnel domain must not
     // start leaking the session token through the tunnel.
     expect(
       mayServeSessionToken({
         host: "abc123.ngrok.app",
         allowedHosts: ["abc123.ngrok.app", "*.ngrok.app"],
+        hostedMode: true,
+      })
+    ).toBe(false);
+    expect(
+      mayServeSessionToken({
+        host: "abc123.tunnels.mcpjam.com",
+        allowedHosts: ["abc123.tunnels.mcpjam.com", "*.tunnels.mcpjam.com"],
         hostedMode: true,
       })
     ).toBe(false);

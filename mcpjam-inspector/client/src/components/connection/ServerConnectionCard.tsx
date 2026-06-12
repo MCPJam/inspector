@@ -251,6 +251,47 @@ export function ServerConnectionCard({
     };
   }, [getAccessToken, server.name, showTunnelRequests, tunnelUrl]);
 
+  // Revalidate the displayed URL while a tunnel is shown: the relay can end
+  // a tunnel server-side (grant superseded by another inspector, secret
+  // rotated elsewhere, expired token), after which the local server 404s for
+  // it — stop advertising a URL that no longer works. Skipped when the
+  // parent owns the URL via the serverTunnelUrl prop.
+  useEffect(() => {
+    if (!tunnelUrl || !showTunnelActions || serverTunnelUrl !== undefined) {
+      return;
+    }
+    let isCancelled = false;
+
+    const revalidate = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const existingTunnel = await getServerTunnel(server.name, accessToken);
+        if (!isCancelled && existingTunnel === null) {
+          setTunnelUrl(null);
+          setShowTunnelRequests(false);
+          toast.warning(
+            `Tunnel for ${server.name} ended — create it again if you still need it`
+          );
+        }
+      } catch {
+        // Transient (network/auth) — keep the last known state; only an
+        // explicit "no tunnel" answer clears the URL.
+      }
+    };
+
+    const intervalId = setInterval(revalidate, 5000);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    getAccessToken,
+    server.name,
+    serverTunnelUrl,
+    showTunnelActions,
+    tunnelUrl,
+  ]);
+
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
       await navigator.clipboard.writeText(text);
