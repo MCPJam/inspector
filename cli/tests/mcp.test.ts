@@ -285,6 +285,33 @@ test("connect, exercise, observe notifications, disconnect", async () => {
   }
 });
 
+test("connect_server cleans up failed connections so the name can be retried", async () => {
+  const context = await startTestContext();
+  try {
+    const failed = await context.callTool("connect_server", {
+      name: "flaky",
+      command: process.execPath,
+      args: ["-e", "process.exit(1)"],
+    });
+    assert.equal(failed.isError, true);
+
+    const servers = await context.callTool("list_servers");
+    assert.equal(servers.payload.servers.length, 0);
+
+    const retried = await context.callTool("connect_server", {
+      name: "flaky",
+      command: process.execPath,
+      args: [TARGET_FIXTURE],
+    });
+    assert.equal(retried.isError, false, JSON.stringify(retried.payload));
+    assert.equal(retried.payload.status, "connected");
+
+    await context.callTool("disconnect_server", { server: "flaky" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("server_doctor runs a stateless sweep against a stdio target", async () => {
   const context = await startTestContext();
   try {

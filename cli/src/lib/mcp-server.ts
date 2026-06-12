@@ -343,7 +343,15 @@ export function createMcpJamMcpServer(
           requestedName ??
           deriveServerName(input, (candidate) => manager.hasServer(candidate));
 
-        await manager.connectToServer(name, config);
+        try {
+          await manager.connectToServer(name, config);
+        } catch (error) {
+          // connectToServer registers the name before opening the transport;
+          // drop the failed registration so list_servers stays clean and the
+          // same name can be retried. Safe because the name was unused above.
+          await manager.removeServer(name).catch(() => undefined);
+          throw error;
+        }
         watchNotifications(name);
 
         return {
