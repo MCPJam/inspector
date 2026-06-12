@@ -165,7 +165,9 @@ export function EvalSuiteRunsView({
               {runs.map((run) => (
                 <TableRow key={run.id} title={run.notes ?? undefined}>
                   <TableCell className="px-4 font-mono text-xs">
-                    {run.runNumber !== null ? `#${run.runNumber}` : "—"}
+                    {typeof run.runNumber === "number"
+                      ? `#${run.runNumber}`
+                      : "—"}
                   </TableCell>
                   <TableCell>
                     <OutcomeBadge status={run.status} result={run.result} bare />
@@ -227,7 +229,9 @@ export function EvalRunView({
   return (
     <>
       <ViewHeader
-        title={run.runNumber !== null ? `Run #${run.runNumber}` : "Eval run"}
+        title={
+          typeof run.runNumber === "number" ? `Run #${run.runNumber}` : "Eval run"
+        }
         accessory={<OutcomeBadge status={run.status} result={run.result} />}
         caption={`Eval run · ${payload.project.name}`}
         isDark={isDark}
@@ -364,8 +368,8 @@ export function EvalRunIterationsView({
                       {iteration.model ?? "—"}
                     </TableCell>
                     <TableCell className="text-xs tabular-nums">
-                      {iteration.actualToolCalls.length}/
-                      {iteration.expectedToolCalls.length}
+                      {toolCallList(iteration.actualToolCalls).length}/
+                      {toolCallList(iteration.expectedToolCalls).length}
                     </TableCell>
                     <TableCell className="text-xs tabular-nums">
                       {formatInteger(iteration.tokensUsed)}
@@ -468,8 +472,22 @@ function summaryResult(run: PlatformEvalRunSummary): string | null {
   return typeof run.passed === "number" && run.passed > 0 ? "passed" : null;
 }
 
-function toolCallNames(calls: Array<Record<string, unknown>>): string[] {
-  return calls.map((call) => {
+/**
+ * The iteration tool-call arrays are spec-optional and passed through from
+ * the API unnormalized, so partial/pending payloads may omit or malform
+ * them; a missing list must read as empty, not crash the view.
+ */
+function toolCallList(calls: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(calls)
+    ? calls.filter(
+        (call): call is Record<string, unknown> =>
+          typeof call === "object" && call !== null
+      )
+    : [];
+}
+
+function toolCallNames(calls: unknown): string[] {
+  return toolCallList(calls).map((call) => {
     for (const key of ["toolName", "name", "tool"]) {
       const value = call[key];
       if (typeof value === "string" && value) {
@@ -481,7 +499,8 @@ function toolCallNames(calls: Array<Record<string, unknown>>): string[] {
 }
 
 function formatRunDuration(run: PlatformEvalRun): string | undefined {
-  if (run.completedAt === null) {
+  // completedAt is spec-optional as well as nullable; absent reads as null.
+  if (typeof run.completedAt !== "number") {
     return undefined;
   }
 
