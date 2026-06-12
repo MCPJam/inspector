@@ -59,14 +59,19 @@ test.describe("NUX first-run redirect", () => {
 
     await page.goto("/");
 
-    // "Welcome to MCPJam" is rendered by HomeTab when no org context exists
-    // (the unauthenticated local-mode empty state). Its presence confirms we
-    // are on the Home page, not on /playground.
-    await expect(page.getByText("Welcome to MCPJam")).toBeVisible({
-      timeout: 30_000,
-    });
-    // Use toHaveURL (retried) rather than a snapshot of page.url() so that a
-    // late-firing NUX redirect doesn't produce a false green.
-    await expect(page).toHaveURL(/^(?!.*\/playground)/, { timeout: 5_000 });
+    // The app shell must mount before we assert the non-redirect.
+    await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
+
+    // The NUX fires shortly after mount. Wait up to 5 s for the URL to become
+    // /playground — if it does, the test fails; if waitForURL times out (the
+    // expected outcome), the NUX correctly skipped the redirect.
+    const wasRedirected = await page
+      .waitForURL("**/playground", { timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+    expect(
+      wasRedirected,
+      "returning user should not be redirected to /playground",
+    ).toBe(false);
   });
 });
