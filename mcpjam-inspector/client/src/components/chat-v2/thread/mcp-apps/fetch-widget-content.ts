@@ -1,6 +1,10 @@
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildServerRequest } from "@/lib/apis/web/context";
+import {
+  MCPJAM_AGENT_WIDGET_CONTENT_PATH,
+  MCPJAM_PLATFORM_SERVER_ID,
+} from "@/shared/mcpjam-agent-widgets.js";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { ResolvedOpenAiAppsCapabilities } from "@/lib/client-styles";
 import type {
@@ -86,16 +90,28 @@ export interface FetchMcpAppsWidgetContentResponse {
 }
 
 export async function fetchMcpAppsWidgetContent(
-  request: FetchMcpAppsWidgetContentRequest,
+  request: FetchMcpAppsWidgetContentRequest
 ): Promise<FetchMcpAppsWidgetContentResponse> {
   const useWebEndpoint = HOSTED_MODE || request.forceWebEndpoint === true;
-  const endpoint = useWebEndpoint
-    ? "/api/web/apps/mcp-apps/widget-content"
-    : "/api/apps/mcp-apps/widget-content";
 
-  const payload = useWebEndpoint
-    ? { ...buildServerRequest(request.serverId) }
-    : { serverId: request.serverId };
+  // Widget-backed BUILT-IN tools (the MCPJam agent's show_servers) stamp the
+  // synthetic platform id as the tool result's `_serverId`. There is no
+  // Convex-registered server behind it, so the general web endpoint's
+  // `buildServerRequest` resolution would throw — the agent's companion
+  // endpoint serves the platform widget bundle directly instead.
+  const isPlatformBuiltIn = request.serverId === MCPJAM_PLATFORM_SERVER_ID;
+
+  const endpoint =
+    useWebEndpoint && isPlatformBuiltIn
+      ? MCPJAM_AGENT_WIDGET_CONTENT_PATH
+      : useWebEndpoint
+      ? "/api/web/apps/mcp-apps/widget-content"
+      : "/api/apps/mcp-apps/widget-content";
+
+  const payload =
+    useWebEndpoint && !isPlatformBuiltIn
+      ? { ...buildServerRequest(request.serverId) }
+      : { serverId: request.serverId };
 
   const response = await authFetch(endpoint, {
     method: "POST",
@@ -127,7 +143,7 @@ export async function fetchMcpAppsWidgetContent(
     throw new Error(
       errorData.message ||
         errorData.error ||
-        `Failed to fetch widget: ${response.statusText}`,
+        `Failed to fetch widget: ${response.statusText}`
     );
   }
 
