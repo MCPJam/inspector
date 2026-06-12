@@ -355,7 +355,14 @@ export async function startLocalBridge(
           lazyConnect: true,
         },
       );
-      await manager.connectToServer(serverId, target.config);
+      try {
+        await manager.connectToServer(serverId, target.config);
+      } catch (error) {
+        // A failed handshake may still have spawned the child process;
+        // don't leak it past the error.
+        await manager.disconnectAllServers().catch(() => {});
+        throw error;
+      }
     }
   }
 
