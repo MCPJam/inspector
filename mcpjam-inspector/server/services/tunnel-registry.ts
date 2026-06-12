@@ -4,9 +4,8 @@
  * HTTP adapter (per-server isolation guard, request logging) and the
  * session-token paths (tunnel-host leak invariant).
  *
- * Lives apart from tunnel-manager so consumers don't transitively load
- * the native @ngrok/ngrok module just to ask "did this request arrive
- * through a tunnel?".
+ * Lives apart from tunnel-manager so consumers can ask "did this request
+ * arrive through a tunnel?" without loading the relay-client machinery.
  */
 
 // domain (lowercase hostname) → bound serverId, or null for the legacy

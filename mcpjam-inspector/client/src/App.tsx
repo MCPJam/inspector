@@ -1269,10 +1269,9 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
-  const defaultHubRoute = useMemo(
-    (): "connect" | "servers" => (isAuthenticated ? "connect" : "servers"),
-    [isAuthenticated]
-  );
+  const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
+    return "home";
+  }, []);
   const isHostedChatRoute = isChatboxChatRoute;
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
