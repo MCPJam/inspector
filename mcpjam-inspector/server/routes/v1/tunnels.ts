@@ -62,6 +62,22 @@ type ProjectServerDto = {
 };
 
 /**
+ * Whether two tunnel/bearer URLs point at the same endpoint, ignoring the
+ * query (where the rotating ?k= secret lives). Re-running a tunnel reuses
+ * the slug, so the previous URL differing only by secret is the normal
+ * rotation path — not an overwrite worth warning about.
+ */
+function sameEndpoint(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return ua.origin === ub.origin && ua.pathname === ub.pathname;
+  } catch {
+    return a === b;
+  }
+}
+
+/**
  * The project's saved servers via the same Convex `/v1/project-servers`
  * read the catalog routes proxy. Doubles as the project membership check
  * (Convex 404s/403s projects the caller can't see) and is how `existed`
@@ -197,7 +213,7 @@ tunnels.post("/projects/:projectId/tunnels", async (c) => {
       serverId,
       name,
       existed,
-      ...(previousUrl !== undefined && previousUrl !== grant.url
+      ...(previousUrl !== undefined && !sameEndpoint(previousUrl, grant.url)
         ? { previousUrl }
         : {}),
       ...(previousTransportType !== undefined

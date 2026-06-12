@@ -236,6 +236,31 @@ describe("v1 tunnel routes", () => {
       expect(body.previousUrl).toBe("https://hand-configured.example.com/mcp");
     });
 
+    it("omits previousUrl on a same-tunnel re-run (only the secret rotated)", async () => {
+      stubBackendFetch({
+        projectServers: {
+          items: [
+            {
+              id: "srv_1",
+              name: "everything",
+              transportType: "http",
+              // Same endpoint as the fresh grant, older ?k= secret: the
+              // normal rotation path, not an overwrite worth warning about.
+              url: GRANT.url.replace("plain-secret", "old-secret"),
+            },
+          ],
+        },
+      });
+
+      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
+        name: "everything",
+      });
+
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.existed).toBe(true);
+      expect(body).not.toHaveProperty("previousUrl");
+    });
+
     it("rejects a missing name with the v1 validation envelope", async () => {
       stubBackendFetch();
       const response = await request(
