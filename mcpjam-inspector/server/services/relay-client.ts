@@ -235,6 +235,10 @@ export class RelayConnection {
       logger.warn(
         `Tunnel relay disconnected (${code}); reconnecting in ${delay}ms`
       );
+      // Never let reconnect timers stack: a stale pending timer would dial a
+      // second overlapping socket on the same grant (which the edge would
+      // then 4001 against the other). At most one reconnect is ever queued.
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => this.dial(onHello), delay);
     });
   }

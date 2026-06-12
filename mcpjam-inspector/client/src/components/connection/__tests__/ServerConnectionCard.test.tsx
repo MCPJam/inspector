@@ -45,9 +45,13 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
   getTunnelRequests: vi.fn().mockResolvedValue([]),
 }));
 
+// Stable getAccessToken reference across renders — a fresh fn per render
+// would make the card's tunnel-URL effects (which depend on getAccessToken)
+// re-run on every re-render, masking the real polling cadence under test.
+const mockGetAccessToken = vi.fn().mockResolvedValue("test-token");
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
-    getAccessToken: vi.fn().mockResolvedValue("test-token"),
+    getAccessToken: mockGetAccessToken,
   }),
 }));
 
@@ -703,14 +707,14 @@ describe("ServerConnectionCard", () => {
       }
     });
 
-    it("does not clear the URL while a rotate is in flight (server briefly has no entry)", async () => {
+    it("suspends revalidation while a rotate is in flight (server briefly has no entry)", async () => {
       vi.useFakeTimers();
       try {
         const { getServerTunnel, rotateServerTunnel } = await import(
           "@/lib/apis/mcp-tunnels-api"
         );
         // Server-side view during rotation: the entry disappears between
-        // close and re-create, so revalidation would read null.
+        // close and re-create, so a poll then would read null.
         let tunnelVisible = true;
         (getServerTunnel as Mock).mockImplementation(async () =>
           tunnelVisible ? { url: seedUrl, serverId: "test-server" } : null
@@ -737,24 +741,33 @@ describe("ServerConnectionCard", () => {
           await vi.advanceTimersByTimeAsync(0);
         });
         expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+        const callsAfterMount = (getServerTunnel as Mock).mock.calls.length;
 
-        // Start a rotate that hangs; the server-side entry vanishes.
-        fireEvent.click(
-          screen.getByRole("button", {
-            name: "Rotate tunnel secret (revokes the current URL)",
-          })
-        );
+        // Start a rotate that hangs; the server-side entry vanishes. The
+        // awaited act flushes setIsRotatingTunnel(true) so the revalidation
+        // effect re-runs and tears down the poll before timers advance.
+        await act(async () => {
+          fireEvent.click(
+            screen.getByRole("button", {
+              name: "Rotate tunnel secret (revokes the current URL)",
+            })
+          );
+        });
         tunnelVisible = false;
         await act(async () => {
           await vi.advanceTimersByTimeAsync(15000);
         });
-        // The poll is suspended during the mutation: no clearing, no toast.
+        // Poll suspended: no extra getServerTunnel calls, URL kept, no toast.
+        expect((getServerTunnel as Mock).mock.calls.length).toBe(
+          callsAfterMount
+        );
         expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
         expect(toast.warning as Mock).not.toHaveBeenCalled();
 
+        // Rotation completes; the URL is still shown.
         tunnelVisible = true;
-        finishRotate?.();
         await act(async () => {
+          finishRotate?.();
           await vi.advanceTimersByTimeAsync(0);
         });
         expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
