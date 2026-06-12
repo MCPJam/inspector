@@ -37,3 +37,8 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_SOUNDCHECK_TOKEN }}
         run: railway up --service mcpjam-soundcheck --ci
+
+  post-deploy:
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-soundcheck.yml
+    secrets: inherit

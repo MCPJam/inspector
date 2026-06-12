@@ -257,7 +257,7 @@ jobs:
             exit 1
           fi
 
-  publish-packages:
+  e2e:
     needs:
       - preflight
       - artifact-gate
@@ -265,6 +265,20 @@ jobs:
       always() &&
       needs.preflight.result == 'success' &&
       needs.artifact-gate.result == 'success' &&
+      !fromJSON(inputs.skip_verify)
+    uses: ./.github/workflows/post-deploy-soundcheck.yml
+    secrets: inherit
+
+  publish-packages:
+    needs:
+      - preflight
+      - artifact-gate
+      - e2e
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.artifact-gate.result == 'success' &&
+      (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') &&
       needs.preflight.outputs.publish_any == 'true'
     runs-on: ubuntu-latest
     steps:

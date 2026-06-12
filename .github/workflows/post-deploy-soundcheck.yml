@@ -1,0 +1,112 @@
+name: Post-Deploy Soundcheck Smoke
+
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Optional soundcheck base URL override"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Optional soundcheck base URL override"
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    outputs:
+      base_url: ${{ steps.target.outputs.base_url }}
+    steps:
+      - name: Resolve soundcheck URL
+        id: target
+        shell: bash
+        run: |
+          BASE_URL="${{ inputs.base_url }}"
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="${{ vars.SOUNDCHECK_APP_URL }}"
+          fi
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="https://soundcheck.mcpjam.com"
+          fi
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Check public health endpoints
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          curl --fail --silent --show-error "$BASE_URL/health" >/tmp/health.json
+          curl --fail --silent --show-error "$BASE_URL/api/mcp/health" >/tmp/mcp-health.json
+          curl --fail --silent --show-error "$BASE_URL/api/apps/health" >/tmp/apps-health.json
+
+      - name: Check unauthenticated web route is denied
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          STATUS="$(curl --silent --output /tmp/web-auth.json --write-out '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            "$BASE_URL/api/web/tools/list" \
+            -d '{"workspaceId":"smoke","serverId":"smoke"}')"
+
+          if [ "$STATUS" != "401" ] && [ "$STATUS" != "403" ]; then
+            echo "Expected 401 or 403 from /api/web/tools/list, got $STATUS"
+            cat /tmp/web-auth.json
+            exit 1
+          fi
+
+      - name: Summarize smoke result
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        run: |
+          echo "## ✅ Soundcheck HTTP smoke passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: \`$BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Checked: \`/health\`, \`/api/mcp/health\`, \`/api/apps/health\`, unauthenticated \`/api/web/tools/list\`" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    needs: smoke
+    runs-on: ubuntu-latest
+    # Drives a deployed URL; never launches Electron, so skip its binary download.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke against soundcheck
+        # PLAYWRIGHT_BASE_URL skips the local webServer (no build needed) and
+        # drives the deployed URL. NUX tests self-skip when this var is set.
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ needs.smoke.outputs.base_url }}
+        run: npm run test:e2e -w @mcpjam/inspector
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-soundcheck
+          path: |
+            mcpjam-inspector/playwright-report/
+            mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
