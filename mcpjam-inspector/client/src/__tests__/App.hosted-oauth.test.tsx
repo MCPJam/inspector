@@ -2684,7 +2684,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/clients");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
@@ -2697,10 +2697,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/clients");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
   });
 
@@ -2931,10 +2931,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/clients");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 });
