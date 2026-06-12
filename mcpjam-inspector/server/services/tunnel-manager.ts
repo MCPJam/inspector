@@ -67,6 +67,20 @@ class TunnelManager {
       throw error;
     }
 
+    // A permanent close (4000/4001/4002) can land between the handshake
+    // resolving and the registration below; its onPermanentFailure→dropEntry
+    // would be a no-op (entry not in the map yet), and we'd register a dead
+    // connection. Bail if the relay already gave up — this synchronous check
+    // and the registration that follows can't be interleaved by a later
+    // 'close' event, so registering past it is safe (that drop finds the
+    // entry).
+    if (connection.permanentFailure) {
+      const reason = connection.permanentFailure;
+      connection.close();
+      logger.warn(`✗ Tunnel (${serverId}) died during handshake: ${reason}`);
+      throw new Error(reason);
+    }
+
     const baseUrl = `https://${host}`;
     this.tunnels.set(serverId, {
       connection,
