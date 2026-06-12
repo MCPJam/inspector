@@ -628,7 +628,7 @@ async function shutdown() {
   }
 
   shuttingDown = true;
-  scheduledEvalsWorker?.stop();
+  await scheduledEvalsWorker?.stop();
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;

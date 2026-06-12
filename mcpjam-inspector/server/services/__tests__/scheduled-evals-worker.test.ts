@@ -104,22 +104,33 @@ describe("startScheduledEvalsWorker loop", () => {
 });
 
 describe("classifyFailure", () => {
-  it("maps billing-limit errors to quota_exhausted (pauses the schedule)", () => {
+  it("maps the canonical billing-limit code to quota_exhausted (pauses the schedule)", () => {
     expect(
       classifyFailure(new Error("billing_limit_reached: eval iterations")),
     ).toBe("quota_exhausted");
-    expect(classifyFailure(new Error("Eval iteration quota exceeded"))).toBe(
-      "quota_exhausted",
-    );
   });
 
-  it("maps delegation failures to auth (pauses the schedule)", () => {
+  it("maps delegated-mint 401/403 failures to auth (pauses the schedule)", () => {
     expect(
       classifyFailure(new Error("Delegated token exchange failed (403)")),
     ).toBe("auth");
-    expect(classifyFailure(new Error("User is not a member of org"))).toBe(
-      "auth",
-    );
+    expect(
+      classifyFailure(new Error("Delegated token exchange failed (401)")),
+    ).toBe("auth");
+  });
+
+  it("does NOT pause on loose substring matches (retryable failures stay retryable)", () => {
+    // An MCP server error merely mentioning these words must not pause
+    // the schedule.
+    expect(
+      classifyFailure(new Error("server replied: quota header missing")),
+    ).toMatch(/^run_create_failed: /);
+    expect(
+      classifyFailure(new Error("upstream FORBIDDEN while fetching tools")),
+    ).toMatch(/^run_create_failed: /);
+    expect(
+      classifyFailure(new Error("user is not a member of channel #general")),
+    ).toMatch(/^run_create_failed: /);
   });
 
   it("falls back to a bounded run_create_failed reason", () => {

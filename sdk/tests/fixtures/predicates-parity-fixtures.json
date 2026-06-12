@@ -280,6 +280,14 @@
       "value": { "type": "widgetRenderLatencyUnder", "ms": 250.5 }
     },
     {
+      "label": "widgetRenderLatencyUnder — empty toolName",
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 1000,
+        "toolName": ""
+      }
+    },
+    {
       "label": "widgetNoConsoleErrors — empty toolName",
       "value": { "type": "widgetNoConsoleErrors", "toolName": "" }
     }

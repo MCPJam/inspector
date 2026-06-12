@@ -20,6 +20,15 @@ export type TestCaseType = (typeof TEST_CASE_TYPES)[number];
 export const MAX_PROBE_RENDER_TIMEOUT_MS = 120_000;
 
 /**
+ * Placeholder toolName stamped by "New case → Widget probe" (the backend
+ * requires a non-empty toolName at rest, but no tool inventory is loaded at
+ * create time). Deliberately not a plausible tool identifier so a real tool
+ * can never collide with it; the probe editor treats exactly this literal
+ * as "unset".
+ */
+export const PROBE_TOOL_NAME_PLACEHOLDER = "__pick_a_tool__";
+
+/**
  * The pinned tool call a widget probe executes.
  *
  * `serverId` is the stable project-server reference (resolved against the

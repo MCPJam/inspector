@@ -2177,7 +2177,9 @@ const runTestCase = async (params: {
   // id first, display name fallback) resolves through the same binding maps
   // the LLM path uses for its environment.
   if (test.caseType === "widget_probe" && test.probeConfig) {
-    const connected = new Set(mcpClientManager.listServers());
+    // Run-scoped allow-list: only environment-selected servers are probe
+    // targets, even if the process happens to be connected to more.
+    const connected = new Set(selectedServers);
     const candidates = [
       test.probeConfig.serverId,
       test.probeConfig.serverName,

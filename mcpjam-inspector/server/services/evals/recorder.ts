@@ -437,6 +437,15 @@ export const startSuiteRunWithRecorder = async ({
       // fan-out below would silently drop them from the run. The sentinel
       // model/provider strings are display-only; the runner forks off the
       // LLM path before any model resolution.
+      if (tc.caseType === "widget_probe" && !tc.probeConfig) {
+        // Malformed probe (caseType without a pinned call): the model-free
+        // fallthrough below would drop it without a trace — surface it.
+        logger.warn("[evals] widget probe case missing probeConfig; skipped", {
+          testCaseId: tc._id ?? tc.testCaseId,
+          title: tc.title,
+        });
+        return [];
+      }
       if (tc.caseType === "widget_probe" && tc.probeConfig) {
         return [
           {

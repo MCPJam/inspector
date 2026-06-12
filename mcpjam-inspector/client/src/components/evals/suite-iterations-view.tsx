@@ -28,7 +28,7 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
-import { ScheduleEditor, type SuiteSchedule } from "./schedule-editor";
+import { ScheduleEditor } from "./schedule-editor";
 import { EvalExportModal } from "./eval-export-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
@@ -1227,7 +1227,7 @@ export function SuiteIterationsView({
                 >
                   <ScheduleEditor
                     suiteId={suite._id}
-                    schedule={(suite as { schedule?: SuiteSchedule }).schedule}
+                    schedule={suite.schedule}
                   />
                 </SettingsSection>
               ) : null}

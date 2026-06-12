@@ -226,12 +226,15 @@ async function runProbeIteration(
 
   // ── verdict ──────────────────────────────────────────────────────────
   // Same evaluator as every other path. The transcript is assembled
-  // directly (no trace exists to derive it from).
-  const toolsCalled = [
-    { toolName: probeConfig.toolName, arguments: probeArguments },
-  ];
+  // directly (no trace exists to derive it from). The pinned call is only
+  // recorded when an MCP call actually happened (success or error) — a
+  // not-connected probe must not report a phantom tool call.
+  const toolsCalled =
+    toolCallOk || toolErrors.length > 0
+      ? [{ toolName: probeConfig.toolName, arguments: probeArguments }]
+      : [];
   const transcript: IterationTranscript = {
-    toolCalls: toolCallOk || toolErrors.length > 0 ? toolsCalled : [],
+    toolCalls: toolsCalled,
     ...(toolErrors.length > 0 ? { toolErrors } : {}),
     ...(observation
       ? { renderObservations: summarizeRenderObservations([observation]) }

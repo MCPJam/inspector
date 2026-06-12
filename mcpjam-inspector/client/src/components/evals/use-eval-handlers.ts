@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
+import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -673,6 +674,14 @@ export function useEvalHandlers({
           // Dropping it here forced the backend to re-derive linkage by
           // title, which silently broke after a case rename.
           testCaseId: (test as { testCaseId?: string }).testCaseId,
+          // Probe fields ride along so cap-math excludes probes and any
+          // non-rerun upsert keeps the case's identity (dropping them here
+          // would re-count probes as LLM calls server-side).
+          caseType: (test as { caseType?: string }).caseType,
+          ...((test as { caseType?: string }).caseType === "widget_probe" &&
+          (test as { probeConfig?: unknown }).probeConfig
+            ? { probeConfig: (test as { probeConfig?: unknown }).probeConfig }
+            : {}),
         }));
 
         // Partial-failure tolerant: a failure on one host shouldn't cancel
@@ -1323,7 +1332,7 @@ export function useEvalHandlers({
           caseType: "widget_probe",
           probeConfig: {
             serverName: firstServer,
-            toolName: "tool",
+            toolName: PROBE_TOOL_NAME_PLACEHOLDER,
             arguments: {},
           },
           predicates: {

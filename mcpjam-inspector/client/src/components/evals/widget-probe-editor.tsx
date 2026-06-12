@@ -26,9 +26,15 @@ import {
   probeConfigSchema,
   type ProbeConfig,
   MAX_PROBE_RENDER_TIMEOUT_MS,
+  PROBE_TOOL_NAME_PLACEHOLDER,
 } from "@/shared/probe-config";
 import { ChecksSection, areAllChecksValid } from "./checks-section";
 import type { RemoteServer } from "@/hooks/useProjects";
+
+/** The create-flow placeholder reads as "unset" in the editor. */
+function seedToolName(persisted: string | undefined): string {
+  return persisted === PROBE_TOOL_NAME_PLACEHOLDER ? "" : (persisted ?? "");
+}
 
 interface WidgetProbeEditorProps {
   testCase: {
@@ -66,7 +72,9 @@ export function WidgetProbeEditor({
   const [serverName, setServerName] = useState(
     testCase.probeConfig?.serverName ?? suiteServers[0] ?? "",
   );
-  const [toolName, setToolName] = useState(testCase.probeConfig?.toolName ?? "");
+  const [toolName, setToolName] = useState(
+    seedToolName(testCase.probeConfig?.toolName),
+  );
   const [argsJson, setArgsJson] = useState(() =>
     JSON.stringify(testCase.probeConfig?.arguments ?? {}, null, 2),
   );
@@ -87,7 +95,7 @@ export function WidgetProbeEditor({
     setTitle(testCase.title);
     setRuns(testCase.runs ?? 1);
     setServerName(testCase.probeConfig?.serverName ?? suiteServers[0] ?? "");
-    setToolName(testCase.probeConfig?.toolName ?? "");
+    setToolName(seedToolName(testCase.probeConfig?.toolName));
     setArgsJson(JSON.stringify(testCase.probeConfig?.arguments ?? {}, null, 2));
     setArgsError(null);
     setRenderTimeoutMs(testCase.probeConfig?.renderTimeoutMs);
@@ -101,14 +109,21 @@ export function WidgetProbeEditor({
     return match?._id;
   }, [projectServers, serverName]);
 
-  // The placeholder created by "New case → Widget probe" pins toolName
-  // "tool"; treat it as unset so the picker shows its prompt state.
-  const effectiveToolName = toolName === "tool" ? "" : toolName;
+  const effectiveToolName = toolName;
 
+  // Only offer tools that live on the selected server when per-tool server
+  // attribution is available — a probe pinned to server A must not offer
+  // server B's tools. Tools without a serverId (older inventories) stay
+  // visible everywhere.
   const toolNames = useMemo(() => {
-    const names = availableTools.map((t) => t.name);
+    const names = availableTools
+      .filter(
+        (t) =>
+          !t.serverId || !resolvedServerId || t.serverId === resolvedServerId,
+      )
+      .map((t) => t.name);
     return Array.from(new Set(names));
-  }, [availableTools]);
+  }, [availableTools, resolvedServerId]);
 
   const parsedArgs = useMemo(() => {
     try {

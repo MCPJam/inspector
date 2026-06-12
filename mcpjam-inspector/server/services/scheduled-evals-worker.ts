@@ -33,6 +33,8 @@ const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
 /** Backoff after claim/transport errors so a broken backend isn't hammered. */
 const ERROR_BACKOFF_MS = 60_000;
+/** Per-request cap on claim/complete calls so a stalled Convex can't wedge the loop. */
+const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
 
 type ClaimedScheduledRun = {
   triggerId: string;
@@ -65,14 +67,22 @@ async function postServiceRoute(
       "Scheduled evals worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
     );
   }
-  const response = await fetch(`${env.convexUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-inspector-service-token": env.serviceToken,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SERVICE_ROUTE_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${env.convexUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-inspector-service-token": env.serviceToken,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   let parsed: any = null;
   try {
     parsed = await response.json();
@@ -118,17 +128,17 @@ async function reportComplete(args: {
 
 /**
  * Map a setup-phase failure to the completion reason the backend pauses
- * schedules on. Quota and auth failures pause; everything else records a
- * plain failure and the schedule tries again next window.
+ * schedules on. Deliberately anchored to the two CANONICAL markers — the
+ * backend's `billing_limit_reached` billing-error code and this server's
+ * own delegated-mint failure message — because pausing a schedule on a
+ * loose substring (an MCP server error that merely mentions "quota")
+ * would stop monitoring for a transient, retryable failure. Everything
+ * else records a plain failure and the schedule tries again next window.
  */
 export function classifyFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/billing_limit_reached|quota/i.test(message)) return "quota_exhausted";
-  if (
-    /delegated token exchange failed \(40[13]\)|FORBIDDEN|not a member/i.test(
-      message,
-    )
-  ) {
+  if (/billing_limit_reached/i.test(message)) return "quota_exhausted";
+  if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }
   return `run_create_failed: ${message.slice(0, 160)}`;
@@ -256,7 +266,8 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 export interface ScheduledEvalsWorkerHandle {
-  stop: () => void;
+  /** Aborts polling and resolves once the loop (incl. an in-flight run) settles. */
+  stop: () => Promise<void>;
 }
 
 /**
@@ -281,12 +292,12 @@ export function startScheduledEvalsWorker(options?: {
     logger.warn(
       "[scheduled-evals] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
-    return { stop: () => {} };
+    return { stop: async () => {} };
   }
 
   logger.info("[scheduled-evals] worker started", { claimedBy });
 
-  void (async () => {
+  const loop = (async () => {
     while (!abort.signal.aborted) {
       let waitMs = POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
       try {
@@ -312,5 +323,12 @@ export function startScheduledEvalsWorker(options?: {
     logger.info("[scheduled-evals] worker stopped");
   })();
 
-  return { stop: () => abort.abort() };
+  return {
+    stop: async () => {
+      abort.abort();
+      // Bounded by the caller's shutdown force-exit timer; runs that
+      // outlast it are recovered by the backend's stale-lease sweep.
+      await loop;
+    },
+  };
 }
