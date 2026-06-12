@@ -55,6 +55,7 @@ export default defineConfig({
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
     "@mcpjam/sdk/host-config/internal",
+    "@mcpjam/sdk/platform",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -70,6 +71,7 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/host-config/internal.js",
       ),
+      "@mcpjam/sdk/platform": join(rootDir, "../sdk/dist/platform/index.js"),
     };
   },
 });
