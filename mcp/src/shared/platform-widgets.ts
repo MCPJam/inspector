@@ -85,9 +85,11 @@ export function getPlatformWidgetView(
   }
 
   const value = (payload as { widget?: unknown }).widget;
+  // Own-property check: `in` would also accept prototype keys such as
+  // "toString" and index inherited members of the guard map.
   if (
     typeof value !== "string" ||
-    !(value in PLATFORM_WIDGET_RESOURCE_URIS)
+    !Object.hasOwn(PLATFORM_WIDGET_RESOURCE_URIS, value)
   ) {
     return undefined;
   }

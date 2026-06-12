@@ -48,6 +48,12 @@ describe("getPlatformWidgetView", () => {
     expect(getPlatformWidgetView({ project: PROJECT })).toBeUndefined();
   });
 
+  it("rejects prototype keys masquerading as view tags", () => {
+    expect(getPlatformWidgetView({ widget: "toString" })).toBeUndefined();
+    expect(getPlatformWidgetView({ widget: "constructor" })).toBeUndefined();
+    expect(getPlatformWidgetView({ widget: "hasOwnProperty" })).toBeUndefined();
+  });
+
   it("rejects tagged payloads whose envelope is malformed", () => {
     // items missing entirely.
     expect(
