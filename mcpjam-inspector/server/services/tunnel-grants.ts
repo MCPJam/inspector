@@ -37,6 +37,14 @@ export async function convexFetch(
   url: string,
   init: RequestInit = {}
 ): Promise<Response> {
+  if (init.signal) {
+    // The deadline owns the signal slot; a caller-provided one would be
+    // silently clobbered below. Reject loudly until someone needs both
+    // (then merge with AbortSignal.any).
+    throw new Error(
+      "convexFetch does not support caller-provided signals; the shared timeout owns cancellation"
+    );
+  }
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
