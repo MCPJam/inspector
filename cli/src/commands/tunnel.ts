@@ -188,10 +188,10 @@ export function registerTunnelCommands(program: Command): void {
         };
 
         const session = new TunnelSession({
-          createGrant: () =>
+          createGrant: (signal) =>
             createTunnelOperation.execute(
               { project: options.project, name: options.id },
-              { client },
+              { client, signal },
             ),
           closeGrant: async (result, signal) => {
             await closeTunnelOperation.execute(

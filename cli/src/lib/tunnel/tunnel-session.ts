@@ -44,8 +44,13 @@ export interface TunnelSessionResult {
 }
 
 export interface TunnelSessionDeps {
-  /** POST /projects/:id/tunnels — also the rotation path. */
-  createGrant(): Promise<CreateTunnelResult>;
+  /**
+   * POST /projects/:id/tunnels — also the rotation path. The signal aborts
+   * when stop() lands while the mint is in flight; implementations must
+   * wire it into the request. (A mint whose response already won the race
+   * is revoked by the session's stopped-guards instead.)
+   */
+  createGrant(signal: AbortSignal): Promise<CreateTunnelResult>;
   /**
    * Best-effort grant revocation on Ctrl-C. The signal aborts when the
    * grace period expires — implementations must wire it into the request
@@ -117,6 +122,8 @@ export class TunnelSession {
    */
   private pendingPermanent: { reason: string; closeCode: number } | null =
     null;
+  /** Aborts an in-flight grant mint when stop() lands during one. */
+  private mintAborter: AbortController | null = null;
   private settled = false;
   private settle!: (result: TunnelSessionResult) => void;
   private readonly closed: Promise<TunnelSessionResult>;
@@ -138,7 +145,7 @@ export class TunnelSession {
    */
   async start(): Promise<CreateTunnelResult> {
     try {
-      const result = await this.deps.createGrant();
+      const result = await this.mintGrant();
       this.grantResult = result;
       this.assertNotStopped();
       this.bridge = await this.deps.startBridge(result.grant.serverId);
@@ -157,6 +164,18 @@ export class TunnelSession {
       // caller needs to see.
       await this.revokeGrantBestEffort();
       throw error;
+    }
+  }
+
+  private async mintGrant(): Promise<CreateTunnelResult> {
+    const aborter = new AbortController();
+    this.mintAborter = aborter;
+    try {
+      return await this.deps.createGrant(aborter.signal);
+    } finally {
+      if (this.mintAborter === aborter) {
+        this.mintAborter = null;
+      }
     }
   }
 
@@ -194,6 +213,11 @@ export class TunnelSession {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    // Cancel an in-flight mint right away: the request (and its timers)
+    // must not outlive the session, and usually no grant gets minted at
+    // all. A response that already won the race is revoked by the
+    // startup/remint stopped-guards instead.
+    this.mintAborter?.abort();
     await this.cleanup();
     if (this.grantResult) {
       // Abort the request when the grace period wins the race — otherwise
@@ -304,7 +328,7 @@ export class TunnelSession {
       );
       try {
         this.connection?.close();
-        const result = await this.deps.createGrant();
+        const result = await this.mintGrant();
         this.grantResult = result;
         // A stop()/fail() that landed while the grant was minting owns the
         // session now. Its own revocation may have raced AHEAD of this mint

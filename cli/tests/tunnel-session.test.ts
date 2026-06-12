@@ -59,6 +59,7 @@ type Harness = {
   session: TunnelSession;
   connections: StubConnection[];
   createGrantCalls: number;
+  startBridgeCalls: number;
   closeGrantCalls: CreateTunnelResult[];
   bridge: { closed: boolean } & LocalBridgeLike;
   grants: Array<{ result: CreateTunnelResult; rotated: boolean }>;
@@ -86,7 +87,7 @@ function makeHarness(
       this.closed = true;
     },
   };
-  const state = { createGrantCalls: 0 };
+  const state = { createGrantCalls: 0, startBridgeCalls: 0 };
 
   const deps: TunnelSessionDeps = {
     createGrant: async () => {
@@ -96,7 +97,10 @@ function makeHarness(
     closeGrant: async (result) => {
       closeGrantCalls.push(result);
     },
-    startBridge: async () => bridge,
+    startBridge: async () => {
+      state.startBridgeCalls += 1;
+      return bridge;
+    },
     connectRelay: ({ onPermanentFailure }) => {
       const connection = new StubConnection(
         onPermanentFailure,
@@ -117,6 +121,9 @@ function makeHarness(
     connections,
     get createGrantCalls() {
       return state.createGrantCalls;
+    },
+    get startBridgeCalls() {
+      return state.startBridgeCalls;
     },
     closeGrantCalls,
     bridge,
@@ -411,8 +418,34 @@ test("stop during startup aborts the bring-up and revokes the late-minted grant"
 
   assert.equal(harness.closeGrantCalls.length, 1);
   assert.equal(harness.closeGrantCalls[0]!.grant.connectToken, "ct-1");
+  assert.equal(harness.startBridgeCalls, 0);
   assert.equal(harness.connections.length, 0);
   assert.equal(harness.grants.length, 0);
+  const result = await harness.session.waitUntilClosed();
+  assert.equal(result.exitCode, 0);
+});
+
+test("stop aborts an in-flight grant mint", async () => {
+  let mintSignal: AbortSignal | undefined;
+  const harness = makeHarness({
+    createGrant: (signal) =>
+      new Promise<CreateTunnelResult>((_resolve, reject) => {
+        mintSignal = signal;
+        signal.addEventListener("abort", () =>
+          reject(new Error("mint aborted")),
+        );
+      }),
+  });
+
+  const startPromise = harness.session.start();
+  await waitFor(() => mintSignal !== undefined);
+  await harness.session.stop();
+
+  assert.equal(mintSignal!.aborted, true);
+  await assert.rejects(() => startPromise, /mint aborted/);
+  assert.equal(harness.startBridgeCalls, 0);
+  // The mint never completed, so there is nothing to revoke.
+  assert.equal(harness.closeGrantCalls.length, 0);
   const result = await harness.session.waitUntilClosed();
   assert.equal(result.exitCode, 0);
 });
