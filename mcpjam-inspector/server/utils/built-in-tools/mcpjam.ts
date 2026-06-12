@@ -103,10 +103,8 @@ const CONNECTION_OPENING_IDS = new Set([
 
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
-// updated" default for context-free callers. Exported for the widget-backed
-// show_servers built-in (mcpjam-show-servers.ts), which adapts a catalog
-// operation the same way.
-export const AMBIENT_PROJECT_NOTE =
+// updated" default for context-free callers.
+const AMBIENT_PROJECT_NOTE =
   " When no project is given, the current chat's project is used.";
 
 export interface McpjamToolOptions {

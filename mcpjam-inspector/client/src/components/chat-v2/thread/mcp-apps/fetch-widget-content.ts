@@ -94,22 +94,21 @@ export async function fetchMcpAppsWidgetContent(
 ): Promise<FetchMcpAppsWidgetContentResponse> {
   const useWebEndpoint = HOSTED_MODE || request.forceWebEndpoint === true;
 
-  // Widget-backed BUILT-IN tools (the MCPJam agent's show_servers) stamp the
-  // synthetic platform id as the tool result's `_serverId`. There is no
-  // Convex-registered server behind it, so the general web endpoint's
-  // `buildServerRequest` resolution would throw — the agent's companion
-  // endpoint serves the platform widget bundle directly instead.
-  const isPlatformBuiltIn = request.serverId === MCPJAM_PLATFORM_SERVER_ID;
+  // The MCPJam agent's platform MCP server (mcp.mcpjam.com) is connected
+  // under a synthetic id with no Convex registration, so the general web
+  // endpoint's `buildServerRequest` resolution would throw. The agent's
+  // companion endpoint reads the `ui://` resource from that server instead.
+  const isAgentPlatformServer = request.serverId === MCPJAM_PLATFORM_SERVER_ID;
 
   const endpoint =
-    useWebEndpoint && isPlatformBuiltIn
+    useWebEndpoint && isAgentPlatformServer
       ? MCPJAM_AGENT_WIDGET_CONTENT_PATH
       : useWebEndpoint
       ? "/api/web/apps/mcp-apps/widget-content"
       : "/api/apps/mcp-apps/widget-content";
 
   const payload =
-    useWebEndpoint && !isPlatformBuiltIn
+    useWebEndpoint && !isAgentPlatformServer
       ? { ...buildServerRequest(request.serverId) }
       : { serverId: request.serverId };
 

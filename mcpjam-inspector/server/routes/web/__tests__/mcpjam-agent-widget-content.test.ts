@@ -1,11 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-// The companion endpoint under test serves static bundle HTML — the heavy
-// chat-turn machinery the route module also imports is irrelevant here.
+// The companion endpoint under test proxies a `resources/read` to the
+// platform MCP worker — the heavy chat-turn machinery the route module also
+// imports is irrelevant here.
 vi.mock("../../../utils/web-chat-turn.js", () => ({
   streamWebChatTurn: vi.fn(),
 }));
+
+// Capture MCPClientManager construction (server configs, notably the
+// forwarded bearer) and stub readResource. Everything else from @mcpjam/sdk
+// stays real (MCP_UI_EXTENSION_ID etc. are imported at module load).
+const managerState = vi.hoisted(() => ({
+  constructedConfigs: [] as Record<string, any>[],
+  readResource: vi.fn(),
+  disconnectAllServers: vi.fn(async () => {}),
+}));
+
+vi.mock("@mcpjam/sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@mcpjam/sdk")>();
+  class FakeMCPClientManager {
+    constructor(configs: Record<string, any>) {
+      managerState.constructedConfigs.push(configs);
+    }
+    readResource = managerState.readResource;
+    disconnectAllServers = managerState.disconnectAllServers;
+    listTools = vi.fn();
+  }
+  return { ...actual, MCPClientManager: FakeMCPClientManager };
+});
 
 vi.mock("../auth.js", () => {
   class WebRouteError extends Error {
@@ -48,11 +71,12 @@ vi.mock("../auth.js", () => {
 });
 
 import mcpjamAgent from "../mcpjam-agent.js";
-import { MCPJAM_APP_HTML } from "../../../../../mcp/src/generated/McpAppsHtml.bundled.js";
 import {
   MCPJAM_PLATFORM_SERVER_ID,
-  SHOW_SERVERS_RESOURCE_URI,
+  MCPJAM_AGENT_WIDGET_CONTENT_PATH,
 } from "../../../../shared/mcpjam-agent-widgets";
+
+const SHOW_SERVERS_URI = "ui://mcpjam/show-servers.html";
 
 function makeApp() {
   const app = new Hono();
@@ -61,44 +85,74 @@ function makeApp() {
 }
 
 const VALID_BODY = {
-  resourceUri: SHOW_SERVERS_RESOURCE_URI,
+  resourceUri: SHOW_SERVERS_URI,
   toolId: "call_1",
   toolName: "show_servers",
   toolInput: {},
 };
 
 function post(app: Hono, body: unknown, headers: Record<string, string> = {}) {
-  return app.request("/api/web/mcpjam-agent/widget-content", {
+  return app.request(MCPJAM_AGENT_WIDGET_CONTENT_PATH, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 }
 
+beforeEach(() => {
+  managerState.constructedConfigs.length = 0;
+  managerState.readResource.mockReset();
+  managerState.disconnectAllServers.mockClear();
+});
+
 describe("POST /api/web/mcpjam-agent/widget-content", () => {
-  it("serves the platform widget bundle for a known resource URI", async () => {
+  it("reads the ui:// resource from the platform worker with the caller's bearer", async () => {
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        {
+          uri: SHOW_SERVERS_URI,
+          mimeType: "text/html;profile=mcp-app",
+          text: "<html>WIDGET</html>",
+          _meta: { ui: { prefersBorder: true } },
+        },
+      ],
+    });
+
     const app = makeApp();
     const response = await post(app, VALID_BODY, {
       authorization: "Bearer user-token",
     });
+
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
-    expect(body.html).toBe(MCPJAM_APP_HTML);
+    expect(body.html).toBe("<html>WIDGET</html>");
     expect(body.prefersBorder).toBe(true);
     expect(body.mimeType).toBe("text/html;profile=mcp-app");
     expect(body.mimeTypeValid).toBe(true);
-    expect(body.permissive).toBe(true);
-    expect(body.cspMode).toBe("permissive");
+
+    // The ephemeral connection targets the platform server id with the
+    // caller's own bearer as the MCP access token.
+    expect(managerState.constructedConfigs).toHaveLength(1);
+    const config =
+      managerState.constructedConfigs[0]![MCPJAM_PLATFORM_SERVER_ID];
+    expect(config).toBeDefined();
+    expect(config.accessToken).toBe("user-token");
+    expect(managerState.readResource).toHaveBeenCalledWith(
+      MCPJAM_PLATFORM_SERVER_ID,
+      { uri: SHOW_SERVERS_URI }
+    );
+    expect(managerState.disconnectAllServers).toHaveBeenCalled();
   });
 
-  it("rejects resource URIs outside the platform widget catalog", async () => {
+  it("rejects non-ui:// resource URIs", async () => {
     const app = makeApp();
     const response = await post(
       app,
-      { ...VALID_BODY, resourceUri: "ui://evil/whatever.html" },
+      { ...VALID_BODY, resourceUri: "https://evil.example/page.html" },
       { authorization: "Bearer user-token" }
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
+    expect(managerState.readResource).not.toHaveBeenCalled();
   });
 
   it("requires a bearer token", async () => {
@@ -107,8 +161,22 @@ describe("POST /api/web/mcpjam-agent/widget-content", () => {
     expect(response.status).toBe(401);
   });
 
-  it("widget tool result ids round-trip to this endpoint's routing constant", () => {
-    // fetch-widget-content.ts routes on this exact id; the tool stamps it.
-    expect(MCPJAM_PLATFORM_SERVER_ID).toBe("mcpjam-platform");
+  it("returns 404 when the resource has no content", async () => {
+    managerState.readResource.mockResolvedValue({ contents: [] });
+    const app = makeApp();
+    const response = await post(app, VALID_BODY, {
+      authorization: "Bearer user-token",
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it("maps worker failures through the standard error envelope and disconnects", async () => {
+    managerState.readResource.mockRejectedValue(new Error("worker down"));
+    const app = makeApp();
+    const response = await post(app, VALID_BODY, {
+      authorization: "Bearer user-token",
+    });
+    expect(response.status).toBe(500);
+    expect(managerState.disconnectAllServers).toHaveBeenCalled();
   });
 });

@@ -1,30 +1,25 @@
 /**
- * Cross-layer constants for the MCPJam agent's built-in widget tools.
+ * Cross-layer constants for the MCPJam agent's platform MCP server
+ * connection.
  *
- * The agent's `show_servers` built-in renders through the standard MCP Apps
- * pipeline, but its widget HTML is the platform widget bundle served by the
- * agent's own companion endpoint — not a Convex-registered server. The
- * client routes the HTML fetch on the synthetic server id below
- * (`fetch-widget-content.ts`); the server stamps the same id into the tool
- * result (`built-in-tools/mcpjam-show-servers.ts`). Keep them in this one
- * module so the two sides can't drift.
+ * The agent connects to the MCPJam platform MCP worker (mcp.mcpjam.com)
+ * under the synthetic id below. The standard hosted widget pipeline resolves
+ * widget HTML by Convex-registered server id, which this server doesn't
+ * have — so the client routes widget-content fetches for this id to the
+ * agent's companion endpoint, which `resources/read`s the `ui://` resource
+ * over an ephemeral authed connection to the worker. The id reaches the
+ * client as `_serverId` on streamed tool results (stamped by the chat
+ * engine for every MCP server). Keep both sides on this one module so they
+ * can't drift.
  */
 
 /**
- * Synthetic server id carried as `_serverId` on widget-backed built-in tool
- * results. Not a Convex id — it exists only to route widget-content fetches
- * to the agent's companion endpoint.
+ * Manager key for the platform MCP server in the agent route — and
+ * therefore the `_serverId` the client sees on its tool results. Not a
+ * Convex id.
  */
 export const MCPJAM_PLATFORM_SERVER_ID = "mcpjam-platform";
 
-/**
- * Resource URI of the show-servers view in the shared platform widget
- * bundle. Source of truth: `mcp/src/shared/platform-widgets.ts`
- * (`PLATFORM_WIDGET_RESOURCE_URIS.servers`) — a server-side test asserts
- * this literal stays in lockstep.
- */
-export const SHOW_SERVERS_RESOURCE_URI = "ui://mcpjam/show-servers.html";
-
-/** Companion endpoint that serves the platform widget bundle HTML. */
+/** Companion endpoint that reads `ui://` widget resources from the worker. */
 export const MCPJAM_AGENT_WIDGET_CONTENT_PATH =
   "/api/web/mcpjam-agent/widget-content";

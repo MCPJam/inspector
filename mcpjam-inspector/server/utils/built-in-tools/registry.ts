@@ -48,10 +48,6 @@ import {
 } from "./exa-web-search.js";
 import { buildBashTool, BASH_TOOL_NAME } from "./bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
-import {
-  buildShowServersWidgetTool,
-  SHOW_SERVERS_TOOL_NAME,
-} from "./mcpjam-show-servers.js";
 
 export interface BuiltInToolContext {
   /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
@@ -182,31 +178,6 @@ export function resolveHostTools(
         authHeader,
         projectId: ctx.projectId,
         workdir: computer.workdir,
-        requireToolApproval: ctx.requireToolApproval,
-      });
-      continue;
-    }
-    if (id === SHOW_SERVERS_TOOL_NAME) {
-      // Widget-backed workspace tool: same actor + client gates as the
-      // plain catalog ops below, but built separately because its result
-      // carries MCP Apps render metadata (see mcpjam-show-servers.ts).
-      if (ctx.isGuest || ctx.isChatboxSession) {
-        logger.debug(
-          "[built-in-tools] workspace tools not advertised to guest/chatbox actors; skipping",
-          { id }
-        );
-        continue;
-      }
-      if (!ctx.mcpjamPlatformClient) {
-        logger.debug(
-          "[built-in-tools] workspace tool id without a platform client; skipping",
-          { id }
-        );
-        continue;
-      }
-      out[id] = buildShowServersWidgetTool({
-        client: ctx.mcpjamPlatformClient,
-        projectId: ctx.projectId,
         requireToolApproval: ctx.requireToolApproval,
       });
       continue;
