@@ -344,7 +344,7 @@ export function ComputerTerminal({
 
         {/* Terminal canvas + overlay */}
         <div className="relative min-h-0 flex-1">
-          <div ref={containerRef} className="absolute inset-0 p-1" />
+          <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
           {showOverlay ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
               {state === "connecting" ? (
