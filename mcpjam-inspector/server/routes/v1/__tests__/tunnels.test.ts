@@ -261,6 +261,68 @@ describe("v1 tunnel routes", () => {
       expect(body).not.toHaveProperty("previousUrl");
     });
 
+    it("serializes overlapping creates: mint + persist is a per-server critical section", async () => {
+      const events: string[] = [];
+      let releaseFirstMint: (() => void) | undefined;
+      const firstMintGate = new Promise<void>((resolve) => {
+        releaseFirstMint = resolve;
+      });
+      let mintCalls = 0;
+
+      const fetchMock = vi.fn(async (target: RequestInfo | URL) => {
+        const url = String(target);
+        if (url.includes("/v1/project-servers")) {
+          return Response.json({ items: [] });
+        }
+        if (url.includes("/tunnels/token")) {
+          mintCalls += 1;
+          const call = mintCalls;
+          events.push(`mint${call}`);
+          if (call === 1) await firstMintGate;
+          return Response.json({
+            ...GRANT,
+            url: `${GRANT.url}&mint=${call}`,
+            secretVersion: call,
+          });
+        }
+        throw new Error(`Unexpected fetch in test: ${url}`);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      convexMutationMock.mockImplementation(
+        async (name: string, args: { url?: string }) => {
+          if (name === "servers:updateServer") {
+            events.push(`update${args.url?.includes("mint=1") ? 1 : 2}`);
+          }
+          return "srv_1";
+        }
+      );
+
+      const app = makeApp();
+      const first = request(app, "POST", "/api/v1/projects/p1/tunnels", {
+        name: "everything",
+      });
+      await vi.waitFor(() => expect(mintCalls).toBe(1));
+      const second = request(app, "POST", "/api/v1/projects/p1/tunnels", {
+        name: "everything",
+      });
+
+      // While the first request's mint is parked, the second must queue on
+      // the lock instead of starting its own mint.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(mintCalls).toBe(1);
+
+      releaseFirstMint!();
+      const [firstResponse, secondResponse] = await Promise.all([
+        first,
+        second,
+      ]);
+      expect(firstResponse.status).toBe(201);
+      expect(secondResponse.status).toBe(201);
+      // No interleaving: each mint's URL is persisted before the next mint
+      // (which revokes it at the edge) can begin.
+      expect(events).toEqual(["mint1", "update1", "mint2", "update2"]);
+    });
+
     it("rejects a missing name with the v1 validation envelope", async () => {
       stubBackendFetch();
       const response = await request(

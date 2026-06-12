@@ -22,6 +22,7 @@ import {
   readJsonBody,
 } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { withTunnelLock } from "../../services/tunnel-locks.js";
 import {
   closeTunnelGrant,
   convexFetch,
@@ -174,49 +175,56 @@ tunnels.post("/projects/:projectId/tunnels", async (c) => {
     );
   }
 
-  let grant;
-  try {
-    grant = await fetchRelayGrant(serverId, `Bearer ${bearer}`);
-  } catch (error) {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      error instanceof Error ? error.message : "Failed to fetch tunnel grant"
-    );
-  }
-
-  // Point the record at the live tunnel. `transportType: "http"` converts a
-  // name-colliding stdio record — without it the platform would keep trying
-  // to launch the local command and ignore the URL.
-  try {
-    await convex.mutation("servers:updateServer" as any, {
-      serverId,
-      url: grant.url,
-      transportType: "http",
-      enabled: true,
-    });
-  } catch (error) {
-    logger.error("v1 tunnels: updateServer failed", error, { serverId });
-    // The caller never receives this grant, so don't leave its secret
-    // live with the record pointing at a stale URL. Best-effort: the
-    // updateServer failure is what the caller needs to see.
+  // Mint + persist is a per-server critical section (same posture as the
+  // web route's create/rotate/close): two overlapping creates would
+  // otherwise interleave so the LOSING request's updateServer lands last,
+  // persisting a URL whose secret the winning mint already revoked.
+  const grant = await withTunnelLock(serverId, async () => {
+    let minted;
     try {
-      await closeTunnelGrant(serverId, `Bearer ${bearer}`);
-    } catch (closeError) {
-      logger.error(
-        "v1 tunnels: failed to revoke the orphaned grant",
-        closeError,
-        { serverId }
+      minted = await fetchRelayGrant(serverId, `Bearer ${bearer}`);
+    } catch (error) {
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        error instanceof Error ? error.message : "Failed to fetch tunnel grant"
       );
     }
-    throw new WebRouteError(
-      502,
-      ErrorCode.INTERNAL_ERROR,
-      `Tunnel grant was minted but storing the URL on the server record failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-  }
+
+    // Point the record at the live tunnel. `transportType: "http"` converts
+    // a name-colliding stdio record — without it the platform would keep
+    // trying to launch the local command and ignore the URL.
+    try {
+      await convex.mutation("servers:updateServer" as any, {
+        serverId,
+        url: minted.url,
+        transportType: "http",
+        enabled: true,
+      });
+    } catch (error) {
+      logger.error("v1 tunnels: updateServer failed", error, { serverId });
+      // The caller never receives this grant, so don't leave its secret
+      // live with the record pointing at a stale URL. Best-effort: the
+      // updateServer failure is what the caller needs to see.
+      try {
+        await closeTunnelGrant(serverId, `Bearer ${bearer}`);
+      } catch (closeError) {
+        logger.error(
+          "v1 tunnels: failed to revoke the orphaned grant",
+          closeError,
+          { serverId }
+        );
+      }
+      throw new WebRouteError(
+        502,
+        ErrorCode.INTERNAL_ERROR,
+        `Tunnel grant was minted but storing the URL on the server record failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    return minted;
+  });
 
   // Explicit whitelist — the upstream grant also carries the plaintext
   // `secret` and the `secretHash`, which must not pass through.
@@ -267,15 +275,19 @@ tunnels.post("/projects/:projectId/tunnels/:serverId/close", async (c) => {
     );
   }
 
-  try {
-    await closeTunnelGrant(serverId, `Bearer ${bearer}`);
-  } catch (error) {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      error instanceof Error ? error.message : "Failed to close tunnel"
-    );
-  }
+  // Serialized with creates for this server: a close interleaving with a
+  // mint's grant/persist steps would race the edge's view of the live grant.
+  await withTunnelLock(serverId, async () => {
+    try {
+      await closeTunnelGrant(serverId, `Bearer ${bearer}`);
+    } catch (error) {
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        error instanceof Error ? error.message : "Failed to close tunnel"
+      );
+    }
+  });
 
   return v1Resource(c, { serverId, status: "closed" });
 });
