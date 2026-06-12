@@ -6,12 +6,16 @@ const reserve = vi.fn(async () => ({} as never));
 const deleteComputer = vi.fn(async () => ({ deleted: true }));
 const mintToken = vi.fn(async () => ({ token: "t", expiresAt: 0 } as never));
 let mockStatus: ComputerViewModel | null | undefined;
+let mockDataPlane:
+  | { localConfigured: boolean; remoteDataPlaneUrl: string | null }
+  | undefined;
 
 vi.mock("@/hooks/useProjectComputer", () => ({
   useComputerStatus: () => mockStatus,
   useReserveComputer: () => reserve,
   useDeleteComputer: () => deleteComputer,
   useMintTerminalToken: () => mintToken,
+  useComputersDataPlaneConfig: () => mockDataPlane,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -25,7 +29,9 @@ vi.mock("sonner", () => ({
 
 // Stub the xterm terminal so the orchestration test needs no real terminal.
 vi.mock("../ComputerTerminal", () => ({
-  ComputerTerminal: () => <div data-testid="terminal-stub" />,
+  ComputerTerminal: (props: { baseUrl?: string }) => (
+    <div data-testid="terminal-stub" data-base-url={props.baseUrl ?? ""} />
+  ),
 }));
 
 import { ComputerView } from "../ComputerView";
@@ -33,7 +39,12 @@ import { ComputerView } from "../ComputerView";
 afterEach(() => {
   vi.clearAllMocks();
   mockStatus = undefined;
+  mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 });
+
+// Default for every test: this server IS a data plane (the pre-remote
+// behavior). Individual tests override to exercise the delegation states.
+mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 
 describe("ComputerView", () => {
   it("prompts to sign in when unauthenticated", () => {
@@ -120,6 +131,69 @@ describe("ComputerView", () => {
     expect(queryByText(/Starting your computer/i)).toBeNull();
     expect(getByText("Try again")).toBeTruthy();
     expect(getByText("Close")).toBeTruthy();
+  });
+
+  it("shows an honest empty state when no data plane is available (no Open terminal)", () => {
+    mockDataPlane = { localConfigured: false, remoteDataPlaneUrl: null };
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText(/isn't set up to run computers/i)).toBeTruthy();
+    expect(queryByText("Open terminal")).toBeNull();
+    // The computer itself still exists (it lives in Convex/E2B, not on this
+    // server), so Delete must stay available.
+    expect(getByText("Delete")).toBeTruthy();
+  });
+
+  it("aims the terminal at the remote data plane when delegating", () => {
+    mockDataPlane = {
+      localConfigured: false,
+      remoteDataPlaneUrl: "https://dp.example.test",
+    };
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    expect(getByTestId("terminal-stub").getAttribute("data-base-url")).toBe(
+      "wss://dp.example.test"
+    );
+  });
+
+  it("holds the terminal mount until the data-plane config resolves", () => {
+    mockDataPlane = undefined; // /config still in flight
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByTestId, getByTestId, rerender } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    // Mounting now would dial the page origin and never re-dial once the
+    // remote base URL arrives — show a spinner instead.
+    expect(queryByTestId("terminal-stub")).toBeNull();
+
+    mockDataPlane = {
+      localConfigured: false,
+      remoteDataPlaneUrl: "https://dp.example.test",
+    };
+    rerender(<ComputerView projectId="p1" isAuthenticated />);
+    expect(getByTestId("terminal-stub").getAttribute("data-base-url")).toBe(
+      "wss://dp.example.test"
+    );
+  });
+
+  it("keeps the terminal on the page origin when locally configured", () => {
+    mockDataPlane = {
+      localConfigured: true,
+      // A remote URL alongside local credentials must be ignored.
+      remoteDataPlaneUrl: "https://dp.example.test",
+    };
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    expect(getByTestId("terminal-stub").getAttribute("data-base-url")).toBe("");
   });
 
   it("shows a 'no longer available' pane when the computer disappears with the terminal open", () => {
