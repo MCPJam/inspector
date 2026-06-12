@@ -6,6 +6,7 @@ import {
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
 import { isAbortError } from "./abort-errors";
+import { isClientFulfilledToolName } from "./client-fulfilled-tools";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -45,8 +46,6 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   return index;
 }
 
-const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
-
 function isSkippableClientFulfilledToolCall(
   toolName: string,
   tool: unknown,
@@ -54,7 +53,7 @@ function isSkippableClientFulfilledToolCall(
 ): boolean {
   return (
     skipNonExecutableTools === true &&
-    APP_TOOL_ALIAS_REGEX.test(toolName) &&
+    isClientFulfilledToolName(toolName) &&
     !!tool &&
     typeof tool === "object" &&
     typeof (tool as { execute?: unknown }).execute !== "function"

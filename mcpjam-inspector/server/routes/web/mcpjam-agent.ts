@@ -15,8 +15,10 @@
  *     validation against the project's `servers` rows. The chat appears in
  *     the user's history alongside other direct sessions; per-surface
  *     differentiation is client-side.
- *   - Rejects chatbox / appTools / selectedServerIds fields up front — this
- *     surface owns its tool set.
+ *   - Ignores chatbox / appTools / selectedServerIds fields up front — this
+ *     surface owns its MCP tool set. The one client-supplied tool snapshot it
+ *     DOES accept is `uiTools` (WebMCP UI tools, validated at the boundary):
+ *     the agent panel is the primary surface for driving the inspector UI.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -30,6 +32,10 @@ import { isMCPAuthError } from "@mcpjam/sdk";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  validateUiToolEntries,
+  UiToolValidationError,
+} from "../../utils/chat-v2-orchestration.js";
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { MCPJAM_TOOL_IDS } from "../../utils/built-in-tools/mcpjam.js";
@@ -56,7 +62,8 @@ const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 // `auth.ts` tolerates this via `.passthrough()`; we match that pattern so
 // the AI SDK extras are silently passed through instead of rejected as
 // validation errors. Server-side use of the parsed body still only reads
-// the explicitly-declared fields below — there's no path here that routes
+// the explicitly-declared fields below plus `uiTools` (validated by
+// `validateUiToolEntries` before use) — there's no path here that routes
 // a tampered selectedServerIds / appTools / chatbox field into the
 // streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
@@ -75,6 +82,9 @@ const mcpjamAgentSchema = z
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
     respectToolVisibility: z.boolean().optional(),
+    // WebMCP UI tools snapshot. Wide here; `validateUiToolEntries` is the
+    // real boundary (caps, `ui_` name regex, schema size) and 400s on abuse.
+    uiTools: z.array(z.unknown()).optional(),
   })
   .passthrough();
 
@@ -88,6 +98,18 @@ mcpjamAgent.post("/", async (c) => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     rpcCollector = createHostedRpcLogCollector(rawBody);
     const body = parseWithSchema(mcpjamAgentSchema, rawBody);
+
+    // WebMCP UI tools: validate the client snapshot at the boundary, same
+    // treatment as web/chat-v2.
+    let validatedUiTools;
+    try {
+      validatedUiTools = validateUiToolEntries(body.uiTools);
+    } catch (error) {
+      if (error instanceof UiToolValidationError) {
+        return webError(c, 400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
 
     const docsUrl = process.env.MCPJAM_DOCS_MCP_URL ?? DEFAULT_DOCS_URL;
     const docsConfig: HttpServerConfig = {
@@ -140,6 +162,7 @@ mcpjamAgent.post("/", async (c) => {
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,
           uiMessages: body.messages,
+          uiTools: validatedUiTools,
           builtInTools,
         },
         persist: {

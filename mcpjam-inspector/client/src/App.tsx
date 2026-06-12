@@ -133,6 +133,8 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "./lib/inspector-command-handlers";
+import { resolveUiNavigationTarget } from "./lib/webmcp/ui-actions";
+import { useRegisterUiTools } from "./lib/webmcp/use-register-ui-tools";
 import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
@@ -1684,6 +1686,10 @@ export default function App() {
     }
   }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
+  // WebMCP UI tools: registered in both modes; advertised to MCPJam's chat
+  // agents via the chat POST snapshot and mirrored to the browser's native
+  // modelContext when present.
+  useRegisterUiTools();
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -2218,21 +2224,28 @@ export default function App() {
     }
   }, [activeTab, setActiveOrganizationId]);
 
+  // Registered in BOTH local and hosted modes: these handlers serve the
+  // local SSE command bus (which only subscribes in local mode) AND the
+  // WebMCP UI tools, which work everywhere. Hosted-blocked navigation
+  // targets are rejected per the hosted tab policy instead of silently
+  // falling back.
   useLayoutEffect(() => {
-    if (HOSTED_MODE) {
-      return;
-    }
-
     const unregisterNavigate = registerInspectorCommandHandler(
       "navigate",
       async (rawCommand) => {
         const command = rawCommand as NavigateInspectorCommand;
-        const path = navigationTargetToPath(command.payload.target);
+        const resolved = resolveUiNavigationTarget(command.payload.target);
+        if (!resolved.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            resolved.reason
+          );
+        }
 
-        navigateApp(path);
+        navigateApp(resolved.path);
         await waitForUiCommit();
 
-        return { activeTab: pathnameToActiveTab(path) };
+        return { activeTab: pathnameToActiveTab(resolved.path) };
       }
     );
 

@@ -1,9 +1,11 @@
 /**
  * useMcpjamAgentSession
  *
- * Tiny hook for the MCPJam Agent surfaces (Home page hero, future bubble).
- * Wraps `useChat` against `/api/web/mcpjam-agent` with hosted auth and
- * transcript hydration on mount — and nothing else.
+ * Tiny hook for the MCPJam Agent surfaces (Home page hero, side panel).
+ * Wraps `useChat` against `/api/web/mcpjam-agent` with hosted auth,
+ * transcript hydration on mount, and WebMCP UI tool fulfillment (the agent
+ * panel is the primary surface for driving the inspector UI) — and nothing
+ * else.
  *
  * Per the plan, this is deliberately NOT a second `useChatSession`. If
  * Ollama / custom providers / app tools / chatbox / widget / trace
@@ -12,7 +14,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import { DefaultChatTransport, generateId } from "ai";
+import {
+  DefaultChatTransport,
+  generateId,
+  lastAssistantMessageIsCompleteWithToolCalls,
+} from "ai";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
+import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { usePostHog } from "posthog-js/react";
 import { authFetch } from "@/lib/session-token";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -177,15 +185,40 @@ export function useMcpjamAgentSession(
           model: modelRef.current,
           projectId,
           chatSessionId,
+          // WebMCP UI tools snapshot, drained fresh at POST time (same
+          // contract as `useChatSession`). The server validates again in
+          // `validateUiToolEntries`.
+          uiTools: useUiToolsRegistry
+            .getState()
+            .snapshotForChatBody(chatSessionId),
         }),
       }),
     [chatSessionId, projectId]
   );
 
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
-    id: chatSessionId,
-    transport,
-  });
+  const { messages, sendMessage, status, error, stop, setMessages, addToolOutput } =
+    useChat({
+      id: chatSessionId,
+      transport,
+      // WebMCP UI tools are no-execute server-side; the stream pauses until
+      // the client supplies the result via `addToolOutput`. Non-UI names
+      // fall through untouched (this surface has no app tools).
+      onToolCall: async ({ toolCall }) => {
+        await handleUiToolCall({
+          toolName: (toolCall as { toolName: string }).toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+          chatSessionId,
+          addToolOutput: addToolOutput as Parameters<
+            typeof handleUiToolCall
+          >[0]["addToolOutput"],
+        });
+      },
+      // Resume the turn automatically once every tool call has an output —
+      // without this, `addToolOutput` would sit unsent until the next user
+      // message.
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    });
 
   // Lifecycle telemetry — track each user message round-trip so we can read
   // engagement (message_sent), latency (response_finished.duration_ms), tool
