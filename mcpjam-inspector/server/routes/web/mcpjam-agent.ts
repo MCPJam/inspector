@@ -20,13 +20,20 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { MCPClientManager, type HttpServerConfig } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  type HttpServerConfig,
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { MCPJAM_TOOL_IDS } from "../../utils/built-in-tools/mcpjam.js";
+import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import {
   assertBearerToken,
   readJsonBody,
@@ -86,6 +93,13 @@ mcpjamAgent.post("/", async (c) => {
     const docsConfig: HttpServerConfig = {
       url: docsUrl,
       timeout: 30_000,
+      clientCapabilities: {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      },
     };
 
     manager = new MCPClientManager(
@@ -106,11 +120,12 @@ mcpjamAgent.post("/", async (c) => {
       const authHeader = c.req.header("authorization");
       const builtInTools = authHeader
         ? resolveHostTools(
-            { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
+            { builtInToolIds: [WEB_SEARCH_TOOL_NAME, ...MCPJAM_TOOL_IDS] },
             {
               authHeader,
               projectId: body.projectId,
               chatSessionId: body.chatSessionId,
+              mcpjamPlatformClient: buildMcpjamPlatformClient(c),
             }
           )
         : undefined;

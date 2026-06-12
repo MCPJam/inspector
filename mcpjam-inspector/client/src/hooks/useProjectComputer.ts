@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 
 /**
@@ -69,4 +70,72 @@ export function useMintTerminalToken(): (args: {
   projectId: string;
 }) => Promise<TerminalTokenResult> {
   return useAction("projectComputers:mintTerminalToken" as never) as never;
+}
+
+/**
+ * Which data plane serves this inspector (GET /api/web/computers/config):
+ * itself (`localConfigured` — it holds the vendor key + secrets) or a
+ * deployed one (`remoteDataPlaneUrl`). Neither ⇒ computers are unavailable
+ * here and the UI should say so instead of offering a terminal that can't
+ * connect.
+ */
+export interface ComputersDataPlaneConfig {
+  localConfigured: boolean;
+  remoteDataPlaneUrl: string | null;
+}
+
+// One fetch per page load — the answer is env-derived and can't change
+// without a server restart.
+let cachedDataPlaneConfig: ComputersDataPlaneConfig | null = null;
+
+function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.localConfigured !== "boolean") return null;
+  return {
+    localConfigured: record.localConfigured,
+    remoteDataPlaneUrl:
+      typeof record.remoteDataPlaneUrl === "string"
+        ? record.remoteDataPlaneUrl
+        : null,
+  };
+}
+
+/** `undefined` while loading. On fetch failure assumes a local data plane —
+ * the pre-config behavior, where the terminal WS surfaces the real error. */
+export function useComputersDataPlaneConfig():
+  | ComputersDataPlaneConfig
+  | undefined {
+  const [config, setConfig] = useState<ComputersDataPlaneConfig | undefined>(
+    cachedDataPlaneConfig ?? undefined
+  );
+
+  useEffect(() => {
+    if (cachedDataPlaneConfig) return;
+    let cancelled = false;
+    void fetch("/api/web/computers/config")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((json: unknown) => {
+        // Only cache real answers. The assume-local fallback below is
+        // per-mount, so a transient /config failure can't pin the wrong
+        // data plane for the rest of the SPA session.
+        const parsed = parseDataPlaneConfig(json);
+        if (parsed) cachedDataPlaneConfig = parsed;
+        if (!cancelled) {
+          setConfig(
+            parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setConfig({ localConfigured: true, remoteDataPlaneUrl: null });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return config;
 }

@@ -8,7 +8,6 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
-  getModelById,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -28,6 +27,7 @@ import {
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
+  resolveHostModelDefinition,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
 } from "../../utils/org-model-config.js";
@@ -387,10 +387,13 @@ chatV2.post("/", async (c) => {
         );
       }
     }
-    // `modelId` stays special-cased: chat resolves it to a `ModelDefinition`
-    // via the catalog (built-in hit → full def; miss → swap id only,
-    // keep body provider). The resolver yields the resolved `modelId`
-    // string; the call site does the catalog lookup and warn.
+    // `modelId` stays special-cased: the resolver yields the resolved
+    // string, and `resolveHostModelDefinition` lifts it (catalog hit →
+    // full def; miss → org provider config lookup, then id-shape
+    // inference). The provider must come from the host id + org config,
+    // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
+    // selections with vendor-prefixed ids) would otherwise inherit the
+    // body's provider and route to the wrong runtime.
     if (
       isChatboxSession &&
       hostRuntimeConfig &&
@@ -399,28 +402,24 @@ chatV2.post("/", async (c) => {
       resolvedExecution.modelId !== model.id
     ) {
       const hostModelId = resolvedExecution.modelId;
-      const hostModel = getModelById(hostModelId);
-      if (hostModel) {
-        logger.warn(
-          "[mcp/chat-v2] client model differs from host; using host model",
-          {
-            chatboxId: bodyChatboxId,
-            body: model.id,
-            host: hostModelId,
-          }
-        );
-        resolvedModelOverride = hostModel;
-      } else {
-        logger.warn(
-          "[mcp/chat-v2] host model not in catalog; swapping id only",
-          {
-            chatboxId: bodyChatboxId,
-            body: model.id,
-            host: hostModelId,
-          }
-        );
-        resolvedModelOverride = { ...model, id: hostModelId };
-      }
+      const hostModel = await resolveHostModelDefinition({
+        modelId: hostModelId,
+        projectId: typeof body.projectId === "string" ? body.projectId : null,
+        auth: {
+          authHeader: c.req.header("authorization") ?? undefined,
+          chatboxId: bodyChatboxId,
+        },
+      });
+      logger.warn(
+        "[mcp/chat-v2] client model differs from host; using host model",
+        {
+          chatboxId: bodyChatboxId,
+          body: model.id,
+          host: hostModelId,
+          provider: hostModel.provider,
+        }
+      );
+      resolvedModelOverride = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
     const temperature = resolvedExecution.temperature;

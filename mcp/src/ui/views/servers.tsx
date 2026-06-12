@@ -1,24 +1,11 @@
-import {
-  applyDocumentTheme,
-  applyHostFonts,
-  applyHostStyleVariables,
-  type McpUiHostContext,
-  type McpUiHostContextChangedNotification,
-} from "@modelcontextprotocol/ext-apps";
-import {
-  useApp,
-  useDocumentTheme,
-} from "@modelcontextprotocol/ext-apps/react";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@mcpjam/design-system/alert";
+/**
+ * The show_servers widget view: project server inventory with doctor health
+ * status and a per-server drill-down over discovered primitives. Moved
+ * verbatim from the original standalone show-servers app.
+ */
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
-import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ArrowLeft,
   BookOpen,
@@ -29,15 +16,12 @@ import {
   MessageSquareCode,
 } from "lucide-react";
 import {
-  StrictMode,
   type ComponentType,
-  type CSSProperties,
   type MouseEvent,
   type ReactNode,
   useEffect,
   useState,
 } from "react";
-import { createRoot } from "react-dom/client";
 import type {
   ServerEntry,
   ServerPrimitiveCollection,
@@ -47,15 +31,8 @@ import type {
   ServerStatus,
   ServerToolInfo,
   ShowServersPayload,
-} from "../shared/show-servers.js";
-import mcpJamDarkLogoUrl from "../../../docs/logo/mcp_jam_dark.png?url";
-import mcpJamLightLogoUrl from "../../../docs/logo/mcp_jam_light.png?url";
-import "./global.css";
-
-const APP_INFO = {
-  name: "MCPJam servers",
-  version: "1.0.0",
-};
+} from "../../shared/show-servers.js";
+import { McpJamLogo, MessageBox } from "../shared/app-shell.js";
 
 const STATUS_LABELS: Record<ServerStatus, string> = {
   reachable: "Reachable",
@@ -77,180 +54,7 @@ const PRIMITIVE_STATUS_LABELS: Record<ServerPrimitiveListStatus, string> = {
   error: "Error",
 };
 
-type HostShellStyle = CSSProperties & Record<`--${string}`, string | number>;
-
-function ShowServersApp() {
-  const [toolResult, setToolResult] = useState<CallToolResult | null>(null);
-  const [hostContext, setHostContext] = useState<
-    McpUiHostContext | undefined
-  >();
-  const { app, error } = useApp({
-    appInfo: APP_INFO,
-    capabilities: {},
-    onAppCreated(createdApp) {
-      createdApp.ontoolresult = async (result) => {
-        setToolResult(result);
-      };
-      createdApp.onerror = (appError) => {
-        console.error(appError);
-      };
-    },
-  });
-  const documentTheme = useDocumentTheme();
-
-  useEffect(() => {
-    if (!app) {
-      return;
-    }
-
-    const initialHostContext = app.getHostContext();
-    setHostContext(initialHostContext);
-
-    const handleHostContextChanged = (
-      params: McpUiHostContextChangedNotification["params"]
-    ) => {
-      setHostContext((previous) =>
-        mergeHostContext(previous ?? app.getHostContext(), params)
-      );
-    };
-
-    app.onhostcontextchanged = handleHostContextChanged;
-    return () => {
-      app.onhostcontextchanged = () => {};
-    };
-  }, [app]);
-
-  useEffect(() => {
-    if (hostContext) {
-      applyHostContextToDocument(hostContext);
-    }
-  }, [hostContext]);
-
-  const activeTheme = getResolvedTheme(hostContext, documentTheme);
-  const isDark = activeTheme === "dark";
-  const themePreset = getThemePreset(hostContext);
-
-  if (error) {
-    return (
-      <Shell
-        hostContext={hostContext}
-        isDark={isDark}
-        themePreset={themePreset}
-      >
-        <MessageBox
-          label="App error"
-          message={error.message}
-          variant="destructive"
-        />
-      </Shell>
-    );
-  }
-
-  if (!app) {
-    return (
-      <Shell
-        hostContext={hostContext}
-        isDark={isDark}
-        themePreset={themePreset}
-      >
-        <MessageBox
-          label="Connecting"
-          message="Waiting for server inventory."
-        />
-      </Shell>
-    );
-  }
-
-  return (
-    <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
-      <ShowServersContent toolResult={toolResult} isDark={isDark} />
-    </Shell>
-  );
-}
-
-function Shell({
-  children,
-  hostContext,
-  isDark,
-  themePreset,
-}: {
-  children: ReactNode;
-  hostContext?: McpUiHostContext;
-  isDark: boolean;
-  themePreset: string;
-}) {
-  const style = {
-    ...getHostStyleVariables(hostContext),
-    paddingTop: (hostContext?.safeAreaInsets?.top ?? 0) + 16,
-    paddingRight: (hostContext?.safeAreaInsets?.right ?? 0) + 16,
-    paddingBottom: (hostContext?.safeAreaInsets?.bottom ?? 0) + 16,
-    paddingLeft: (hostContext?.safeAreaInsets?.left ?? 0) + 16,
-    colorScheme: isDark ? "dark" : "light",
-  } satisfies HostShellStyle;
-
-  return (
-    <main
-      className={cn(
-        "app-theme-scope chatbox-host-shell min-h-full bg-background text-foreground font-sans",
-        isDark && "dark"
-      )}
-      data-theme-preset={themePreset}
-      data-theme={isDark ? "dark" : "light"}
-      style={style}
-    >
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
-        {children}
-      </div>
-    </main>
-  );
-}
-
-function ShowServersContent({
-  isDark,
-  toolResult,
-}: {
-  isDark: boolean;
-  toolResult: CallToolResult | null;
-}) {
-  if (!toolResult) {
-    return (
-      <ServersLoadingSkeleton
-        className="p-0"
-        data-testid="show-servers-loading"
-      />
-    );
-  }
-
-  if (toolResult.isError) {
-    return (
-      <MessageBox
-        label="Unable to load servers"
-        message={
-          getResultText(toolResult) ??
-          "The show_servers tool returned an error."
-        }
-        variant="destructive"
-      />
-    );
-  }
-
-  const payload = toolResult.structuredContent as
-    | ShowServersPayload
-    | undefined;
-  if (!isShowServersPayload(payload)) {
-    return (
-      <MessageBox
-        label="Missing structured content"
-        message="The show_servers tool did not include structured content."
-        variant="destructive"
-      />
-    );
-  }
-
-  return <ServerInventory isDark={isDark} payload={payload} />;
-}
-
-function ServerInventory({
+export function ServersView({
   isDark,
   payload,
 }: {
@@ -655,40 +459,9 @@ function StatusDot({ status }: { status: ServerStatus }) {
   );
 }
 
-function MessageBox({
-  label,
-  message,
-  variant = "default",
-}: {
-  label: string;
-  message: string;
-  variant?: "default" | "destructive";
-}) {
-  return (
-    <Alert variant={variant} className="border-border/50 bg-card shadow-sm">
-      <AlertTitle>{label}</AlertTitle>
-      <AlertDescription>{message}</AlertDescription>
-    </Alert>
-  );
-}
-
-function McpJamLogo({ isDark }: { isDark: boolean }) {
-  return (
-    <img
-      src={isDark ? mcpJamDarkLogoUrl : mcpJamLightLogoUrl}
-      alt="MCPJam"
-      className="h-5 w-auto shrink-0 object-contain sm:h-6"
-    />
-  );
-}
-
-function getResultText(result: CallToolResult): string | undefined {
-  const textBlock = result.content?.find((entry) => entry.type === "text");
-
-  return textBlock?.type === "text" ? textBlock.text : undefined;
-}
-
-function isShowServersPayload(value: unknown): value is ShowServersPayload {
+export function isShowServersPayload(
+  value: unknown
+): value is ShowServersPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -700,175 +473,6 @@ function isShowServersPayload(value: unknown): value is ShowServersPayload {
   );
 }
 
-function mergeHostContext(
-  previous: McpUiHostContext | undefined,
-  next: Partial<McpUiHostContext>
-): McpUiHostContext {
-  const merged = { ...(previous ?? {}), ...next } as McpUiHostContext;
-
-  if (next.styles) {
-    const previousStyles = previous?.styles;
-    merged.styles = {
-      ...previousStyles,
-      ...next.styles,
-      variables: next.styles.variables
-        ? {
-            ...previousStyles?.variables,
-            ...next.styles.variables,
-          }
-        : previousStyles?.variables,
-      css: next.styles.css
-        ? {
-            ...previousStyles?.css,
-            ...next.styles.css,
-          }
-        : previousStyles?.css,
-    };
-  }
-
-  return merged;
-}
-
-function getResolvedTheme(
-  hostContext: McpUiHostContext | undefined,
-  fallback: "light" | "dark"
-): "light" | "dark" {
-  return hostContext?.theme === "light" || hostContext?.theme === "dark"
-    ? hostContext.theme
-    : fallback;
-}
-
-function applyHostContextToDocument(context: Partial<McpUiHostContext>) {
-  if (context.theme === "light" || context.theme === "dark") {
-    applyDocumentTheme(context.theme);
-  }
-
-  if (context.styles?.variables) {
-    applyHostStyleVariables(context.styles.variables);
-  }
-
-  if (context.styles?.css?.fonts) {
-    applyHostFonts(context.styles.css.fonts);
-  }
-}
-
-function getHostStyleVariables(hostContext?: McpUiHostContext): HostShellStyle {
-  const variables = hostContext?.styles?.variables as
-    | Record<string, unknown>
-    | undefined;
-  if (!variables) {
-    return {};
-  }
-
-  const scopedVariables: HostShellStyle = {};
-  for (const [key, value] of Object.entries(variables)) {
-    if (
-      key.startsWith("--") &&
-      (typeof value === "string" || typeof value === "number")
-    ) {
-      scopedVariables[key as `--${string}`] = value;
-    }
-  }
-
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--background",
-    "--color-background-primary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--foreground",
-    "--color-text-primary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--card",
-    "--color-background-secondary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--card-foreground",
-    "--color-text-primary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--muted",
-    "--color-background-tertiary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--muted-foreground",
-    "--color-text-secondary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--accent",
-    "--color-background-tertiary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--accent-foreground",
-    "--color-text-primary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--border",
-    "--color-border-primary"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--input",
-    "--color-border-secondary"
-  );
-  mapHostToken(scopedVariables, variables, "--ring", "--color-ring-primary");
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--destructive",
-    "--color-background-danger"
-  );
-  mapHostToken(
-    scopedVariables,
-    variables,
-    "--destructive-foreground",
-    "--color-text-danger"
-  );
-  mapHostToken(scopedVariables, variables, "--success", "--color-text-success");
-  mapHostToken(scopedVariables, variables, "--warning", "--color-text-warning");
-
-  return scopedVariables;
-}
-
-function mapHostToken(
-  target: HostShellStyle,
-  source: Record<string, unknown>,
-  token: `--${string}`,
-  hostToken: `--${string}`
-) {
-  const value = source[hostToken];
-  if (typeof value === "string" || typeof value === "number") {
-    target[token] = value;
-  }
-}
-
-function getThemePreset(hostContext?: McpUiHostContext): string {
-  const variables = hostContext?.styles?.variables as
-    | Record<string, unknown>
-    | undefined;
-  const value = variables?.["--mcpjam-theme-preset"];
-  return typeof value === "string" && value.length > 0 ? value : "default";
-}
-
 function formatServerCount(count: number): string {
   return `${count} ${count === 1 ? "server" : "servers"}`;
 }
@@ -876,9 +480,3 @@ function formatServerCount(count: number): string {
 function getMissingUrlLabel(server: ServerEntry): string {
   return server.transportType === "stdio" ? "STDIO transport" : "No URL";
 }
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ShowServersApp />
-  </StrictMode>
-);

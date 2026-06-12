@@ -41,7 +41,7 @@ export function TunnelExplanationModal({
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            Create ngrok tunnel
+            Create tunnel
           </DialogTitle>
           <DialogDescription className="pt-4">
             Tunneling allows you to expose your local MCP servers over HTTPS for
@@ -84,10 +84,10 @@ export function TunnelExplanationModal({
             <div className="flex-1">
               <h4 className="font-medium text-sm mb-1">Secured at the Edge</h4>
               <p className="text-sm text-muted-foreground">
-                Requests without the secret key are rejected before they reach
-                your machine, and the tunnel only exposes this one server. Use
-                Rotate to revoke the current URL, or close the tunnel when
-                you're done.
+                Requests without the secret key are rejected at MCPJam's relay
+                edge before they reach your machine, and the tunnel only exposes
+                this one server. Use Rotate to revoke the current URL, or close
+                the tunnel when you're done.
               </p>
             </div>
           </div>
@@ -120,7 +120,7 @@ export function TunnelExplanationModal({
               Cancel
             </Button>
             <Button onClick={handleConfirm} disabled={isCreating}>
-              {isCreating ? "Creating..." : "Create ngrok tunnel"}
+              {isCreating ? "Creating..." : "Create tunnel"}
             </Button>
           </div>
         </DialogFooter>

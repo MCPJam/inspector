@@ -123,7 +123,6 @@
     "@mcpjam/sdk": "^1.16.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
-    "@ngrok/ngrok": "^1.6.0",
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "@sentry/electron": "^5.10.0",
     "@sentry/node": "^8.47.0",
@@ -182,6 +181,7 @@
     "update-electron-app": "^3.1.1",
     "url-template": "^3.1.1",
     "use-stick-to-bottom": "^1.1.1",
+    "ws": "^8.18.0",
     "zod": "^4.1.12",
     "zustand": "^5.0.6"
   },
@@ -206,6 +206,7 @@
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24",
+    "@types/ws": "^8.5.13",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typescript-eslint/parser": "^8.53.1",

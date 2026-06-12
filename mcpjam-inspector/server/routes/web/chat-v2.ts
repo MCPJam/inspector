@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { getModelById } from "@/shared/types";
+import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   validateAppToolEntries,
@@ -29,6 +29,7 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -179,9 +180,12 @@ chatV2.post("/", async (c) => {
       }
     }
     // `modelId` stays a special case — the resolver yields the resolved
-    // string, but chat needs to lift it to a `ModelDefinition` via
-    // catalog lookup (built-in hit → full def; miss → swap id only,
-    // keep body provider fields).
+    // string, and `resolveHostModelDefinition` lifts it (catalog hit →
+    // full def; miss → org provider config lookup, then id-shape
+    // inference). The provider must come from the host id + org config,
+    // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
+    // selections with vendor-prefixed ids) would otherwise inherit the
+    // body's provider and route to the wrong runtime.
     if (
       isChatboxSession &&
       hostRuntimeConfig &&
@@ -189,21 +193,18 @@ chatV2.post("/", async (c) => {
       resolvedExecution.modelId !== modelDefinition.id
     ) {
       const hostModelId = resolvedExecution.modelId;
-      const hostModel = getModelById(hostModelId);
-      if (hostModel) {
-        logger.warn(
-          "[chat-v2] client model differs from host; using host model",
-          { chatboxId, body: modelDefinition.id, host: hostModelId }
-        );
-        modelDefinition = hostModel;
-      } else {
-        logger.warn("[chat-v2] host model not in catalog; swapping id only", {
-          chatboxId,
-          body: modelDefinition.id,
-          host: hostModelId,
-        });
-        modelDefinition = { ...modelDefinition, id: hostModelId };
-      }
+      const hostModel = await resolveHostModelDefinition({
+        modelId: hostModelId,
+        projectId: hostedBody.projectId ?? null,
+        auth: { bearerToken, chatboxId },
+      });
+      logger.warn("[chat-v2] client model differs from host; using host model", {
+        chatboxId,
+        body: modelDefinition.id,
+        host: hostModelId,
+        provider: hostModel.provider,
+      });
+      modelDefinition = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
     const temperature = resolvedExecution.temperature;
@@ -230,7 +231,9 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
+        isChatboxSession,
         requireToolApproval,
+        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
       }
     );
 

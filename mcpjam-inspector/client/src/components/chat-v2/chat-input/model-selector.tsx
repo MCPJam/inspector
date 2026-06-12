@@ -54,6 +54,12 @@ interface ModelSelectorProps {
    * tab) pass "end" so the panel opens inward instead of clipping.
    */
   align?: "start" | "center" | "end";
+  /**
+   * `location` for the picker's PostHog events. Non-chat embeds (e.g. the
+   * client builder's Agent tab) pass their own so chat-input metrics stay
+   * clean.
+   */
+  analyticsLocation?: string;
 }
 
 type GroupKey = string;
@@ -118,6 +124,7 @@ export function ModelSelector({
   onMultiModelEnabledChange,
   maxSelectedModels = 3,
   align = "start",
+  analyticsLocation = "chat_input",
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -198,7 +205,7 @@ export function ModelSelector({
     if (nextOpen && !isOpen) {
       posthog.capture(
         "chat_model_selector_clicked",
-        standardEventProps("chat_input")
+        standardEventProps(analyticsLocation)
       );
     }
     setIsOpen(nextOpen);

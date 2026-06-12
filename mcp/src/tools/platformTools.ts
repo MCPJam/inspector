@@ -1,14 +1,20 @@
 /**
- * Plain (no-UI) MCP tools over the shared platform operation catalog. Each
- * tool is a thin adapter: parse args with the operation's schema, call the
- * Platform API with the session's bearer token, and emit the payload as both
- * text and structured content. The widget-backed `show_servers` tool lives in
- * `showServers.ts` and reuses `runPlatformOperation` from here.
+ * MCP tools over the shared platform operation catalog. Each tool is a thin
+ * adapter: parse args with the operation's schema, call the Platform API
+ * with the session's bearer token, and emit the payload as both text and
+ * structured content. Operations listed in `PLATFORM_TOOL_WIDGET_VIEWS`
+ * additionally register the shared MCP Apps bundle as their UI resource —
+ * rendered only when the client supports MCP Apps, with the registrar
+ * falling back to the plain (untagged) callback otherwise. The widget-backed
+ * `show_servers` tool lives in `showServers.ts` and reuses the helpers here.
  */
 import {
+  callServerToolOperation,
+  diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
@@ -17,24 +23,37 @@ import {
   listEvalSuitesOperation,
   listProjectsOperation,
   listProjectServersOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  listServerToolsOperation,
   PlatformApiClient,
+  readServerResourceOperation,
   runEvalSuiteOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
+import {
+  PLATFORM_WIDGET_RESOURCE_URIS,
+  tagPlatformWidgetPayload,
+  type PlatformWidgetView,
+} from "../shared/platform-widgets.js";
 import type { McpJamMcpServer } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
-/**
- * Every catalog operation registered as a plain tool, in list order.
- * `show_servers` is intentionally absent — it registers separately with its
- * MCP Apps UI resource.
- */
-export const PLAIN_PLATFORM_OPERATIONS: ReadonlyArray<
+/** Every catalog operation registered as a tool, in list order. */
+export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   PlatformOperation<any, any>
 > = [
   listProjectsOperation,
   listProjectServersOperation,
+  diagnoseServerOperation,
+  listServerToolsOperation,
+  callServerToolOperation,
+  listServerPromptsOperation,
+  getServerPromptOperation,
+  listServerResourcesOperation,
+  readServerResourceOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
@@ -46,11 +65,31 @@ export const PLAIN_PLATFORM_OPERATIONS: ReadonlyArray<
   listChatSessionsOperation,
 ];
 
-export function registerPlainPlatformTools(
+/**
+ * Catalog operations that render as MCP Apps widgets, mapped to their view
+ * in the shared UI bundle. The rest stay plain: list_projects and
+ * list_project_servers defer to the richer show_servers widget,
+ * run_eval_suite returns a receipt the run widgets supersede, and
+ * get_eval_iteration_trace / list_chat_sessions are agent-oriented payloads
+ * with no visual form. `show_servers` itself registers in `showServers.ts`.
+ */
+export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
+  Partial<Record<string, PlatformWidgetView>>
+> = {
+  [listEvalSuitesOperation.name]: "eval_suites",
+  [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
+  [getEvalRunOperation.name]: "eval_run",
+  [listEvalRunIterationsOperation.name]: "eval_run_iterations",
+  [listChatboxesOperation.name]: "chatboxes",
+  [getChatboxOperation.name]: "chatbox",
+};
+
+export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
   agent: McpJamMcpServer
 ): void {
-  for (const operation of PLAIN_PLATFORM_OPERATIONS) {
+  for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+    const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
     registrar.registerTool(
       operation.name,
       {
@@ -59,26 +98,62 @@ export function registerPlainPlatformTools(
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
-      async (input) => runPlatformOperation(agent, operation, input)
+      async (input) => runPlatformOperation(agent, operation, input),
+      view ? platformWidgetUi(agent, operation, view) : undefined
     );
   }
+}
+
+/**
+ * UI registration for a widget-backed tool: the shared app bundle under the
+ * view's own resource URI, and a callback whose payload carries the
+ * `widget` tag the bundle routes on. The plain callback stays untagged so
+ * non-MCP-Apps sessions see the bare operation payload.
+ */
+export function platformWidgetUi(
+  agent: McpJamMcpServer,
+  operation: PlatformOperation<any, any>,
+  view: PlatformWidgetView
+) {
+  return {
+    resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
+    html: MCPJAM_APP_HTML,
+    resourceName: `${operation.title} UI`,
+    resourceMeta: {
+      ui: {
+        prefersBorder: true,
+      },
+    },
+    callback: async (input: unknown) =>
+      runPlatformOperation(agent, operation, input, (payload) =>
+        tagPlatformWidgetPayload(view, payload)
+      ),
+  };
 }
 
 export function operationAnnotations(
   operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
-  // Non-read operations (run_eval_suite) create resources but never destroy
-  // or overwrite them; without the explicit hint, MCP clients must assume
-  // destructive (the spec's default for non-read-only tools).
-  return operation.readOnly
-    ? { readOnlyHint: true }
-    : { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+  if (operation.readOnly) {
+    return { readOnlyHint: true };
+  }
+  // Operations whose effects are unknowable upstream (call_server_tool runs
+  // arbitrary third-party tools) omit destructive/idempotent hints on
+  // purpose: per spec, clients must then assume destructive — the honest
+  // claim.
+  if (operation.mayBeDestructive) {
+    return { readOnlyHint: false };
+  }
+  // Remaining non-read operations (run_eval_suite) create resources but
+  // never destroy or overwrite them.
+  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 
 export async function runPlatformOperation<TInput, TOutput extends object>(
   agent: McpJamMcpServer,
   operation: PlatformOperation<TInput, TOutput>,
-  input: TInput
+  input: TInput,
+  transformPayload?: (payload: TOutput) => object
 ) {
   const token = agent.bearerToken;
   if (!token) {
@@ -93,7 +168,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 
   try {
     const payload = await operation.execute(input, { client });
-    return toolSuccess(payload);
+    return toolSuccess(transformPayload ? transformPayload(payload) : payload);
   } catch (error) {
     return toolError(describeOperationError(error));
   }

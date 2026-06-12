@@ -283,6 +283,41 @@ export class PlatformApiClient {
     return this.serverOp(params, "prompts", options);
   }
 
+  /**
+   * `POST /projects/{p}/servers/{s}/tools/call` — execute one tool and return
+   * the MCP CallToolResult. Tool-level failures (`isError: true`) are
+   * successful calls; only transport/auth errors throw.
+   */
+  callServerTool(
+    params: ServerScope & {
+      body: { toolName: string; parameters?: Record<string, unknown> };
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "tools/call", options);
+  }
+
+  /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */
+  getServerPrompt(
+    params: ServerScope & {
+      body: {
+        promptName: string;
+        arguments?: Record<string, string | number | boolean>;
+      };
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "prompts/get", options);
+  }
+
+  /** `POST /projects/{p}/servers/{s}/resources/read` — read one resource. */
+  readServerResource(
+    params: ServerScope & { body: { uri: string } },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "resources/read", options);
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,

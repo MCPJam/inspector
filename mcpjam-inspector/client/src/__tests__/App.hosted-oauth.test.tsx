@@ -301,6 +301,9 @@ vi.mock("../lib/guest-session", () => ({
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
+vi.mock("../components/HomeTab", () => ({
+  HomeTab: () => <div data-testid="home-tab" />,
+}));
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
 }));
@@ -1840,7 +1843,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
     expect(
@@ -2673,7 +2676,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects conformance to servers when the feature flag is disabled", async () => {
+  it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/conformance");
@@ -2686,11 +2689,11 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
-  it("redirects xaa-flow to Servers when the xaa flag is disabled", async () => {
+  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");
@@ -2699,10 +2702,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
   });
 
@@ -2933,10 +2936,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 });

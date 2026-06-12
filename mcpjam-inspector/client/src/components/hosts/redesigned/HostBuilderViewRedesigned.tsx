@@ -79,7 +79,11 @@ export function HostBuilderViewRedesigned({
   const [isSaving, setIsSaving] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
-  const [focusState, setFocusState] = useState<HostFocusState>(CLOSED_FOCUS);
+  const [focusState, setFocusState] = useState<HostFocusState>({
+    open: true,
+    tab: "behavior",
+    selectedServerId: null,
+  });
   // Diff snapshot — populated for ONE render after a host switch so the
   // canvas can mark changed leaves/fields. Cleared after the flash
   // duration so subsequent in-place edits don't keep re-firing the

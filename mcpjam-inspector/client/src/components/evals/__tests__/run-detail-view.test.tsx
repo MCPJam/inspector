@@ -50,8 +50,8 @@ vi.mock("convex/react", () => ({
 
 // The goal-completion judge panel pulls the model catalog; stub it so the view
 // test stays isolated from the provider chain (auth / provider keys / ollama).
-vi.mock("@/hooks/use-available-eval-models", () => ({
-  useAvailableEvalModels: () => ({ availableModels: [] }),
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
