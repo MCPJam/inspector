@@ -12,6 +12,7 @@ import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerToolsCommands } from "./commands/tools.js";
+import { registerTunnelCommands } from "./commands/tunnel.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
 import {
   detectOutputFormatFromArgv,
@@ -73,6 +74,7 @@ export async function main(
   registerProtocolCommands(program);
   registerAuthCommands(program);
   registerProjectsCommands(program);
+  registerTunnelCommands(program);
   registerInspectorCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 
