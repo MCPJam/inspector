@@ -429,6 +429,19 @@ export const createDebugOAuthStateMachine = (
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
+  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
+  // must use the identifier advertised in the server's Protected Resource
+  // Metadata when one was discovered. That identifier may be any URI (including
+  // a URN) and is not required to equal the MCP endpoint URL, so the client must
+  // not overwrite it with the server URL. Only fall back to the server URL when
+  // no PRM `resource` is available. Resolving through a single helper also keeps
+  // the authorization request and the token request resource values identical —
+  // some authorization servers reject a mismatch between the two.
+  const resolveResourceParameter = (): string | undefined => {
+    const current = getCurrentState();
+    return current.resourceMetadata?.resource ?? current.serverUrl;
+  };
+
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
       url,
@@ -1460,7 +1473,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: resolveResourceParameter() || "Unknown",
               },
             );
 
@@ -1496,8 +1509,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
+            const authResourceParam = resolveResourceParameter();
+            if (authResourceParam) {
+              authUrl.searchParams.set("resource", authResourceParam);
             }
 
             const requestedScopeValue = resolveRequestedScopeValue({
@@ -1583,8 +1597,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
+            const tokenBodyResourceParam = resolveResourceParameter();
+            if (tokenBodyResourceParam) {
+              tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
             const tokenRequest = {
@@ -1650,8 +1665,9 @@ export const createDebugOAuthStateMachine = (
               }
 
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
+              const tokenResourceParam = resolveResourceParameter();
+              if (tokenResourceParam) {
+                tokenRequestBody.set("resource", tokenResourceParam);
               }
 
               // Make the token request via backend proxy

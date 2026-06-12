@@ -403,4 +403,128 @@ describe("OAuth state machine regressions", () => {
     expect(state.tokenEndpointAuthMethod).toBe("none");
     expect(state.error).toBeUndefined();
   });
+
+  // Regression for #2119: the OAuth `resource` indicator must honour the
+  // identifier advertised in the server's Protected Resource Metadata (which may
+  // be a URN, not the MCP endpoint URL) instead of being overwritten with the
+  // server URL. The authorization request and token request must also agree.
+  const RESOURCE_URN = "urn:example:my-resource";
+
+  const seedAuthorizationStart = (
+    resourceMetadata?: { resource: string },
+  ) => ({
+    ...EMPTY_OAUTH_FLOW_STATE,
+    currentStep: "received_client_credentials" as const,
+    serverUrl: SERVER_URL,
+    clientId: "test-client",
+    authorizationServerMetadata: {
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/token",
+    } as any,
+    ...(resourceMetadata ? { resourceMetadata } : {}),
+    infoLogs: [],
+  });
+
+  const seedTokenExchange = (resourceMetadata?: { resource: string }) => ({
+    ...EMPTY_OAUTH_FLOW_STATE,
+    currentStep: "received_authorization_code" as const,
+    serverUrl: SERVER_URL,
+    clientId: "test-client",
+    codeVerifier: "test-code-verifier",
+    authorizationCode: "test-auth-code",
+    authorizationServerMetadata: {
+      token_endpoint: "https://auth.example.com/token",
+    } as any,
+    ...(resourceMetadata ? { resourceMetadata } : {}),
+    infoLogs: [],
+  });
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "uses the PRM-advertised resource for the authorization request in %s",
+    async (protocolVersion) => {
+      let state: any = seedAuthorizationStart({ resource: RESOURCE_URN });
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn(),
+      });
+
+      await machine.proceedToNextStep(); // generate PKCE parameters
+      await machine.proceedToNextStep(); // build authorization URL
+
+      const authUrl = new URL(state.authorizationUrl);
+      expect(authUrl.searchParams.get("resource")).toBe(RESOURCE_URN);
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "uses the PRM-advertised resource for the token request in %s",
+    async (protocolVersion) => {
+      let state: any = seedTokenExchange({ resource: RESOURCE_URN });
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { access_token: "token" },
+        }),
+      });
+
+      await machine.proceedToNextStep(); // prepare token request body
+
+      expect(state.lastRequest?.body?.resource).toBe(RESOURCE_URN);
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "falls back to the server URL when no PRM resource is advertised in %s",
+    async (protocolVersion) => {
+      let state: any = seedTokenExchange();
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { access_token: "token" },
+        }),
+      });
+
+      await machine.proceedToNextStep(); // prepare token request body
+
+      expect(state.lastRequest?.body?.resource).toBe(SERVER_URL);
+    },
+  );
 });
