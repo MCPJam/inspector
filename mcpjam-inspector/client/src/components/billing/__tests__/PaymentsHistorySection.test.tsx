@@ -7,17 +7,45 @@ import type {
   PaymentHistoryEntry,
   UsePaymentsHistoryResult,
 } from "@/hooks/usePaymentsHistory";
+import type {
+  InvoiceHistoryEntry,
+  UseInvoiceHistoryResult,
+} from "@/hooks/useInvoiceHistory";
+import type { CreditActivityEntry } from "@/hooks/useCreditActivity";
 
 let hookState: UsePaymentsHistoryResult = {
   entries: undefined,
   isLoading: true,
   isAuthenticated: false,
 };
+let invoiceHookState: UseInvoiceHistoryResult = {
+  entries: [],
+  upcoming: null,
+  isLoading: false,
+  error: null,
+};
+let creditActivityHookState: {
+  entries: CreditActivityEntry[] | undefined;
+  isLoading: boolean;
+} = {
+  entries: [],
+  isLoading: false,
+};
 
 const captureMock = vi.fn();
 
 vi.mock("@/hooks/usePaymentsHistory", () => ({
   usePaymentsHistory: () => hookState,
+}));
+
+// Invoices come from a separate Stripe-backed hook; these tests cover the
+// top-up path, so stub it empty (its own behavior is exercised elsewhere).
+vi.mock("@/hooks/useInvoiceHistory", () => ({
+  useInvoiceHistory: () => invoiceHookState,
+}));
+
+vi.mock("@/hooks/useCreditActivity", () => ({
+  useCreditActivity: () => creditActivityHookState,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -49,6 +77,16 @@ describe("PaymentsHistorySection", () => {
       entries: undefined,
       isLoading: true,
       isAuthenticated: false,
+    };
+    invoiceHookState = {
+      entries: [],
+      upcoming: null,
+      isLoading: false,
+      error: null,
+    };
+    creditActivityHookState = {
+      entries: [],
+      isLoading: false,
     };
     captureMock.mockReset();
   });
@@ -136,8 +174,8 @@ describe("PaymentsHistorySection", () => {
       expect(screen.getAllByText(/Not available/)).toHaveLength(2);
       // Pending → "Processing"
       expect(screen.getAllByText(/Processing/)).toHaveLength(2);
-      // Failed → em-dash
-      expect(screen.getAllByText("—")).toHaveLength(2);
+      // Failed -> placeholder
+      expect(screen.getAllByText("-")).toHaveLength(2);
     });
 
     it("renders the receipt link with full safety attributes", () => {
@@ -219,7 +257,7 @@ describe("PaymentsHistorySection", () => {
       );
       expect(screen.getAllByText("Refunded")).toHaveLength(2);
       // Must not also read as Succeeded.
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
     });
 
     it("renders a Partially refunded badge with a reversed-amount tooltip", () => {
@@ -247,7 +285,407 @@ describe("PaymentsHistorySection", () => {
         })
       );
       expect(screen.getAllByText("Disputed")).toHaveLength(2);
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("billing rows", () => {
+    it("collapses Stripe proration lines into a simple seat-change detail", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_prorated",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            amountDueCents: 35997,
+            amountPaidCents: 35997,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35997,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71994,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getAllByText("+1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("$359.97")).toHaveLength(2);
+      expect(
+        screen.queryByText(/Unused time on MCPJam Team/)
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Remaining time on 2/)).not.toBeInTheDocument();
+    });
+
+    it("folds granted credits into the matching paid invoice row", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_prorated",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            amountDueCents: 35997,
+            amountPaidCents: 35997,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35997,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71994,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+      creditActivityHookState = {
+        entries: [
+          {
+            id: "credit_1",
+            createdAt: Date.UTC(2026, 5, 10, 0, 2),
+            amountCredits: 12903,
+            seatDelta: 1,
+            kind: "granted",
+            label: "Seat added (prorated)",
+          },
+        ],
+        isLoading: false,
+      };
+
+      render(
+        <PaymentsHistorySection
+          organizationId="org-1"
+          canViewInvoices
+          canViewCreditActivity
+        />
+      );
+
+      expect(screen.getAllByText("$359.97")).toHaveLength(2);
+      expect(screen.getAllByText("+1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("+12,903")).toHaveLength(2);
+      expect(screen.getAllByText("Paid")).toHaveLength(2);
+      expect(screen.queryByText("Granted")).not.toBeInTheDocument();
+    });
+
+    it("does not aggregate multiple same-day grants into one invoice row", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_first",
+            createdAt: Date.UTC(2026, 5, 10, 0, 1),
+            status: "paid",
+            amountDueCents: 35968,
+            amountPaidCents: 35968,
+            currency: "usd",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35968,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71936,
+                quantity: 2,
+              },
+            ],
+          },
+          {
+            id: "in_second",
+            createdAt: Date.UTC(2026, 5, 10, 0, 4),
+            status: "paid",
+            amountDueCents: 35967,
+            amountPaidCents: 35967,
+            currency: "usd",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35967,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71934,
+                quantity: 2,
+              },
+            ],
+          },
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+      creditActivityHookState = {
+        entries: [
+          {
+            id: "credit_first",
+            createdAt: Date.UTC(2026, 5, 10, 0, 1, 30),
+            amountCredits: 9990,
+            seatDelta: 1,
+            kind: "granted",
+            label: "Seat added (prorated)",
+          },
+          {
+            id: "credit_second",
+            createdAt: Date.UTC(2026, 5, 10, 0, 4, 30),
+            amountCredits: 9889,
+            seatDelta: 1,
+            kind: "granted",
+            label: "Seat added (prorated)",
+          },
+        ],
+        isLoading: false,
+      };
+
+      render(
+        <PaymentsHistorySection
+          organizationId="org-1"
+          canViewInvoices
+          canViewCreditActivity
+        />
+      );
+
+      expect(screen.getAllByText("+9,990")).toHaveLength(2);
+      expect(screen.getAllByText("+9,889")).toHaveLength(2);
+      expect(screen.queryByText("+19,879")).not.toBeInTheDocument();
+      expect(screen.queryByText("Granted")).not.toBeInTheDocument();
+    });
+
+    it("folds clawed credits into the matching paid seat-removal invoice row", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_prorated_removal",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            totalCents: -35997,
+            amountDueCents: 0,
+            amountPaidCents: 0,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice-removal",
+            lines: [
+              {
+                description: "Unused time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: -35997,
+                quantity: 2,
+              },
+              {
+                description: "Remaining time on MCPJam Team after 11 Jun 2026",
+                amountCents: 35997,
+                quantity: 1,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+      creditActivityHookState = {
+        entries: [
+          {
+            id: "claw_1",
+            createdAt: Date.UTC(2026, 5, 10, 0, 2),
+            amountCredits: -9974,
+            seatDelta: -1,
+            kind: "clawed",
+            label: "Seat removed (clawed back)",
+          },
+        ],
+        isLoading: false,
+      };
+
+      render(
+        <PaymentsHistorySection
+          organizationId="org-1"
+          canViewInvoices
+          canViewCreditActivity
+        />
+      );
+
+      expect(screen.getAllByText("$359.97 credit")).toHaveLength(2);
+      expect(screen.getAllByText("-1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("-9,974")).toHaveLength(2);
+      expect(screen.getAllByText("Credited")).toHaveLength(2);
+      expect(screen.getAllByText("Stripe balance")).toHaveLength(2);
+      expect(screen.queryByText("Clawed back")).not.toBeInTheDocument();
+    });
+
+    it("hides void Stripe invoices from payment history", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_void",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "void",
+            amountDueCents: 35968,
+            amountPaidCents: 0,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice-void",
+            lines: [
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 35968,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getByTestId("payments-history-empty")).toBeInTheDocument();
+      expect(screen.queryByText("void")).not.toBeInTheDocument();
+      expect(screen.queryByText("$359.68")).not.toBeInTheDocument();
+    });
+
+    it("hides unmatched credit activity when invoice history is visible", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_paid",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            amountDueCents: 36000,
+            amountPaidCents: 36000,
+            currency: "usd",
+            lines: [
+              {
+                description: "1 × MCPJam Team (at $360.00 / year)",
+                amountCents: 36000,
+                quantity: 1,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+      creditActivityHookState = {
+        entries: [
+          {
+            id: "credit_unmatched",
+            createdAt: Date.UTC(2026, 5, 10, 0, 2),
+            amountCredits: 9990,
+            seatDelta: 1,
+            kind: "granted",
+            label: "Seat added (prorated)",
+          },
+          {
+            id: "claw_unmatched",
+            createdAt: Date.UTC(2026, 5, 10, 0, 3),
+            amountCredits: -9990,
+            seatDelta: -1,
+            kind: "clawed",
+            label: "Seat removed (clawed back)",
+          },
+        ],
+        isLoading: false,
+      };
+
+      render(
+        <PaymentsHistorySection
+          organizationId="org-1"
+          canViewInvoices
+          canViewCreditActivity
+        />
+      );
+
+      expect(screen.getAllByText("$360")).toHaveLength(2);
+      expect(screen.queryByText("+9,990")).not.toBeInTheDocument();
+      expect(screen.queryByText("-9,990")).not.toBeInTheDocument();
+      expect(screen.queryByText("Granted")).not.toBeInTheDocument();
+      expect(screen.queryByText("Clawed back")).not.toBeInTheDocument();
+    });
+
+    it("renders unmatched credit activity inside payment history", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      creditActivityHookState = {
+        entries: [
+          {
+            id: "credit_1",
+            createdAt: Date.UTC(2026, 5, 10),
+            amountCredits: 12903,
+            seatDelta: 1,
+            kind: "granted",
+            label: "Seat added (prorated)",
+          },
+        ],
+        isLoading: false,
+      };
+
+      render(
+        <PaymentsHistorySection organizationId="org-1" canViewCreditActivity />
+      );
+
+      expect(screen.getAllByText("+1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("+12,903")).toHaveLength(2);
+      expect(screen.getAllByText("Granted")).toHaveLength(2);
     });
   });
 });
