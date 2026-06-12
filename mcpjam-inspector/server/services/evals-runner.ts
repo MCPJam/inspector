@@ -1039,12 +1039,12 @@ const runIterationWithAiSdk = async ({
   let enhancedSystemPromptForPersist: string | undefined = undefined;
 
   // Browser-rendered MCP App eval (PR 5): render MCP App tool results in the
-  // headless-Chromium harness and (for Claude drivers) drive them with
-  // Computer Use. The shared context owns the harness, the Computer Use tools,
+  // headless-Chromium harness and (for models with vision + tool calling) drive
+  // them with Computer Use. The shared context owns the harness, the Computer Use tools,
   // the advertised-tool gate, and the artifact collectors; construction is
   // cheap and Chromium launches lazily on the first widget render, so
   // prompt-only / no-widget iterations pay nothing.
-  const browser = createBrowserSessionContext({
+  const browser = await createBrowserSessionContext({
     model: test.model,
     mcpClientManager,
     injectOpenAiCompat,
@@ -1105,7 +1105,7 @@ const runIterationWithAiSdk = async ({
       typeof toolChoice === "object" &&
       !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
       // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on Claude drivers.
+      // forced tool choice naming one of them is valid on computer-capable drivers.
       !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
@@ -1638,7 +1638,7 @@ const runIterationViaBackend = async (params: RunIterationBackendParams) => {
   // The wrapper owns disposal: try/finally guarantees a launched Chromium is
   // torn down on EVERY exit (cancellation early-returns, setup failures,
   // finalize throws), which per-exit dispose calls could miss.
-  const browser = createBrowserSessionContext({
+  const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
@@ -2790,9 +2790,10 @@ const streamIterationWithAiSdk = async ({
 
   // Browser-rendered MCP App eval (PR 9): mirror runIterationWithAiSdk on the
   // streamed path — render MCP App tool results in the headless-Chromium harness
-  // and (for Claude drivers) drive them with Computer Use. Declared BEFORE the
+  // and (for models with vision + tool calling) drive them with Computer
+  // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
-  const browser = createBrowserSessionContext({
+  const browser = await createBrowserSessionContext({
     model: test.model,
     mcpClientManager,
     injectOpenAiCompat,
@@ -2841,7 +2842,7 @@ const streamIterationWithAiSdk = async ({
       typeof toolChoice === "object" &&
       !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
       // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on Claude drivers.
+      // forced tool choice naming one of them is valid on computer-capable drivers.
       !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
@@ -3516,7 +3517,7 @@ const streamIterationViaBackend = async (
   // Browser-rendered MCP App eval (PR 14): hosted-path harness context for
   // the streaming runner — same wiring as `runIterationViaBackend`; the
   // wrapper's try/finally guarantees Chromium teardown on every exit.
-  const browser = createBrowserSessionContext({
+  const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,

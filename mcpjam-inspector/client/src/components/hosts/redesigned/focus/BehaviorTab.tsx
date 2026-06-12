@@ -19,7 +19,7 @@ import {
 import { hostConfigField } from "@/lib/host-config-field-schema";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import { useHostAgentModels } from "@/hooks/use-host-agent-models";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
@@ -83,7 +83,7 @@ export function BehaviorTab({
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
-  const { availableModels } = useHostAgentModels();
+  const { availableModels } = useAvailableModels();
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = availableModels.find((m) => String(m.id) === draft.modelId);
     if (match) return match;
@@ -156,6 +156,7 @@ export function BehaviorTab({
                 onModelChange={(model) => update({ modelId: String(model.id) })}
                 disabled={readOnly}
                 align="end"
+                analyticsLocation="client_builder"
               />
             </div>
           }

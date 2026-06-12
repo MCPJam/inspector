@@ -532,12 +532,12 @@ async function runOneSession(args: {
     });
 
     // One browser context per session: renders MCP App tool results in the
-    // headless harness (render observations for every model) and, for Claude
-    // assistant models, adds the `computer` / `finish_widget` tools so the
+    // headless harness (render observations for every model) and, for assistant
+    // models with vision + tool calling, adds the `computer` / `finish_widget` tools so the
     // simulated assistant can interact with rendered widgets (interaction
     // steps). `injectOpenAiCompat` is omitted to match the snapshot capture
     // below — the chatbox runtime config doesn't carry the flag.
-    browser = createBrowserSessionContext({
+    browser = await createBrowserSessionContext({
       model: String(modelDefinition.id),
       mcpClientManager: manager,
       logScope: "sessionSimulation",
@@ -975,23 +975,20 @@ async function persistBrowserArtifactsForTurn(args: {
       await serializeBrowserStepsForBackend(steps, convexClient)
     ).map(toBrowserStepPayload);
 
-    await convexClient.mutation(
-      "chatSessions:recordBrowserArtifacts" as any,
-      {
-        chatboxId: args.chatboxId,
-        ...(args.accessVersion !== undefined
-          ? { accessVersion: args.accessVersion }
-          : {}),
-        chatSessionId: args.chatSessionId,
-        promptIndex: args.promptIndex,
-        ...(serializedObservations.length
-          ? { widgetRenderObservations: serializedObservations }
-          : {}),
-        ...(serializedSteps.length
-          ? { browserInteractionSteps: serializedSteps }
-          : {}),
-      }
-    );
+    await convexClient.mutation("chatSessions:recordBrowserArtifacts" as any, {
+      chatboxId: args.chatboxId,
+      ...(args.accessVersion !== undefined
+        ? { accessVersion: args.accessVersion }
+        : {}),
+      chatSessionId: args.chatSessionId,
+      promptIndex: args.promptIndex,
+      ...(serializedObservations.length
+        ? { widgetRenderObservations: serializedObservations }
+        : {}),
+      ...(serializedSteps.length
+        ? { browserInteractionSteps: serializedSteps }
+        : {}),
+    });
   } catch (err) {
     logger.warn("[sessionSimulation.runner] browser artifact persist failed", {
       chatSessionId: args.chatSessionId,

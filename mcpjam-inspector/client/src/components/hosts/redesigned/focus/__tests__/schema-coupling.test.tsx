@@ -11,8 +11,8 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
 // BehaviorTab's model picker reuses the Playground ModelSelector fed by the
 // shared app-state + Convex model hooks; stub them so the tab renders
 // without providers.
-vi.mock("@/hooks/use-host-agent-models", () => ({
-  useHostAgentModels: () => ({
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({
     availableModels: [
       { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
     ],
