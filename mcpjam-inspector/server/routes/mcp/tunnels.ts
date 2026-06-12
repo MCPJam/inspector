@@ -5,6 +5,12 @@ import {
   clearTunnelRequests,
   getTunnelRequests,
 } from "../../services/tunnel-request-log";
+import {
+  fetchRelayGrant,
+  fetchRotationGrant,
+  reportTunnelClosure,
+  type RelayGrant,
+} from "../../services/tunnel-grants";
 import { LOCAL_SERVER_ADDR } from "../../config";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
@@ -13,137 +19,11 @@ import { classifyTunnelError } from "../../utils/error-classify";
 
 const tunnels = new Hono();
 
-// Grant minted by the Convex backend: a stable slug, the bearer URL with a
-// fresh ?k= secret, and a connect token the relay edge verifies at the
-// WebSocket handshake. The secret/URL/token live in inspector memory only.
-interface RelayGrant {
-  slug: string;
-  url: string;
-  secret?: string;
-  secretHash?: string;
-  secretVersion?: number;
-  connectToken: string;
-  connectTokenExpiresAt?: number;
-  relayWsUrl: string;
-}
-
-function convexHeaders(authHeader?: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  }
-  return headers;
-}
-
-function requireConvexUrl(): string {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new Error("CONVEX_HTTP_URL not configured");
-  }
-  return convexUrl;
-}
-
-function validateGrant(
-  data: Partial<RelayGrant> & { ok?: boolean }
-): RelayGrant {
-  if (!data.ok || !data.slug || !data.url) {
-    throw new Error("Invalid response from tunnel service");
-  }
-  if (!data.connectToken || !data.relayWsUrl) {
-    // Local-dev skew: a backend without the relay routes answered.
-    throw new Error(
-      "Tunnel backend does not support relay tunnels yet — deploy the relay-enabled backend (or set TUNNEL_RELAY_* env on it)"
-    );
-  }
-  return data as RelayGrant;
-}
-
-// Fetch a relay tunnel grant from the Convex backend. `transport=relay`
-// marks this inspector as relay-capable; backends answer pre-relay
-// inspectors (no marker) with an actionable 410.
-async function fetchRelayGrant(
-  serverId: string,
-  authHeader?: string
-): Promise<RelayGrant> {
-  const convexUrl = requireConvexUrl();
-
-  const response = await fetch(
-    `${convexUrl}/tunnels/token?serverId=${encodeURIComponent(
-      serverId
-    )}&transport=relay`,
-    {
-      method: "GET",
-      headers: convexHeaders(authHeader),
-    }
-  );
-
-  if (!response.ok) {
-    const error = (await response.json()) as { error?: string };
-    throw new Error(error.error || "Failed to fetch tunnel grant");
-  }
-
-  return validateGrant(
-    (await response.json()) as Partial<RelayGrant> & { ok?: boolean }
-  );
-}
-
-// Rotate the bearer secret with the Convex backend. Single-phase: the
-// backend patches the row AND revokes the old grant at the edge before
-// responding, so the old URL is already dead; we just reconnect with the
-// fresh grant.
-async function fetchRotationGrant(
-  serverId: string,
-  full: boolean,
-  authHeader?: string
-): Promise<RelayGrant> {
-  const convexUrl = requireConvexUrl();
-
-  const response = await fetch(`${convexUrl}/tunnels/rotate`, {
-    method: "POST",
-    headers: convexHeaders(authHeader),
-    body: JSON.stringify({ serverId, full, transport: "relay" }),
-  });
-
-  if (!response.ok) {
-    const error = (await response.json()) as { error?: string };
-    throw new Error(error.error || "Failed to rotate tunnel");
-  }
-
-  return validateGrant(
-    (await response.json()) as Partial<RelayGrant> & { ok?: boolean }
-  );
-}
-
 function safeHostname(url: string): string {
   try {
     return new URL(url).hostname || url;
   } catch {
     return url;
-  }
-}
-
-// Report tunnel closure to Convex backend (which also tells the relay edge
-// to drop the socket and deny the now-superseded grant; the slug is kept so
-// the URL stays stable on recreate).
-async function reportTunnelClosure(
-  serverId: string,
-  authHeader?: string
-): Promise<void> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    return;
-  }
-
-  try {
-    await fetch(`${convexUrl}/tunnels/close`, {
-      method: "POST",
-      headers: convexHeaders(authHeader),
-      body: JSON.stringify({ serverId }),
-    });
-  } catch (error) {
-    logger.error("Failed to report tunnel closure", error, { serverId });
   }
 }
 
