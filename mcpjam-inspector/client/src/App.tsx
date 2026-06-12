@@ -1189,8 +1189,6 @@ export function ServersRedirectRoute() {
 export function HomeRoute() {
   const { activeProjectId, homeOrganizationId, isHomeContextResolving } =
     useAppRouteContext();
-  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
-  if (!homeEnabled) return <ServersRoute />;
   return (
     <HomeTab
       // Membership-validated org for `/home` (the route carries none, so it is
@@ -1300,12 +1298,9 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
-  const defaultHubRoute = useMemo((): "connect" | "servers" => {
-    if (!evaluateRunsFlagsLoaded) {
-      return "servers";
-    }
-    return hostsHubFlagEnabled && isAuthenticated ? "connect" : "servers";
-  }, [evaluateRunsFlagsLoaded, hostsHubFlagEnabled, isAuthenticated]);
+  const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
+    return "home";
+  }, []);
   const isHostedChatRoute = isChatboxChatRoute;
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
