@@ -239,7 +239,16 @@ export class RelayConnection {
       // second overlapping socket on the same grant (which the edge would
       // then 4001 against the other). At most one reconnect is ever queued.
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = setTimeout(() => this.dial(onHello), delay);
+      // Forward BOTH callbacks: a transient close before the first `hello`
+      // schedules this reconnect, and if that next attempt closes
+      // permanently (4000/4001/4002) before `hello`, onPermanent must still
+      // reject connect() with the real reason instead of leaving the caller
+      // to hit the 15s connect timeout. After connect() settles both are
+      // no-ops, so post-connect reconnects are unaffected.
+      this.reconnectTimer = setTimeout(
+        () => this.dial(onHello, onPermanent),
+        delay
+      );
     });
   }
 

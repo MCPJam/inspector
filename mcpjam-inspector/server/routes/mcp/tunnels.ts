@@ -197,10 +197,14 @@ tunnels.post("/create/:serverId", async (c) => {
         secretVersion: grant.secretVersion,
       });
 
-      const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
-      if (!serverTunnelUrl) {
-        throw new Error("Failed to build server tunnel URL");
-      }
+      // The handshake succeeded, so the grant URL is the right answer. Don't
+      // re-derive it from live manager state: a permanent edge close
+      // (replaced/revoked) racing in right after createTunnel could drop the
+      // entry and turn a completed create into a misleading 500. If the
+      // tunnel did die, the card's revalidation poll detects it and clears
+      // the URL.
+      const serverTunnelUrl =
+        tunnelManager.getServerTunnelUrl(serverId) ?? grant.url;
 
       getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
         tunnelKind: "server",
