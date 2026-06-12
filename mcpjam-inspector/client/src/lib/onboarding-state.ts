@@ -107,11 +107,18 @@ export function isFirstRunEligible(
   )
     return false;
 
+  // Read localStorage before the remote check. A locally-completed or
+  // dismissed state is authoritative — it prevents re-triggering the NUX in
+  // a fresh guest Convex session where the user row starts with
+  // hasSeenOnboarding: false and would otherwise bypass localStorage.
+  const persisted = readOnboardingState();
+  if (persisted?.status === "completed" || persisted?.status === "dismissed")
+    return false;
+
   if (hasSeenRemoteOnboarding !== undefined) {
     return hasSeenRemoteOnboarding !== true;
   }
 
-  const persisted = readOnboardingState();
   if (!persisted) return true;
   if (persisted.status === "started") return true;
   if (persisted.status === "seen" && !persisted.shownAt) return true;
