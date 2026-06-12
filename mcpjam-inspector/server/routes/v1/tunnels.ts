@@ -24,6 +24,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   closeTunnelGrant,
+  convexFetch,
   fetchRelayGrant,
   requireConvexHttpUrl,
 } from "../../services/tunnel-grants.js";
@@ -88,7 +89,7 @@ async function fetchProjectServers(
   bearer: string
 ): Promise<ProjectServerDto[]> {
   const convexUrl = requireConvexHttpUrl();
-  const response = await fetch(
+  const response = await convexFetch(
     `${convexUrl}/v1/project-servers?projectId=${encodeURIComponent(projectId)}`,
     {
       method: "GET",

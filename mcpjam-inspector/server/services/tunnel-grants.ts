@@ -29,6 +29,47 @@ function convexHeaders(authHeader?: string): Record<string, string> {
   return headers;
 }
 
+// One shared deadline for every Convex round-trip in the tunnel lifecycle:
+// a wedged backend must fail the route, not hang it.
+const CONVEX_FETCH_TIMEOUT_MS = 15_000;
+
+export async function convexFetch(
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    CONVEX_FETCH_TIMEOUT_MS
+  );
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Tunnel backend request timed out after ${CONVEX_FETCH_TIMEOUT_MS}ms`
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Error message from an upstream failure body; tolerates non-JSON bodies. */
+async function upstreamErrorMessage(
+  response: Response,
+  fallback: string
+): Promise<string> {
+  try {
+    const error = (await response.json()) as { error?: string };
+    if (error.error) return error.error;
+  } catch {
+    // Non-JSON error body (proxy HTML, empty 5xx); keep the fallback.
+  }
+  return `${fallback} (${response.status})`;
+}
+
 export function requireConvexHttpUrl(): string {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -62,7 +103,7 @@ export async function fetchRelayGrant(
 ): Promise<RelayGrant> {
   const convexUrl = requireConvexHttpUrl();
 
-  const response = await fetch(
+  const response = await convexFetch(
     `${convexUrl}/tunnels/token?serverId=${encodeURIComponent(
       serverId
     )}&transport=relay`,
@@ -73,8 +114,9 @@ export async function fetchRelayGrant(
   );
 
   if (!response.ok) {
-    const error = (await response.json()) as { error?: string };
-    throw new Error(error.error || "Failed to fetch tunnel grant");
+    throw new Error(
+      await upstreamErrorMessage(response, "Failed to fetch tunnel grant")
+    );
   }
 
   return validateGrant(
@@ -93,15 +135,16 @@ export async function fetchRotationGrant(
 ): Promise<RelayGrant> {
   const convexUrl = requireConvexHttpUrl();
 
-  const response = await fetch(`${convexUrl}/tunnels/rotate`, {
+  const response = await convexFetch(`${convexUrl}/tunnels/rotate`, {
     method: "POST",
     headers: convexHeaders(authHeader),
     body: JSON.stringify({ serverId, full, transport: "relay" }),
   });
 
   if (!response.ok) {
-    const error = (await response.json()) as { error?: string };
-    throw new Error(error.error || "Failed to rotate tunnel");
+    throw new Error(
+      await upstreamErrorMessage(response, "Failed to rotate tunnel")
+    );
   }
 
   return validateGrant(
@@ -122,7 +165,7 @@ export async function reportTunnelClosure(
   }
 
   try {
-    await fetch(`${convexUrl}/tunnels/close`, {
+    await convexFetch(`${convexUrl}/tunnels/close`, {
       method: "POST",
       headers: convexHeaders(authHeader),
       body: JSON.stringify({ serverId }),
@@ -144,20 +187,15 @@ export async function closeTunnelGrant(
 ): Promise<void> {
   const convexUrl = requireConvexHttpUrl();
 
-  const response = await fetch(`${convexUrl}/tunnels/close`, {
+  const response = await convexFetch(`${convexUrl}/tunnels/close`, {
     method: "POST",
     headers: convexHeaders(authHeader),
     body: JSON.stringify({ serverId }),
   });
 
   if (!response.ok) {
-    let message = "Failed to close tunnel";
-    try {
-      const error = (await response.json()) as { error?: string };
-      if (error.error) message = error.error;
-    } catch {
-      // Non-JSON error body; keep the generic message.
-    }
-    throw new Error(message);
+    throw new Error(
+      await upstreamErrorMessage(response, "Failed to close tunnel")
+    );
   }
 }
