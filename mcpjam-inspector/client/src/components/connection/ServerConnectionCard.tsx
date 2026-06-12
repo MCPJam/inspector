@@ -288,6 +288,11 @@ export function ServerConnectionCard({
       }
     };
 
+    // Run once up front: the tunnel can already be dead when the effect
+    // starts (a permanent relay close can race creation, and the create
+    // route answers with the grant URL by design) — don't advertise it for
+    // a full interval before the first check.
+    void revalidate();
     const intervalId = setInterval(revalidate, 5000);
     return () => {
       isCancelled = true;

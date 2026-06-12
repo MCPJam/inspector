@@ -77,6 +77,7 @@ vi.mock("sonner", () => ({
 
 // Must import after mocks are set up
 import { ServerConnectionCard } from "../ServerConnectionCard";
+import { TUNNEL_EXPLANATION_DISMISSED_KEY } from "../TunnelExplanationModal";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 // Mock navigator.clipboard
@@ -821,6 +822,53 @@ describe("ServerConnectionCard", () => {
         });
         expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
       } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("detects a tunnel that died during creation without waiting a full poll interval", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getServerTunnel, createServerTunnel } = await import(
+          "@/lib/apis/mcp-tunnels-api"
+        );
+        // The create endpoint answers with the grant URL even when a
+        // permanent relay close raced the handshake (by design — see the
+        // create route); the server then holds no live entry.
+        (getServerTunnel as Mock).mockResolvedValue(null);
+        (createServerTunnel as Mock).mockResolvedValue({
+          url: seedUrl,
+          serverId: "test-server",
+        });
+        localStorage.setItem(TUNNEL_EXPLANATION_DISMISSED_KEY, "true");
+
+        render(
+          <ServerConnectionCard
+            server={createServer({ connectionStatus: "connected" })}
+            {...defaultProps}
+          />
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        await act(async () => {
+          fireEvent.click(
+            screen.getByRole("button", { name: "Create tunnel" })
+          );
+        });
+        // Far less than the 5s poll cadence: the effect's immediate
+        // revalidation must catch the dead tunnel, not the first tick.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(50);
+        });
+
+        expect(screen.queryByText("Copy tunnel URL")).not.toBeInTheDocument();
+        expect(toast.warning as Mock).toHaveBeenCalledWith(
+          expect.stringContaining("Tunnel for test-server ended")
+        );
+      } finally {
+        localStorage.removeItem(TUNNEL_EXPLANATION_DISMISSED_KEY);
         vi.useRealTimers();
       }
     });
