@@ -100,6 +100,7 @@
             "icon": "map",
             "pages": [
               "cli/overview",
+              "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",

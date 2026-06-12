@@ -379,6 +379,20 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `mcp` command
+
+### `mcp`
+
+Run MCPJam as an MCP server over stdio so MCP clients (Claude Desktop, Claude Code, Cursor, ...) can connect to, exercise, and debug other MCP servers. See [MCPJam as an MCP server](/cli/mcp-server) for the exposed tools and client setup.
+
+```bash
+npx -y @mcpjam/cli@latest mcp
+```
+
+The command takes no flags of its own. The global `--timeout <ms>` flag sets the default per-request timeout against target servers, and `--quiet` suppresses the startup notice on stderr. Stdout carries only JSON-RPC; never pipe other output into it.
+
+---
+
 ## `telemetry` commands
 
 Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
