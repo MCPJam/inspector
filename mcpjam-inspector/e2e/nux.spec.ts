@@ -50,17 +50,36 @@ test.describe("NUX first-run redirect", () => {
     page,
   }) => {
     // Seed completed onboarding state before the page loads.
-    await page.addInitScript((key) => {
-      localStorage.setItem(
-        key,
+    // Key is inlined (no parameter passing) to avoid any serialization edge
+    // cases with addInitScript's arg channel.
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "mcp-onboarding-state",
         JSON.stringify({ status: "completed", completedAt: 1 }),
       );
-    }, ONBOARDING_KEY);
+    });
 
     await page.goto("/");
 
     // The app shell must mount before we assert the non-redirect.
     await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
+
+    // Verify the localStorage seed survived initial page load.
+    // If this assertion fails the issue is in the seed, not the NUX redirect.
+    const seededStatus = await page.evaluate(() => {
+      try {
+        const raw = window.localStorage.getItem("mcp-onboarding-state");
+        return raw
+          ? (JSON.parse(raw) as { status?: string }).status ?? null
+          : null;
+      } catch {
+        return null;
+      }
+    });
+    expect(
+      seededStatus,
+      "localStorage onboarding status should be 'completed' after page load",
+    ).toBe("completed");
 
     // The NUX fires shortly after mount. Wait up to 5 s for the URL to become
     // /playground — if it does, the test fails; if waitForURL times out (the
