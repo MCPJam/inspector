@@ -38,6 +38,8 @@ export type {
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
+  PlatformTunnelClosed,
+  PlatformTunnelGrant,
 } from "./types.js";
 
 export {
@@ -67,6 +69,8 @@ export {
 
 export {
   callServerToolOperation,
+  closeTunnelOperation,
+  createTunnelOperation,
   diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -87,6 +91,10 @@ export {
   showServersOperation,
   type CallServerToolInput,
   type CallServerToolResult,
+  type CloseTunnelInput,
+  type CloseTunnelResult,
+  type CreateTunnelInput,
+  type CreateTunnelResult,
   type DiagnoseServerResult,
   type EvalRunScopedInput,
   type GetChatboxInput,
