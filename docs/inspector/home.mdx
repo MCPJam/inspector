@@ -82,6 +82,10 @@ The MCPJam Agent is a persistent chat panel that lets you ask questions about do
 - **Resize** — Drag the left edge of the panel to adjust its width. The minimum width is 360 px; the maximum is 50% of the viewport. Dragging below the minimum snaps the panel closed.
 - **Close** — Click the **✕** button in the panel header, or press the keyboard shortcut again.
 
+### Widget rendering
+
+The agent supports MCP Apps widget rendering. When a workspace tool returns an interactive widget — for example, asking "show my servers" — the widget renders inline in the chat, just like widgets in the LLM Playground. You can interact with the widget directly without leaving the panel.
+
 ### Persistence
 
 The panel's open state, width, and active session are saved to your browser's local storage and restored on reload. Conversations persist server-side, so you can close and reopen the panel without losing your chat history.
