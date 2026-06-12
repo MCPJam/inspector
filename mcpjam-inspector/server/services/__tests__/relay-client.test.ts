@@ -317,4 +317,37 @@ describe("RelayConnection", () => {
     expect(edge.connections.length).toBe(1);
     expect(conn.isConnected).toBe(false);
   });
+
+  it("rejects connect() with the permanent reason when a transient drop is followed by a permanent close before hello", async () => {
+    // Edge that never sends hello: connection #1 closes transiently (1012,
+    // immediate reconnect), connection #2 closes permanently (4001). The
+    // reconnect dial must still carry onPermanent so connect() rejects with
+    // the real reason instead of stalling to the 15s connect timeout.
+    const server = http.createServer();
+    const wss = new WebSocketServer({ server, path: "/agent" });
+    let n = 0;
+    wss.on("connection", (ws) => {
+      n += 1;
+      ws.close(n === 1 ? 1012 : 4001, n === 1 ? "restart" : "replaced");
+    });
+    const port: number = await new Promise((resolve) =>
+      server.listen(0, "127.0.0.1", () =>
+        resolve((server.address() as AddressInfo).port)
+      )
+    );
+
+    try {
+      const conn = makeConnection(port);
+      activeConnections.push(conn);
+      const started = Date.now();
+      await expect(conn.connect()).rejects.toThrow(/another inspector/i);
+      // Rejected from the permanent close, not the 15s connect timeout.
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(n).toBe(2);
+    } finally {
+      wss.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
 });
