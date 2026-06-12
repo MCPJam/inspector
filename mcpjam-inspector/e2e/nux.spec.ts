@@ -35,8 +35,8 @@ test.describe("NUX first-run redirect", () => {
     // doesn't race against the initial render.
     await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
 
-    // The NUX useLayoutEffect fires synchronously after mount and navigates
-    // to /playground. 15 s covers any async flag-loading delay.
+    // The NUX useLayoutEffect fires shortly after mount once auth/gate state
+    // settles and navigates to /playground. 15 s covers that async delay.
     await page.waitForURL("**/playground", { timeout: 15_000 });
   });
 
@@ -59,6 +59,8 @@ test.describe("NUX first-run redirect", () => {
     await expect(page.getByText("Welcome to MCPJam")).toBeVisible({
       timeout: 30_000,
     });
-    expect(page.url()).not.toContain("/playground");
+    // Use toHaveURL (retried) rather than a snapshot of page.url() so that a
+    // late-firing NUX redirect doesn't produce a false green.
+    await expect(page).toHaveURL(/^(?!.*\/playground)/, { timeout: 5_000 });
   });
 });
