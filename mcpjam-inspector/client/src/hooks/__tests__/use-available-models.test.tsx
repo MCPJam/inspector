@@ -135,6 +135,19 @@ describe("useAvailableModels", () => {
     expect(projectQuery?.args).toEqual({ projectId: "convex-project-2" });
   });
 
+  it("accepts a Convex/shared project id as the scope (eval surfaces pass convexProjectId)", () => {
+    // EvalsTab/CiEvalsTab/run rows carry the Convex id, not the local
+    // appState key — the hook must resolve it via sharedProjectId instead
+    // of silently missing the project and skipping the org config.
+    renderHook(() => useAvailableModels({ projectId: "convex-project-2" }));
+    const projectQuery = queryCalls.find(
+      (c) =>
+        c.name === "organizationModelProviders:getVisibleConfigForProject" &&
+        c.args !== "skip"
+    );
+    expect(projectQuery?.args).toEqual({ projectId: "convex-project-2" });
+  });
+
   it("appends locally-detected tool-capable Ollama models to the org list", async () => {
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: true,
