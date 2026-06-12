@@ -277,6 +277,7 @@ export const startSuiteRunWithRecorder = async ({
   namedHostId,
   runGroupId,
   source,
+  idempotencyKey,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -325,9 +326,15 @@ export const startSuiteRunWithRecorder = async ({
   /**
    * Run origin persisted on `testSuiteRun.source` for audit attribution.
    * Omitted means 'ui' (backend default); the public /api/v1 surface
-   * passes 'api'.
+   * passes 'api'; the scheduled-evals worker passes 'schedule'.
    */
-  source?: "ui" | "api";
+  source?: "ui" | "api" | "schedule";
+  /**
+   * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
+   * (scheduled-run claim retries) can never double-create a run. Absent on
+   * interactive paths — the mutation's fingerprint window covers those.
+   */
+  idempotencyKey?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -345,6 +352,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
       ...(source ? { source } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     },
   );
 

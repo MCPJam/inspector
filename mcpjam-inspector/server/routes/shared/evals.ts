@@ -181,8 +181,16 @@ export const RunEvalsRequestSchema = z.object({
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
-  /** Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api'. */
-  source?: "ui" | "api";
+  /**
+   * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
+   * the scheduled-evals worker passes 'schedule'.
+   */
+  source?: "ui" | "api" | "schedule";
+  /**
+   * Forwarded to `startTestSuiteRun.idempotencyKey`. The scheduled worker
+   * passes its trigger id so claim retries can never double-create a run.
+   */
+  idempotencyKey?: string;
 };
 
 export const RunTestCaseRequestSchema = z.object({
@@ -586,6 +594,7 @@ export async function prepareEvalRun(
     refreshSnapshot,
     runGroupId,
     source,
+    idempotencyKey,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -966,6 +975,7 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     source,
+    idempotencyKey,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??

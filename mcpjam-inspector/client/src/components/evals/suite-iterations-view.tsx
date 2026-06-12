@@ -28,6 +28,7 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
+import { ScheduleEditor, type SuiteSchedule } from "./schedule-editor";
 import { EvalExportModal } from "./eval-export-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
@@ -626,6 +627,8 @@ export function SuiteIterationsView({
   };
 
   const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
+  const syntheticMonitorsEnabled =
+    useFeatureFlagEnabled("synthetic-monitors") === true;
 
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
@@ -1215,6 +1218,19 @@ export function SuiteIterationsView({
                   onChange={setDraftDefaultPredicates}
                 />
               </SettingsSection>
+
+              {/* ── Schedule (synthetic monitors, flag-gated) ────────── */}
+              {syntheticMonitorsEnabled ? (
+                <SettingsSection
+                  label="Schedule"
+                  hint="Run this suite automatically on a fixed interval."
+                >
+                  <ScheduleEditor
+                    suiteId={suite._id}
+                    schedule={(suite as { schedule?: SuiteSchedule }).schedule}
+                  />
+                </SettingsSection>
+              ) : null}
 
               {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection

@@ -18,6 +18,7 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
+import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
   mapInternalToRequestContext,
@@ -319,14 +320,46 @@ function stripStdioFieldsFromHostedConfig<
  * and stay on the original-bearer path until they're either reached
  * by an API key request or refactored to receive Context.
  */
+/**
+ * The caller-identity inputs the authorize/manager helpers actually consume,
+ * decoupled from Hono so background workers (scheduled evals) can call them
+ * without faking a route context. Routes build one via
+ * {@link callerContextFromHono}; workers pass explicit values (or the empty
+ * object, which behaves exactly like a plain-JWT caller — locked by
+ * `caller-context.test.ts`).
+ */
+export interface ManagerCallerContext {
+  /** "workos_api_key" switches to the service-token + acting-as exchange. */
+  authMethod?: string;
+  /** WorkOS user id (Convex `externalId`) for the delegated exchange. */
+  workosUserId?: string;
+  /** Convex organization id scope for the delegated exchange. */
+  mcpjamOrganizationId?: string;
+  /** Sink for backend-attributed request log context; absent ⇒ no-op. */
+  setLogContext?: (partial: Partial<RequestLogContext>) => void;
+  /** Read-back of the same log context (authenticatedUserId); absent ⇒ null. */
+  getLogContext?: () => RequestLogContext | undefined;
+}
+
+/** Adapt a live Hono request context to {@link ManagerCallerContext}. */
+export function callerContextFromHono(c: Context): ManagerCallerContext {
+  return {
+    authMethod: c.get("authMethod") as string | undefined,
+    workosUserId: c.get("workosUserId") as string | undefined,
+    mcpjamOrganizationId: c.get("mcpjamOrganizationId") as string | undefined,
+    setLogContext: (partial) => setRequestLogContext(c, partial),
+    getLogContext: () => c.var.requestLogContext,
+  };
+}
+
 export function buildConvexAuthHeaders(
-  c: Context,
+  caller: ManagerCallerContext,
   originalBearer: string
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (c.get("authMethod") === "workos_api_key") {
+  if (caller.authMethod === "workos_api_key") {
     const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
     if (!serviceToken) {
       throw new WebRouteError(
@@ -338,7 +371,7 @@ export function buildConvexAuthHeaders(
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
     // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
-    const actingAs = c.get("workosUserId");
+    const actingAs = caller.workosUserId;
     if (!actingAs) {
       throw new WebRouteError(
         500,
@@ -346,7 +379,7 @@ export function buildConvexAuthHeaders(
         "Missing workosUserId for WorkOS API key auth exchange"
       );
     }
-    const actingInOrg = c.get("mcpjamOrganizationId");
+    const actingInOrg = caller.mcpjamOrganizationId;
     if (!actingInOrg) {
       throw new WebRouteError(
         500,
@@ -387,7 +420,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(c, bearerToken),
+      headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
       body: JSON.stringify({
         projectId,
         serverId,
@@ -441,7 +474,7 @@ export async function authorizeServer(
 }
 
 export async function authorizeBatch(
-  c: Context,
+  caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
   serverIds: string[],
@@ -464,7 +497,7 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(c, bearerToken),
+      headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({
         projectId,
         serverIds,
@@ -547,7 +580,7 @@ export async function authorizeBatch(
       partial.serverTransport = null;
       partial.chatboxId = null;
     }
-    setRequestLogContext(c, partial);
+    caller.setLogContext?.(partial);
   }
 
   const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
@@ -699,7 +732,7 @@ function resolveEffectiveInitializePinsForServer(
 }
 
 export async function createAuthorizedManager(
-  c: Context,
+  caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
   serverIds: string[],
@@ -763,7 +796,7 @@ export async function createAuthorizedManager(
 
   const oauthServerUrls: Record<string, string> = {};
   const batch = await authorizeBatch(
-    c,
+    caller,
     bearerToken,
     projectId,
     uniqueServerIds,
@@ -855,13 +888,13 @@ export async function createAuthorizedManager(
                       // as `authorizeBatch` — otherwise Convex would see the
                       // service token without an acting-as user.
                       workosApiKeyActingAs:
-                        c.get("authMethod") === "workos_api_key" &&
-                        c.get("workosUserId") &&
-                        c.get("mcpjamOrganizationId")
+                        caller.authMethod === "workos_api_key" &&
+                        caller.workosUserId &&
+                        caller.mcpjamOrganizationId
                           ? {
-                              workosUserId: c.get("workosUserId")!,
+                              workosUserId: caller.workosUserId,
                               mcpjamOrganizationId:
-                                c.get("mcpjamOrganizationId")!,
+                                caller.mcpjamOrganizationId,
                             }
                           : undefined,
                     })
@@ -893,7 +926,7 @@ export async function createAuthorizedManager(
   return {
     manager,
     oauthServerUrls,
-    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+    authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
   };
 }
 
@@ -1136,7 +1169,7 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
 
   return await withManager(
     createAuthorizedManager(
-      c,
+      callerContextFromHono(c),
       bearerToken,
       raw.projectId as string,
       serverIds,

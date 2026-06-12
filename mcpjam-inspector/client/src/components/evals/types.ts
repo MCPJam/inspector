@@ -372,7 +372,7 @@ export type EvalSuiteRun = {
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
   result?: "pending" | "passed" | "failed" | "cancelled";
-  source?: "ui" | "sdk";
+  source?: "ui" | "sdk" | "api" | "schedule";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

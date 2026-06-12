@@ -14,6 +14,7 @@ import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
+  callerContextFromHono,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -242,7 +243,7 @@ chatV2.post("/", async (c) => {
       oauthServerUrls: urls,
       authenticatedUserId,
     } = await createAuthorizedManager(
-      c,
+      callerContextFromHono(c),
       bearerToken,
       hostedBody.projectId,
       selectedServerIds,
