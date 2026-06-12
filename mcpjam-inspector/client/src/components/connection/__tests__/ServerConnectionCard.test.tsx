@@ -703,6 +703,66 @@ describe("ServerConnectionCard", () => {
       }
     });
 
+    it("does not clear the URL while a rotate is in flight (server briefly has no entry)", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getServerTunnel, rotateServerTunnel } = await import(
+          "@/lib/apis/mcp-tunnels-api"
+        );
+        // Server-side view during rotation: the entry disappears between
+        // close and re-create, so revalidation would read null.
+        let tunnelVisible = true;
+        (getServerTunnel as Mock).mockImplementation(async () =>
+          tunnelVisible ? { url: seedUrl, serverId: "test-server" } : null
+        );
+        let finishRotate: (() => void) | undefined;
+        (rotateServerTunnel as Mock).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishRotate = () =>
+                resolve({
+                  url: seedUrl.replace("?k=s", "?k=s2"),
+                  serverId: "test-server",
+                });
+            })
+        );
+
+        render(
+          <ServerConnectionCard
+            server={createServer({ connectionStatus: "connected" })}
+            {...defaultProps}
+          />
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+
+        // Start a rotate that hangs; the server-side entry vanishes.
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: "Rotate tunnel secret (revokes the current URL)",
+          })
+        );
+        tunnelVisible = false;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15000);
+        });
+        // The poll is suspended during the mutation: no clearing, no toast.
+        expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+        expect(toast.warning as Mock).not.toHaveBeenCalled();
+
+        tunnelVisible = true;
+        finishRotate?.();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("keeps the URL on transient revalidation errors", async () => {
       vi.useFakeTimers();
       try {

@@ -255,9 +255,18 @@ export function ServerConnectionCard({
   // a tunnel server-side (grant superseded by another inspector, secret
   // rotated elsewhere, expired token), after which the local server 404s for
   // it — stop advertising a URL that no longer works. Skipped when the
-  // parent owns the URL via the serverTunnelUrl prop.
+  // parent owns the URL via the serverTunnelUrl prop, and while a local
+  // create/rotate/close is in flight (mid-rotation the server briefly has
+  // no entry; polling then would clear a healthy tunnel).
   useEffect(() => {
-    if (!tunnelUrl || !showTunnelActions || serverTunnelUrl !== undefined) {
+    if (
+      !tunnelUrl ||
+      !showTunnelActions ||
+      serverTunnelUrl !== undefined ||
+      isCreatingTunnel ||
+      isClosingTunnel ||
+      isRotatingTunnel
+    ) {
       return;
     }
     let isCancelled = false;
@@ -286,6 +295,9 @@ export function ServerConnectionCard({
     };
   }, [
     getAccessToken,
+    isClosingTunnel,
+    isCreatingTunnel,
+    isRotatingTunnel,
     server.name,
     serverTunnelUrl,
     showTunnelActions,
