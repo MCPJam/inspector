@@ -100,12 +100,14 @@ export async function fetchMcpAppsWidgetContent(
   // companion endpoint reads the `ui://` resource from that server instead.
   const isAgentPlatformServer = request.serverId === MCPJAM_PLATFORM_SERVER_ID;
 
-  const endpoint =
-    useWebEndpoint && isAgentPlatformServer
-      ? MCPJAM_AGENT_WIDGET_CONTENT_PATH
-      : useWebEndpoint
-      ? "/api/web/apps/mcp-apps/widget-content"
-      : "/api/apps/mcp-apps/widget-content";
+  // Server-id-first: the synthetic id has exactly one endpoint that can
+  // serve it, regardless of hosted mode — the local endpoint's MCP pool
+  // could never resolve it.
+  const endpoint = isAgentPlatformServer
+    ? MCPJAM_AGENT_WIDGET_CONTENT_PATH
+    : useWebEndpoint
+    ? "/api/web/apps/mcp-apps/widget-content"
+    : "/api/apps/mcp-apps/widget-content";
 
   const payload =
     useWebEndpoint && !isAgentPlatformServer
