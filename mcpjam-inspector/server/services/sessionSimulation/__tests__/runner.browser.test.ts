@@ -43,9 +43,9 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 vi.mock("../../session-agent.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../session-agent.js")
-  >("../../session-agent.js");
+  const actual = await vi.importActual<typeof import("../../session-agent.js")>(
+    "../../session-agent.js"
+  );
   return {
     ...actual,
     personaNextTurn: (...args: unknown[]) => personaNextTurnMock(...args),
@@ -117,8 +117,9 @@ vi.mock("../../browser-artifact-serialization.js", async () => {
 });
 
 vi.mock("convex/browser", async () => {
-  const actual =
-    await vi.importActual<typeof import("convex/browser")>("convex/browser");
+  const actual = await vi.importActual<typeof import("convex/browser")>(
+    "convex/browser"
+  );
   return {
     ...actual,
     ConvexHttpClient: class {
@@ -149,6 +150,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
     steps: Array<Record<string, unknown>>;
   } = { observations: [], steps: [] };
   const ctx = {
+    computerUseSupported: opts.computerUse,
     computerUseVersion: opts.computerUse ? ("20250124" as const) : null,
     computerWidgetTools: opts.computerUse
       ? { computer: { fake: true }, finish_widget: { fake: true } }
@@ -180,7 +182,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
     /** Test handle: queue artifacts the next drain returns. */
     _queueArtifacts(
       observations: Array<Record<string, unknown>>,
-      steps: Array<Record<string, unknown>>,
+      steps: Array<Record<string, unknown>>
     ) {
       artifacts.observations = observations;
       artifacts.steps = steps;
@@ -287,7 +289,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
           ts: 2,
           screenshotBase64: "img2",
         },
-      ],
+      ]
     );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
@@ -329,7 +331,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
     expect(captureMcpAppWidgetSnapshotsMock).toHaveBeenCalledTimes(1);
     const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts",
+      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
     );
     expect(artifactCall).toBeDefined();
     expect(artifactCall![1]).toMatchObject({
@@ -377,7 +379,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
           promptIndex: 0,
         },
       ],
-      [],
+      []
     );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
@@ -391,7 +393,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(engineOpts.prepareAdvertisedTools).toBeUndefined();
 
     const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts",
+      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
     );
     expect(artifactCall).toBeDefined();
     expect((artifactCall![1] as any).widgetRenderObservations).toHaveLength(1);
@@ -418,8 +420,8 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
 
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "chatSessions:recordBrowserArtifacts",
-      ),
+        (c) => c[0] === "chatSessions:recordBrowserArtifacts"
+      )
     ).toBe(false);
   });
 });

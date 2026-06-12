@@ -50,6 +50,7 @@ import {
   buildComputerUseTools,
   resolveComputerUseToolVersion,
 } from "../utils/computer-use-tool";
+import { modelSupportsComputerUse } from "../utils/model-capabilities";
 import {
   isRenderableMcpAppTool,
   renderMcpAppToolResult,
@@ -65,7 +66,9 @@ import {
 import { logger } from "../utils/logger";
 
 export interface CreateBrowserSessionContextParams {
-  /** Driver model id — decides Computer Use availability (Claude-only). */
+  /** Driver model id — decides Computer Use availability. Mapped Claude ids
+   *  resolve offline; other ids are checked against the OpenRouter catalog
+   *  for vision + tool calling (see model-capabilities.ts). */
   model: string;
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
@@ -74,9 +77,13 @@ export interface CreateBrowserSessionContextParams {
 }
 
 export interface BrowserSessionContext {
-  /** Non-null exactly when the driver model supports Computer Use. */
+  /** Whether the driver model gets the `computer` / `finish_widget` tools. */
+  readonly computerUseSupported: boolean;
+  /** Anthropic provider-native version for mapped Claude ids, else null.
+   *  Null does NOT mean Computer Use is off — see `computerUseSupported`. */
   readonly computerUseVersion: ReturnType<typeof resolveComputerUseToolVersion>;
-  /** Wire-format `computer` + `finish_widget`, or `{}` for non-Claude drivers. */
+  /** Wire-format `computer` + `finish_widget`, or `{}` when the driver model
+   *  lacks vision/tool-calling. */
   readonly computerWidgetTools: ToolSet;
   /** Collected render observations (promptIndex stamped at push time). */
   readonly widgetRenderObservations: RunnerWidgetRenderObservation[];
@@ -96,7 +103,7 @@ export interface BrowserSessionContext {
     chunk: Pick<
       DirectChatTurnToolResultChunk,
       "toolCallId" | "toolName" | "input" | "output" | "serverId"
-    >,
+    >
   ): Promise<void>;
   /**
    * Return artifacts appended since the previous drain (both arrays stay
@@ -114,12 +121,20 @@ export interface BrowserSessionContext {
   dispose(): Promise<void>;
 }
 
-export function createBrowserSessionContext(
-  params: CreateBrowserSessionContextParams,
-): BrowserSessionContext {
+export async function createBrowserSessionContext(
+  params: CreateBrowserSessionContextParams
+): Promise<BrowserSessionContext> {
   const { mcpClientManager, injectOpenAiCompat } = params;
   const scope = params.logScope ?? "evals";
   const computerUseVersion = resolveComputerUseToolVersion(params.model);
+  // Capability gate, resolved ONCE at construction so the tool surface is
+  // deterministic for the whole session/iteration: mapped Claude ids are
+  // eligible offline; anything else needs vision + tool calling per the
+  // OpenRouter catalog. Unknown/unreachable → no computer tools (the
+  // pre-feature behavior for non-Claude drivers).
+  const computerUseSupported =
+    computerUseVersion !== null ||
+    (await modelSupportsComputerUse(params.model));
 
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
     current: null,
@@ -145,11 +160,13 @@ export function createBrowserSessionContext(
   // Eager (cheap) construction when Computer Use is supported so the computer
   // tools can reference the harness; Chromium still launches lazily on the
   // first widget render.
-  if (computerUseVersion) ensureWidgetHarness();
+  if (computerUseSupported) ensureWidgetHarness();
 
-  const computerWidgetTools: ToolSet = computerUseVersion
+  const computerWidgetTools: ToolSet = computerUseSupported
     ? buildComputerUseTools({
-        version: computerUseVersion,
+        // Version only matters for the provider-native form; wire format is
+        // version-independent, so non-Claude drivers simply omit it.
+        ...(computerUseVersion ? { version: computerUseVersion } : {}),
         harness: ensureWidgetHarness(),
         // The harness keeps at most one widget mounted — it is the single
         // source of truth for the active widget across turns and dismissals.
@@ -204,12 +221,12 @@ export function createBrowserSessionContext(
   // `getActiveToolCallId` reads — so the model only sees `computer` /
   // `finish_widget` when an action can actually target a widget.
   const prepareAdvertisedTools: PrepareAdvertisedTools | undefined =
-    computerUseVersion
+    computerUseSupported
       ? ({ defaultToolNames }) =>
           widgetHarnessRef.current?.getMountedWidgetId()
             ? defaultToolNames
             : defaultToolNames.filter(
-                (n) => n !== "computer" && n !== "finish_widget",
+                (n) => n !== "computer" && n !== "finish_widget"
               )
       : undefined;
 
@@ -237,7 +254,7 @@ export function createBrowserSessionContext(
         mcpClientManager,
         injectOpenAiCompat,
         harness: ensureWidgetHarness(),
-        keepMounted: computerUseVersion !== null,
+        keepMounted: computerUseSupported,
       });
       // Stamp promptIndex at push-time — the harness type stays pure; the
       // runner loop is the single source of truth for promptIndex.
@@ -258,7 +275,7 @@ export function createBrowserSessionContext(
   };
 
   const handleEngineToolResult = async (
-    event: MCPJamToolResultEvent,
+    event: MCPJamToolResultEvent
   ): Promise<void> => {
     const { toolCallId, toolName, serverId } = event;
     // Feed the real tool-call args to the widget shim so the engine-path
@@ -286,7 +303,7 @@ export function createBrowserSessionContext(
     chunk: Pick<
       DirectChatTurnToolResultChunk,
       "toolCallId" | "toolName" | "input" | "output" | "serverId"
-    >,
+    >
   ): Promise<void> => {
     if (!chunk.serverId) return;
     await renderIfRenderable({
@@ -300,6 +317,7 @@ export function createBrowserSessionContext(
   };
 
   return {
+    computerUseSupported,
     computerUseVersion,
     computerWidgetTools,
     widgetRenderObservations,
@@ -316,7 +334,7 @@ export function createBrowserSessionContext(
       ) {
         inputByToolCallId.set(
           event.toolCallId,
-          event.input as Record<string, unknown>,
+          event.input as Record<string, unknown>
         );
       }
     },
@@ -324,7 +342,7 @@ export function createBrowserSessionContext(
     handleDirectToolResultChunk,
     drainNewArtifacts() {
       const observations = widgetRenderObservations.slice(
-        drainedObservationCount,
+        drainedObservationCount
       );
       const steps = browserInteractionSteps.slice(drainedStepCount);
       drainedObservationCount = widgetRenderObservations.length;
