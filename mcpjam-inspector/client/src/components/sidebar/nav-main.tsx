@@ -12,24 +12,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
-import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { learnMoreContent } from "@/lib/learn-more-content";
 import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
-import { useDismissibleAnnouncement } from "@/hooks/use-dismissible-announcement";
-
-interface NavMainItemAnnouncement {
-  id: string;
-  badge: string;
-  title: string;
-  body: string;
-}
 
 interface NavMainItem {
   title: string;
@@ -38,7 +23,6 @@ interface NavMainItem {
   isActive?: boolean;
   disabled?: boolean;
   disabledTooltip?: string;
-  announcement?: NavMainItemAnnouncement;
 }
 
 interface LearnMoreProps {
@@ -95,15 +79,10 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
     );
   };
 
-  const renderButton = (
-    item: NavMainItem,
-    options: { suppressTooltip?: boolean; badge?: React.ReactNode } = {}
-  ) => (
+  const renderButton = (item: NavMainItem) => (
     <SidebarMenuButton
       tooltip={
-        !item.disabled &&
-        !options.suppressTooltip &&
-        (!shouldShowHoverCard(item) || sidebarOpen)
+        !item.disabled && (!shouldShowHoverCard(item) || sidebarOpen)
           ? item.title
           : undefined
       }
@@ -116,7 +95,6 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       {item.icon && <item.icon className="h-4 w-4" />}
       <span className="flex min-w-0 flex-1 items-center gap-1.5">
         <span className="truncate">{item.title}</span>
-        {options.badge}
       </span>
     </SidebarMenuButton>
   );
@@ -126,17 +104,6 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {
-            if (item.announcement && !item.disabled) {
-              return (
-                <AnnouncementNavRow
-                  key={item.title}
-                  item={{ ...item, announcement: item.announcement }}
-                  sidebarOpen={sidebarOpen}
-                  renderButton={renderButton}
-                />
-              );
-            }
-
             const button = renderButton(item);
 
             if (item.disabled) {
@@ -176,77 +143,5 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
-  );
-}
-
-interface AnnouncementNavRowProps {
-  item: NavMainItem & { announcement: NavMainItemAnnouncement };
-  sidebarOpen: boolean;
-  renderButton: (
-    item: NavMainItem,
-    options?: { suppressTooltip?: boolean; badge?: React.ReactNode }
-  ) => React.ReactNode;
-}
-
-function AnnouncementNavRow({
-  item,
-  sidebarOpen,
-  renderButton,
-}: AnnouncementNavRowProps) {
-  const { announcement } = item;
-  const { dismissed, dismiss } = useDismissibleAnnouncement(announcement.id);
-
-  const badge = !dismissed ? (
-    <Badge
-      variant="secondary"
-      className="ml-1 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide"
-    >
-      {announcement.badge}
-    </Badge>
-  ) : null;
-
-  const button = renderButton(item, {
-    suppressTooltip: !dismissed && sidebarOpen,
-    badge,
-  });
-
-  if (dismissed || !sidebarOpen) {
-    return <SidebarMenuItem>{button}</SidebarMenuItem>;
-  }
-
-  // Radix Popover treats a click on the trigger (the nav button) as a request
-  // to toggle open → onOpenChange(false) fires, which dismisses. So navigating
-  // away by clicking the row also marks the announcement seen.
-  return (
-    <SidebarMenuItem>
-      <Popover
-        open
-        onOpenChange={(next) => {
-          if (!next) dismiss();
-        }}
-      >
-        <PopoverTrigger asChild>{button}</PopoverTrigger>
-        <PopoverContent
-          side="right"
-          align="start"
-          sideOffset={12}
-          className="w-72"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onFocusOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
-        >
-          <div className="font-medium">{announcement.title}</div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {announcement.body}
-          </p>
-          <div className="mt-3 flex justify-end">
-            <Button size="sm" onClick={dismiss}>
-              Got it
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </SidebarMenuItem>
   );
 }
