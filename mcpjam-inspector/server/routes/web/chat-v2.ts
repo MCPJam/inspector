@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
+import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   validateAppToolEntries,
@@ -178,11 +178,12 @@ chatV2.post("/", async (c) => {
       }
     }
     // `modelId` stays a special case — the resolver yields the resolved
-    // string, and `buildSyntheticModelDefinition` lifts it (catalog hit →
-    // full def; miss → provider inferred from the id shape). The provider
-    // must come from the host id, never the body model: org-only ids
-    // (Bedrock, custom:NAME) would otherwise inherit the body's provider
-    // and route to the wrong runtime.
+    // string, and `resolveHostModelDefinition` lifts it (catalog hit →
+    // full def; miss → org provider config lookup, then id-shape
+    // inference). The provider must come from the host id + org config,
+    // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
+    // selections with vendor-prefixed ids) would otherwise inherit the
+    // body's provider and route to the wrong runtime.
     if (
       isChatboxSession &&
       hostRuntimeConfig &&
@@ -190,7 +191,11 @@ chatV2.post("/", async (c) => {
       resolvedExecution.modelId !== modelDefinition.id
     ) {
       const hostModelId = resolvedExecution.modelId;
-      const hostModel = buildSyntheticModelDefinition(hostModelId);
+      const hostModel = await resolveHostModelDefinition({
+        modelId: hostModelId,
+        projectId: hostedBody.projectId ?? null,
+        auth: { bearerToken, chatboxId },
+      });
       logger.warn("[chat-v2] client model differs from host; using host model", {
         chatboxId,
         body: modelDefinition.id,

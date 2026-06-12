@@ -897,3 +897,85 @@ export function buildSyntheticModelDefinition(
     provider: "ollama",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Host-pinned model lift (org-config-aware)
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the org provider whose per-provider model list explicitly contains
+ * `modelId`, and build the definition from that provider. Mirrors the
+ * client's `isOrgManagedModel` matching: openrouter/bedrock list ids in
+ * `selectedModels`; ollama and `custom:<slug>` providers list them in
+ * `modelIds` (custom ids are compared with the `custom:<slug>:` prefix
+ * stripped). Returns null when no provider lists the id.
+ */
+export function matchOrgProviderForModelId(
+  config: ResolvedOrgModelConfig,
+  modelId: string,
+): ModelDefinition | null {
+  for (const p of config.providers) {
+    if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
+      if (p.selectedModels?.includes(modelId)) {
+        return { id: modelId, name: modelId, provider: p.providerKey };
+      }
+    } else if (p.providerKey === "ollama") {
+      if (p.modelIds?.includes(modelId)) {
+        return { id: modelId, name: modelId, provider: "ollama" };
+      }
+    } else if (p.providerKey.startsWith("custom:")) {
+      const slug = p.providerKey.slice("custom:".length);
+      const prefix = `custom:${slug}:`;
+      const bareId = modelId.startsWith(prefix)
+        ? modelId.slice(prefix.length)
+        : modelId;
+      if (p.modelIds?.includes(bareId)) {
+        return {
+          id: modelId,
+          name: modelId,
+          provider: "custom",
+          customProviderName: slug,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Lift a host-pinned bare modelId to a `ModelDefinition`, preferring the
+ * org's provider config over id-shape inference. A non-catalog id like
+ * `vendor/model` is intrinsically ambiguous — org OpenRouter selected
+ * models keep their vendor-prefixed ids but belong to providerKey
+ * "openrouter", while `buildSyntheticModelDefinition` would infer the
+ * native vendor from the prefix. When an enabled provider explicitly
+ * lists the id, that provider wins; shape inference is the fallback.
+ *
+ * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
+ * shape is exact, and this path sits on a live chat turn.
+ */
+export async function resolveHostModelDefinition(args: {
+  modelId: string;
+  projectId?: string | null;
+  auth?: ResolveOrgModelConfigAuth;
+}): Promise<ModelDefinition> {
+  const { modelId, projectId, auth } = args;
+
+  const catalogHit = getModelById(modelId);
+  if (catalogHit) return catalogHit;
+
+  const shapeIsExact =
+    modelId.startsWith("custom:") || isBedrockModelId(modelId);
+  if (!shapeIsExact && projectId) {
+    try {
+      const config = await resolveOrgModelConfig({ projectId }, auth);
+      const fromConfig = matchOrgProviderForModelId(config, modelId);
+      if (fromConfig) return fromConfig;
+    } catch {
+      // Org config unavailable — fall through to shape inference, the
+      // same best-effort behavior the synthetic runner has always had.
+    }
+  }
+
+  return buildSyntheticModelDefinition(modelId);
+}

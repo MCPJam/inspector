@@ -20,6 +20,8 @@ import { describe, expect, it } from "vitest";
 import type { ModelDefinition } from "@/shared/types";
 import {
   buildSyntheticModelDefinition,
+  matchOrgProviderForModelId,
+  resolveHostModelDefinition,
   resolveSyntheticModelSource,
 } from "../org-model-config";
 
@@ -200,5 +202,118 @@ describe("buildSyntheticModelDefinition", () => {
       "experimentalprovider/some-model",
     );
     expect(result.provider).toBe("ollama");
+  });
+});
+
+describe("matchOrgProviderForModelId", () => {
+  const ORG_CONFIG = {
+    providers: [
+      { providerKey: "anthropic", apiKey: "sk-x" },
+      {
+        providerKey: "openrouter",
+        apiKey: "sk-or",
+        selectedModels: ["anthropic/claude-3.5-sonnet", "qwen/qwen-2.5-72b"],
+      },
+      {
+        providerKey: "bedrock",
+        apiKey: "aws",
+        selectedModels: ["amazon.nova-micro-v1:0"],
+      },
+      {
+        providerKey: "ollama",
+        baseUrl: "http://10.0.0.5:11434",
+        modelIds: ["llama3.2"],
+      },
+      {
+        providerKey: "custom:acme",
+        baseUrl: "https://llm.acme.dev/v1",
+        modelIds: ["acme-large"],
+      },
+    ],
+  };
+
+  it("resolves vendor-prefixed OpenRouter selections to provider='openrouter', not the native vendor", () => {
+    // The whole point: `anthropic/claude-3.5-sonnet` as an org OpenRouter
+    // selection must NOT route to the org's anthropic key.
+    expect(
+      matchOrgProviderForModelId(ORG_CONFIG, "anthropic/claude-3.5-sonnet"),
+    ).toEqual({
+      id: "anthropic/claude-3.5-sonnet",
+      name: "anthropic/claude-3.5-sonnet",
+      provider: "openrouter",
+    });
+  });
+
+  it("matches bedrock/ollama list entries to their providers", () => {
+    expect(
+      matchOrgProviderForModelId(ORG_CONFIG, "amazon.nova-micro-v1:0")
+        ?.provider,
+    ).toBe("bedrock");
+    expect(
+      matchOrgProviderForModelId(ORG_CONFIG, "llama3.2")?.provider,
+    ).toBe("ollama");
+  });
+
+  it("matches custom ids with the custom:<slug>: prefix stripped", () => {
+    expect(
+      matchOrgProviderForModelId(ORG_CONFIG, "custom:acme:acme-large"),
+    ).toEqual({
+      id: "custom:acme:acme-large",
+      name: "custom:acme:acme-large",
+      provider: "custom",
+      customProviderName: "acme",
+    });
+  });
+
+  it("returns null when no provider lists the id", () => {
+    expect(
+      matchOrgProviderForModelId(ORG_CONFIG, "google/gemini-9000"),
+    ).toBeNull();
+  });
+});
+
+describe("resolveHostModelDefinition (non-fetch paths)", () => {
+  // The org-config fetch path can't be unit-tested here: it calls
+  // resolveOrgModelConfig in the SAME module, so a vitest module mock
+  // can't intercept it (same-module calls bypass mocks). The matching
+  // logic itself is covered by matchOrgProviderForModelId above; these
+  // pin the paths that must never fetch on a live chat turn.
+
+  it("returns the catalog definition without needing a projectId", async () => {
+    const result = await resolveHostModelDefinition({
+      modelId: "openai/gpt-oss-120b",
+    });
+    expect(result.provider).toBe("openai");
+    expect(result.contextLength).toBeDefined();
+  });
+
+  it("resolves custom:-prefixed ids by shape alone (no org fetch)", async () => {
+    const result = await resolveHostModelDefinition({
+      modelId: "custom:acme:acme-large",
+      // No projectId — must still resolve correctly from the id shape.
+    });
+    expect(result).toEqual({
+      id: "custom:acme:acme-large",
+      name: "custom:acme:acme-large",
+      provider: "custom",
+      customProviderName: "acme",
+    });
+  });
+
+  it("resolves Bedrock-shaped ids by shape alone (no org fetch)", async () => {
+    const result = await resolveHostModelDefinition({
+      modelId: "amazon.nova-micro-v1:0",
+    });
+    expect(result.provider).toBe("bedrock");
+  });
+
+  it("falls back to shape inference when no projectId is available", async () => {
+    const result = await resolveHostModelDefinition({
+      modelId: "anthropic/claude-3.5-sonnet",
+      projectId: null,
+    });
+    // Without org config there is no way to know this is an OpenRouter
+    // selection — the native-vendor guess is the documented fallback.
+    expect(result.provider).toBe("anthropic");
   });
 });

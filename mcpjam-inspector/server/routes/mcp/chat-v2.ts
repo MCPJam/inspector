@@ -25,9 +25,9 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import {
-  buildSyntheticModelDefinition,
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
+  resolveHostModelDefinition,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
 } from "../../utils/org-model-config.js";
@@ -388,11 +388,12 @@ chatV2.post("/", async (c) => {
       }
     }
     // `modelId` stays special-cased: the resolver yields the resolved
-    // string, and `buildSyntheticModelDefinition` lifts it (catalog hit →
-    // full def; miss → provider inferred from the id shape). The provider
-    // must come from the host id, never the body model: org-only ids
-    // (Bedrock, custom:NAME) would otherwise inherit the body's provider
-    // and route to the wrong runtime.
+    // string, and `resolveHostModelDefinition` lifts it (catalog hit →
+    // full def; miss → org provider config lookup, then id-shape
+    // inference). The provider must come from the host id + org config,
+    // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
+    // selections with vendor-prefixed ids) would otherwise inherit the
+    // body's provider and route to the wrong runtime.
     if (
       isChatboxSession &&
       hostRuntimeConfig &&
@@ -401,7 +402,14 @@ chatV2.post("/", async (c) => {
       resolvedExecution.modelId !== model.id
     ) {
       const hostModelId = resolvedExecution.modelId;
-      const hostModel = buildSyntheticModelDefinition(hostModelId);
+      const hostModel = await resolveHostModelDefinition({
+        modelId: hostModelId,
+        projectId: typeof body.projectId === "string" ? body.projectId : null,
+        auth: {
+          authHeader: c.req.header("authorization") ?? undefined,
+          chatboxId: bodyChatboxId,
+        },
+      });
       logger.warn(
         "[mcp/chat-v2] client model differs from host; using host model",
         {
