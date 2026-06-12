@@ -7,8 +7,7 @@ import { MakerDMG } from "@electron-forge/maker-dmg";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
-import { resolve, join, dirname } from "path";
-import { cpSync, existsSync, mkdirSync, readdirSync } from "fs";
+import { resolve } from "path";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -78,59 +77,6 @@ const config: ForgeConfig = {
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
-    // VitePlugin only packs .vite/build/ into the asar; copy native externals here so require() resolves them.
-    afterCopy: [
-      (buildPath, _electronVersion, _platform, _arch, callback) => {
-        let ngrokSrc: string;
-        try {
-          const ngrokPkg = require.resolve("@ngrok/ngrok/package.json", {
-            paths: [__dirname],
-          });
-          ngrokSrc = dirname(dirname(ngrokPkg)); // …/@ngrok/ngrok/package.json -> …/@ngrok
-        } catch {
-          ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
-        }
-        if (!existsSync(ngrokSrc)) {
-          console.warn("[forge] @ngrok not found, skipping copy");
-          callback();
-          return;
-        }
-        const dest = join(buildPath, ".vite", "build", "node_modules", "@ngrok");
-        try {
-          mkdirSync(dest, { recursive: true });
-
-          const nativePkgs = readdirSync(ngrokSrc, { withFileTypes: true })
-            .filter(
-              (entry) => entry.isDirectory() && entry.name.startsWith("ngrok-")
-            )
-            .map((entry) => entry.name)
-            .sort();
-          if (nativePkgs.length === 0) {
-            console.warn(
-              "[forge] No @ngrok/ngrok-* native packages found — ngrok tunnels will fail at runtime",
-            );
-          }
-
-          const pkgsToCopy = ["ngrok", ...nativePkgs];
-          for (const pkg of pkgsToCopy) {
-            const src = join(ngrokSrc, pkg);
-            if (existsSync(src)) {
-              console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
-              cpSync(src, join(dest, pkg), { recursive: true });
-            } else {
-              console.warn(
-                `[forge] @ngrok/${pkg} not found at ${src} — ngrok tunnels will fail at runtime`,
-              );
-            }
-          }
-        } catch (err) {
-          console.error(`[forge] Failed to copy @ngrok to ${dest}:`, err);
-          callback(err as Error);
-          return;
-        }
-        callback();
-      },
-    ],
   },
   rebuildConfig: {},
   makers: [

@@ -44,6 +44,8 @@ class TunnelManager {
     }
 
     const host = new URL(options.publicUrl).hostname;
+    let registered = false;
+    let earlyPermanentFailure: { reason: string; code: number } | null = null;
     const connection = new RelayConnection({
       serverId,
       slug: options.slug,
@@ -55,12 +57,26 @@ class TunnelManager {
         // The relay refused this grant for good (expired, replaced by
         // another inspector, or revoked) — drop the entry so the UI offers
         // a fresh create instead of advertising a dead URL.
+        if (!registered) {
+          earlyPermanentFailure = { reason, code };
+          return;
+        }
         this.dropEntry(serverId, reason, code);
       },
     } satisfies RelayConnectionOptions);
 
     try {
       await connection.connect();
+      if (earlyPermanentFailure || connection.permanentFailure) {
+        throw new Error(
+          earlyPermanentFailure?.reason ??
+            connection.permanentFailure ??
+            "Tunnel relay closed permanently before registration"
+        );
+      }
+      if (!connection.isConnected) {
+        throw new Error("Tunnel relay closed before registration");
+      }
     } catch (error: any) {
       connection.close();
       logger.error(`✗ Failed to create tunnel:`, error);
@@ -76,6 +92,7 @@ class TunnelManager {
       publicUrl: options.publicUrl,
       secretVersion: options.secretVersion,
     });
+    registered = true;
     registerTunnelDomain(host, serverId);
 
     logger.info(
