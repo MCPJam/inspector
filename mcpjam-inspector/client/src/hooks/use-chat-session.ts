@@ -46,20 +46,19 @@ import {
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
-  buildAvailableModels,
-  buildAvailableModelsFromOrgConfig,
   getDefaultModel,
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
+import {
+  GUEST_LOCKED_MODEL_REASON,
+  composeAvailableModels,
+} from "@/components/chat-v2/shared/available-models";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
-import {
-  detectOllamaModels,
-  detectOllamaToolCapableModels,
-} from "@/lib/ollama-utils";
+import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
@@ -116,8 +115,6 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 
-const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
-
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
 // `useAppToolsRegistry`. Mirrors the regex in `app-tools-registry.ts`,
 // `shared/http-tool-calls.ts`, and the server-side validators — kept
@@ -128,40 +125,6 @@ function resolveSystemPrompt(value: string | null | undefined): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
     : DEFAULT_SYSTEM_PROMPT;
-}
-
-export function applyGuestModelLocks(
-  models: ModelDefinition[],
-  isAuthenticated: boolean
-): ModelDefinition[] {
-  if (isAuthenticated) return models;
-
-  return models.map((model) => {
-    const modelId = String(model.id);
-    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
-      return model;
-    }
-
-    return {
-      ...model,
-      disabled: true,
-      disabledReason: GUEST_LOCKED_MODEL_REASON,
-    };
-  });
-}
-
-export function appendDetectedLocalOllamaModels(
-  models: ModelDefinition[],
-  isOllamaRunning: boolean,
-  ollamaModels: ModelDefinition[]
-): ModelDefinition[] {
-  if (!isOllamaRunning || ollamaModels.length === 0) return models;
-  return models.concat(
-    ollamaModels.filter(
-      (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id))
-    )
-  );
 }
 
 function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
@@ -1154,10 +1117,10 @@ export function useChatSession(
     getAzureBaseUrl,
   } = useAiProviderKeys();
   const { customProviders, getCustomProviderByName } = useCustomProviders();
+  const { isOllamaRunning, ollamaModels } =
+    useDetectedOllamaModels(getOllamaBaseUrl);
 
   // Local state
-  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
-  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
@@ -1322,43 +1285,32 @@ export function useChatSession(
     pendingHydration.resolve?.();
   }, []);
 
-  // Build available models
-  const availableModels = useMemo(() => {
-    if ((hostedOrgModelConfig?.providers.length ?? 0) > 0) {
-      const orgModels = buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
-      const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
-        orgModels,
+  // Build available models — the same composition every picker surface
+  // uses (see `composeAvailableModels`); only the org-config source is
+  // chat-specific (chatbox embeds resolve a host-provided project context).
+  const availableModels = useMemo(
+    () =>
+      composeAvailableModels({
+        orgConfig: hostedOrgModelConfig,
+        isAuthenticated,
         isOllamaRunning,
-        ollamaModels
-      );
-      return applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated);
-    }
-
-    const localModels = buildAvailableModels({
+        ollamaModels,
+        hasToken,
+        getOpenRouterSelectedModels,
+        getAzureBaseUrl,
+        customProviders,
+      }),
+    [
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
+      isAuthenticated,
       customProviders,
-    });
-    const visibleModels = applyGuestModelLocks(localModels, isAuthenticated);
-    if (HOSTED_MODE) {
-      return visibleModels.filter((model) =>
-        isMCPJamProvidedModel(String(model.id))
-      );
-    }
-    return visibleModels;
-  }, [
-    hasToken,
-    getOpenRouterSelectedModels,
-    isOllamaRunning,
-    ollamaModels,
-    getAzureBaseUrl,
-    isAuthenticated,
-    customProviders,
-    hostedOrgModelConfig,
-  ]);
+      hostedOrgModelConfig,
+    ]
+  );
 
   // Model selection with persistence
   const {
@@ -2469,44 +2421,6 @@ export function useChatSession(
     syncResumedVersion,
     syncRestoredToolRenderOverrides,
   ]);
-
-  // Ollama model detection — local mode only. Hosted mode never surfaces
-  // Ollama: the browser may be able to reach localhost, but Convex (which
-  // owns the chat path in hosted mode) cannot.
-  useEffect(() => {
-    if (HOSTED_MODE) {
-      setIsOllamaRunning(false);
-      setOllamaModels([]);
-      return;
-    }
-
-    const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels(
-        getOllamaBaseUrl()
-      );
-      setIsOllamaRunning(isRunning);
-
-      const toolCapable = isRunning
-        ? await detectOllamaToolCapableModels(getOllamaBaseUrl())
-        : [];
-      const toolCapableSet = new Set(toolCapable);
-      const ollamaDefs: ModelDefinition[] = availableModels.map(
-        (modelName) => ({
-          id: modelName,
-          name: modelName,
-          provider: "ollama" as const,
-          disabled: !toolCapableSet.has(modelName),
-          disabledReason: toolCapableSet.has(modelName)
-            ? undefined
-            : "Model does not support tool calling",
-        })
-      );
-      setOllamaModels(ollamaDefs);
-    };
-    checkOllama();
-    const interval = setInterval(checkOllama, 30000);
-    return () => clearInterval(interval);
-  }, [getOllamaBaseUrl]);
 
   // Fetch tools metadata
   useEffect(() => {
