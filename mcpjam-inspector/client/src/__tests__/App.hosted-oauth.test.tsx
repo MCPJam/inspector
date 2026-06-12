@@ -301,6 +301,9 @@ vi.mock("../lib/guest-session", () => ({
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
+vi.mock("../components/HomeTab", () => ({
+  HomeTab: () => <div data-testid="home-tab" />,
+}));
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
 }));
