@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InspectorCommand } from "@/shared/inspector-command.js";
 import { isUiToolName } from "@/shared/client-fulfilled-tools.js";
 
-const { executeInspectorCommandMock } = vi.hoisted(() => ({
-  executeInspectorCommandMock: vi.fn(),
-}));
+const { executeInspectorCommandMock, hasInspectorCommandHandlerMock } =
+  vi.hoisted(() => ({
+    executeInspectorCommandMock: vi.fn(),
+    hasInspectorCommandHandlerMock: vi.fn(),
+  }));
 
 vi.mock("@/lib/inspector-command-handlers", () => ({
   executeInspectorCommand: executeInspectorCommandMock,
+  hasInspectorCommandHandler: hasInspectorCommandHandlerMock,
 }));
 
 import { buildUiToolsCatalog } from "../ui-tools-catalog";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 function getTool(name: string) {
   const tool = buildUiToolsCatalog().find((t) => t.name === name);
@@ -33,7 +35,8 @@ describe("buildUiToolsCatalog", () => {
         result: { echoed: command.type },
       }),
     );
-    useUIPlaygroundStore.setState({ isPlaygroundActive: true });
+    // Playground handlers registered (the /playground surface is mounted).
+    hasInspectorCommandHandlerMock.mockReturnValue(true);
   });
 
   it("every tool satisfies the wire contract (name regex, description cap)", () => {
@@ -98,12 +101,16 @@ describe("buildUiToolsCatalog", () => {
     });
   });
 
-  it("auto-opens the playground first when it is not mounted", async () => {
-    useUIPlaygroundStore.setState({ isPlaygroundActive: false });
+  it("auto-opens the playground first when its command handler is absent", async () => {
+    // The gate is handler registration, NOT UI store state — the
+    // playground store's isPlaygroundActive tracks the Views-tab preview
+    // surface, which never registers the selectTool/executeTool handlers.
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
     const executeTool = getTool("ui_execute_tool");
 
     await executeTool.execute({ toolName: "echo", serverName: "demo" });
 
+    expect(hasInspectorCommandHandlerMock).toHaveBeenCalledWith("executeTool");
     const types = dispatchedCommands().map((c) => c.type);
     expect(types).toEqual(["openPlayground", "executeTool"]);
     expect(dispatchedCommands()[0]).toMatchObject({
@@ -112,7 +119,7 @@ describe("buildUiToolsCatalog", () => {
   });
 
   it("surfaces a failed auto-open instead of dispatching the tool command", async () => {
-    useUIPlaygroundStore.setState({ isPlaygroundActive: false });
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
     executeInspectorCommandMock.mockResolvedValueOnce({
       id: "x",
       status: "error",

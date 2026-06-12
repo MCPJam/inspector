@@ -4,18 +4,19 @@
  * `navigate`/`selectServer`/`openPlayground` via the hosted-aware actions in
  * `ui-actions.ts`, the playground-scoped commands via
  * `dispatchInspectorCommand` directly (their handlers are registered while
- * the UI Playground is mounted, so those tools auto-open the playground
- * first).
+ * the /playground surface is mounted, so those tools auto-open the
+ * playground first when the handler is absent).
  *
  * Tool names live in the reserved `ui_` namespace (see
  * `shared/client-fulfilled-tools.ts`) and must satisfy the server-side
  * `validateUiToolEntries` boundary.
  */
 
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { hasInspectorCommandHandler } from "@/lib/inspector-command-handlers";
 import type {
   InspectorAppDeviceType,
   InspectorAppDisplayMode,
+  InspectorCommandType,
   SetAppContextInspectorCommand,
 } from "@/shared/inspector-command.js";
 import type { UiToolDefinition, UiToolResult } from "./ui-tools-registry";
@@ -73,14 +74,18 @@ function asOptionalObject(
 }
 
 /**
- * The playground-scoped command handlers only exist while the UI Playground
- * is mounted (`use-playground-state.ts`). Open it first when needed so the
- * 2s handler-registration wait has something to wait for.
+ * The playground-scoped command handlers only exist while the playground
+ * surface is mounted (`usePlaygroundState` in `PlaygroundTab` on
+ * `/playground`). Gate on the HANDLER being registered — not on UI store
+ * flags, which track a different surface (`isPlaygroundActive` follows the
+ * Views-tab preview) — and open the playground first when it is missing.
+ * The bus's 2s late-registration wait bridges the mount after navigation.
  */
 async function ensurePlaygroundOpen(
+  commandType: InspectorCommandType,
   serverName?: string,
 ): Promise<UiToolResult | null> {
-  if (useUIPlaygroundStore.getState().isPlaygroundActive) return null;
+  if (hasInspectorCommandHandler(commandType)) return null;
   const opened = await openPlaygroundAction(serverName);
   if (!opened.ok) {
     return errorResult(`Could not open the playground first: ${opened.error}`);
@@ -192,7 +197,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
         const serverName = asOptionalString(args.serverName);
-        const notOpen = await ensurePlaygroundOpen(serverName);
+        const notOpen = await ensurePlaygroundOpen("selectTool", serverName);
         if (notOpen) return notOpen;
         const response = await dispatchInspectorCommand({
           type: "selectTool",
@@ -233,7 +238,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
         const serverName = asOptionalString(args.serverName);
-        const notOpen = await ensurePlaygroundOpen(serverName);
+        const notOpen = await ensurePlaygroundOpen("executeTool", serverName);
         if (notOpen) return notOpen;
         const response = await dispatchInspectorCommand({
           type: "executeTool",
@@ -292,7 +297,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
             "Provide at least one of: theme, deviceType, displayMode, locale, timeZone.",
           );
         }
-        const notOpen = await ensurePlaygroundOpen();
+        const notOpen = await ensurePlaygroundOpen("setAppContext");
         if (notOpen) return notOpen;
         const response = await dispatchInspectorCommand({
           type: "setAppContext",
@@ -312,7 +317,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
       },
       readOnly: true,
       execute: async () => {
-        const notOpen = await ensurePlaygroundOpen();
+        const notOpen = await ensurePlaygroundOpen("snapshotApp");
         if (notOpen) return notOpen;
         const response = await dispatchInspectorCommand({
           type: "snapshotApp",
