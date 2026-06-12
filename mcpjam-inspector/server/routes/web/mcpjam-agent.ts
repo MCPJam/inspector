@@ -198,6 +198,24 @@ mcpjamAgent.post("/", async (c) => {
       // like chat-v2 / eval surfaces, so the id list is fixed here.
       // Workspace tools are NOT built-ins here: they come from the platform
       // MCP server connection above.
+      // Ambient workspace context: the platform worker's tools default an
+      // omitted `project` to the caller's most-recently-updated project —
+      // correct for context-free API callers, wrong in a chat that HAS a
+      // current project (the old built-in adapter defaulted blank `project`
+      // to the chat's project for the same reason). The worker never sees
+      // this route's body, so the bridge is the system prompt: tell the
+      // model what it's looking at and to pass the id explicitly.
+      const ambientContextPrompt = [
+        "## Workspace context",
+        `The user is currently working in the MCPJam project with id "${body.projectId}".`,
+        "When calling MCPJam platform tools that accept a `project` argument, " +
+          `always pass \`project: "${body.projectId}"\` unless the user ` +
+          "explicitly asks about a different project.",
+      ].join("\n");
+      const effectiveSystemPrompt = [body.systemPrompt, ambientContextPrompt]
+        .filter((section): section is string => Boolean(section?.trim()))
+        .join("\n\n");
+
       const authHeader = c.req.header("authorization");
       const builtInTools = authHeader
         ? resolveHostTools(
@@ -215,7 +233,7 @@ mcpjamAgent.post("/", async (c) => {
         prepare: {
           selectedServerIds,
           modelDefinition: body.model as never,
-          systemPrompt: body.systemPrompt,
+          systemPrompt: effectiveSystemPrompt,
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,

@@ -1,12 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-// The companion endpoint under test proxies a `resources/read` to the
-// platform MCP worker — the heavy chat-turn machinery the route module also
-// imports is irrelevant here.
-vi.mock("../../../utils/web-chat-turn.js", () => ({
-  streamWebChatTurn: vi.fn(),
-}));
+// The heavy chat-turn machinery is stubbed: the companion endpoint never
+// touches it, and the main-route test below only asserts what the route
+// passes INTO it.
+const streamWebChatTurn = vi.hoisted(() =>
+  vi.fn(async (_args: unknown) => new Response("stream"))
+);
+vi.mock("../../../utils/web-chat-turn.js", () => ({ streamWebChatTurn }));
 
 // Capture MCPClientManager construction (server configs, notably the
 // forwarded bearer) and stub readResource. Everything else from @mcpjam/sdk
@@ -103,6 +104,41 @@ beforeEach(() => {
   managerState.constructedConfigs.length = 0;
   managerState.readResource.mockReset();
   managerState.disconnectAllServers.mockClear();
+  streamWebChatTurn.mockClear();
+});
+
+describe("POST /api/web/mcpjam-agent ambient project context", () => {
+  it("augments the prepare prompt with the chat's project id but persists the original", async () => {
+    const app = makeApp();
+    const response = await app.request("/api/web/mcpjam-agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "anthropic/claude-haiku-4.5" },
+        chatSessionId: "session_1",
+        projectId: "proj_ambient",
+        systemPrompt: "Be terse.",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(streamWebChatTurn).toHaveBeenCalledTimes(1);
+    const args = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+      prepare: { systemPrompt?: string };
+      persist: { systemPrompt?: string };
+    };
+    // The model is told which project it's looking at, so the platform
+    // worker's tools (whose omitted `project` means "most recently
+    // updated") get the chat's project passed explicitly.
+    expect(args.prepare.systemPrompt).toContain("Be terse.");
+    expect(args.prepare.systemPrompt).toContain('project: "proj_ambient"');
+    // The persisted prompt stays the user's own configuration.
+    expect(args.persist.systemPrompt).toBe("Be terse.");
+  });
 });
 
 describe("POST /api/web/mcpjam-agent/widget-content", () => {
