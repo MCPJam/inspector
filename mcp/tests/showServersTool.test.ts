@@ -86,6 +86,13 @@ describe("platform tool registration", () => {
     expect(registrations.map((registration) => registration.name)).toEqual([
       "list_projects",
       "list_project_servers",
+      "diagnose_server",
+      "list_server_tools",
+      "call_server_tool",
+      "list_server_prompts",
+      "get_server_prompt",
+      "list_server_resources",
+      "read_server_resource",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_suite",
@@ -103,7 +110,7 @@ describe("platform tool registration", () => {
     }
   });
 
-  it("marks read tools read-only and the eval-run starter as non-destructive write", () => {
+  it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
     registerPlainPlatformTools(registrar, fakeAgent({ bearerToken: "jwt" }));
@@ -114,6 +121,13 @@ describe("platform tool registration", () => {
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
+        });
+      } else if (registration.name === "call_server_tool") {
+        // Arbitrary third-party tool execution: destructive/idempotent hints
+        // are deliberately absent so clients assume destructive (spec
+        // default).
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
         });
       } else {
         expect(registration.config.annotations).toEqual({

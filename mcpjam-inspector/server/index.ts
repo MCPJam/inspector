@@ -40,6 +40,7 @@ import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
+import { registerSelfFetch } from "./utils/self-app";
 
 const sysLogger = getSystemLogger("process");
 
@@ -384,6 +385,11 @@ app.use(
   })
 );
 app.route("/api/v1", v1Routes);
+
+// In-process self-dispatch for the workspace built-in tools' platform
+// client (see utils/self-app.ts). Mirror of the registration in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+registerSelfFetch((request) => app.fetch(request));
 
 // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
 // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;

@@ -527,21 +527,30 @@ describe("prepareChatV2 built-in tools", () => {
     expect(typeof entry.execute).toBe("function");
   });
 
-  it("fails closed when a built-in name collides with an MCP tool", async () => {
+  it("shadows a same-named MCP tool with the built-in instead of failing", async () => {
+    // The expected collision is a genuine twin: the MCPJam remote MCP server
+    // exposes the same platform operations the workspace built-ins are made
+    // of. The host's explicit catalog choice wins; the turn survives.
     const manager = mockManager({
       [WEB_SEARCH_TOOL_NAME]: {
         description: "mcp web search",
         _serverId: "srv",
       },
+      other_tool: { description: "untouched", _serverId: "srv" },
     });
 
-    await expect(
-      prepareChatV2({
-        ...baseArgs,
-        mcpClientManager: manager,
-        builtInTools: webSearchBuiltIn(),
-      }),
-    ).rejects.toThrow(/web_search.*collides/);
+    const result = await prepareChatV2({
+      ...baseArgs,
+      mcpClientManager: manager,
+      builtInTools: webSearchBuiltIn(),
+    });
+
+    const entry = result.allTools[WEB_SEARCH_TOOL_NAME] as {
+      execute?: unknown;
+    };
+    // The built-in (which has a server-side execute) won, not the MCP stub.
+    expect(typeof entry.execute).toBe("function");
+    expect(Object.keys(result.allTools)).toContain("other_tool");
   });
 
   it("fails closed when a built-in name collides with a skill tool", async () => {

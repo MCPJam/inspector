@@ -23,16 +23,16 @@
  *     backend accepts guest bearers on /computers/reserve and contains cost
  *     via the guest daily start cap + idle-delete sweep. Inherits the host's
  *     `requireToolApproval` via ctx.
- *   - mcpjam_*: workspace tools (list / diagnose / run live MCP ops on the
- *     project's saved servers). Skipped for guest actors AND chatbox
- *     sessions — mirrors the /api/v1 boundary ("Guests cannot access
- *     /api/v1"): the workspace surface is for project members, and the
- *     live-op pipeline authorizes via project membership, not chatbox
- *     tokens. Live-op ids additionally require ctx.mcpjamLiveOps (the
- *     route-layer authorize→connect→run runner); engines that don't pass it
- *     never advertise those tools. Only `mcpjam_list_servers` is runner-free
- *     (a plain Convex read). Connection-opening ops inherit
- *     `requireToolApproval` like bash does.
+ *   - workspace tools (list_project_servers, diagnose_server,
+ *     list/call_server_tool(s), prompts, resources — the shared platform
+ *     operation catalog, see built-in-tools/mcpjam.ts): require
+ *     ctx.mcpjamPlatformClient, the route-injected PlatformApiClient bound
+ *     to the caller's bearer; engines that don't pass it never advertise
+ *     them. Skipped for guest actors AND chatbox sessions — mirrors the
+ *     /api/v1 boundary ("Guests cannot access /api/v1"): the workspace
+ *     surface is for project members, and the operations authorize via
+ *     project membership, not chatbox tokens. Connection-opening ops
+ *     inherit `requireToolApproval` like bash does.
  *
  * Deliberately thin: this module merges tool sets, it does not absorb
  * per-surface policy. The eval engines simply never pass `computer` (a
@@ -40,17 +40,14 @@
  * there is no isEval flag here and there must never be one.
  */
 import type { ToolSet } from "ai";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
 } from "./exa-web-search.js";
 import { buildBashTool, BASH_TOOL_NAME } from "./bash.js";
-import {
-  buildMcpjamTool,
-  isMcpjamToolId,
-  type McpjamLiveOps,
-} from "./mcpjam.js";
+import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 
 export interface BuiltInToolContext {
   /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
@@ -78,11 +75,12 @@ export interface BuiltInToolContext {
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
   /**
-   * Route-layer runner for the `mcpjam_*` live MCP operations (ephemeral
-   * authorize→connect→run). Absent on engines that can't open ephemeral
-   * connections — those advertise only the runner-free workspace tools.
+   * Platform API client for the MCPJam workspace tools, bound to the
+   * caller's bearer (in the web chat it self-dispatches into this server's
+   * own /api/v1). Absent on engines that don't wire it — those advertise no
+   * workspace tools.
    */
-  mcpjamLiveOps?: McpjamLiveOps;
+  mcpjamPlatformClient?: PlatformApiClient;
 }
 
 /** The host-config fields this resolver consumes. */
@@ -187,22 +185,27 @@ export function resolveHostTools(
     if (isMcpjamToolId(id)) {
       if (ctx.isGuest || ctx.isChatboxSession) {
         logger.debug(
-          "[built-in-tools] mcpjam tools not advertised to guest/chatbox actors; skipping",
+          "[built-in-tools] workspace tools not advertised to guest/chatbox actors; skipping",
+          { id }
+        );
+        continue;
+      }
+      if (!ctx.mcpjamPlatformClient) {
+        logger.debug(
+          "[built-in-tools] workspace tool id without a platform client; skipping",
           { id }
         );
         continue;
       }
       const built = buildMcpjamTool(id, {
-        authHeader,
+        client: ctx.mcpjamPlatformClient,
         projectId: ctx.projectId,
-        liveOps: ctx.mcpjamLiveOps,
         requireToolApproval: ctx.requireToolApproval,
       });
       if (!built) {
-        logger.debug(
-          "[built-in-tools] mcpjam live-op id without a runner; skipping",
-          { id }
-        );
+        logger.warn("[built-in-tools] unknown workspace tool id; skipping", {
+          id,
+        });
         continue;
       }
       out[id] = built;

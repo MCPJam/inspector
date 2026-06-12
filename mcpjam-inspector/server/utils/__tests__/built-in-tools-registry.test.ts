@@ -1,11 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   resolveHostTools,
   narrowHostComputer,
 } from "../built-in-tools/registry";
 import { WEB_SEARCH_TOOL_NAME } from "../built-in-tools/exa-web-search";
 import { BASH_TOOL_NAME } from "../built-in-tools/bash";
-import { MCPJAM_TOOL_IDS, type McpjamLiveOps } from "../built-in-tools/mcpjam";
+import { MCPJAM_TOOL_IDS } from "../built-in-tools/mcpjam";
 
 const ctx = {
   authHeader: "Bearer token-123",
@@ -13,17 +14,9 @@ const ctx = {
   chatSessionId: "session-1",
 };
 
-function stubLiveOps(): McpjamLiveOps {
-  return {
-    diagnoseServer: vi.fn(async () => ({})),
-    listTools: vi.fn(async () => ({})),
-    callTool: vi.fn(async () => ({})),
-    listPrompts: vi.fn(async () => ({})),
-    getPrompt: vi.fn(async () => ({})),
-    listResources: vi.fn(async () => ({})),
-    readResource: vi.fn(async () => ({})),
-  };
-}
+// Tool construction never calls the client; resolution tests only need a
+// truthy instance. Execute paths live in mcpjam-built-in-tools.test.ts.
+const stubClient = {} as PlatformApiClient;
 
 const computer = { kind: "personal", workdir: "/srv" };
 
@@ -125,73 +118,67 @@ describe("resolveHostTools — computer-backed bash", () => {
   });
 });
 
-describe("resolveHostTools — mcpjam workspace tools", () => {
-  it("resolves mcpjam_list_servers without a live-ops runner", () => {
+describe("resolveHostTools — workspace tools (platform operation catalog)", () => {
+  it("advertises every workspace id when the platform client is wired", () => {
     const tools = resolveHostTools(
-      { builtInToolIds: ["mcpjam_list_servers"] },
-      ctx
-    );
-    expect(Object.keys(tools ?? {})).toEqual(["mcpjam_list_servers"]);
-    expect(typeof tools!["mcpjam_list_servers"].execute).toBe("function");
-  });
-
-  it("skips live-op ids without a runner, resolves them with one", () => {
-    const without = resolveHostTools(
-      { builtInToolIds: ["mcpjam_call_tool", "mcpjam_list_servers"] },
-      ctx
-    );
-    expect(Object.keys(without ?? {})).toEqual(["mcpjam_list_servers"]);
-
-    const withRunner = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS] },
-      { ...ctx, mcpjamLiveOps: stubLiveOps() }
+      { ...ctx, mcpjamPlatformClient: stubClient }
     );
-    expect(Object.keys(withRunner ?? {}).sort()).toEqual(
+    expect(Object.keys(tools ?? {}).sort()).toEqual(
       [...MCPJAM_TOOL_IDS].sort()
     );
+    expect(typeof tools!["list_project_servers"].execute).toBe("function");
   });
 
-  it("does not advertise any mcpjam_* id to guest actors", () => {
+  it("advertises no workspace id without a platform client", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isGuest: true, mcpjamLiveOps: stubLiveOps() }
+      ctx
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("does not advertise any mcpjam_* id in chatbox sessions", () => {
+  it("does not advertise any workspace id to guest actors", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isChatboxSession: true, mcpjamLiveOps: stubLiveOps() }
+      { ...ctx, isGuest: true, mcpjamPlatformClient: stubClient }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("requireToolApproval gates connection-opening ops but never list_servers", () => {
+  it("does not advertise any workspace id in chatbox sessions", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
+      { ...ctx, isChatboxSession: true, mcpjamPlatformClient: stubClient }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("requireToolApproval gates connection-opening ops but never list_project_servers", () => {
     const tools = resolveHostTools(
       {
         builtInToolIds: [
-          "mcpjam_list_servers",
-          "mcpjam_call_tool",
-          "mcpjam_diagnose_server",
+          "list_project_servers",
+          "call_server_tool",
+          "diagnose_server",
         ],
       },
-      { ...ctx, mcpjamLiveOps: stubLiveOps(), requireToolApproval: true }
+      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: true }
     );
     const approval = (id: string) =>
       (tools![id] as { needsApproval?: boolean }).needsApproval;
-    expect(approval("mcpjam_call_tool")).toBe(true);
-    expect(approval("mcpjam_diagnose_server")).toBe(true);
-    expect(approval("mcpjam_list_servers")).toBeUndefined();
+    expect(approval("call_server_tool")).toBe(true);
+    expect(approval("diagnose_server")).toBe(true);
+    expect(approval("list_project_servers")).toBe(false);
   });
 
   it("live ops do not require approval when the host policy is off", () => {
     const tools = resolveHostTools(
-      { builtInToolIds: ["mcpjam_call_tool"] },
-      { ...ctx, mcpjamLiveOps: stubLiveOps() }
+      { builtInToolIds: ["call_server_tool"] },
+      { ...ctx, mcpjamPlatformClient: stubClient }
     );
     expect(
-      (tools!["mcpjam_call_tool"] as { needsApproval?: boolean }).needsApproval
+      (tools!["call_server_tool"] as { needsApproval?: boolean }).needsApproval
     ).toBe(false);
   });
 });

@@ -28,6 +28,7 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
+import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import { HOSTED_MODE } from "../config.js";
 import {
@@ -569,22 +570,35 @@ export async function prepareChatV2(
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
   const builtInToolEntries = builtInTools ?? {};
-  // Collision guard: a built-in tool must not shadow — or be shadowed by — an
-  // MCP, app, or skill tool. Fail closed before streaming so `web_search` never
-  // silently resolves to a different tool (or vice versa).
+  // Collision policy, per origin:
+  //  - MCP tools: the built-in wins and the server tool is dropped with a
+  //    warn. Built-ins are the host's explicit catalog choice, and the
+  //    expected collision is a genuine twin — the MCPJam remote MCP server
+  //    exposes the same platform operations (list_project_servers, …) the
+  //    workspace built-ins are made of. Failing the whole turn over a
+  //    same-named server tool punishes the host for connecting MCPJam's own
+  //    server.
+  //  - App and skill tools: still fail closed. The `app_<8hex>` alias
+  //    namespace and the curated skill set are disjoint from catalog ids by
+  //    construction, so a collision there is a bug, not a configuration.
   for (const name of Object.keys(builtInToolEntries)) {
+    if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
+      logger.warn(
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
+      );
+      delete mcpTools[name];
+    }
     if (
-      Object.prototype.hasOwnProperty.call(mcpTools, name) ||
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing MCP, app, or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app or skill tool.`,
       );
     }
   }
-  // Built-ins merge last so an explicit built-in wins, but the guard above
-  // means there is never actually a collision to resolve.
+  // Built-ins merge last so an explicit built-in wins; the policy above has
+  // already resolved (or rejected) every collision by here.
   const realTools = {
     ...mcpTools,
     ...appToolEntries,

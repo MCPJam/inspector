@@ -1,259 +1,326 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   buildMcpjamTool,
-  MCPJAM_TOOL_IDS,
   isMcpjamToolId,
-  type McpjamLiveOps,
+  MCPJAM_TOOL_IDS,
 } from "../built-in-tools/mcpjam";
 
-// mcpjam_list_servers goes through global fetch (CONVEX_HTTP_URL); the live
-// ops go through an injectable McpjamLiveOps runner. Stub both and exercise
-// the tools exactly as the AI SDK would call them.
+// The workspace tools ARE the shared platform operations, executed against a
+// PlatformApiClient. Build a real client over a stubbed fetch and exercise
+// the tools exactly as the AI SDK would call them — resolution flows
+// (project default, server by name) included.
 
-const CONVEX_URL = "https://convex.example";
+const BASE_URL = "http://self.test/api/v1";
 
-const toolOpts = {
-  authHeader: "Bearer user-token",
-  projectId: "proj_1",
+type RecordedCall = {
+  method: string;
+  path: string;
+  auth: string | null;
+  body: unknown;
 };
 
-function stubLiveOps(overrides: Partial<McpjamLiveOps> = {}): McpjamLiveOps {
-  return {
-    diagnoseServer: vi.fn(async () => ({ status: "healthy" })),
-    listTools: vi.fn(async () => ({ tools: [] })),
-    callTool: vi.fn(async () => ({ content: [] })),
-    listPrompts: vi.fn(async () => ({ prompts: [] })),
-    getPrompt: vi.fn(async () => ({ messages: [] })),
-    listResources: vi.fn(async () => ({ resources: [] })),
-    readResource: vi.fn(async () => ({ contents: [] })),
-    ...overrides,
+type RouteHandler = (call: RecordedCall) => { status?: number; json: unknown };
+
+function makeClient(routes: Record<string, RouteHandler>) {
+  const calls: RecordedCall[] = [];
+  const stubFetch: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    const call: RecordedCall = {
+      method: request.method,
+      path: url.pathname + url.search,
+      auth: request.headers.get("authorization"),
+      body: request.method === "POST" ? await request.json() : undefined,
+    };
+    calls.push(call);
+    const handler = routes[`${request.method} ${url.pathname}`];
+    if (!handler) {
+      throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+    }
+    const { status = 200, json } = handler(call);
+    return new Response(JSON.stringify(json), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   };
+  const client = new PlatformApiClient({
+    baseUrl: BASE_URL,
+    getAuth: () => "user-token",
+    fetch: stubFetch,
+  });
+  return { client, calls };
 }
 
+// proj_2 is the most recently updated — the catalog default for context-free
+// callers. The chat's ambient project is proj_1, so any test that sees
+// proj_1 used on an omitted `project` proves the in-app default overrode the
+// catalog's "most recent" default.
+const PROJECTS_PAGE = {
+  items: [
+    {
+      id: "proj_1",
+      name: "Chat Project",
+      description: null,
+      icon: null,
+      organizationId: "org_1",
+      visibility: "private",
+      createdAt: 1,
+      updatedAt: 100,
+    },
+    {
+      id: "proj_2",
+      name: "Other Project",
+      description: null,
+      icon: null,
+      organizationId: "org_1",
+      visibility: "private",
+      createdAt: 2,
+      updatedAt: 200,
+    },
+  ],
+};
+
+const SERVERS_PAGE = {
+  items: [
+    {
+      id: "srv_1",
+      projectId: "proj_1",
+      name: "Linear",
+      enabled: true,
+      transportType: "http",
+      url: "https://mcp.linear.app/mcp",
+      useOAuth: true,
+      hasClientSecret: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      id: "srv_2",
+      projectId: "proj_1",
+      name: "Local stdio",
+      enabled: true,
+      transportType: "stdio",
+      url: null,
+      useOAuth: false,
+      hasClientSecret: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ],
+};
+
+const toolOpts = { projectId: "proj_1" };
+
 function execTool(
-  tool: NonNullable<ReturnType<typeof buildMcpjamTool>>,
+  builtTool: NonNullable<ReturnType<typeof buildMcpjamTool>>,
   input: Record<string, unknown>,
   abortSignal?: AbortSignal
 ) {
-  return (tool as any).execute(input, {
+  return (builtTool as any).execute(input, {
     toolCallId: "call_1",
     abortSignal,
     messages: [],
   });
 }
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.unstubAllEnvs();
-  vi.restoreAllMocks();
-});
-
-describe("buildMcpjamTool dispatcher", () => {
-  it("builds mcpjam_list_servers without a runner", () => {
-    expect(buildMcpjamTool("mcpjam_list_servers", toolOpts)).not.toBeNull();
-  });
-
-  it("returns null for every live-op id without a runner", () => {
-    for (const id of MCPJAM_TOOL_IDS) {
-      if (id === "mcpjam_list_servers") continue;
-      expect(buildMcpjamTool(id, toolOpts)).toBeNull();
-    }
-  });
-
-  it("isMcpjamToolId accepts the catalog ids and rejects others", () => {
+describe("workspace tool catalog", () => {
+  it("pins the operation names the backend catalog rows must mirror", () => {
+    expect([...MCPJAM_TOOL_IDS]).toEqual([
+      "list_project_servers",
+      "diagnose_server",
+      "list_server_tools",
+      "call_server_tool",
+      "list_server_prompts",
+      "get_server_prompt",
+      "list_server_resources",
+      "read_server_resource",
+    ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
-    expect(isMcpjamToolId("mcpjam_nope")).toBe(false);
+    expect(isMcpjamToolId("list_projects")).toBe(false);
+  });
+
+  it("returns null for ids outside the workspace set", () => {
+    const { client } = makeClient({});
+    expect(buildMcpjamTool("web_search", { ...toolOpts, client })).toBeNull();
   });
 });
 
-describe("mcpjam_list_servers", () => {
-  let fetchCalls: { url: string; headers: Record<string, string> }[];
-
-  function installFetchStub(status: number, json: unknown) {
-    fetchCalls = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string | URL, init?: RequestInit) => {
-        fetchCalls.push({
-          url: String(url),
-          headers: (init?.headers ?? {}) as Record<string, string>,
-        });
-        return new Response(JSON.stringify(json), {
-          status,
-          headers: { "content-type": "application/json" },
-        });
-      })
-    );
-  }
-
-  beforeEach(() => {
-    vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
-  });
-
-  it("passes the Convex page envelope through on 200", async () => {
-    const page = {
-      items: [{ id: "srv_1", name: "Linear", url: "https://mcp.linear.app" }],
-    };
-    installFetchStub(200, page);
-    const tool = buildMcpjamTool("mcpjam_list_servers", toolOpts)!;
-
-    const result = await execTool(tool, {});
-
-    expect(result).toEqual(page);
-    const call = fetchCalls[0];
-    expect(call.url).toBe(
-      `${CONVEX_URL}/v1/project-servers?projectId=proj_1`
-    );
-    expect(call.headers.Authorization).toBe("Bearer user-token");
-  });
-
-  it("surfaces the upstream v1 error message on non-OK", async () => {
-    installFetchStub(403, {
-      code: "FORBIDDEN",
-      message: "API key is not scoped to this organization",
+describe("ambient project scoping", () => {
+  it("defaults an omitted project to the chat's project, not the most recent", async () => {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
     });
-    const tool = buildMcpjamTool("mcpjam_list_servers", toolOpts)!;
+    const builtTool = buildMcpjamTool("list_project_servers", {
+      ...toolOpts,
+      client,
+    })!;
 
-    expect(await execTool(tool, {})).toEqual({
+    const result = (await execTool(builtTool, {})) as {
+      project: { id: string };
+    };
+
+    expect(result.project.id).toBe("proj_1");
+    expect(calls.map((call) => call.path)).toEqual([
+      "/api/v1/projects",
+      "/api/v1/projects/proj_1/servers",
+    ]);
+    expect(calls[0]!.auth).toBe("Bearer user-token");
+  });
+
+  it("lets an explicit project selector roam to another project", async () => {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_2/servers": () => ({ json: { items: [] } }),
+    });
+    const builtTool = buildMcpjamTool("list_project_servers", {
+      ...toolOpts,
+      client,
+    })!;
+
+    const result = (await execTool(builtTool, {
+      project: "Other Project",
+    })) as { project: { id: string } };
+
+    expect(result.project.id).toBe("proj_2");
+    expect(calls[1]!.path).toBe("/api/v1/projects/proj_2/servers");
+  });
+});
+
+describe("live server operations", () => {
+  it("call_server_tool resolves the server by name and posts the call body", async () => {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
+      "POST /api/v1/projects/proj_1/servers/srv_1/tools/call": () => ({
+        json: { content: [{ type: "text", text: "created" }] },
+      }),
+    });
+    const builtTool = buildMcpjamTool("call_server_tool", {
+      ...toolOpts,
+      client,
+    })!;
+
+    const result = (await execTool(builtTool, {
+      server: "linear",
+      toolName: "create_issue",
+      parameters: { title: "Bug" },
+    })) as { server: { id: string }; result: unknown };
+
+    expect(result.server.id).toBe("srv_1");
+    expect(result.result).toEqual({
+      content: [{ type: "text", text: "created" }],
+    });
+    const callRequest = calls.find((call) => call.method === "POST")!;
+    expect(callRequest.body).toEqual({
+      toolName: "create_issue",
+      parameters: { title: "Bug" },
+    });
+  });
+
+  it("fails deterministically for stdio servers instead of a connect error", async () => {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
+    });
+    const builtTool = buildMcpjamTool("diagnose_server", {
+      ...toolOpts,
+      client,
+    })!;
+
+    const result = (await execTool(builtTool, {
+      server: "Local stdio",
+    })) as { error: string };
+
+    expect(result.error).toMatch(/stdio servers are not supported/);
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
+  it("maps platform error envelopes to { error: message }", async () => {
+    const { client } = makeClient({
+      "GET /api/v1/projects": () => ({
+        status: 403,
+        json: {
+          code: "FORBIDDEN",
+          message: "API key is not scoped to this organization",
+        },
+      }),
+    });
+    const builtTool = buildMcpjamTool("list_server_tools", {
+      ...toolOpts,
+      client,
+    })!;
+
+    expect(await execTool(builtTool, { server: "Linear" })).toEqual({
       error: "API key is not scoped to this organization",
     });
   });
 
-  it("falls back to a status message when the error body is opaque", async () => {
-    installFetchStub(500, "not-json-shaped");
-    const tool = buildMcpjamTool("mcpjam_list_servers", toolOpts)!;
-
-    expect(await execTool(tool, {})).toEqual({
-      error: "Listing project servers failed (500).",
+  it("pre-checks abort and never dispatches", async () => {
+    const fetchSpy = vi.fn();
+    const client = new PlatformApiClient({
+      baseUrl: BASE_URL,
+      getAuth: () => "user-token",
+      fetch: fetchSpy as unknown as typeof fetch,
     });
-  });
-
-  it("returns { error } when CONVEX_HTTP_URL is missing", async () => {
-    vi.stubEnv("CONVEX_HTTP_URL", "");
-    const tool = buildMcpjamTool("mcpjam_list_servers", toolOpts)!;
-
-    expect(await execTool(tool, {})).toEqual({
-      error: "MCPJam workspace tools are not configured.",
-    });
-  });
-});
-
-describe("mcpjam live ops", () => {
-  it("mcpjam_call_tool forwards serverId/toolName/parameters to the runner", async () => {
-    const liveOps = stubLiveOps({
-      callTool: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })),
-    });
-    const tool = buildMcpjamTool("mcpjam_call_tool", { ...toolOpts, liveOps })!;
-
-    const result = await execTool(tool, {
-      serverId: "srv_1",
-      toolName: "create_issue",
-      parameters: { title: "Bug" },
-    });
-
-    expect(liveOps.callTool).toHaveBeenCalledWith(
-      "srv_1",
-      "create_issue",
-      { title: "Bug" },
-      undefined
-    );
-    expect(result).toEqual({ content: [{ type: "text", text: "ok" }] });
-  });
-
-  it("mcpjam_call_tool defaults omitted parameters to {}", async () => {
-    const liveOps = stubLiveOps();
-    const tool = buildMcpjamTool("mcpjam_call_tool", { ...toolOpts, liveOps })!;
-
-    await execTool(tool, { serverId: "srv_1", toolName: "ping" });
-
-    expect(liveOps.callTool).toHaveBeenCalledWith(
-      "srv_1",
-      "ping",
-      {},
-      undefined
-    );
-  });
-
-  it("maps a runner throw to { error: message } instead of breaking the turn", async () => {
-    const liveOps = stubLiveOps({
-      callTool: vi.fn(async () => {
-        throw new Error("Server not found");
-      }),
-    });
-    const tool = buildMcpjamTool("mcpjam_call_tool", { ...toolOpts, liveOps })!;
-
-    expect(
-      await execTool(tool, { serverId: "srv_x", toolName: "ping" })
-    ).toEqual({ error: "Server not found" });
-  });
-
-  it("uses the per-tool fallback message when the throw has no message", async () => {
-    const liveOps = stubLiveOps({
-      diagnoseServer: vi.fn(async () => {
-        throw new Error("");
-      }),
-    });
-    const tool = buildMcpjamTool("mcpjam_diagnose_server", {
+    const builtTool = buildMcpjamTool("call_server_tool", {
       ...toolOpts,
-      liveOps,
+      client,
     })!;
-
-    expect(await execTool(tool, { serverId: "srv_1" })).toEqual({
-      error: "Failed to diagnose the server.",
-    });
-  });
-
-  it("pre-checks abort and never dispatches to the runner", async () => {
-    const liveOps = stubLiveOps();
-    const tool = buildMcpjamTool("mcpjam_call_tool", { ...toolOpts, liveOps })!;
     const controller = new AbortController();
     controller.abort();
 
     const result = await execTool(
-      tool,
-      { serverId: "srv_1", toolName: "ping" },
+      builtTool,
+      { server: "Linear", toolName: "ping" },
       controller.signal
     );
 
-    expect(result).toEqual({ error: "Tool execution was cancelled." });
-    expect(liveOps.callTool).not.toHaveBeenCalled();
-  });
-
-  it("mcpjam_get_prompt forwards promptName and arguments", async () => {
-    const liveOps = stubLiveOps();
-    const tool = buildMcpjamTool("mcpjam_get_prompt", { ...toolOpts, liveOps })!;
-
-    await execTool(tool, {
-      serverId: "srv_1",
-      promptName: "summarize",
-      arguments: { style: "brief", limit: 3 },
+    expect(result).toEqual({
+      error: "Call MCPJam server tool was cancelled.",
     });
-
-    expect(liveOps.getPrompt).toHaveBeenCalledWith(
-      "srv_1",
-      "summarize",
-      { style: "brief", limit: 3 },
-      undefined
-    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("caps oversized results to a truncated preview", async () => {
-    const liveOps = stubLiveOps({
-      readResource: vi.fn(async () => ({ contents: "x".repeat(50_000) })),
+    const { client } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
+      "POST /api/v1/projects/proj_1/servers/srv_1/resources/read": () => ({
+        json: { contents: ["x".repeat(50_000)] },
+      }),
     });
-    const tool = buildMcpjamTool("mcpjam_read_resource", {
+    const builtTool = buildMcpjamTool("read_server_resource", {
       ...toolOpts,
-      liveOps,
+      client,
     })!;
 
-    const result = (await execTool(tool, {
-      serverId: "srv_1",
+    const result = (await execTool(builtTool, {
+      server: "Linear",
       uri: "file:///big",
     })) as { truncated?: boolean; preview?: string };
 
     expect(result.truncated).toBe(true);
     expect(result.preview).toContain("…[truncated");
     expect(result.preview!.length).toBeLessThan(25_000);
+  });
+
+  it("honors requireToolApproval on connection-opening ops only", () => {
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("call_server_tool")).toBe(true);
+    expect(approval("diagnose_server")).toBe(true);
+    expect(approval("read_server_resource")).toBe(true);
+    expect(approval("list_project_servers")).toBe(false);
   });
 });
