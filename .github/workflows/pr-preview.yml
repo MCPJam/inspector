@@ -70,12 +70,21 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+      # Source environment that new preview envs are duplicated from. Prefer
+      # the dedicated preview-template environment (scoped-down secrets) once
+      # it is provisioned; fall back to duplicating staging — secrets and
+      # all — until then.
+      RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
       MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
-      STAGING_VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
-      STAGING_CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
+      # Default Convex backend for previews when no per-PR backend preview
+      # exists. Points at the shared preview deployment once the
+      # PREVIEW_BACKEND_* repo vars are provisioned (see
+      # mcpjam-backend/docs/preview-environments.md); falls back to the
+      # staging deployment until then.
+      DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
+      DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Checkout code
@@ -138,9 +147,9 @@ jobs:
       - name: Create preview environment
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
+            --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
-      - name: Configure staging-safe preview defaults
+      - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
@@ -155,8 +164,8 @@ jobs:
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
-            VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
-            CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
+            VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
+            CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
       - name: Deploy preview to Railway
         run: |
@@ -201,11 +210,12 @@ jobs:
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
 
-      # Initial health check: the preview is currently wired to staging
-      # Convex. If staging itself is broken (e.g., a rename shipped to main
-      # without `convex deploy` against staging), fail loudly now so the
-      # author isn't debugging a 404 from the "staging fallback" case later.
-      - name: Verify initial preview can reach Convex (staging)
+      # Initial health check: the preview starts wired to the default
+      # backend (shared preview deployment, or staging until that's
+      # provisioned). If that backend is broken (e.g., a rename shipped to
+      # main without `convex deploy` against it), fail loudly now so the
+      # author isn't debugging a 404 from the fallback case later.
+      - name: Verify initial preview can reach Convex (default backend)
         id: initial_health
         if: steps.preview_domain.outputs.url != ''
         continue-on-error: true
@@ -213,8 +223,8 @@ jobs:
           # The script posts to <url>/api/query, which only exists on the
           # .convex.cloud (client API) domain. The .convex.site HTTP-router
           # domain 404s every probe ("No matching routes found"), which made
-          # this check report staging as down on every PR.
-          CONVEX_HTTP: ${{ env.STAGING_VITE_CONVEX_URL }}
+          # this check report the backend as down on every PR.
+          CONVEX_HTTP: ${{ env.DEFAULT_BACKEND_VITE_CONVEX_URL }}
         run: |
           .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
 
@@ -247,7 +257,9 @@ jobs:
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
-          BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || 'staging fallback' }}
+          # 'preview requested' is string-matched by preview-watchdog.yml —
+          # keep that label verbatim when rewording.
+          BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || (vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' && 'shared preview backend' || 'staging fallback') }}
           HEALTH_OUTCOME: ${{ steps.initial_health.outcome }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
           PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
@@ -268,7 +280,7 @@ jobs:
               healthOutcome === "success"
                 ? "Health: ✅ Convex reachable"
                 : healthOutcome === "failure"
-                  ? "Health: ❌ Convex unreachable — see upsert-preview job logs (staging may need `convex deploy`)"
+                  ? "Health: ❌ Convex unreachable — see upsert-preview job logs (the default preview backend may need `convex deploy`)"
                   : null;
             const bodyLines = [
               marker,
@@ -327,12 +339,21 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+      # Source environment that new preview envs are duplicated from. Prefer
+      # the dedicated preview-template environment (scoped-down secrets) once
+      # it is provisioned; fall back to duplicating staging — secrets and
+      # all — until then.
+      RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
       MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
-      STAGING_VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
-      STAGING_CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
+      # Default Convex backend for previews when no per-PR backend preview
+      # exists. Points at the shared preview deployment once the
+      # PREVIEW_BACKEND_* repo vars are provisioned (see
+      # mcpjam-backend/docs/preview-environments.md); falls back to the
+      # staging deployment until then.
+      DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
+      DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Checkout default branch
@@ -365,9 +386,9 @@ jobs:
       - name: Create preview environment
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
+            --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
-      - name: Configure staging-safe preview defaults
+      - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
@@ -382,8 +403,8 @@ jobs:
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
-            VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
-            CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
+            VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
+            CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
       - name: Deploy preview to Railway
         run: |
@@ -503,7 +524,7 @@ jobs:
               headSha && headSha !== deployedSha
                 ? `PR head commit: [${headSha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${headSha})`
                 : null,
-              "Backend target: Convex preview requested (falls back to staging if deploy fails).",
+              "Backend target: Convex preview requested (falls back to the shared non-prod backend if deploy fails).",
               "Access is employee-only in non-production environments.",
             ].filter(Boolean);
             const body = bodyLines.join("\n");
@@ -686,8 +707,11 @@ jobs:
       MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
-      STAGING_VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
-      STAGING_CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
+      # See upsert-preview: shared preview deployment when provisioned,
+      # staging deployment until then.
+      DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
+      DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
+      PREVIEW_BACKEND_CONFIGURED: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Checkout code
@@ -712,9 +736,13 @@ jobs:
             echo "convex_http_url=${{ github.event.client_payload.convex_http_url }}" >> "$GITHUB_OUTPUT"
             echo "backend_mode=preview" >> "$GITHUB_OUTPUT"
           else
-            echo "vite_convex_url=$STAGING_VITE_CONVEX_URL" >> "$GITHUB_OUTPUT"
-            echo "convex_http_url=$STAGING_CONVEX_HTTP_URL" >> "$GITHUB_OUTPUT"
-            echo "backend_mode=staging fallback" >> "$GITHUB_OUTPUT"
+            echo "vite_convex_url=$DEFAULT_BACKEND_VITE_CONVEX_URL" >> "$GITHUB_OUTPUT"
+            echo "convex_http_url=$DEFAULT_BACKEND_CONVEX_HTTP_URL" >> "$GITHUB_OUTPUT"
+            if [ "$PREVIEW_BACKEND_CONFIGURED" = "true" ]; then
+              echo "backend_mode=shared preview fallback" >> "$GITHUB_OUTPUT"
+            else
+              echo "backend_mode=staging fallback" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Update preview environment variables
@@ -854,7 +882,7 @@ jobs:
               healthOutcome === "success"
                 ? "Health: ✅ Convex reachable"
                 : healthOutcome === "failure"
-                  ? "Health: ❌ Convex unreachable — see job logs (staging may need `convex deploy`)"
+                  ? "Health: ❌ Convex unreachable — see job logs (the active preview backend may need `convex deploy`)"
                   : null;
             const bodyLines = [
               marker,
