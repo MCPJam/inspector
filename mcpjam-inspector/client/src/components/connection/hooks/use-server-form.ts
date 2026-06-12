@@ -438,10 +438,11 @@ export function useServerForm(
     return null;
   };
 
-  const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 8) {
-      return "Client Secret must be at least 8 characters if provided";
-    }
+  const validateClientSecret = (_value: string): string | null => {
+    // OAuth 2.0 places no minimum length on client secrets — the value is
+    // issued by the authorization server, not chosen here, so enforcing an
+    // arbitrary length client-side rejects valid credentials from providers
+    // that issue short secrets.
     return null;
   };
 
