@@ -96,6 +96,25 @@ describe("buildSyntheticModelDefinition", () => {
     });
   });
 
+  it("parses picker-minted custom:NAME:MODEL ids — slug stops at the first colon", () => {
+    // Both model builders mint `custom:<slug>:<modelId>` (see
+    // buildAvailableModels / buildAvailableModelsFromOrgConfig in
+    // model-helpers); deriveOrgProviderKey must get back `custom:<slug>`,
+    // not `custom:<slug>:<modelId>`.
+    const result = buildSyntheticModelDefinition("custom:acme:acme-large");
+    expect(result).toEqual({
+      id: "custom:acme:acme-large",
+      name: "custom:acme:acme-large",
+      provider: "custom",
+      customProviderName: "acme",
+    });
+    // Model segment may itself contain a slash.
+    expect(
+      buildSyntheticModelDefinition("custom:acme:meta/llama-3.1")
+        .customProviderName,
+    ).toBe("acme");
+  });
+
   it("derives provider from prefix for non-catalog known prefixes", () => {
     expect(
       buildSyntheticModelDefinition("anthropic/claude-3.5-sonnet").provider,

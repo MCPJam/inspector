@@ -824,8 +824,9 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  * Resolution order:
  *   1. `getModelById(modelId)` — MCPJam catalog hit returns the full
  *      definition unchanged (correct provider, contextLength, etc.).
- *   2. `custom:NAME/...` prefix — provider="custom", customProviderName
- *      parsed from the segment after `custom:`. Matches the
+ *   2. `custom:` prefix — provider="custom", customProviderName is the
+ *      segment after `custom:` up to the first `:` or `/` (the picker
+ *      mints `custom:<slug>:<modelId>`). Matches the
  *      `deriveOrgProviderKey` shape for custom providers.
  *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
  *      `ollama/...`, etc.) — provider is derived from the prefix via
@@ -837,12 +838,11 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  *      bare ids are how Ollama BYOK models are typically stored on
  *      chatbox runtime configs (no catalog ID uses a bare shape).
  *
- * This is **synthetic-runner-specific** — real chat callers always have
- * a client-supplied ModelDefinition with the provider set. Synthetic
- * only has `runtime.config.modelId` (the chatbox runtime endpoint
- * doesn't expose provider today). Hoisting the runner's catalog-only
- * lookup into a function with BYOK fallbacks makes the previously-fatal
- * `Unknown modelId for simulation` cases dispatchable.
+ * Callers: the synthetic session runner (which only has
+ * `runtime.config.modelId` — the chatbox runtime endpoint doesn't expose
+ * provider today) and the chat routes' host-wins merges, where the host
+ * config likewise pins a bare modelId and the provider must come from the
+ * id shape, never from the request body's model.
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
@@ -852,7 +852,11 @@ export function buildSyntheticModelDefinition(
 
   if (modelId.startsWith("custom:")) {
     const rest = modelId.slice("custom:".length);
-    const customProviderName = rest.split("/")[0];
+    // Picker-minted ids are `custom:<slug>:<modelId>` (both the local and
+    // org builders in model-helpers use a colon; the evals runner parses
+    // the same way); tolerate `custom:<slug>/<modelId>` too. The slug is
+    // the segment before the first `:` or `/`.
+    const customProviderName = rest.split(/[:/]/, 1)[0];
     return {
       id: modelId,
       name: modelId,
