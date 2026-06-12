@@ -915,6 +915,43 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
   });
 
+  it("exempts UI tools from progressive discovery (never cataloged, always advertised)", async () => {
+    const tools: Record<string, unknown> = {};
+    for (let i = 0; i < 30; i++) {
+      tools[`srv_tool_${i}`] = {
+        description: `server tool ${i}`,
+        _serverId: "srv",
+        execute: async () => ({ ok: true }),
+      };
+    }
+    const manager = mockManager(tools);
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: {
+        id: "gpt-4.1",
+        provider: "openai",
+        contextLength: 200_000,
+      } as any,
+      systemPrompt: "Base prompt.",
+      progressiveToolDiscovery: { enabled: true },
+      uiTools,
+    });
+
+    expect(result.progressivePlan.enabled).toBe(true);
+    const catalogNames = result.progressivePlan.catalog.map(
+      (entry) => entry.modelName,
+    );
+    // MCP tools are lazily loaded; UI tools must not be — both stream
+    // paths advertise non-cataloged tools unconditionally, which keeps
+    // the unconditional ui_* system-prompt section truthful.
+    expect(catalogNames).toContain("srv_tool_0");
+    expect(catalogNames).not.toContain("ui_navigate");
+    expect(catalogNames).not.toContain("ui_snapshot_app");
+    expect(Object.keys(result.allTools)).toContain("ui_navigate");
+  });
+
   it("adds the UI tools system-prompt section iff uiTools are present", async () => {
     const manager = mockManager({});
 

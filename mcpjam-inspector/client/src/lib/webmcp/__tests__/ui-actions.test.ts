@@ -113,6 +113,10 @@ describe("ui-actions (local mode)", () => {
     expect(response.status).toBe("error");
     if (response.status === "error") {
       expect(response.error.code).toBe("timeout");
+      // The bus has no cancellation contract, so the handler may still
+      // complete after we give up — the message must steer the model away
+      // from blind retries (duplicate side effects).
+      expect(response.error.message).toContain("may still complete");
     }
   });
 });

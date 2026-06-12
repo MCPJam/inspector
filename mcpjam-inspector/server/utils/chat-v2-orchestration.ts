@@ -791,7 +791,19 @@ export async function prepareChatV2(
   // it does. The catalog is built from real tools only (meta-tools aren't
   // searchable) but the meta-tools are then merged into the final ToolSet so
   // both streamText and the Convex loop see them.
-  const catalog = buildToolCatalog(realTools);
+  //
+  // WebMCP UI tools are exempt from progressive discovery: the catalog is
+  // what gets lazily loaded via `load_mcp_tools`, and both stream paths
+  // treat non-cataloged entries as always-advertised, never-gated
+  // "injected" tools (see direct-chat-turn / mcpjam-stream-handler).
+  // Cataloging them would hide the `ui_*` tools behind a load step while
+  // the system prompt advertises them unconditionally — and a 7-entry
+  // first-party control surface is not what discovery exists to trim.
+  const catalogSource: ToolSet = { ...realTools };
+  for (const name of Object.keys(uiToolEntries)) {
+    delete catalogSource[name];
+  }
+  const catalog = buildToolCatalog(catalogSource);
   const discoveryState = createDiscoveryState();
   // Replay prior `load_mcp_tools` calls into the discovery state before
   // we mint the plan / meta-tools. Without hydration, a multi-turn

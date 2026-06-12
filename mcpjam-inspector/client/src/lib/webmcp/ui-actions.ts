@@ -66,7 +66,9 @@ export async function dispatchInspectorCommand(
             status: "error",
             error: buildInspectorCommandError(
               "timeout",
-              `Inspector command "${withId.type}" timed out after ${timeoutMs}ms.`,
+              `Inspector command "${withId.type}" timed out after ${timeoutMs}ms. ` +
+                "The action may still complete in the UI — observe state " +
+                "(e.g. ui_snapshot_app) before retrying instead of re-running it blindly.",
             ),
           });
         }, timeoutMs);
