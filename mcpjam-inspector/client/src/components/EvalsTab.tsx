@@ -784,6 +784,9 @@ function EvalsTabContent({
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
           }
+          onCreateWidgetProbe={async () =>
+            handlers.handleCreateWidgetProbe(selectedSuite._id)
+          }
           onGenerateTestCases={() => void handleGenerateMore()}
           canGenerateTestCases={generateState.canGenerate}
           generateTestCasesDisabledReason={generateState.disabledReason}

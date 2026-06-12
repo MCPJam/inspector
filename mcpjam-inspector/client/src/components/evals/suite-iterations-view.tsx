@@ -160,6 +160,7 @@ export function SuiteIterationsView({
   navigation,
   onSetupCi,
   onCreateTestCase,
+  onCreateWidgetProbe,
   onGenerateTestCases,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
@@ -212,6 +213,7 @@ export function SuiteIterationsView({
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
+  onCreateWidgetProbe?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
@@ -720,6 +722,7 @@ export function SuiteIterationsView({
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
+            onCreateWidgetProbe={onCreateWidgetProbe}
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}

@@ -425,6 +425,26 @@ export const startSuiteRunWithRecorder = async ({
   const config = {
     tests: testCases.flatMap((tc: any) => {
       const successPredicates = resolvePredicatesForCase(tc);
+      // Widget probes have no models — without this branch the model
+      // fan-out below would silently drop them from the run. The sentinel
+      // model/provider strings are display-only; the runner forks off the
+      // LLM path before any model resolution.
+      if (tc.caseType === "widget_probe" && tc.probeConfig) {
+        return [
+          {
+            title: tc.title,
+            query: "",
+            model: "widget-probe",
+            provider: "none",
+            runs: tc.runs || 1,
+            expectedToolCalls: [],
+            successPredicates,
+            testCaseId: tc._id ?? tc.testCaseId,
+            caseType: "widget_probe" as const,
+            probeConfig: tc.probeConfig,
+          },
+        ];
+      }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => ({
           title: tc.title,

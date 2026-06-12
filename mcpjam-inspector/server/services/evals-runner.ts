@@ -59,6 +59,7 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import { runProbeTestCase } from "./evals/probe-iteration";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -147,6 +148,15 @@ export type EvalTestCase = {
    */
   hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
+  /**
+   * Case kind. Absent ⇒ prompt case. `widget_probe` carries `probeConfig`
+   * and skips the LLM path entirely (`runTestCase` forks before any model
+   * resolution); `model`/`provider` hold display-only sentinels on probe
+   * entries and are never resolved.
+   */
+  caseType?: import("@/shared/probe-config").TestCaseType;
+  /** Pinned tool call for `widget_probe` cases. */
+  probeConfig?: import("@/shared/probe-config").ProbeConfig;
 };
 
 export type RunEvalSuiteOptions = {
@@ -234,7 +244,7 @@ type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
-function resolveConfiguredServerIds(args: {
+export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   mcpClientManager: MCPClientManager;
 }): string[] {
@@ -2128,6 +2138,13 @@ const runTestCase = async (params: {
   toolSignals?: ToolExposureSignals;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
+  /**
+   * Run environment snapshot (servers + serverBindings). Only consulted by
+   * the widget-probe fork below to resolve the probe's pinned server
+   * reference to a manager key; the LLM path receives its servers
+   * pre-resolved via `selectedServers`.
+   */
+  environment?: RunEvalSuiteOptions["config"]["environment"];
 }) => {
   const {
     test,
@@ -2150,8 +2167,48 @@ const runTestCase = async (params: {
     hostPolicy,
     toolSignals,
     suiteHostConfig,
+    environment,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
+
+  // Widget probes skip the LLM entirely — fork before any model/BYOK
+  // resolution (probe entries carry display-only model sentinels that must
+  // never reach buildModelDefinition). The probe's server reference (stable
+  // id first, display name fallback) resolves through the same binding maps
+  // the LLM path uses for its environment.
+  if (test.caseType === "widget_probe" && test.probeConfig) {
+    const connected = new Set(mcpClientManager.listServers());
+    const candidates = [
+      test.probeConfig.serverId,
+      test.probeConfig.serverName,
+    ].filter((ref): ref is string => !!ref);
+    let resolvedServerKey: string | undefined;
+    for (const candidate of candidates) {
+      const [resolved] = resolveConfiguredServerIds({
+        environment: {
+          servers: [candidate],
+          serverBindings: environment?.serverBindings,
+        },
+        mcpClientManager,
+      });
+      if (resolved && connected.has(resolved)) {
+        resolvedServerKey = resolved;
+        break;
+      }
+    }
+    return runProbeTestCase({
+      test,
+      resolvedServerKey,
+      mcpClientManager,
+      recorder,
+      convexClient,
+      testCaseId,
+      runId,
+      abortSignal,
+      injectOpenAiCompat,
+    });
+  }
+
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
@@ -2449,6 +2506,7 @@ export const runEvalSuiteWithAiSdk = async ({
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
+        environment: config.environment,
       })
     );
 

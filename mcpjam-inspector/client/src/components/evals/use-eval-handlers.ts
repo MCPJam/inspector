@@ -307,6 +307,26 @@ export function useEvalHandlers({
       // (Convex testSuiteRun hostConfigId snapshot).
 
       for (const testCase of testCases) {
+        // Widget probes carry no models and no prompt — they must never fall
+        // into the LLM fan-out below (a probe with a suite default model
+        // would otherwise run as an empty-prompt LLM case). The sentinel
+        // model/provider strings satisfy the wire schema; the server forks
+        // probes off the LLM path before any model resolution.
+        if (testCase.caseType === "widget_probe") {
+          if (!testCase.probeConfig) continue;
+          tests.push({
+            title: testCase.title,
+            query: "",
+            runs: testCase.runs || 1,
+            model: "widget-probe",
+            provider: "none",
+            expectedToolCalls: [],
+            caseType: "widget_probe",
+            probeConfig: testCase.probeConfig,
+            testCaseId: testCase._id,
+          });
+          continue;
+        }
         const hasModels = testCase.models && testCase.models.length > 0;
         if (!hasModels && !suiteDefaultModelDef) {
           continue;
@@ -1277,6 +1297,77 @@ export function useEvalHandlers({
     ]
   );
 
+  // Create a widget probe case (synthetic monitor): no LLM/prompt — a pinned
+  // tool call rendered in the browser harness, gated by widget render checks.
+  // Created with placeholder probeConfig values the probe editor immediately
+  // prompts the user to fix; seeded with a widgetRendered check so an
+  // unedited probe still asserts something meaningful.
+  const handleCreateWidgetProbe = useCallback(
+    async (suiteId: string) => {
+      if (isCreatingTestCase) return;
+
+      setIsCreatingTestCase(true);
+
+      try {
+        const suite = await convex.query("testSuites:getTestSuite" as any, {
+          suiteId,
+        });
+        const firstServer: string =
+          (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
+
+        const testCaseId = await mutations.createTestCaseMutation({
+          suiteId,
+          title: "Untitled widget probe",
+          query: "",
+          models: [],
+          caseType: "widget_probe",
+          probeConfig: {
+            serverName: firstServer,
+            toolName: "tool",
+            arguments: {},
+          },
+          predicates: {
+            mode: "replace",
+            list: [{ type: "widgetRendered" }],
+          },
+        });
+
+        toast.success("Widget probe created");
+
+        posthog.capture("eval_test_case_created", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          test_case_id: testCaseId,
+          case_type: "widget_probe",
+        });
+
+        navigateAfterTestCaseMutation({
+          type: "test-edit",
+          suiteId,
+          testId: testCaseId,
+        });
+
+        return testCaseId;
+      } catch (error) {
+        console.error("Failed to create widget probe:", error);
+        toast.error(
+          getBillingErrorMessage(error, "Failed to create widget probe")
+        );
+        return null;
+      } finally {
+        setIsCreatingTestCase(false);
+      }
+    },
+    [
+      isCreatingTestCase,
+      mutations.createTestCaseMutation,
+      convex,
+      navigateAfterTestCaseMutation,
+    ]
+  );
+
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback(
     (testCaseId: string, testCaseTitle: string) => {
@@ -1608,6 +1699,7 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleCreateWidgetProbe,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

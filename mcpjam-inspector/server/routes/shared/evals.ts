@@ -25,6 +25,12 @@ import {
   streamTestCase,
 } from "../../services/evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import {
+  probeConfigSchema,
+  TEST_CASE_TYPES,
+  type ProbeConfig,
+  type TestCaseType,
+} from "@/shared/probe-config";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -100,6 +106,13 @@ export const RunEvalsRequestSchema = z.object({
       // boundary on the wire so it doesn't get silently stripped
       // (feedback_zod_strips_unthreaded_fields).
       predicates: casePredicatesSchema.optional(),
+      // Widget-probe discriminant + pinned tool call. Same silent-strip
+      // rationale as `predicates` above. Probe entries carry display-only
+      // model/provider sentinels to satisfy the required fields; the
+      // runner forks off the LLM path before any model resolution and
+      // `assertSuiteRunWithinCap` excludes them from LLM-call math.
+      caseType: z.enum(TEST_CASE_TYPES).optional(),
+      probeConfig: probeConfigSchema.optional(),
     }),
   ),
   serverIds: z
@@ -257,9 +270,11 @@ export function assertSuiteRunWithinCap(
 ) {
   const override = request.iterationOverride;
   // Each iteration issues one model call per prompt turn; counting only `runs`
-  // lets a multi-turn save-from-chat case bypass the cap.
+  // lets a multi-turn save-from-chat case bypass the cap. Widget probes issue
+  // zero model calls and are excluded entirely.
   const totalCalls =
     request.tests.reduce((sum, t) => {
+      if (t.caseType === "widget_probe") return sum;
       const iterations = override ?? t.runs ?? 0;
       const turns = Math.max(t.promptTurns?.length ?? 0, 1);
       return sum + iterations * turns;
@@ -634,6 +649,8 @@ export async function prepareEvalRun(
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
       predicates?: import("@/shared/eval-matching").CasePredicates;
+      caseType?: TestCaseType;
+      probeConfig?: ProbeConfig;
     }
   >();
 
@@ -653,12 +670,18 @@ export async function prepareEvalRun(
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
+        caseType: test.caseType,
+        probeConfig: test.probeConfig,
       });
     }
-    testCaseMap.get(key)!.models.push({
-      model: test.model,
-      provider: test.provider,
-    });
+    // Probe entries carry display-only model sentinels — never collect them
+    // into the case's persisted model list.
+    if (test.caseType !== "widget_probe") {
+      testCaseMap.get(key)!.models.push({
+        model: test.model,
+        provider: test.provider,
+      });
+    }
   }
 
   if (resolvedSuiteId) {
@@ -749,6 +772,11 @@ export async function prepareEvalRun(
             normalizeForComparison(existingTestCase.predicates),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.predicates));
+        const probeConfigChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.probeConfig),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.probeConfig));
 
         const hasChanges =
           modelsChanged ||
@@ -761,7 +789,8 @@ export async function prepareEvalRun(
           judgeRequirementChanged ||
           advancedConfigChanged ||
           matchOptionsChanged ||
-          predicatesChanged;
+          predicatesChanged ||
+          probeConfigChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -780,6 +809,16 @@ export async function prepareEvalRun(
             ),
             matchOptions: testCaseData.matchOptions,
             predicates: testCaseData.predicates,
+            // updateTestCase rejects probeConfig on prompt cases — only
+            // thread it when the wire entry is a probe.
+            ...(testCaseData.caseType === "widget_probe" &&
+            testCaseData.probeConfig
+              ? {
+                  probeConfig: sanitizeForConvexTransport(
+                    testCaseData.probeConfig,
+                  ),
+                }
+              : {}),
           });
         }
         committedCases.push({
@@ -806,6 +845,14 @@ export async function prepareEvalRun(
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          caseType: testCaseData.caseType,
+          ...(testCaseData.probeConfig
+            ? {
+                probeConfig: sanitizeForConvexTransport(
+                  testCaseData.probeConfig,
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       }
@@ -862,6 +909,14 @@ export async function prepareEvalRun(
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          caseType: testCaseData.caseType,
+          ...(testCaseData.probeConfig
+            ? {
+                probeConfig: sanitizeForConvexTransport(
+                  testCaseData.probeConfig,
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {

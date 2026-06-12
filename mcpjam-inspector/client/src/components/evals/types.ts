@@ -216,6 +216,14 @@ export type EvalIteration = {
      * snapshot the iteration was actually evaluated against.
      */
     predicates?: Predicate[];
+    /**
+     * Case kind frozen at run-precreate time. Absent ⇒ prompt case. Probe
+     * iterations carry display-only model/provider sentinels
+     * ('none'/'widget-probe') in this snapshot.
+     */
+    caseType?: import("@/shared/probe-config").TestCaseType;
+    /** Pinned probe call, snapshotted for replay stability. */
+    probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
   configRevision?: string;
