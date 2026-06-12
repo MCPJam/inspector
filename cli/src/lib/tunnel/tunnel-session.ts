@@ -290,18 +290,27 @@ export class TunnelSession {
       try {
         this.connection?.close();
         const result = await this.deps.createGrant();
-        // A stop()/fail() that landed while the grant was minting owns the
-        // session now; dialing a fresh connection would leak it.
-        if (this.stopped || this.settled) return;
         this.grantResult = result;
+        // A stop()/fail() that landed while the grant was minting owns the
+        // session now. Its own revocation may have raced AHEAD of this mint
+        // at the backend, so revoke the fresh grant explicitly — issued
+        // after the mint response, the ordering is deterministic — instead
+        // of leaving a live secret behind an exited session.
+        if (this.stopped || this.settled) {
+          await this.revokeGrantBestEffort();
+          return;
+        }
         await this.dial(result);
         // The attempt counter is NOT reset here: a mint that succeeds but
         // gets 4000'd again right away must still run into the cap. The
         // reset is time-based (REMINT_RESET_WINDOW_MS) above.
         this.deps.onGrant?.(result, true);
       } catch (error) {
-        if (this.stopped || this.settled) return;
+        // Whatever failed, the latest grant must not outlive this attempt —
+        // including the stopped/settled case, where the mint may have
+        // completed after stop()'s own revocation (same race as above).
         await this.revokeGrantBestEffort();
+        if (this.stopped || this.settled) return;
         await this.fail(
           `Failed to renew the tunnel: ${
             error instanceof Error ? error.message : String(error)

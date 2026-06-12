@@ -197,6 +197,18 @@ tunnels.post("/projects/:projectId/tunnels", async (c) => {
     });
   } catch (error) {
     logger.error("v1 tunnels: updateServer failed", error, { serverId });
+    // The caller never receives this grant, so don't leave its secret
+    // live with the record pointing at a stale URL. Best-effort: the
+    // updateServer failure is what the caller needs to see.
+    try {
+      await closeTunnelGrant(serverId, `Bearer ${bearer}`);
+    } catch (closeError) {
+      logger.error(
+        "v1 tunnels: failed to revoke the orphaned grant",
+        closeError,
+        { serverId }
+      );
+    }
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,

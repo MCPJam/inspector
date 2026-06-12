@@ -355,6 +355,39 @@ test("stop aborts a hung grant revocation after the grace period and still exits
   );
 });
 
+test("stop during an in-flight remint revokes the freshly minted grant", async () => {
+  let resolveSecondGrant: ((result: CreateTunnelResult) => void) | undefined;
+  let calls = 0;
+  const harness = makeHarness({
+    createGrant: () => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(makeGrantResult(1));
+      return new Promise<CreateTunnelResult>((resolve) => {
+        resolveSecondGrant = resolve;
+      });
+    },
+  });
+  await harness.session.start();
+
+  harness.firePermanent("expired", 4000);
+  await waitFor(() => calls === 2);
+  // Ctrl-C completes while the rotation's mint is still in flight; its
+  // revocation may have raced ahead of the mint at the backend.
+  await harness.session.stop();
+  assert.equal(harness.closeGrantCalls.length, 1);
+  assert.equal(harness.closeGrantCalls[0]!.grant.connectToken, "ct-1");
+
+  resolveSecondGrant!(makeGrantResult(2));
+  await waitFor(() => harness.closeGrantCalls.length === 2);
+
+  // The post-stop mint got revoked too, and no new relay was dialed.
+  assert.equal(harness.closeGrantCalls[1]!.grant.connectToken, "ct-2");
+  assert.equal(harness.connections.length, 1);
+  assert.equal(harness.grants.length, 1);
+  const result = await harness.session.waitUntilClosed();
+  assert.equal(result.exitCode, 0);
+});
+
 test("permanent closes after stop are ignored", async () => {
   const harness = makeHarness();
   await harness.session.start();

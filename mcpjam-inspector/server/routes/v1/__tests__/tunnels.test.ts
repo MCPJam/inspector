@@ -276,6 +276,34 @@ describe("v1 tunnel routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    it("revokes the minted grant when storing the URL fails", async () => {
+      const fetchMock = stubBackendFetch();
+      convexMutationMock.mockImplementation(async (name: string) => {
+        if (name === "servers:updateServer") {
+          throw new Error("convex write failed");
+        }
+        return "srv_1";
+      });
+
+      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
+        name: "everything",
+      });
+
+      // The v1 envelope derives the status from the public code:
+      // INTERNAL_ERROR -> 500.
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { message?: string };
+      expect(body.message).toContain("convex write failed");
+      // The caller never received the grant — its secret must not stay live.
+      const closeCall = fetchMock.mock.calls.find((call) =>
+        String(call[0]).includes("/tunnels/close")
+      );
+      expect(closeCall).toBeDefined();
+      expect(JSON.parse(String((closeCall?.[1] as RequestInit).body))).toEqual({
+        serverId: "srv_1",
+      });
+    });
+
     it("maps grant mint failures to SERVER_UNREACHABLE without storing a URL", async () => {
       stubBackendFetch({
         token: { error: "relay down" },
