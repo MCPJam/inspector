@@ -149,10 +149,11 @@ export function buildMcpjamTool(
       }
       // Ambient default, not a clamp: an explicit `project` (name or id)
       // wins; only an omitted/blank one resolves to the chat's project.
-      const project =
-        typeof input.project === "string" && input.project.trim()
-          ? input.project
-          : opts.projectId;
+      // Trimmed here for raw callers — schema-validated input arrives
+      // pre-trimmed via zod's .trim().
+      const trimmedProject =
+        typeof input.project === "string" ? input.project.trim() : "";
+      const project = trimmedProject || opts.projectId;
       try {
         const result = await operation.execute(
           { ...input, project },
