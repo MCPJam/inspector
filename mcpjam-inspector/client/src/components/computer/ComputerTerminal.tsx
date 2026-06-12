@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@mcpjam/design-system/button";
-import { Loader2, RotateCcw } from "lucide-react";
+import { Copy, Eraser, Loader2, RotateCcw, TerminalSquare } from "lucide-react";
+import { toast } from "sonner";
 import {
   openTerminalConnection,
   type TerminalConnection,
@@ -18,10 +21,56 @@ type TerminalState =
 
 const PING_INTERVAL_MS = 30_000;
 
+const DARK_THEME: ITheme = {
+  background: "#1a1916",
+  foreground: "#e8e4d8",
+  cursor: "#d4762e",
+  cursorAccent: "#1a1916",
+  selectionBackground: "rgba(212, 118, 46, 0.3)",
+  black: "#1a1916",
+  brightBlack: "#5a5648",
+  red: "#e06c75",
+  brightRed: "#e06c75",
+  green: "#98c379",
+  brightGreen: "#98c379",
+  yellow: "#e5c07b",
+  brightYellow: "#e5c07b",
+  blue: "#61afef",
+  brightBlue: "#61afef",
+  magenta: "#c678dd",
+  brightMagenta: "#c678dd",
+  cyan: "#56b6c2",
+  brightCyan: "#56b6c2",
+  white: "#abb2bf",
+  brightWhite: "#e8e4d8",
+};
+
+const LIGHT_THEME: ITheme = {
+  background: "#f5f0e8",
+  foreground: "#2c2a24",
+  cursor: "#c96a2e",
+  cursorAccent: "#f5f0e8",
+  selectionBackground: "rgba(201, 106, 46, 0.2)",
+  black: "#2c2a24",
+  brightBlack: "#767060",
+  red: "#c0392b",
+  brightRed: "#e74c3c",
+  green: "#27ae60",
+  brightGreen: "#2ecc71",
+  yellow: "#b07800",
+  brightYellow: "#e5a000",
+  blue: "#2471a3",
+  brightBlue: "#3498db",
+  magenta: "#7d3c98",
+  brightMagenta: "#9b59b6",
+  cyan: "#148f77",
+  brightCyan: "#1abc9c",
+  white: "#e8e4d8",
+  brightWhite: "#f5f0e8",
+};
+
 function themeFor(mode: "light" | "dark"): ITheme {
-  return mode === "dark"
-    ? { background: "#1e1e1e", foreground: "#d4d4d4", cursor: "#d4d4d4" }
-    : { background: "#ffffff", foreground: "#1e1e1e", cursor: "#1e1e1e" };
+  return mode === "dark" ? DARK_THEME : LIGHT_THEME;
 }
 
 function closeMessage(code: number, reason: string): string {
@@ -29,6 +78,14 @@ function closeMessage(code: number, reason: string): string {
   if (code === 4503) return "Computer is unavailable right now.";
   return reason || "Disconnected from the computer.";
 }
+
+const STATUS_CONFIG: Record<TerminalState, { dot: string; label: string }> = {
+  connecting:   { dot: "bg-amber-400 animate-pulse", label: "Connecting" },
+  connected:    { dot: "bg-emerald-500",              label: "Connected" },
+  exited:       { dot: "bg-zinc-400",                 label: "Exited" },
+  disconnected: { dot: "bg-zinc-400",                 label: "Disconnected" },
+  error:        { dot: "bg-red-500",                  label: "Error" },
+};
 
 /**
  * Live terminal to the project's personal computer. Bridges xterm.js to the
@@ -67,6 +124,10 @@ export function ComputerTerminal({
 
   const [state, setState] = useState<TerminalState>("connecting");
   const [detail, setDetail] = useState<string>("");
+  const [hasSelection, setHasSelection] = useState(false);
+
+  const termBg = themeMode === "dark" ? "#1a1916" : "#f5f0e8";
+  const toolbarBg = themeMode === "dark" ? "#222019" : "#ede7d8";
 
   const teardownConnection = useCallback(() => {
     if (pingRef.current) {
@@ -142,6 +203,19 @@ export function ComputerTerminal({
     }, PING_INTERVAL_MS);
   }, [mintToken, teardownConnection, baseUrl]);
 
+  const handleCopy = useCallback(() => {
+    const sel = termRef.current?.getSelection();
+    if (sel) {
+      void navigator.clipboard.writeText(sel);
+      toast.success("Copied", { duration: 1500 });
+    }
+  }, []);
+
+  const handleClear = useCallback(() => {
+    termRef.current?.clear();
+    termRef.current?.focus();
+  }, []);
+
   // Create the xterm instance once; wire input + resize; auto-connect.
   useEffect(() => {
     disposedRef.current = false;
@@ -151,14 +225,31 @@ export function ComputerTerminal({
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
+      cursorStyle: "bar",
       fontSize: 13,
+      lineHeight: 1.45,
       fontFamily:
-        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       theme: themeFor(themeMode),
+      scrollback: 10_000,
+      smoothScrollDuration: 100,
+      allowProposedApi: true,
     });
+
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon());
     term.open(container);
+
+    // GPU-accelerated renderer; falls back to canvas automatically.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      // canvas fallback is automatic
+    }
+
     fit.fit();
     termRef.current = term;
     fitRef.current = fit;
@@ -170,6 +261,9 @@ export function ComputerTerminal({
     const resizeSub = term.onResize(({ cols, rows }) =>
       connRef.current?.resize(cols, rows)
     );
+    const selSub = term.onSelectionChange(() => {
+      setHasSelection(term.hasSelection());
+    });
 
     const observer = new ResizeObserver(() => {
       try {
@@ -188,6 +282,7 @@ export function ComputerTerminal({
       observer.disconnect();
       dataSub.dispose();
       resizeSub.dispose();
+      selSub.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -205,35 +300,79 @@ export function ComputerTerminal({
 
   return (
     <div className={className}>
-      <div className="relative h-full w-full overflow-hidden rounded-md border bg-[#1e1e1e]">
-        <div ref={containerRef} className="h-full w-full p-2" />
-        {showOverlay ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
-            {state === "connecting" ? (
-              <span className="inline-flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Connecting to your computer…
-              </span>
-            ) : (
-              <>
-                <span className="text-muted-foreground">
-                  {detail ||
-                    (state === "exited"
-                      ? "The shell session ended."
-                      : "Disconnected from the computer.")}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void connect()}
-                >
-                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                  Reconnect
-                </Button>
-              </>
-            )}
+      <div
+        className="flex h-full flex-col overflow-hidden rounded-lg border shadow-sm"
+        style={{ background: termBg }}
+      >
+        {/* Toolbar */}
+        <div
+          className="flex shrink-0 items-center justify-between border-b px-3"
+          style={{ height: 36, background: toolbarBg }}
+        >
+          <div className="flex items-center gap-2">
+            <TerminalSquare className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <span className="font-mono text-xs text-muted-foreground/60">
+              bash
+            </span>
           </div>
-        ) : null}
+          <div className="flex items-center gap-1">
+            <span
+              className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${STATUS_CONFIG[state].dot}`}
+              title={STATUS_CONFIG[state].label}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 text-muted-foreground/60 hover:text-muted-foreground"
+              disabled={!hasSelection}
+              onClick={handleCopy}
+              title="Copy selection"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 text-muted-foreground/60 hover:text-muted-foreground"
+              onClick={handleClear}
+              title="Clear terminal"
+            >
+              <Eraser className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Terminal canvas + overlay */}
+        <div className="relative min-h-0 flex-1">
+          <div ref={containerRef} className="absolute inset-0 p-1" />
+          {showOverlay ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
+              {state === "connecting" ? (
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Connecting to your computer…
+                </span>
+              ) : (
+                <>
+                  <span className="text-muted-foreground">
+                    {detail ||
+                      (state === "exited"
+                        ? "The shell session ended."
+                        : "Disconnected from the computer.")}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void connect()}
+                  >
+                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                    Reconnect
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
