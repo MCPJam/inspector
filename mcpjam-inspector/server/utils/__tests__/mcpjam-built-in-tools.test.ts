@@ -127,6 +127,7 @@ function execTool(
 describe("workspace tool catalog", () => {
   it("pins the operation names the backend catalog rows must mirror", () => {
     expect([...MCPJAM_TOOL_IDS]).toEqual([
+      "list_projects",
       "list_project_servers",
       "diagnose_server",
       "list_server_tools",
@@ -135,10 +136,19 @@ describe("workspace tool catalog", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_eval_suites",
+      "list_eval_suite_runs",
+      "run_eval_suite",
+      "get_eval_run",
+      "list_eval_run_iterations",
+      "get_eval_iteration_trace",
+      "list_chatboxes",
+      "get_chatbox",
+      "list_chat_sessions",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
-    expect(isMcpjamToolId("list_projects")).toBe(false);
+    expect(isMcpjamToolId("show_servers")).toBe(false);
   });
 
   it("returns null for ids outside the workspace set", () => {
