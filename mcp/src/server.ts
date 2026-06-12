@@ -7,7 +7,7 @@ import {
   createSessionToolRegistrar,
   type SessionToolRegistrar,
 } from "./tools/sessionToolRegistrar.js";
-import { registerPlainPlatformTools } from "./tools/platformTools.js";
+import { registerPlatformCatalogTools } from "./tools/platformTools.js";
 import { registerShowServersTool } from "./tools/showServers.js";
 
 interface McpProps extends Record<string, unknown> {
@@ -43,7 +43,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
     this.sessionToolRegistrar = registrar;
 
     registerShowServersTool(registrar, this);
-    registerPlainPlatformTools(registrar, this);
+    registerPlatformCatalogTools(registrar, this);
   }
 
   override async onConnect(conn: any, context: { request: Request }): Promise<void> {
