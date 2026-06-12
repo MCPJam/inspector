@@ -236,12 +236,6 @@ export function registerTunnelCommands(program: Command): void {
           );
         }
 
-        try {
-          await session.start();
-        } catch (error) {
-          throw toCliError(error);
-        }
-
         let sigints = 0;
         const onSignal = () => {
           sigints += 1;
@@ -252,10 +246,29 @@ export function registerTunnelCommands(program: Command): void {
           }
           process.exit(130);
         };
+        // Attached BEFORE start(): an interrupt while the grant/bridge/relay
+        // are still coming up must run the same graceful stop (revoking
+        // whatever was already minted) instead of the default kill.
         process.on("SIGINT", onSignal);
         process.on("SIGTERM", onSignal);
 
         try {
+          const startPromise = session.start();
+          try {
+            // An interrupt mid-startup settles the session via stop()
+            // while start() may still be unwinding (e.g. a relay connect
+            // waiting out its timeout) — don't stay blocked on it.
+            await Promise.race([startPromise, session.waitUntilClosed()]);
+          } catch (error) {
+            if (sigints === 0) {
+              throw toCliError(error);
+            }
+          }
+          if (sigints > 0) {
+            // Interrupted startup: the rejection (if any) IS the
+            // interruption; the session result below is the real outcome.
+            startPromise.catch(() => {});
+          }
           const result = await session.waitUntilClosed();
           if (result.exitCode !== 0) {
             throw cliError(

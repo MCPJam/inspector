@@ -140,8 +140,11 @@ export class TunnelSession {
     try {
       const result = await this.deps.createGrant();
       this.grantResult = result;
+      this.assertNotStopped();
       this.bridge = await this.deps.startBridge(result.grant.serverId);
+      this.assertNotStopped();
       await this.dial(result);
+      this.assertNotStopped();
       this.started = true;
       this.deps.onGrant?.(result, false);
       this.flushPendingPermanent();
@@ -154,6 +157,18 @@ export class TunnelSession {
       // caller needs to see.
       await this.revokeGrantBestEffort();
       throw error;
+    }
+  }
+
+  /**
+   * A stop() that lands mid-startup owns the session: abandon the bring-up
+   * here so start()'s catch tears down and revokes whatever exists by now —
+   * including a grant whose mint resolved after stop() already ran its own
+   * (then-empty) revocation.
+   */
+  private assertNotStopped(): void {
+    if (this.stopped || this.settled) {
+      throw new Error("Tunnel startup interrupted");
     }
   }
 

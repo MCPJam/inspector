@@ -388,6 +388,35 @@ test("stop during an in-flight remint revokes the freshly minted grant", async (
   assert.equal(result.exitCode, 0);
 });
 
+test("stop during startup aborts the bring-up and revokes the late-minted grant", async () => {
+  let resolveGrant: ((result: CreateTunnelResult) => void) | undefined;
+  const harness = makeHarness({
+    createGrant: () =>
+      new Promise<CreateTunnelResult>((resolve) => {
+        resolveGrant = resolve;
+      }),
+  });
+
+  const startPromise = harness.session.start();
+  await waitFor(() => resolveGrant !== undefined);
+  // Ctrl-C lands while the grant is still minting: stop() has nothing to
+  // revoke yet...
+  await harness.session.stop();
+  assert.equal(harness.closeGrantCalls.length, 0);
+
+  // ...so when the mint resolves, startup must abandon the bring-up and
+  // revoke it instead of binding the bridge and dialing.
+  resolveGrant!(makeGrantResult(1));
+  await assert.rejects(() => startPromise, /interrupted/);
+
+  assert.equal(harness.closeGrantCalls.length, 1);
+  assert.equal(harness.closeGrantCalls[0]!.grant.connectToken, "ct-1");
+  assert.equal(harness.connections.length, 0);
+  assert.equal(harness.grants.length, 0);
+  const result = await harness.session.waitUntilClosed();
+  assert.equal(result.exitCode, 0);
+});
+
 test("permanent closes after stop are ignored", async () => {
   const harness = makeHarness();
   await harness.session.start();
