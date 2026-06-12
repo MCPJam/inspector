@@ -8,7 +8,7 @@
  * resume; resume resets the failure counter and the clock.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -63,7 +63,16 @@ export function ScheduleEditor({
   const [isSaving, setIsSaving] = useState(false);
 
   const enabled = schedule?.enabled === true;
-  const intervalMinutes = schedule?.intervalMinutes ?? 60;
+  const persistedIntervalMinutes = schedule?.intervalMinutes ?? 60;
+  // Local draft so an interval picked while the schedule is OFF survives
+  // until the next enable (the server only stores intervals on enabled
+  // writes). Re-seeds when the persisted value changes from elsewhere.
+  const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
+    persistedIntervalMinutes,
+  );
+  useEffect(() => {
+    setDraftIntervalMinutes(persistedIntervalMinutes);
+  }, [persistedIntervalMinutes]);
   const pausedState =
     enabled && schedule && schedule.state !== "active"
       ? schedule.state
@@ -93,7 +102,10 @@ export function ScheduleEditor({
             checked={enabled}
             disabled={isSaving}
             onCheckedChange={(checked) =>
-              void apply({ enabled: checked, intervalMinutes })
+              void apply({
+                enabled: checked,
+                intervalMinutes: draftIntervalMinutes,
+              })
             }
             aria-label="Enable scheduled runs"
           />
@@ -102,13 +114,14 @@ export function ScheduleEditor({
           </span>
         </div>
         <Select
-          value={String(intervalMinutes)}
+          value={String(draftIntervalMinutes)}
           disabled={isSaving}
           onValueChange={(next) => {
             const minutes = Number(next);
             if (!Number.isFinite(minutes)) return;
-            // Interval changes only persist while enabled; when off, the
-            // toggle's next enable picks the freshly selected interval.
+            setDraftIntervalMinutes(minutes);
+            // Enabled schedules persist immediately; while off, the draft
+            // rides along on the next enable.
             if (enabled) {
               void apply({ enabled: true, intervalMinutes: minutes });
             }
@@ -139,7 +152,12 @@ export function ScheduleEditor({
             variant="outline"
             className="h-7 shrink-0 text-xs"
             disabled={isSaving}
-            onClick={() => void apply({ enabled: true, intervalMinutes })}
+            onClick={() =>
+              void apply({
+                enabled: true,
+                intervalMinutes: draftIntervalMinutes,
+              })
+            }
           >
             Resume
           </Button>
