@@ -102,6 +102,19 @@ type TargetConfigInput = {
   timeoutMs?: number;
 };
 
+function assertHttpUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw usageError(`Invalid URL: ${url}`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw usageError(`Invalid URL scheme: ${url}. Use http:// or https://.`);
+  }
+}
+
 export function buildTargetConfig(
   input: TargetConfigInput,
   defaultTimeoutMs: number,
@@ -124,11 +137,7 @@ export function buildTargetConfig(
       );
     }
 
-    try {
-      new URL(url);
-    } catch {
-      throw usageError(`Invalid URL: ${url}`);
-    }
+    assertHttpUrl(url);
 
     return {
       target: url,
@@ -343,16 +352,20 @@ export function createMcpJamMcpServer(
           requestedName ??
           deriveServerName(input, (candidate) => manager.hasServer(candidate));
 
+        // Subscribe before connecting: the manager wires pre-registered
+        // handlers onto the client during the connect flow, so notifications
+        // emitted during startup are buffered too.
+        watchNotifications(name);
         try {
           await manager.connectToServer(name, config);
         } catch (error) {
           // connectToServer registers the name before opening the transport;
-          // drop the failed registration so list_servers stays clean and the
-          // same name can be retried. Safe because the name was unused above.
+          // drop the failed registration (and its notification handlers) so
+          // list_servers stays clean and the same name can be retried. Safe
+          // because the name was verified unused above.
           await manager.removeServer(name).catch(() => undefined);
           throw error;
         }
-        watchNotifications(name);
 
         return {
           server: name,
@@ -671,11 +684,7 @@ export function createMcpJamMcpServer(
     },
     async ({ url, accessToken, headers, timeoutMs }) =>
       runTool(async () => {
-        try {
-          new URL(url);
-        } catch {
-          throw usageError(`Invalid URL: ${url}`);
-        }
+        assertHttpUrl(url);
         const result = await probeMcpServer({
           url,
           accessToken,

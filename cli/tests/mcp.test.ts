@@ -98,6 +98,10 @@ test("buildTargetConfig validates target selection", () => {
     /Invalid URL/,
   );
   assert.throws(
+    () => buildTargetConfig({ url: "ftp://x.test/mcp" }, 1_000),
+    /Invalid URL scheme/,
+  );
+  assert.throws(
     () => buildTargetConfig({ command: "node", accessToken: "tok" }, 1_000),
     /accessToken/,
   );

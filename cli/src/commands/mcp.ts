@@ -18,21 +18,28 @@ export function registerMcpCommands(program: Command): void {
       });
 
       const transport = new StdioServerTransport();
+      let resolveClosed!: () => void;
+      const stopOnSignal = () => resolveClosed();
       const closed = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
         handle.server.server.onclose = resolve;
-        const stopOnSignal = () => resolve();
         process.once("SIGINT", stopOnSignal);
         process.once("SIGTERM", stopOnSignal);
       });
 
-      await handle.server.connect(transport);
+      try {
+        await handle.server.connect(transport);
 
-      if (!globalOptions.quiet) {
-        // stdout carries JSON-RPC in this mode; status goes to stderr only.
-        process.stderr.write("MCPJam MCP server listening on stdio\n");
+        if (!globalOptions.quiet) {
+          // stdout carries JSON-RPC in this mode; status goes to stderr only.
+          process.stderr.write("MCPJam MCP server listening on stdio\n");
+        }
+
+        await closed;
+      } finally {
+        process.off("SIGINT", stopOnSignal);
+        process.off("SIGTERM", stopOnSignal);
+        await handle.close();
       }
-
-      await closed;
-      await handle.close();
     });
 }
