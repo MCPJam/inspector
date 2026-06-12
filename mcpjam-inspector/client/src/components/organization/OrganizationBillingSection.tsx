@@ -449,7 +449,6 @@ function BillingIntervalToggle({
  */
 function FreePlanTeamUpsell({
   planCatalog,
-  billingInterval,
   currentPlan,
   billingConfigured,
   canManageBilling,
@@ -460,7 +459,6 @@ function FreePlanTeamUpsell({
   onStartPlanChange,
 }: {
   planCatalog: PlanCatalog;
-  billingInterval: BillingInterval;
   currentPlan: OrganizationPlan;
   billingConfigured: boolean;
   canManageBilling: boolean;
@@ -476,6 +474,8 @@ function FreePlanTeamUpsell({
     billingInterval: BillingInterval
   ) => Promise<void>;
 }) {
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("annual");
   const entry = planCatalog.plans.team;
   if (!entry) {
     return null;
@@ -516,9 +516,9 @@ function FreePlanTeamUpsell({
   return (
     <div
       data-testid="free-plan-team-upsell"
-      className="flex h-full flex-col gap-5 rounded-xl border border-primary/35 bg-primary/[0.06] p-5 md:p-6"
+      className="flex h-full flex-col gap-5 rounded-xl border border-primary/35 bg-card p-5 md:p-6"
     >
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
         <div className="flex flex-wrap items-center justify-center gap-2">
           <span className="text-base font-semibold">{entry.displayName}</span>
           <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
@@ -526,6 +526,36 @@ function FreePlanTeamUpsell({
           </Badge>
         </div>
         <div className="w-full space-y-1">
+          <div
+            role="group"
+            aria-label="Billing interval"
+            className="mb-2 inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "annual"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("annual")}
+            >
+              Annual
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "monthly"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("monthly")}
+            >
+              Monthly
+            </button>
+          </div>
           <PlanPriceDisplay label={priceLabel} />
           <p className="text-xs leading-snug text-muted-foreground">
             {priceSubtext}
@@ -876,7 +906,6 @@ export function OrganizationBillingSection({
           {currentPlanPanel}
           <FreePlanTeamUpsell
             planCatalog={planCatalog}
-            billingInterval={billingInterval}
             currentPlan={currentPlan}
             billingConfigured={billingConfigured}
             canManageBilling={canManageBilling}
