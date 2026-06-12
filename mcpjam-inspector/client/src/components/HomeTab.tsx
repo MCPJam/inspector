@@ -12,6 +12,7 @@ import { usePostHog } from "posthog-js/react";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
@@ -32,19 +33,20 @@ interface HomeTabProps {
   isContextLoading?: boolean;
 }
 
-// Mirrors the real home's header layout (greeting + stats strip) so the
-// loading state previews the page that's about to render rather than showing
-// a bare spinner or the misleading empty state.
+// Mirrors the real home's header layout (greeting line + stats strip) so the
+// loading state previews the page that's about to render rather than showing a
+// bare spinner or the misleading empty state. Sizes/spacing track the real
+// header (space-y-2, text-2xl greeting) to keep the preview faithful.
 function HomeContextSkeleton() {
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
-        <header className="space-y-3">
-          <div className="h-7 w-52 animate-pulse rounded-md bg-muted" />
-          <div className="h-3.5 w-72 animate-pulse rounded-sm bg-muted/70" />
+        <header className="space-y-2">
+          <Skeleton className="h-8 w-52" />
+          <Skeleton className="h-4 w-72" />
         </header>
-        <div className="h-32 w-full animate-pulse rounded-xl bg-muted/50" />
-        <div className="h-20 w-full animate-pulse rounded-xl bg-muted/30" />
+        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-20 w-full rounded-xl" />
       </div>
     </div>
   );
