@@ -20,6 +20,12 @@ import { expect, test } from "@playwright/test";
 const ONBOARDING_KEY = "mcp-onboarding-state";
 
 test.describe("NUX first-run redirect", () => {
+  // Hosted deployments require WorkOS auth before the NUX gate settles,
+  // so these tests only run against the local non-hosted build.
+  test.skip(
+    !!process.env.PLAYWRIGHT_BASE_URL,
+    "NUX tests require local non-hosted build; skip when PLAYWRIGHT_BASE_URL is set",
+  );
   test("fresh user landing on / is redirected to /playground", async ({
     page,
   }) => {
