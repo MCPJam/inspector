@@ -40,10 +40,17 @@ export function ComputerTerminal({
   mintToken,
   themeMode,
   className,
+  baseUrl,
 }: {
   mintToken: () => Promise<string>;
   themeMode: "light" | "dark";
   className?: string;
+  /**
+   * `ws(s)://host` of the data plane serving the terminal. Defaults to the
+   * page origin; set when this inspector delegates to a remote data plane
+   * (see useComputersDataPlaneConfig).
+   */
+  baseUrl?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -102,6 +109,7 @@ export function ComputerTerminal({
       token,
       cols: term.cols,
       rows: term.rows,
+      ...(baseUrl ? { baseUrl } : {}),
       onOutput: (bytes) => {
         if (isStale()) return;
         term.write(bytes);
@@ -132,7 +140,7 @@ export function ComputerTerminal({
       if (isStale()) return;
       conn.ping();
     }, PING_INTERVAL_MS);
-  }, [mintToken, teardownConnection]);
+  }, [mintToken, teardownConnection, baseUrl]);
 
   // Create the xterm instance once; wire input + resize; auto-connect.
   useEffect(() => {

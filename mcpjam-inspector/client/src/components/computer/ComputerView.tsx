@@ -5,11 +5,13 @@ import { Button } from "@mcpjam/design-system/button";
 import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
+  useComputersDataPlaneConfig,
   useComputerStatus,
   useDeleteComputer,
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
+import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
 import {
   getBillingErrorMessage,
   isComputerStartLimitError,
@@ -43,6 +45,18 @@ export function ComputerView({
   const [starting, setStarting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Where the terminal lives: this server (local data plane), a deployed
+  // data plane (remote URL → cross-origin WS), or nowhere (honest empty
+  // state instead of a Ready badge next to a terminal that can't connect).
+  const dataPlane = useComputersDataPlaneConfig();
+  const remoteWsBase = dataPlane?.remoteDataPlaneUrl
+    ? toTerminalWsBase(dataPlane.remoteDataPlaneUrl)
+    : undefined;
+  const terminalBaseUrl =
+    dataPlane && !dataPlane.localConfigured ? remoteWsBase : undefined;
+  const dataPlaneUnavailable =
+    dataPlane !== undefined && !dataPlane.localConfigured && !remoteWsBase;
 
   const liveStatus = status === undefined ? undefined : status?.status ?? null;
   const isReady = liveStatus === "ready";
@@ -120,6 +134,19 @@ export function ComputerView({
   }
 
   const renderTerminalPane = () => {
+    if (dataPlaneUnavailable) {
+      return (
+        <PaneMessage dashed>
+          <span className="max-w-md text-center">
+            This inspector server isn't set up to run computers: it has no
+            data-plane credentials and no remote data plane to delegate to. Set{" "}
+            <code>COMPUTERS_REMOTE_DATA_PLANE_URL</code> (or the data-plane
+            secrets) in the server environment to enable the terminal and the
+            bash tool.
+          </span>
+        </PaneMessage>
+      );
+    }
     if (!terminalOpen) {
       return (
         <PaneMessage dashed>
@@ -133,6 +160,7 @@ export function ComputerView({
           mintToken={mintToken}
           themeMode={terminalTheme}
           className="h-full"
+          {...(terminalBaseUrl ? { baseUrl: terminalBaseUrl } : {})}
         />
       );
     }
@@ -203,7 +231,7 @@ export function ComputerView({
           <ComputerStatusChip status={liveStatus} />
         </div>
         <div className="flex items-center gap-2">
-          {!terminalOpen ? (
+          {!terminalOpen && !dataPlaneUnavailable ? (
             <Button
               size="sm"
               onClick={() => void openTerminal()}

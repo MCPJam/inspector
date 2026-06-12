@@ -40,6 +40,24 @@ export interface OpenTerminalOptions {
   wsFactory?: (url: string) => WebSocket;
 }
 
+/**
+ * Convert a data-plane HTTP(S) origin into the `ws(s)://host` base expected
+ * by `buildTerminalWsUrl`. Used when this inspector delegates to a remote
+ * data plane (see GET /api/web/computers/config); the terminal token in the
+ * query string is the auth, so a cross-origin socket needs nothing else.
+ */
+export function toTerminalWsBase(httpOrigin: string): string | undefined {
+  try {
+    const url = new URL(httpOrigin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin. */
 export function buildTerminalWsUrl(args: {
   token: string;

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildTerminalWsUrl,
   openTerminalConnection,
+  toTerminalWsBase,
   type TerminalEvent,
 } from "../computer-terminal-connection";
 
@@ -139,5 +140,27 @@ describe("openTerminalConnection", () => {
       ws.onmessage?.({ data: "not json {{{" } as MessageEvent)
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+describe("toTerminalWsBase", () => {
+  it("maps https to wss and http to ws, keeping host and port", () => {
+    expect(toTerminalWsBase("https://dp.example.test")).toBe(
+      "wss://dp.example.test"
+    );
+    expect(toTerminalWsBase("http://localhost:3500")).toBe(
+      "ws://localhost:3500"
+    );
+  });
+
+  it("drops any path — the WS route is fixed", () => {
+    expect(toTerminalWsBase("https://dp.example.test/some/path")).toBe(
+      "wss://dp.example.test"
+    );
+  });
+
+  it("returns undefined for invalid or non-http(s) inputs", () => {
+    expect(toTerminalWsBase("not a url")).toBeUndefined();
+    expect(toTerminalWsBase("ftp://dp.example.test")).toBeUndefined();
   });
 });
