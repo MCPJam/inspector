@@ -765,6 +765,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.queryByTestId("hosted-oauth-loading")
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
 
     await waitFor(() => {
