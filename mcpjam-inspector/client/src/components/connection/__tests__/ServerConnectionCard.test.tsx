@@ -33,7 +33,7 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
   }),
   closeServerTunnel: vi.fn().mockResolvedValue(undefined),
   rotateServerTunnel: vi.fn().mockResolvedValue({
-    url: "https://rotated.ngrok.app/api/mcp/adapter-http/test-server?k=newsecret",
+    url: "https://rotated0001.tunnels.mcpjam.com/api/mcp/adapter-http/test-server?k=newsecret",
     serverId: "test-server",
   }),
   getTunnelRequests: vi.fn().mockResolvedValue([]),
@@ -521,7 +521,7 @@ describe("ServerConnectionCard", () => {
         />
       );
 
-      expect(screen.getByText("Copy ngrok URL")).toBeInTheDocument();
+      expect(screen.getByText("Copy tunnel URL")).toBeInTheDocument();
     });
 
     it("does not show copy url tunnel pill when disconnected", () => {
@@ -534,13 +534,13 @@ describe("ServerConnectionCard", () => {
         />
       );
 
-      expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
+      expect(screen.queryByText("Copy tunnel URL")).not.toBeInTheDocument();
     });
   });
 
   describe("tunnel rotate", () => {
     const seedUrl =
-      "https://old.ngrok.app/api/mcp/adapter-http/test-server?k=old";
+      "https://old000000001.tunnels.mcpjam.com/api/mcp/adapter-http/test-server?k=old";
 
     it("calls rotate and surfaces success", async () => {
       const { rotateServerTunnel, getServerTunnel } = await import(
@@ -611,7 +611,7 @@ describe("ServerConnectionCard", () => {
       });
       // The stale, copyable URL is dropped — the create pill is shown instead.
       await waitFor(() => {
-        expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
+        expect(screen.queryByText("Copy tunnel URL")).not.toBeInTheDocument();
       });
     });
 
@@ -654,7 +654,8 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("tunnel recent-requests panel", () => {
-    const seedUrl = "https://t.ngrok.app/api/mcp/adapter-http/test-server?k=s";
+    const seedUrl =
+      "https://t00000000001.tunnels.mcpjam.com/api/mcp/adapter-http/test-server?k=s";
 
     it("polls and renders recent requests when opened", async () => {
       const { getServerTunnel, getTunnelRequests } = await import(

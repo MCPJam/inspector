@@ -363,7 +363,7 @@ export function ServerConnectionCard({
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
       if (errorMessage.includes("No access token available")) {
-        toast.error("Sign in to create ngrok tunnels");
+        toast.error("Sign in to create tunnels");
       } else {
         toast.error(`Tunnel creation failed: ${errorMessage}`);
       }
@@ -830,7 +830,7 @@ export function ServerConnectionCard({
                         ) : (
                           <>
                             <Cable className="h-3 w-3" />
-                            <span>Copy ngrok URL</span>
+                            <span>Copy tunnel URL</span>
                           </>
                         )}
                       </button>
@@ -889,7 +889,7 @@ export function ServerConnectionCard({
                       )}
                       <span>
                         {canManageTunnels
-                          ? "Create ngrok tunnel"
+                          ? "Create tunnel"
                           : "Sign in for tunnel"}
                       </span>
                     </button>

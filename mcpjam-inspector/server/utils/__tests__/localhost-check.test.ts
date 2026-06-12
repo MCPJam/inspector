@@ -183,7 +183,15 @@ describe("isLocalhostRequest", () => {
 });
 
 describe("isTunnelHost", () => {
-  it("matches ngrok-controlled suffixes regardless of subdomain", () => {
+  it("matches the relay suffix regardless of subdomain", () => {
+    expect(isTunnelHost("x7d9j2m1p9k3.tunnels.mcpjam.com")).toBe(true);
+    expect(isTunnelHost("x7d9j2m1p9k3.tunnels.mcpjam.com:443")).toBe(true);
+    // Suffix-anchored: lookalike hosts must not match.
+    expect(isTunnelHost("eviltunnels.mcpjam.com")).toBe(false);
+    expect(isTunnelHost("tunnels.mcpjam.com.evil.example")).toBe(false);
+  });
+
+  it("matches legacy ngrok suffixes regardless of subdomain (defense-in-depth)", () => {
     expect(isTunnelHost("x7d9j2m1p9k3.ngrok.app")).toBe(true);
     expect(isTunnelHost("foo.ngrok.dev")).toBe(true);
     expect(isTunnelHost("foo.ngrok-free.app")).toBe(true);
