@@ -4,7 +4,9 @@ export type NotificationType =
   | "project_added"
   | "project_removed"
   | "organization_added"
-  | "organization_removed";
+  | "organization_removed"
+  | "scheduled_eval_failed"
+  | "scheduled_eval_paused";
 
 export interface Notification {
   _id: string;

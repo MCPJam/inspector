@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { cn } from "@/lib/utils";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
+import { MonitoringTab } from "./monitoring-tab";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 
 interface RunTrendPoint {
@@ -23,7 +25,7 @@ interface ModelStat {
   total: number;
 }
 
-type SuiteDashboardTab = "runs" | "cases";
+type SuiteDashboardTab = "runs" | "cases" | "monitoring";
 
 export interface SuiteDashboardProps {
   suite: EvalSuite;
@@ -87,6 +89,14 @@ export function SuiteDashboard({
   const [activeTab, setActiveTab] = useState<SuiteDashboardTab>(
     hasRuns ? "runs" : "cases"
   );
+  // Monitoring tab: synthetic-monitors flag AND the suite actually has
+  // monitoring signal (a schedule or at least one widget probe case).
+  const syntheticMonitorsEnabled =
+    useFeatureFlagEnabled("synthetic-monitors") === true;
+  const showMonitoringTab =
+    syntheticMonitorsEnabled &&
+    (Boolean(suite.schedule) ||
+      cases.some((testCase) => testCase.caseType === "widget_probe"));
 
   const testCasesSection = (
     <TestCasesOverview
@@ -176,9 +186,16 @@ export function SuiteDashboard({
       >
         {renderTab("runs", "Runs", runs.length)}
         {renderTab("cases", "Cases", cases.length)}
+        {showMonitoringTab ? renderTab("monitoring", "Monitoring") : null}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        {activeTab === "runs" ? runsSection : testCasesSection}
+        {activeTab === "runs" ? (
+          runsSection
+        ) : activeTab === "monitoring" && showMonitoringTab ? (
+          <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
+        ) : (
+          testCasesSection
+        )}
       </div>
     </div>
   );

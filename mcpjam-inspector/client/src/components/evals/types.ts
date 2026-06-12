@@ -100,6 +100,13 @@ export type EvalSuite = {
   serverAttachmentId?: string;
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
+  /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
+  schedule?: {
+    intervalMinutes: number;
+    enabled: boolean;
+    state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
+    consecutiveFailures?: number;
+  };
 };
 
 export type EvalServerAttachment = {
@@ -145,6 +152,10 @@ export type EvalCase = {
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
    */
   judgeConfigOverride?: EvalJudgeConfigOverride;
+  /** Case kind; absent ⇒ prompt case. */
+  caseType?: import("@/shared/probe-config").TestCaseType;
+  /** Pinned tool call for widget_probe cases. */
+  probeConfig?: import("@/shared/probe-config").ProbeConfig;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
 };
