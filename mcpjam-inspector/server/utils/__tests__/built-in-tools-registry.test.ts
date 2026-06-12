@@ -1,16 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   resolveHostTools,
   narrowHostComputer,
 } from "../built-in-tools/registry";
 import { WEB_SEARCH_TOOL_NAME } from "../built-in-tools/exa-web-search";
 import { BASH_TOOL_NAME } from "../built-in-tools/bash";
+import { MCPJAM_TOOL_IDS, type McpjamLiveOps } from "../built-in-tools/mcpjam";
 
 const ctx = {
   authHeader: "Bearer token-123",
   projectId: "project-1",
   chatSessionId: "session-1",
 };
+
+function stubLiveOps(): McpjamLiveOps {
+  return {
+    diagnoseServer: vi.fn(async () => ({})),
+    listTools: vi.fn(async () => ({})),
+    callTool: vi.fn(async () => ({})),
+    listPrompts: vi.fn(async () => ({})),
+    getPrompt: vi.fn(async () => ({})),
+    listResources: vi.fn(async () => ({})),
+    readResource: vi.fn(async () => ({})),
+  };
+}
 
 const computer = { kind: "personal", workdir: "/srv" };
 
@@ -109,6 +122,77 @@ describe("resolveHostTools — computer-backed bash", () => {
       ctx
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+});
+
+describe("resolveHostTools — mcpjam workspace tools", () => {
+  it("resolves mcpjam_list_servers without a live-ops runner", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["mcpjam_list_servers"] },
+      ctx
+    );
+    expect(Object.keys(tools ?? {})).toEqual(["mcpjam_list_servers"]);
+    expect(typeof tools!["mcpjam_list_servers"].execute).toBe("function");
+  });
+
+  it("skips live-op ids without a runner, resolves them with one", () => {
+    const without = resolveHostTools(
+      { builtInToolIds: ["mcpjam_call_tool", "mcpjam_list_servers"] },
+      ctx
+    );
+    expect(Object.keys(without ?? {})).toEqual(["mcpjam_list_servers"]);
+
+    const withRunner = resolveHostTools(
+      { builtInToolIds: [...MCPJAM_TOOL_IDS] },
+      { ...ctx, mcpjamLiveOps: stubLiveOps() }
+    );
+    expect(Object.keys(withRunner ?? {}).sort()).toEqual(
+      [...MCPJAM_TOOL_IDS].sort()
+    );
+  });
+
+  it("does not advertise any mcpjam_* id to guest actors", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
+      { ...ctx, isGuest: true, mcpjamLiveOps: stubLiveOps() }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("does not advertise any mcpjam_* id in chatbox sessions", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
+      { ...ctx, isChatboxSession: true, mcpjamLiveOps: stubLiveOps() }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("requireToolApproval gates connection-opening ops but never list_servers", () => {
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [
+          "mcpjam_list_servers",
+          "mcpjam_call_tool",
+          "mcpjam_diagnose_server",
+        ],
+      },
+      { ...ctx, mcpjamLiveOps: stubLiveOps(), requireToolApproval: true }
+    );
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("mcpjam_call_tool")).toBe(true);
+    expect(approval("mcpjam_diagnose_server")).toBe(true);
+    expect(approval("mcpjam_list_servers")).toBeUndefined();
+  });
+
+  it("live ops do not require approval when the host policy is off", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["mcpjam_call_tool"] },
+      { ...ctx, mcpjamLiveOps: stubLiveOps() }
+    );
+    expect(
+      (tools!["mcpjam_call_tool"] as { needsApproval?: boolean }).needsApproval
+    ).toBe(false);
   });
 });
 
