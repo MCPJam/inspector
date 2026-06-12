@@ -626,6 +626,55 @@ describe("ServerConnectionCard", () => {
       });
     });
 
+    it("disables copying the URL while a rotation is in flight (old URL is already revoked)", async () => {
+      const { rotateServerTunnel, getServerTunnel } = await import(
+        "@/lib/apis/mcp-tunnels-api"
+      );
+      (getServerTunnel as Mock).mockResolvedValue({
+        url: seedUrl,
+        serverId: "test-server",
+      });
+      const rotatedUrl =
+        "https://old000000001.tunnels.mcpjam.com/api/mcp/adapter-http/test-server?k=new";
+      let resolveRotate:
+        | ((value: { url: string; serverId: string }) => void)
+        | undefined;
+      (rotateServerTunnel as Mock).mockImplementationOnce(
+        () =>
+          new Promise<{ url: string; serverId: string }>(
+            (resolve) => (resolveRotate = resolve)
+          )
+      );
+
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+          serverTunnelUrl={seedUrl}
+        />
+      );
+
+      const copyBtn = screen
+        .getByText("Copy tunnel URL")
+        .closest("button") as HTMLButtonElement;
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Rotate tunnel secret (revokes the current URL)",
+        })
+      );
+
+      // The backend revokes the old grant as soon as rotation starts, so the
+      // stale URL must not be copyable mid-rotate.
+      await waitFor(() => expect(copyBtn).toBeDisabled());
+      fireEvent.click(copyBtn);
+      expect(mockClipboard.writeText).not.toHaveBeenCalled();
+
+      resolveRotate?.({ url: rotatedUrl, serverId: "test-server" });
+      await waitFor(() => expect(copyBtn).not.toBeDisabled());
+      fireEvent.click(copyBtn);
+      expect(mockClipboard.writeText).toHaveBeenCalledWith(rotatedUrl);
+    });
+
     it("disables rotate while a close is in flight (mutually exclusive)", async () => {
       const { rotateServerTunnel, closeServerTunnel, getServerTunnel } =
         await import("@/lib/apis/mcp-tunnels-api");

@@ -873,7 +873,11 @@ export function ServerConnectionCard({
                       <button
                         data-server-card-context-menu-exempt
                         onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                        // Rotation revokes the displayed URL at the edge
+                        // before the new one arrives (close kills it too), so
+                        // mid-mutation the URL must not be copyable.
+                        disabled={isTunnelMutationInFlight}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                       >
                         {copiedField === "tunnel" ? (
                           <>
