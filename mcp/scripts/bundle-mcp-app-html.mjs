@@ -12,8 +12,8 @@ const OUTPUT_TS_PATH = join(
 );
 const APPS = [
   {
-    exportName: "SHOW_SERVERS_APP_HTML",
-    fileName: "src/ui/show-servers.html",
+    exportName: "MCPJAM_APP_HTML",
+    fileName: "src/ui/app.html",
   },
 ];
 
