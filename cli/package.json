@@ -19,10 +19,12 @@
   "dependencies": {
     "@mcpjam/sdk": "^1.16.0",
     "commander": "^12.1.0",
-    "posthog-node": "^5.24.10"
+    "posthog-node": "^5.24.10",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3"
