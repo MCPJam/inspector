@@ -48,6 +48,10 @@
     {
       "name": "Catalog",
       "description": "Discover the resources the other routes operate on: your account, projects, servers, eval suites, and chat sessions."
+    },
+    {
+      "name": "Tunnels",
+      "description": "Relay tunnels that expose local MCP servers through a public URL, registered as first-class project servers (the `mcpjam tunnel` CLI flow)."
     }
   ],
   "paths": {
@@ -918,6 +922,81 @@
             }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/tunnels": {
+      "post": {
+        "operationId": "createTunnel",
+        "tags": ["Tunnels"],
+        "summary": "Create (or revive) a relay tunnel for a named project server",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TunnelCreateRequest" },
+              "example": { "name": "everything" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tunnel grant minted and the server record updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TunnelGrant" },
+                "example": {
+                  "serverId": "srv_abc123",
+                  "name": "everything",
+                  "existed": false,
+                  "slug": "calm-otter",
+                  "url": "https://calm-otter.tunnels.mcpjam.com/api/mcp/adapter-http/srv_abc123?k=…",
+                  "connectToken": "ct_…",
+                  "connectTokenExpiresAt": 1767225600000,
+                  "relayWsUrl": "wss://tunnels.mcpjam.com/agent",
+                  "secretVersion": 3
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/tunnels/{serverId}/close": {
+      "post": {
+        "operationId": "closeTunnel",
+        "tags": ["Tunnels"],
+        "summary": "Revoke a tunnel's live grant",
+        "description": "Revokes the grant at the control plane and edge: the public URL stops working immediately and any live tunnel session is disconnected. The server record — including its now-dead `url` — is intentionally left untouched, so the next create revives the tunnel with the same slug.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grant revoked; the server record is unchanged.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TunnelClosed" },
+                "example": { "serverId": "srv_abc123", "status": "closed" }
+              }
+            }
+          },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -1989,6 +2068,82 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/Chatbox" }
           }
+        }
+      },
+      "TunnelCreateRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel: its `url` is overwritten and stdio records are converted to `transportType: \"http\"`."
+          }
+        }
+      },
+      "TunnelGrant": {
+        "type": "object",
+        "description": "Everything the caller needs to host the tunnel connection. **Treat the whole object as a credential**: `url` embeds the plaintext `?k=` bearer secret and `connectToken` authenticates the relay WebSocket.",
+        "required": [
+          "serverId",
+          "name",
+          "existed",
+          "slug",
+          "url",
+          "connectToken",
+          "relayWsUrl"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "The registered project server's ID."
+          },
+          "name": { "type": "string" },
+          "existed": {
+            "type": "boolean",
+            "description": "True when a server record with this name already existed (its config now points at the tunnel)."
+          },
+          "previousUrl": {
+            "type": "string",
+            "description": "The record's previous URL, present when it existed with a different one (it has been overwritten)."
+          },
+          "previousTransportType": {
+            "type": "string",
+            "description": "The record's previous transport, present when it existed (a `stdio` record has been converted to `http`)."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Stable public subdomain slug; survives re-creates for the same server."
+          },
+          "url": {
+            "type": "string",
+            "description": "Public tunnel URL including the `?k=` bearer secret. Also persisted on the server record's `url`."
+          },
+          "connectToken": {
+            "type": "string",
+            "description": "Bearer for the relay edge WebSocket handshake."
+          },
+          "connectTokenExpiresAt": {
+            "type": "number",
+            "description": "Epoch-ms expiry of `connectToken`."
+          },
+          "relayWsUrl": {
+            "type": "string",
+            "description": "Relay edge WebSocket endpoint to connect to."
+          },
+          "secretVersion": {
+            "type": "number",
+            "description": "Monotonic secret version; each create bumps it."
+          }
+        }
+      },
+      "TunnelClosed": {
+        "type": "object",
+        "required": ["serverId", "status"],
+        "properties": {
+          "serverId": { "type": "string" },
+          "status": { "type": "string", "enum": ["closed"] }
         }
       }
     },
