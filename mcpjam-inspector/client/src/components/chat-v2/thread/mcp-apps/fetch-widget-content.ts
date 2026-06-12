@@ -85,17 +85,32 @@ export interface FetchMcpAppsWidgetContentResponse {
   injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
 }
 
+// The docs server is synthetic (not in the Convex project registry) so
+// it can't go through the standard hosted-mode `buildServerRequest` path.
+// The agent route exposes its own companion endpoint that creates an
+// ephemeral connection to docs.mcpjam.com/mcp directly.
+const MCPJAM_DOCS_SERVER_ID = "mcpjam-docs";
+
 export async function fetchMcpAppsWidgetContent(
   request: FetchMcpAppsWidgetContentRequest,
 ): Promise<FetchMcpAppsWidgetContentResponse> {
   const useWebEndpoint = HOSTED_MODE || request.forceWebEndpoint === true;
-  const endpoint = useWebEndpoint
-    ? "/api/web/apps/mcp-apps/widget-content"
-    : "/api/apps/mcp-apps/widget-content";
+  const isDocsServer = request.serverId === MCPJAM_DOCS_SERVER_ID;
 
-  const payload = useWebEndpoint
-    ? { ...buildServerRequest(request.serverId) }
-    : { serverId: request.serverId };
+  // Docs-server widgets use the agent's companion endpoint — the general
+  // `/api/web/apps/mcp-apps/widget-content` path would call
+  // `buildServerRequest("mcpjam-docs")` → `resolveHostedServerId` → throw.
+  const endpoint =
+    useWebEndpoint && isDocsServer
+      ? "/api/web/mcpjam-agent/widget-content"
+      : useWebEndpoint
+        ? "/api/web/apps/mcp-apps/widget-content"
+        : "/api/apps/mcp-apps/widget-content";
+
+  const payload =
+    useWebEndpoint && !isDocsServer
+      ? { ...buildServerRequest(request.serverId) }
+      : { serverId: request.serverId };
 
   const response = await authFetch(endpoint, {
     method: "POST",
