@@ -15,6 +15,7 @@ vi.mock("../../../utils/web-chat-turn.js", () => ({ streamWebChatTurn }));
 const managerState = vi.hoisted(() => ({
   constructedConfigs: [] as Record<string, any>[],
   readResource: vi.fn(),
+  listTools: vi.fn(async (_serverId?: unknown) => ({ tools: [] })),
   disconnectAllServers: vi.fn(async () => {}),
 }));
 
@@ -26,7 +27,7 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => {
     }
     readResource = managerState.readResource;
     disconnectAllServers = managerState.disconnectAllServers;
-    listTools = vi.fn();
+    listTools = managerState.listTools;
   }
   return { ...actual, MCPClientManager: FakeMCPClientManager };
 });
@@ -103,6 +104,8 @@ function post(app: Hono, body: unknown, headers: Record<string, string> = {}) {
 beforeEach(() => {
   managerState.constructedConfigs.length = 0;
   managerState.readResource.mockReset();
+  managerState.listTools.mockReset();
+  managerState.listTools.mockResolvedValue({ tools: [] });
   managerState.disconnectAllServers.mockClear();
   streamWebChatTurn.mockClear();
 });
@@ -138,6 +141,40 @@ describe("POST /api/web/mcpjam-agent ambient project context", () => {
     expect(args.prepare.systemPrompt).toContain('project: "proj_ambient"');
     // The persisted prompt stays the user's own configuration.
     expect(args.persist.systemPrompt).toBe("Be terse.");
+  });
+
+  it("omits the workspace section when the platform server failed preflight", async () => {
+    managerState.listTools.mockImplementation(async (serverId: unknown) => {
+      if (serverId === MCPJAM_PLATFORM_SERVER_ID) {
+        throw new Error("issuer mismatch");
+      }
+      return { tools: [] };
+    });
+
+    const app = makeApp();
+    const response = await app.request("/api/web/mcpjam-agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "anthropic/claude-haiku-4.5" },
+        chatSessionId: "session_1",
+        projectId: "proj_ambient",
+        systemPrompt: "Be terse.",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const args = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+      prepare: { systemPrompt?: string; selectedServerIds: string[] };
+    };
+    // Degraded turn: no platform tools advertised, so no instructions
+    // about them either.
+    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
+    expect(args.prepare.systemPrompt).toBe("Be terse.");
   });
 });
 

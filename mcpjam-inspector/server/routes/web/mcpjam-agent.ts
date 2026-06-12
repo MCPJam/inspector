@@ -204,14 +204,20 @@ mcpjamAgent.post("/", async (c) => {
       // current project (the old built-in adapter defaulted blank `project`
       // to the chat's project for the same reason). The worker never sees
       // this route's body, so the bridge is the system prompt: tell the
-      // model what it's looking at and to pass the id explicitly.
-      const ambientContextPrompt = [
-        "## Workspace context",
-        `The user is currently working in the MCPJam project with id "${body.projectId}".`,
-        "When calling MCPJam platform tools that accept a `project` argument, " +
-          `always pass \`project: "${body.projectId}"\` unless the user ` +
-          "explicitly asks about a different project.",
-      ].join("\n");
+      // model what it's looking at and to pass the id explicitly. Appended
+      // only while the platform server survived preflight — instructions
+      // must not reference tools the degraded turn doesn't advertise.
+      const platformToolsAvailable =
+        selectedServerIds.includes(PLATFORM_SERVER_ID);
+      const ambientContextPrompt = platformToolsAvailable
+        ? [
+            "## Workspace context",
+            `The user is currently working in the MCPJam project with id "${body.projectId}".`,
+            "When calling MCPJam platform tools that accept a `project` argument, " +
+              `always pass \`project: "${body.projectId}"\` unless the user ` +
+              "explicitly asks about a different project.",
+          ].join("\n")
+        : undefined;
       const effectiveSystemPrompt = [body.systemPrompt, ambientContextPrompt]
         .filter((section): section is string => Boolean(section?.trim()))
         .join("\n\n");
