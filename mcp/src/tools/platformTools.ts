@@ -9,9 +9,12 @@
  * `show_servers` tool lives in `showServers.ts` and reuses the helpers here.
  */
 import {
+  callServerToolOperation,
+  diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
@@ -20,7 +23,11 @@ import {
   listEvalSuitesOperation,
   listProjectsOperation,
   listProjectServersOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  listServerToolsOperation,
   PlatformApiClient,
+  readServerResourceOperation,
   runEvalSuiteOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -40,6 +47,13 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 > = [
   listProjectsOperation,
   listProjectServersOperation,
+  diagnoseServerOperation,
+  listServerToolsOperation,
+  callServerToolOperation,
+  listServerPromptsOperation,
+  getServerPromptOperation,
+  listServerResourcesOperation,
+  readServerResourceOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
@@ -120,12 +134,19 @@ export function platformWidgetUi(
 export function operationAnnotations(
   operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
-  // Non-read operations (run_eval_suite) create resources but never destroy
-  // or overwrite them; without the explicit hint, MCP clients must assume
-  // destructive (the spec's default for non-read-only tools).
-  return operation.readOnly
-    ? { readOnlyHint: true }
-    : { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+  if (operation.readOnly) {
+    return { readOnlyHint: true };
+  }
+  // Operations whose effects are unknowable upstream (call_server_tool runs
+  // arbitrary third-party tools) omit destructive/idempotent hints on
+  // purpose: per spec, clients must then assume destructive — the honest
+  // claim.
+  if (operation.mayBeDestructive) {
+    return { readOnlyHint: false };
+  }
+  // Remaining non-read operations (run_eval_suite) create resources but
+  // never destroy or overwrite them.
+  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 
 export async function runPlatformOperation<TInput, TOutput extends object>(

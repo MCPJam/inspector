@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  callServerToolOperation,
+  diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getServerPromptOperation,
   listChatboxesOperation,
   listChatSessionsOperation,
   listEvalRunIterationsOperation,
@@ -10,8 +13,12 @@ import {
   listEvalSuitesOperation,
   listProjectServersOperation,
   listProjectsOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
+  readServerResourceOperation,
   runEvalSuiteOperation,
   showServersOperation,
   type PlatformOperation,
@@ -254,6 +261,50 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/doctor$/.test(path)) {
+      expect(init?.method).toBe("POST");
+      return Response.json({ status: "healthy", checks: [] });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools$/.test(path)) {
+      const requestBody = JSON.parse(String(init?.body)) as {
+        cursor?: string;
+      };
+      return Response.json({
+        items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
+        nextCursor: "tools-page-2",
+      });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/.test(path)) {
+      const requestBody = JSON.parse(String(init?.body)) as Record<
+        string,
+        unknown
+      >;
+      return Response.json({ content: [{ type: "text", text: "ok" }], requestBody });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/prompts$/.test(path)) {
+      return Response.json({ items: [{ name: "summarize" }] });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/.test(path)
+    ) {
+      const requestBody = JSON.parse(String(init?.body)) as Record<
+        string,
+        unknown
+      >;
+      return Response.json({ messages: [], requestBody });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/resources$/.test(path)) {
+      return Response.json({ items: [{ uri: "file:///a" }] });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/.test(path)
+    ) {
+      const requestBody = JSON.parse(String(init?.body)) as Record<
+        string,
+        unknown
+      >;
+      return Response.json({ contents: [], requestBody });
     }
     return Response.json(
       { code: "NOT_FOUND", message: `No route for ${path}` },
@@ -662,6 +713,22 @@ describe("operation catalog consistency", () => {
     { operation: listChatboxesOperation, minimalInput: {} },
     { operation: getChatboxOperation, minimalInput: { chatbox: "c" } },
     { operation: listChatSessionsOperation, minimalInput: {} },
+    { operation: diagnoseServerOperation, minimalInput: { server: "s" } },
+    { operation: listServerToolsOperation, minimalInput: { server: "s" } },
+    {
+      operation: callServerToolOperation,
+      minimalInput: { server: "s", toolName: "t" },
+    },
+    { operation: listServerPromptsOperation, minimalInput: { server: "s" } },
+    {
+      operation: getServerPromptOperation,
+      minimalInput: { server: "s", promptName: "p" },
+    },
+    { operation: listServerResourcesOperation, minimalInput: { server: "s" } },
+    {
+      operation: readServerResourceOperation,
+      minimalInput: { server: "s", uri: "u" },
+    },
   ];
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -679,9 +746,97 @@ describe("operation catalog consistency", () => {
     ).toBe(false);
   });
 
-  it("marks every operation read-only except run_eval_suite", () => {
+  it("marks every operation read-only except run_eval_suite and call_server_tool", () => {
+    const writes = new Set(["run_eval_suite", "call_server_tool"]);
     for (const { operation } of ALL_OPERATIONS) {
-      expect(operation.readOnly).toBe(operation.name !== "run_eval_suite");
+      expect(operation.readOnly).toBe(!writes.has(operation.name));
     }
+  });
+
+  it("flags only call_server_tool as may-be-destructive", () => {
+    for (const { operation } of ALL_OPERATIONS) {
+      expect(operation.mayBeDestructive === true).toBe(
+        operation.name === "call_server_tool"
+      );
+    }
+  });
+});
+
+describe("server live operations", () => {
+  it("diagnose_server resolves the server by name and posts the doctor op", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await diagnoseServerOperation.execute(
+      { project: "new", server: "echo" },
+      { client }
+    );
+
+    expect(result.server).toEqual({ id: "server-http", name: "Echo" });
+    expect(result.report).toEqual({ status: "healthy", checks: [] });
+    expect(callsTo(fetchMock, "/doctor")[0]!.pathname).toBe(
+      "/api/v1/projects/project-new/servers/server-http/doctor"
+    );
+  });
+
+  it("rejects stdio servers deterministically before any live call", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await expect(
+      diagnoseServerOperation.execute(
+        { project: "new", server: "Docs" },
+        { client }
+      )
+    ).rejects.toThrow(/stdio servers are not supported/);
+    expect(callsTo(fetchMock, "/doctor")).toHaveLength(0);
+  });
+
+  it("list_server_tools forwards the cursor and surfaces nextCursor", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "page-2" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "page-2" }]);
+    expect(result.nextCursor).toBe("tools-page-2");
+  });
+
+  it("call_server_tool defaults parameters and posts the call body", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await callServerToolOperation.execute(
+      { project: "new", server: "Echo", toolName: "echo" },
+      { client }
+    );
+
+    expect(result.result.requestBody).toEqual({
+      toolName: "echo",
+      parameters: {},
+    });
+  });
+
+  it("get_server_prompt and read_server_resource post their payloads", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const prompt = await getServerPromptOperation.execute(
+      {
+        project: "new",
+        server: "Echo",
+        promptName: "summarize",
+        arguments: { style: "brief" },
+      },
+      { client }
+    );
+    expect(prompt.result.requestBody).toEqual({
+      promptName: "summarize",
+      arguments: { style: "brief" },
+    });
+
+    const resource = await readServerResourceOperation.execute(
+      { project: "new", server: "Echo", uri: "file:///a" },
+      { client }
+    );
+    expect(resource.result.requestBody).toEqual({ uri: "file:///a" });
   });
 });

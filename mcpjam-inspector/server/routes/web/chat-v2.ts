@@ -28,6 +28,7 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -229,7 +230,9 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
+        isChatboxSession,
         requireToolApproval,
+        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
       }
     );
 

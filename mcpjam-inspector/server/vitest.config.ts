@@ -22,6 +22,7 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
 
 export default defineConfig({
   define: {
@@ -60,6 +61,7 @@ export default defineConfig({
           "@mcpjam/sdk/matchers",
           "@mcpjam/sdk/predicates",
           "@mcpjam/sdk/host-config/internal",
+          "@mcpjam/sdk/platform",
         ],
       },
     },
@@ -89,6 +91,7 @@ export default defineConfig({
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,
       },
+      { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
   },

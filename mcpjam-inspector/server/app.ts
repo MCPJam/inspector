@@ -46,6 +46,7 @@ import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -398,6 +399,10 @@ export function createHonoApp() {
       });
     });
   }
+
+  // In-process self-dispatch for the workspace built-in tools' platform
+  // client (see utils/self-app.ts) — their /api/v1 calls skip the network.
+  registerSelfFetch((request) => app.fetch(request));
 
   return app;
 }

@@ -20,6 +20,7 @@ import type {
   PlatformChatbox,
   PlatformChatboxDetail,
   PlatformChatSession,
+  PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
@@ -44,6 +45,14 @@ export interface PlatformOperation<TInput, TOutput> {
    * their own affordances (MCP `readOnlyHint`, CLI confirmation prompts).
    */
   readOnly: boolean;
+  /**
+   * True when a non-read operation's effects are unknowable upstream of the
+   * call (call_server_tool runs arbitrary third-party tools). Surfaces must
+   * not soften the destructive default for these — MCP clients assume
+   * destructive when the hint is absent, and that absence is the honest
+   * claim here.
+   */
+  mayBeDestructive?: boolean;
   inputSchema: z.ZodType<TInput>;
   execute(input: TInput, context: PlatformOperationContext): Promise<TOutput>;
 }
@@ -255,6 +264,387 @@ function toOtherProjects(
     .filter((candidate) => candidate.id !== selectedId)
     .map((candidate) => ({ id: candidate.id, name: candidate.name }));
 }
+
+// ── Server live operations ───────────────────────────────────────────
+// Live MCP ops against one saved server: the platform authorizes the caller,
+// opens an ephemeral connection, runs the op, and disconnects. The server is
+// matched by name or ID within the project, like suites and chatboxes.
+
+const SERVER_SELECTOR_DESCRIPTION =
+  "Server name or ID, as saved in the project.";
+
+const serverScopedInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  server: z.string().trim().min(1).describe(SERVER_SELECTOR_DESCRIPTION),
+});
+
+export type ServerScopedInput = z.infer<typeof serverScopedInput>;
+
+export type ResolvedServerInfo = { id: string; name: string };
+
+/**
+ * Resolve a server selector and require it to be hosted-operable: live ops
+ * connect from the hosted runtime, which can never spawn stdio servers.
+ * Failing here is deterministic and names the reason, instead of a
+ * downstream connect error.
+ */
+async function resolveLiveServer(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformProjectServer> {
+  const page = await client.listProjectServers(
+    { projectId: project.id },
+    { signal }
+  );
+  const server = resolveByIdOrName(
+    page.items,
+    selector,
+    "Server",
+    `project "${project.name}"`
+  );
+  if (server.transportType === "stdio" || !server.url) {
+    throw resolutionError(
+      `Server "${selector.trim()}" can't run hosted operations: ${
+        server.transportType === "stdio"
+          ? "stdio servers are not supported on the hosted platform"
+          : "it has no URL"
+      }.`
+    );
+  }
+  return server;
+}
+
+function toServerInfo(server: PlatformProjectServer): ResolvedServerInfo {
+  return { id: server.id, name: server.name };
+}
+
+export type DiagnoseServerResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  report: PlatformDoctorReport;
+};
+
+export const diagnoseServerOperation: PlatformOperation<
+  ServerScopedInput,
+  DiagnoseServerResult
+> = {
+  name: "diagnose_server",
+  title: "Diagnose MCPJam server",
+  description:
+    "Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. Use when a server is erroring, won't connect, or to check its health.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const report = await client.doctorServer(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      report,
+    };
+  },
+};
+
+const PAGE_CURSOR_DESCRIPTION =
+  "Opaque pagination cursor from a previous response.";
+
+const serverPagedInput = serverScopedInput.extend({
+  cursor: z.string().min(1).optional().describe(PAGE_CURSOR_DESCRIPTION),
+});
+
+export type ServerPagedInput = z.infer<typeof serverPagedInput>;
+
+export type ServerPagedResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  items: Array<Record<string, unknown>>;
+  nextCursor?: string;
+};
+
+/** Shared body for the three paged listings (tools/prompts/resources). */
+async function runServerListing(
+  input: ServerPagedInput,
+  context: PlatformOperationContext,
+  list: (
+    scope: { projectId: string; serverId: string },
+    body: Record<string, unknown>
+  ) => Promise<PlatformPage<Record<string, unknown>>>
+): Promise<ServerPagedResult> {
+  const { client, signal } = context;
+  const { project } = await resolveProjectOrThrow(
+    client,
+    input.project,
+    signal
+  );
+  const server = await resolveLiveServer(client, project, input.server, signal);
+  const page = await list(
+    { projectId: project.id, serverId: server.id },
+    input.cursor ? { cursor: input.cursor } : {}
+  );
+  return {
+    project: toSelectedProjectInfo(project),
+    server: toServerInfo(server),
+    items: page.items,
+    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+  };
+}
+
+export const listServerToolsOperation: PlatformOperation<
+  ServerPagedInput,
+  ServerPagedResult
+> = {
+  name: "list_server_tools",
+  title: "List MCPJam server tools",
+  description:
+    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Use before call_server_tool to find the tool name and required parameters. Paginated — pass nextCursor back as cursor for the next page.",
+  readOnly: true,
+  inputSchema: serverPagedInput,
+  async execute(input, context) {
+    return runServerListing(input, context, (scope, body) =>
+      context.client.listServerTools(
+        { ...scope, body },
+        { signal: context.signal }
+      )
+    );
+  },
+};
+
+export const listServerPromptsOperation: PlatformOperation<
+  ServerPagedInput,
+  ServerPagedResult
+> = {
+  name: "list_server_prompts",
+  title: "List MCPJam server prompts",
+  description:
+    "List the prompts a saved MCP server exposes: names, descriptions, and arguments. Use before get_server_prompt to find the prompt name and its arguments. Paginated — pass nextCursor back as cursor for the next page.",
+  readOnly: true,
+  inputSchema: serverPagedInput,
+  async execute(input, context) {
+    return runServerListing(input, context, (scope, body) =>
+      context.client.listServerPrompts(
+        { ...scope, body },
+        { signal: context.signal }
+      )
+    );
+  },
+};
+
+export const listServerResourcesOperation: PlatformOperation<
+  ServerPagedInput,
+  ServerPagedResult
+> = {
+  name: "list_server_resources",
+  title: "List MCPJam server resources",
+  description:
+    "List the resources a saved MCP server exposes: uris, names, and mime types. Use before read_server_resource to find the resource uri. Paginated — pass nextCursor back as cursor for the next page.",
+  readOnly: true,
+  inputSchema: serverPagedInput,
+  async execute(input, context) {
+    return runServerListing(input, context, (scope, body) =>
+      context.client.listServerResources(
+        { ...scope, body },
+        { signal: context.signal }
+      )
+    );
+  },
+};
+
+const callServerToolInput = serverScopedInput.extend({
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Exact tool name to execute, as returned by list_server_tools."),
+  parameters: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Tool arguments matching the tool's input schema."),
+});
+
+export type CallServerToolInput = z.infer<typeof callServerToolInput>;
+
+export type CallServerToolResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const callServerToolOperation: PlatformOperation<
+  CallServerToolInput,
+  CallServerToolResult
+> = {
+  name: "call_server_tool",
+  title: "Call MCPJam server tool",
+  description:
+    "Execute a tool on a saved MCP server and return its result. Runs with the caller's own authorization and may have side effects on the server. Get the tool name and parameter schema from list_server_tools first.",
+  readOnly: false,
+  mayBeDestructive: true,
+  inputSchema: callServerToolInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.callServerTool(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          toolName: input.toolName,
+          parameters: input.parameters ?? {},
+        },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const getServerPromptInput = serverScopedInput.extend({
+  promptName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Exact prompt name, as returned by list_server_prompts."),
+  arguments: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+    .optional()
+    .describe("Prompt arguments, if the prompt declares any."),
+});
+
+export type GetServerPromptInput = z.infer<typeof getServerPromptInput>;
+
+export type GetServerPromptResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const getServerPromptOperation: PlatformOperation<
+  GetServerPromptInput,
+  GetServerPromptResult
+> = {
+  name: "get_server_prompt",
+  title: "Get MCPJam server prompt",
+  description:
+    "Render a prompt from a saved MCP server with the given arguments and return its messages. Get the prompt name and argument list from list_server_prompts first.",
+  readOnly: true,
+  inputSchema: getServerPromptInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.getServerPrompt(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          promptName: input.promptName,
+          ...(input.arguments ? { arguments: input.arguments } : {}),
+        },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const readServerResourceInput = serverScopedInput.extend({
+  uri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Exact resource uri, as returned by list_server_resources."),
+});
+
+export type ReadServerResourceInput = z.infer<typeof readServerResourceInput>;
+
+export type ReadServerResourceResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const readServerResourceOperation: PlatformOperation<
+  ReadServerResourceInput,
+  ReadServerResourceResult
+> = {
+  name: "read_server_resource",
+  title: "Read MCPJam server resource",
+  description:
+    "Read one resource from a saved MCP server by uri and return its contents. Get the uri from list_server_resources first.",
+  readOnly: true,
+  inputSchema: readServerResourceInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.readServerResource(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: { uri: input.uri },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
 
 // ── Eval operations ──────────────────────────────────────────────────
 

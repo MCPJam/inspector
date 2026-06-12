@@ -19,10 +19,20 @@
  * Per-tool gates (all inside this module, by design):
  *   - web_search: requires Convex auth ctx (bills MCPJam credits server-side;
  *     guests are rejected by the Convex route at execute time).
- *   - bash: requires Convex auth ctx AND `computer` AND a non-guest actor
- *     (advertise-time gate: guests never even see the tool; Convex re-rejects
- *     them at reserve time as defense in depth). Inherits the host's
+ *   - bash: requires Convex auth ctx AND `computer`. Guests included — the
+ *     backend accepts guest bearers on /computers/reserve and contains cost
+ *     via the guest daily start cap + idle-delete sweep. Inherits the host's
  *     `requireToolApproval` via ctx.
+ *   - workspace tools (list_project_servers, diagnose_server,
+ *     list/call_server_tool(s), prompts, resources — the shared platform
+ *     operation catalog, see built-in-tools/mcpjam.ts): require
+ *     ctx.mcpjamPlatformClient, the route-injected PlatformApiClient bound
+ *     to the caller's bearer; engines that don't pass it never advertise
+ *     them. Skipped for guest actors AND chatbox sessions — mirrors the
+ *     /api/v1 boundary ("Guests cannot access /api/v1"): the workspace
+ *     surface is for project members, and the operations authorize via
+ *     project membership, not chatbox tokens. Connection-opening ops
+ *     inherit `requireToolApproval` like bash does.
  *
  * Deliberately thin: this module merges tool sets, it does not absorb
  * per-surface policy. The eval engines simply never pass `computer` (a
@@ -30,12 +40,14 @@
  * there is no isEval flag here and there must never be one.
  */
 import type { ToolSet } from "ai";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
 } from "./exa-web-search.js";
 import { buildBashTool, BASH_TOOL_NAME } from "./bash.js";
+import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 
 export interface BuiltInToolContext {
   /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
@@ -52,8 +64,23 @@ export interface BuiltInToolContext {
    * non-guest actors (eval runners, sessionSimulation).
    */
   isGuest?: boolean;
+  /**
+   * True when this turn runs under a chatbox / share-link token rather than
+   * project membership. Workspace tools (`mcpjam_*`) are not advertised in
+   * those sessions: the surface is for project members, and the live-op
+   * pipeline authorizes via membership — a non-member visitor's calls would
+   * all fail closed at Convex anyway.
+   */
+  isChatboxSession?: boolean;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
+  /**
+   * Platform API client for the MCPJam workspace tools, bound to the
+   * caller's bearer (in the web chat it self-dispatches into this server's
+   * own /api/v1). Absent on engines that don't wire it — those advertise no
+   * workspace tools.
+   */
+  mcpjamPlatformClient?: PlatformApiClient;
 }
 
 /** The host-config fields this resolver consumes. */
@@ -153,6 +180,35 @@ export function resolveHostTools(
         workdir: computer.workdir,
         requireToolApproval: ctx.requireToolApproval,
       });
+      continue;
+    }
+    if (isMcpjamToolId(id)) {
+      if (ctx.isGuest || ctx.isChatboxSession) {
+        logger.debug(
+          "[built-in-tools] workspace tools not advertised to guest/chatbox actors; skipping",
+          { id }
+        );
+        continue;
+      }
+      if (!ctx.mcpjamPlatformClient) {
+        logger.debug(
+          "[built-in-tools] workspace tool id without a platform client; skipping",
+          { id }
+        );
+        continue;
+      }
+      const built = buildMcpjamTool(id, {
+        client: ctx.mcpjamPlatformClient,
+        projectId: ctx.projectId,
+        requireToolApproval: ctx.requireToolApproval,
+      });
+      if (!built) {
+        logger.warn("[built-in-tools] unknown workspace tool id; skipping", {
+          id,
+        });
+        continue;
+      }
+      out[id] = built;
       continue;
     }
     logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
