@@ -15,7 +15,7 @@
  * `runner.dispatch.test.ts`, which mocks `resolveSyntheticModelSource`
  * itself.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -272,12 +272,25 @@ describe("matchOrgProviderForModelId", () => {
   });
 });
 
-describe("resolveHostModelDefinition (non-fetch paths)", () => {
-  // The org-config fetch path can't be unit-tested here: it calls
-  // resolveOrgModelConfig in the SAME module, so a vitest module mock
-  // can't intercept it (same-module calls bypass mocks). The matching
-  // logic itself is covered by matchOrgProviderForModelId above; these
-  // pin the paths that must never fetch on a live chat turn.
+describe("resolveHostModelDefinition", () => {
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const originalInspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+
+  afterEach(() => {
+    if (originalConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    }
+
+    if (originalInspectorServiceToken === undefined) {
+      delete process.env.INSPECTOR_SERVICE_TOKEN;
+    } else {
+      process.env.INSPECTOR_SERVICE_TOKEN = originalInspectorServiceToken;
+    }
+
+    vi.unstubAllGlobals();
+  });
 
   it("returns the catalog definition without needing a projectId", async () => {
     const result = await resolveHostModelDefinition({
@@ -315,5 +328,42 @@ describe("resolveHostModelDefinition (non-fetch paths)", () => {
     // Without org config there is no way to know this is an OpenRouter
     // selection — the native-vendor guess is the documented fallback.
     expect(result.provider).toBe("anthropic");
+  });
+
+  it("prefers org-config OpenRouter matches over catalog hits for ambiguous ids", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          providers: [
+            {
+              providerKey: "openrouter",
+              selectedModels: ["anthropic/claude-haiku-4.5"],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await resolveHostModelDefinition({
+      modelId: "anthropic/claude-haiku-4.5",
+      projectId: "project-openrouter-catalog-overlap",
+      auth: { authHeader: "Bearer user-token" },
+    });
+
+    expect(result).toEqual({
+      id: "anthropic/claude-haiku-4.5",
+      name: "anthropic/claude-haiku-4.5",
+      provider: "openrouter",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

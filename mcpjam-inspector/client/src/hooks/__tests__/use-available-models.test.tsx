@@ -148,6 +148,23 @@ describe("useAvailableModels", () => {
     expect(projectQuery?.args).toEqual({ projectId: "convex-project-2" });
   });
 
+  it("keeps an explicit Convex/shared project id even before appState has the project row", () => {
+    // Run rows can arrive with a Convex project id before that project is
+    // present in appState.projects. The hook should still issue the
+    // project-scoped org config query with the id it was given.
+    renderHook(() =>
+      useAvailableModels({ projectId: "convex-project-not-loaded" }),
+    );
+    const projectQuery = queryCalls.find(
+      (c) =>
+        c.name === "organizationModelProviders:getVisibleConfigForProject" &&
+        c.args !== "skip",
+    );
+    expect(projectQuery?.args).toEqual({
+      projectId: "convex-project-not-loaded",
+    });
+  });
+
   it("appends locally-detected tool-capable Ollama models to the org list", async () => {
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: true,

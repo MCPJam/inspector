@@ -36,7 +36,8 @@ export function useAvailableModels(options?: {
   const scopedProjectId =
     options?.projectId ?? appState.activeProjectId ?? null;
   const scopedProject = findProjectByAnyId(appState.projects, scopedProjectId);
-  const convexProjectId = scopedProject?.sharedProjectId ?? null;
+  const convexProjectId =
+    scopedProject?.sharedProjectId ?? options?.projectId ?? null;
   const organizationId = scopedProject?.organizationId ?? null;
 
   const { isAuthenticated } = useConvexAuth();

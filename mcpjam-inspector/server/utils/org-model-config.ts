@@ -10,6 +10,7 @@ import {
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -230,9 +231,11 @@ export async function resolveOrgModelConfig(
           try {
             await assertSafeHostedOutboundUrl(provider.baseUrl);
           } catch (error) {
-            console.warn(
-              "[org-model-config] Dropping bedrock provider with blocked baseUrl:",
-              error instanceof Error ? error.message : String(error),
+            logger.warn(
+              "[org-model-config] Dropping bedrock provider with blocked baseUrl",
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
             );
             continue;
           }
@@ -944,12 +947,12 @@ export function matchOrgProviderForModelId(
 
 /**
  * Lift a host-pinned bare modelId to a `ModelDefinition`, preferring the
- * org's provider config over id-shape inference. A non-catalog id like
- * `vendor/model` is intrinsically ambiguous — org OpenRouter selected
+ * org's provider config over catalog and id-shape inference. A
+ * `vendor/model` id is intrinsically ambiguous — org OpenRouter selected
  * models keep their vendor-prefixed ids but belong to providerKey
- * "openrouter", while `buildSyntheticModelDefinition` would infer the
- * native vendor from the prefix. When an enabled provider explicitly
- * lists the id, that provider wins; shape inference is the fallback.
+ * "openrouter", while catalog/shape resolution would infer the native
+ * vendor from the prefix. When an enabled provider explicitly lists the
+ * id, that provider wins; catalog/shape inference is the fallback.
  *
  * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
  * shape is exact, and this path sits on a live chat turn.
@@ -961,9 +964,6 @@ export async function resolveHostModelDefinition(args: {
 }): Promise<ModelDefinition> {
   const { modelId, projectId, auth } = args;
 
-  const catalogHit = getModelById(modelId);
-  if (catalogHit) return catalogHit;
-
   const shapeIsExact =
     modelId.startsWith("custom:") || isBedrockModelId(modelId);
   if (!shapeIsExact && projectId) {
@@ -971,11 +971,22 @@ export async function resolveHostModelDefinition(args: {
       const config = await resolveOrgModelConfig({ projectId }, auth);
       const fromConfig = matchOrgProviderForModelId(config, modelId);
       if (fromConfig) return fromConfig;
-    } catch {
+    } catch (error) {
       // Org config unavailable — fall through to shape inference, the
       // same best-effort behavior the synthetic runner has always had.
+      logger.warn(
+        "[org-model-config] Host model org config lookup failed; falling back to catalog/id-shape inference",
+        {
+          modelId,
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
     }
   }
+
+  const catalogHit = getModelById(modelId);
+  if (catalogHit) return catalogHit;
 
   return buildSyntheticModelDefinition(modelId);
 }
