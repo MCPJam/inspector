@@ -161,6 +161,27 @@ describe("ComputerView", () => {
     );
   });
 
+  it("holds the terminal mount until the data-plane config resolves", () => {
+    mockDataPlane = undefined; // /config still in flight
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByTestId, getByTestId, rerender } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Open terminal"));
+    // Mounting now would dial the page origin and never re-dial once the
+    // remote base URL arrives — show a spinner instead.
+    expect(queryByTestId("terminal-stub")).toBeNull();
+
+    mockDataPlane = {
+      localConfigured: false,
+      remoteDataPlaneUrl: "https://dp.example.test",
+    };
+    rerender(<ComputerView projectId="p1" isAuthenticated />);
+    expect(getByTestId("terminal-stub").getAttribute("data-base-url")).toBe(
+      "wss://dp.example.test"
+    );
+  });
+
   it("keeps the terminal on the page origin when locally configured", () => {
     mockDataPlane = {
       localConfigured: true,

@@ -116,12 +116,16 @@ export function useComputersDataPlaneConfig():
     void fetch("/api/web/computers/config")
       .then((response) => (response.ok ? response.json() : null))
       .then((json: unknown) => {
-        const parsed = parseDataPlaneConfig(json) ?? {
-          localConfigured: true,
-          remoteDataPlaneUrl: null,
-        };
-        cachedDataPlaneConfig = parsed;
-        if (!cancelled) setConfig(parsed);
+        // Only cache real answers. The assume-local fallback below is
+        // per-mount, so a transient /config failure can't pin the wrong
+        // data plane for the rest of the SPA session.
+        const parsed = parseDataPlaneConfig(json);
+        if (parsed) cachedDataPlaneConfig = parsed;
+        if (!cancelled) {
+          setConfig(
+            parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
+          );
+        }
       })
       .catch(() => {
         if (!cancelled) {

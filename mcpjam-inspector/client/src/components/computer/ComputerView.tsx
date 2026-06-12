@@ -154,6 +154,20 @@ export function ComputerView({
         </PaneMessage>
       );
     }
+    // Don't mount the terminal until we know WHERE it lives: mounting while
+    // the config fetch is in flight would aim the first WebSocket at the page
+    // origin, and the mount-once effect never re-dials when the remote base
+    // URL arrives a moment later.
+    if (isReady && dataPlane === undefined) {
+      return (
+        <PaneMessage>
+          <span className="inline-flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Connecting to your computer…
+          </span>
+        </PaneMessage>
+      );
+    }
     if (isReady) {
       return (
         <ComputerTerminal
