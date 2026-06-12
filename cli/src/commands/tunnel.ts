@@ -1,6 +1,5 @@
 import type { Command } from "commander";
 import {
-  closeTunnelOperation,
   createTunnelOperation,
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
@@ -194,12 +193,18 @@ export function registerTunnelCommands(program: Command): void {
               { client, signal },
             ),
           closeGrant: async (result, signal) => {
-            await closeTunnelOperation.execute(
+            // Deliberately NOT the close_tunnel operation: it re-resolves
+            // the project via listProjects first, which would add a second
+            // round-trip inside the 5s revocation grace window and an
+            // independent failure mode (a listing hiccup skipping a close
+            // that would have succeeded). The create result already holds
+            // the resolved project id — revoke with it directly.
+            await client.closeTunnel(
               {
-                project: result.project.id,
+                projectId: result.project.id,
                 serverId: result.grant.serverId,
               },
-              { client, signal },
+              { signal },
             );
           },
           startBridge: (serverId) =>
