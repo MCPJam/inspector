@@ -52,6 +52,7 @@ import {
 import {
   buildIterationTranscript,
   evaluatePredicates,
+  summarizeRenderObservations,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
@@ -1398,6 +1399,9 @@ const runIterationWithAiSdk = async ({
             usage: hasReportedUsage(accumulatedUsage)
               ? accumulatedUsage
               : undefined,
+            renderObservations: summarizeRenderObservations(
+              browser.widgetRenderObservations,
+            ),
           }),
           test.successPredicates
         )
@@ -2017,6 +2021,9 @@ const runIterationViaBackendWithBrowser = async (
           usage: hasReportedUsage(accumulatedUsage)
             ? accumulatedUsage
             : undefined,
+          renderObservations: summarizeRenderObservations(
+            browser.widgetRenderObservations,
+          ),
         }),
         test.successPredicates
       )
@@ -3258,6 +3265,9 @@ const streamIterationWithAiSdk = async ({
             usage: hasReportedUsage(accumulatedUsage)
               ? accumulatedUsage
               : undefined,
+            renderObservations: summarizeRenderObservations(
+              browser.widgetRenderObservations,
+            ),
           }),
           test.successPredicates
         )
@@ -4126,6 +4136,9 @@ const streamIterationViaBackendWithBrowser = async (
           usage: hasReportedUsage(accumulatedUsage)
             ? accumulatedUsage
             : undefined,
+          renderObservations: summarizeRenderObservations(
+            browser.widgetRenderObservations,
+          ),
         }),
         test.successPredicates
       )

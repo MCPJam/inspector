@@ -121,6 +121,34 @@
     {
       "label": "tokenBudgetUnder — large budget",
       "value": { "type": "tokenBudgetUnder", "tokens": 100000 }
+    },
+    {
+      "label": "widgetRendered — minimal (no toolName filter)",
+      "value": { "type": "widgetRendered" }
+    },
+    {
+      "label": "widgetRendered — with toolName filter",
+      "value": { "type": "widgetRendered", "toolName": "show_map" }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — minimal",
+      "value": { "type": "widgetRenderLatencyUnder", "ms": 3000 }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — with toolName filter",
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 1500,
+        "toolName": "show_map"
+      }
+    },
+    {
+      "label": "widgetNoConsoleErrors — minimal (no toolName filter)",
+      "value": { "type": "widgetNoConsoleErrors" }
+    },
+    {
+      "label": "widgetNoConsoleErrors — with toolName filter",
+      "value": { "type": "widgetNoConsoleErrors", "toolName": "show_map" }
     }
   ],
   "reject": [
@@ -230,6 +258,30 @@
     {
       "label": "tokenBudgetUnder — tokens missing",
       "value": { "type": "tokenBudgetUnder" }
+    },
+    {
+      "label": "widgetRendered — empty toolName",
+      "value": { "type": "widgetRendered", "toolName": "" }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — ms missing",
+      "value": { "type": "widgetRenderLatencyUnder" }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — zero ms (must be positive)",
+      "value": { "type": "widgetRenderLatencyUnder", "ms": 0 }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — negative ms",
+      "value": { "type": "widgetRenderLatencyUnder", "ms": -100 }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — fractional ms",
+      "value": { "type": "widgetRenderLatencyUnder", "ms": 250.5 }
+    },
+    {
+      "label": "widgetNoConsoleErrors — empty toolName",
+      "value": { "type": "widgetNoConsoleErrors", "toolName": "" }
     }
   ]
 }
