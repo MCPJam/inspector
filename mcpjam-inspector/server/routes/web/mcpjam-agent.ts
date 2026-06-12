@@ -162,24 +162,34 @@ mcpjamAgent.post("/", async (c) => {
     );
 
     try {
-      // Preflight the platform connection: `getToolsForAiSdk` (inside
+      // Preflight both servers in parallel: `getToolsForAiSdk` (inside
       // `prepareChatV2`) fails the WHOLE turn when any selected server
-      // errors at connect/list time, so a worker outage or an issuer
-      // mismatch (local dev) would otherwise take down the entire agent —
-      // docs chat included. Connect + list here and drop the platform
-      // server from the selection on failure; the connection and tool
-      // metadata are cached on the manager, so the later prepare doesn't
-      // repeat the round trip.
-      const selectedServerIds = [DOCS_SERVER_ID, PLATFORM_SERVER_ID];
-      try {
-        await manager.listTools(PLATFORM_SERVER_ID);
-      } catch (error) {
-        selectedServerIds.pop();
+      // errors at connect/list time, so either server's outage (or the
+      // platform worker rejecting local dev's untrusted issuer) would
+      // otherwise take down the entire agent. Select only the servers that
+      // responded; connections and tool metadata are cached on the manager,
+      // so the later prepare doesn't repeat the round trips. With both
+      // down, the turn still runs on web_search + the bare model.
+      const mcp = manager;
+      const candidateServerIds = [DOCS_SERVER_ID, PLATFORM_SERVER_ID];
+      const preflights = await Promise.allSettled(
+        candidateServerIds.map((serverId) => mcp.listTools(serverId))
+      );
+      const selectedServerIds = candidateServerIds.filter((serverId, i) => {
+        const result = preflights[i]!;
+        if (result.status === "fulfilled") return true;
         logger.warn(
-          "[mcpjam-agent] platform MCP server unavailable; continuing without workspace tools",
-          { error: error instanceof Error ? error.message : String(error) }
+          "[mcpjam-agent] MCP server unavailable; continuing without it",
+          {
+            serverId,
+            error:
+              result.reason instanceof Error
+                ? result.reason.message
+                : String(result.reason),
+          }
         );
-      }
+        return false;
+      });
 
       // Bearer is guaranteed by assertBearerToken above; thread it (plus the
       // project + session) into the web_search built-in tool, whose execute
