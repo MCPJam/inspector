@@ -207,3 +207,36 @@ export interface PlatformChatboxDetail extends PlatformChatbox {
  * per server.
  */
 export type PlatformDoctorReport = ServerDoctorResult<unknown>;
+
+/**
+ * Response of `POST /projects/{p}/tunnels` — the relay grant the caller
+ * hosts the tunnel WebSocket with, plus the registered server record's
+ * identity. The `url` embeds the plaintext `?k=` bearer secret (also
+ * persisted on the server record so evals/chatboxes can target it); treat
+ * the whole grant as a credential. Re-creating rotates the secret and
+ * revokes the previous grant.
+ */
+export interface PlatformTunnelGrant {
+  serverId: string;
+  name?: string;
+  /** True when a server record with this name already existed. */
+  existed?: boolean;
+  /** Previous URL, present when the existing record's URL was replaced. */
+  previousUrl?: string;
+  /** Previous transport, present when the record existed (e.g. "stdio"). */
+  previousTransportType?: string;
+  slug: string;
+  /** Public tunnel URL with the `?k=` bearer secret. */
+  url: string;
+  /** Bearer for the relay edge WebSocket handshake. */
+  connectToken: string;
+  connectTokenExpiresAt?: number;
+  relayWsUrl: string;
+  secretVersion?: number;
+}
+
+/** Response of `POST /projects/{p}/tunnels/{serverId}/close`. */
+export interface PlatformTunnelClosed {
+  serverId: string;
+  status: string;
+}

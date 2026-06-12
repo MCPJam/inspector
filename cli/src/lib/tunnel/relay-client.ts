@@ -2,26 +2,27 @@
  * Relay client: one outbound WebSocket per tunneled server, speaking
  * `mcpjam-tunnel.v1` to the MCPJam tunnel edge. The edge sends `req`
  * control frames + binary body chunks; this client replays them against
- * the local inspector server and streams the response back frame-by-frame
+ * the local bridge server and streams the response back frame-by-frame
  * (SSE chunks flow as they happen — nothing is buffered).
  *
  * HAND-MIRRORED CONTRACT: frame shapes, limits, and close codes mirror
  * `tunnel-edge/src/protocol.ts` in the mcpjam-backend repo (the source of
- * truth). A third copy lives at `cli/src/lib/tunnel/relay-client.ts` in
- * this repo (the CLI's tunnel host). Change them only together (and only
- * by bumping the subprotocol).
+ * truth) and `mcpjam-inspector/server/services/relay-client.ts` in this
+ * repo (the hosted inspector's copy this CLI port tracks). This file is the
+ * third hand-mirrored copy. Change them only together (and only by bumping
+ * the subprotocol). The only intended divergence here is the injected
+ * logger (the CLI has no app logger) and the local request port default.
  *
  * Reconnect policy:
  *  - network drops → backoff 1s→30s with jitter;
  *  - 1012 (edge restarting) → reconnect immediately;
  *  - 4000 (bad/expired token), 4002 (revoked by control plane) → PERMANENT;
- *  - 4001 (replaced) → PERMANENT by design: another inspector took the
+ *  - 4001 (replaced) → PERMANENT by design: another session took the
  *    slug; auto-reconnecting would steal it back and flap forever.
  */
 
 import http from "node:http";
 import { WebSocket } from "ws";
-import { logger } from "../utils/logger";
 
 export const RELAY_SUBPROTOCOL = "mcpjam-tunnel.v1";
 
@@ -74,20 +75,20 @@ const BIN_RES_CHUNK = 0x02;
 function encodeBinaryFrame(
   kind: number,
   id: number,
-  payload: Uint8Array
+  payload: Uint8Array,
 ): Buffer {
   const buf = Buffer.allocUnsafe(5 + payload.byteLength);
   buf.writeUInt8(kind, 0);
   buf.writeUInt32BE(id >>> 0, 1);
   Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).copy(
     buf,
-    5
+    5,
   );
   return buf;
 }
 
 function decodeBinaryFrame(
-  data: Buffer
+  data: Buffer,
 ): { kind: number; id: number; payload: Buffer } | null {
   if (data.byteLength < 5) return null;
   return {
@@ -97,16 +98,22 @@ function decodeBinaryFrame(
   };
 }
 
+export interface RelayLogger {
+  info(message: string): void;
+  warn(message: string): void;
+}
+
 export interface RelayConnectionOptions {
   serverId: string;
   slug: string;
   /** wss://agent.tunnels.mcpjam.com/agent (from the backend grant). */
   relayWsUrl: string;
   connectToken: string;
-  /** Local inspector server base, e.g. http://localhost:6274 */
+  /** Local bridge server base, e.g. http://127.0.0.1:51234 */
   localAddr: string;
   /** Public host injected by the edge; used for logging only here. */
   publicHost: string;
+  logger?: RelayLogger;
   onPermanentFailure?: (reason: string, closeCode: number) => void;
 }
 
@@ -114,6 +121,8 @@ interface LocalRequest {
   req: http.ClientRequest;
   resumePoll: NodeJS.Timeout | null;
 }
+
+const NOOP_LOGGER: RelayLogger = { info: () => {}, warn: () => {} };
 
 export class RelayConnection {
   private ws: WebSocket | null = null;
@@ -124,8 +133,11 @@ export class RelayConnection {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private closedByUs = false;
   private permanent: string | null = null;
+  private readonly logger: RelayLogger;
 
-  constructor(private readonly options: RelayConnectionOptions) {}
+  constructor(private readonly options: RelayConnectionOptions) {
+    this.logger = options.logger ?? NOOP_LOGGER;
+  }
 
   /** Resolves on the first successful hello; rejects on permanent failure. */
   connect(): Promise<void> {
@@ -152,7 +164,7 @@ export class RelayConnection {
             clearTimeout(timeout);
             reject(new Error(reason));
           }
-        }
+        },
       );
     });
   }
@@ -167,7 +179,7 @@ export class RelayConnection {
 
   private dial(
     onHello?: () => void,
-    onPermanent?: (reason: string) => void
+    onPermanent?: (reason: string) => void,
   ): void {
     if (this.closedByUs || this.permanent) return;
     const ws = new WebSocket(this.options.relayWsUrl, RELAY_SUBPROTOCOL, {
@@ -188,8 +200,8 @@ export class RelayConnection {
       }
       if (frame.t === "hello") {
         this.reconnectDelayMs = RECONNECT_MIN_MS;
-        logger.info(
-          `✓ Tunnel relay connected (${this.options.serverId}): ${this.options.publicHost}`
+        this.logger.info(
+          `Tunnel relay connected (${this.options.serverId}): ${this.options.publicHost}`,
         );
         onHello?.();
         return;
@@ -216,12 +228,12 @@ export class RelayConnection {
       ) {
         const why =
           code === CLOSE_REPLACED
-            ? "Tunnel taken over by another inspector instance — recreate the tunnel here to take it back"
+            ? "Tunnel taken over by another session — re-run `mcpjam tunnel` to take it back"
             : code === CLOSE_CONTROL_PLANE
-            ? "Tunnel was closed or its secret rotated elsewhere — recreate the tunnel"
-            : "Tunnel session expired — recreate the tunnel";
+              ? "Tunnel was closed or its secret rotated elsewhere — re-run `mcpjam tunnel` to recreate it"
+              : "Tunnel session expired — recreate the tunnel";
         this.permanent = why;
-        logger.warn(`Tunnel relay closed permanently (${code}): ${reason}`);
+        this.logger.warn(`Tunnel relay closed permanently (${code}): ${reason}`);
         onPermanent?.(why);
         this.options.onPermanentFailure?.(why, code);
         return;
@@ -232,10 +244,10 @@ export class RelayConnection {
           : Math.floor(this.reconnectDelayMs * (0.5 + Math.random() * 0.5));
       this.reconnectDelayMs = Math.min(
         this.reconnectDelayMs * 2,
-        RECONNECT_MAX_MS
+        RECONNECT_MAX_MS,
       );
-      logger.warn(
-        `Tunnel relay disconnected (${code}); reconnecting in ${delay}ms`
+      this.logger.warn(
+        `Tunnel relay disconnected (${code}); reconnecting in ${delay}ms`,
       );
       // Never let reconnect timers stack: a stale pending timer would dial a
       // second overlapping socket on the same grant (which the edge would
@@ -249,7 +261,7 @@ export class RelayConnection {
       // no-ops, so post-connect reconnects are unaffected.
       this.reconnectTimer = setTimeout(
         () => this.dial(onHello, onPermanent),
-        delay
+        delay,
       );
     });
   }
@@ -267,7 +279,7 @@ export class RelayConnection {
     this.ws = null;
   }
 
-  // ── Edge frames → local server ────────────────────────────────────────────
+  // ── Edge frames → local bridge ─────────────────────────────────────────────
 
   private handleControl(frame: ControlFrame): void {
     if (frame.t === "req") {
@@ -304,8 +316,8 @@ export class RelayConnection {
       host: base.hostname,
       port: base.port || 80,
       method: frame.method,
-      // Forwarded verbatim by the edge (?k= included): the adapter reads
-      // the bearer secret off this URL for its SSE `endpoint` event.
+      // Forwarded verbatim by the edge (?k= included): the bridge owns
+      // stripping the bearer secret before it reaches the local target.
       path: frame.url,
       headers,
     });
@@ -336,8 +348,8 @@ export class RelayConnection {
             encodeBinaryFrame(
               BIN_RES_CHUNK,
               frame.id,
-              chunk.subarray(off, off + CHUNK_BYTES)
-            )
+              chunk.subarray(off, off + CHUNK_BYTES),
+            ),
           );
         }
         // Backpressure: stop reading the local response while the socket's
