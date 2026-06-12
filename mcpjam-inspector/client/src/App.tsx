@@ -2245,7 +2245,11 @@ export default function App() {
         navigateApp(resolved.path);
         await waitForUiCommit();
 
-        return { activeTab: pathnameToActiveTab(resolved.path) };
+        // Report the tab the shell actually landed on, not the requested
+        // one — the gating effects below (feature flags, hosted policy)
+        // can redirect immediately after the navigation commits, and the
+        // caller (SSE bus / WebMCP UI tools) plans its next step from this.
+        return { activeTab: pathnameToActiveTab(window.location.pathname) };
       }
     );
 
