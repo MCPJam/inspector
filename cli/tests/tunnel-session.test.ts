@@ -30,13 +30,23 @@ class StubConnection implements RelayConnectionLike {
   closed = false;
   constructor(
     readonly onPermanentFailure: (reason: string, closeCode: number) => void,
-    private readonly behavior: { failOnConnect?: string } = {},
+    private readonly behavior: {
+      failOnConnect?: string;
+      // Simulates a permanent close racing the handshake: the callback
+      // fires mid-dial but connect() still resolves and permanentFailure
+      // stays unset — only the session's stash can catch it.
+      fireHandlerOnConnect?: { reason: string; closeCode: number };
+    } = {},
   ) {}
 
   async connect(): Promise<void> {
     if (this.behavior.failOnConnect) {
       this.permanentFailure = this.behavior.failOnConnect;
       throw new Error(this.behavior.failOnConnect);
+    }
+    if (this.behavior.fireHandlerOnConnect) {
+      const { reason, closeCode } = this.behavior.fireHandlerOnConnect;
+      this.onPermanentFailure(reason, closeCode);
     }
   }
 
@@ -59,7 +69,10 @@ type Harness = {
 
 function makeHarness(
   overrides: Partial<TunnelSessionDeps> & {
-    connectionBehavior?: { failOnConnect?: string };
+    connectionBehavior?: {
+      failOnConnect?: string;
+      fireHandlerOnConnect?: { reason: string; closeCode: number };
+    };
   } = {},
 ): Harness {
   const connections: StubConnection[] = [];
@@ -160,6 +173,9 @@ test("start applies the handshake-race guard: a permanent close between hello an
   );
   assert.equal(harness.bridge.closed, true);
   assert.equal(harness.connections[0]!.closed, true);
+  // The minted grant's secret must not stay live for a session that never
+  // came up.
+  assert.equal(harness.closeGrantCalls.length, 1);
 });
 
 test("close 4000 remints: new grant, new connection, rotated onGrant, session stays up", async () => {
@@ -265,6 +281,74 @@ test("stop still exits 0 when grant revocation fails, and says so", async () => 
 
   const result = await harness.session.waitUntilClosed();
   assert.equal(result.exitCode, 0);
+  assert.ok(
+    harness.logs.some((line) => line.includes("Could not revoke")),
+    `expected a revoke warning in: ${JSON.stringify(harness.logs)}`,
+  );
+});
+
+test("a permanent close that races the handshake fails startup instead of reporting a dead tunnel", async () => {
+  // The callback fires mid-dial without permanentFailure being set: only
+  // the stashed-event path can catch this one.
+  const harness = makeHarness({
+    connectionBehavior: {
+      fireHandlerOnConnect: { reason: "revoked mid-handshake", closeCode: 4002 },
+    },
+  });
+
+  await assert.rejects(() => harness.session.start(), /revoked mid-handshake/);
+  assert.equal(harness.grants.length, 0);
+  assert.equal(harness.bridge.closed, true);
+  assert.equal(harness.connections[0]!.closed, true);
+});
+
+test("a second 4000 during an in-flight remint does not start a parallel rotation", async () => {
+  let resolveSecondGrant: ((result: CreateTunnelResult) => void) | undefined;
+  let calls = 0;
+  const harness = makeHarness({
+    createGrant: () => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(makeGrantResult(1));
+      return new Promise<CreateTunnelResult>((resolve) => {
+        resolveSecondGrant = resolve;
+      });
+    },
+  });
+  await harness.session.start();
+
+  harness.firePermanent("expired", 4000);
+  await waitFor(() => calls === 2);
+  // The remint is parked on createGrant; a second 4000 must be dropped,
+  // not rotate a competing grant.
+  harness.firePermanent("expired", 4000);
+  resolveSecondGrant!(makeGrantResult(2));
+  await waitFor(() => harness.grants.length === 2);
+
+  assert.equal(calls, 2);
+  assert.equal(harness.grants[1]!.rotated, true);
+  assert.equal(await settledWithin(harness.session), null);
+  await harness.session.stop();
+});
+
+test("stop aborts a hung grant revocation after the grace period and still exits 0", async () => {
+  let observedAbort = false;
+  const harness = makeHarness({
+    closeGrantTimeoutMs: 25,
+    closeGrant: (_result, signal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          observedAbort = true;
+          reject(new Error("aborted"));
+        });
+      }),
+  });
+  await harness.session.start();
+
+  await harness.session.stop();
+
+  const result = await harness.session.waitUntilClosed();
+  assert.equal(result.exitCode, 0);
+  await waitFor(() => observedAbort);
   assert.ok(
     harness.logs.some((line) => line.includes("Could not revoke")),
     `expected a revoke warning in: ${JSON.stringify(harness.logs)}`,

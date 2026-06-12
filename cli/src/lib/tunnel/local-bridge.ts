@@ -192,18 +192,26 @@ export async function handleFacadeJsonRpc(
   const method = body?.method;
   const params = body?.params ?? {};
 
-  // Missing method and notifications/* are notifications — no response
-  // envelope. notifications/initialized lands here right after initialize;
-  // forwarding it as a request would hang every TS-SDK client.
-  if (!method || method.startsWith("notifications/")) {
-    return null;
-  }
-
   const respond = (payload: Record<string, unknown>) => ({
     jsonrpc: "2.0",
     id,
     ...payload,
   });
+
+  // A missing/non-string method is not a notification — it's an invalid
+  // envelope, and a caller waiting on its id would hang on a silent 202.
+  if (typeof method !== "string" || method.length === 0) {
+    return respond({
+      error: { code: -32600, message: "Invalid Request" },
+    });
+  }
+
+  // notifications/* get no response envelope (the HTTP layer answers 202).
+  // notifications/initialized lands here right after initialize; forwarding
+  // it as a request would hang every TS-SDK client.
+  if (method.startsWith("notifications/")) {
+    return null;
+  }
   const respondError = (error: unknown) =>
     respond({
       error: {

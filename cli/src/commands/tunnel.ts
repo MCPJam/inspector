@@ -193,13 +193,13 @@ export function registerTunnelCommands(program: Command): void {
               { project: options.project, name: options.id },
               { client },
             ),
-          closeGrant: async (result) => {
+          closeGrant: async (result, signal) => {
             await closeTunnelOperation.execute(
               {
                 project: result.project.id,
                 serverId: result.grant.serverId,
               },
-              { client },
+              { client, signal },
             );
           },
           startBridge: (serverId) =>

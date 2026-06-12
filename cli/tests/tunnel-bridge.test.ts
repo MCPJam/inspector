@@ -99,6 +99,7 @@ test("http target: rewrites the prefix, strips only k, and streams the body thro
     });
   } finally {
     server.close();
+    await once(server, "close");
   }
 });
 
@@ -120,6 +121,7 @@ test("http target: subpaths append to the target path", async () => {
     });
   } finally {
     server.close();
+    await once(server, "close");
   }
 });
 
@@ -140,6 +142,7 @@ test("http target: foreign paths get 404 without touching the upstream", async (
     });
   } finally {
     server.close();
+    await once(server, "close");
   }
 });
 
@@ -195,6 +198,7 @@ test("http target: SSE responses stream without buffering", async () => {
     });
   } finally {
     server.close();
+    await once(server, "close");
   }
 });
 
@@ -354,6 +358,14 @@ test("stdio facade: GET/DELETE are 405, batches are 400, foreign paths 404", asy
       { jsonrpc: "2.0", id: 1, method: "ping" },
     ]);
     assert.equal(batch.status, 400);
+
+    // A request without a method is invalid (-32600), not a silent 202 the
+    // caller would hang on.
+    const malformed = await postJson(bridge, { jsonrpc: "2.0", id: 9 });
+    assert.equal(malformed.status, 200);
+    const malformedBody = (await malformed.json()) as any;
+    assert.equal(malformedBody.id, 9);
+    assert.equal(malformedBody.error.code, -32600);
 
     const foreign = await fetch(`${bridge.localAddr}/nope`, { method: "POST" });
     assert.equal(foreign.status, 404);
