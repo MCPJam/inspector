@@ -22,6 +22,7 @@ import evals from "./evals.js";
 import evalIngest from "./eval-ingest.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import tunnels from "./tunnels.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -55,6 +56,7 @@ v1.route("/", evals);
 v1.route("/", evalIngest);
 v1.route("/", oauth);
 v1.route("/", catalog);
+v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));
 

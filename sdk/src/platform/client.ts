@@ -12,6 +12,8 @@ import type {
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
+  PlatformTunnelClosed,
+  PlatformTunnelGrant,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -316,6 +318,43 @@ export class PlatformApiClient {
     options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "resources/read", options);
+  }
+
+  /**
+   * `POST /projects/{p}/tunnels` — register (or revive) a relay tunnel for a
+   * named project server and return the grant the caller hosts the tunnel
+   * WebSocket with. Each call rotates the tunnel secret and revokes any
+   * previous grant, so this is also the rotation path.
+   */
+  createTunnel(
+    params: { projectId: string; name: string },
+    options?: RequestOptions
+  ): Promise<PlatformTunnelGrant> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/tunnels`,
+      { body: { name: params.name } },
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/tunnels/{s}/close` — revoke the live tunnel grant.
+   * The server record (and its slug) is kept so the tunnel revives on the
+   * next `createTunnel`.
+   */
+  closeTunnel(
+    params: { projectId: string; serverId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTunnelClosed> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/tunnels/${encodeURIComponent(params.serverId)}/close`,
+      {},
+      options
+    );
   }
 
   private serverOp<T>(
