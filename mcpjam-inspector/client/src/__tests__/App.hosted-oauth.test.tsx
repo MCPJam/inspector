@@ -301,6 +301,9 @@ vi.mock("../lib/guest-session", () => ({
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
+vi.mock("../components/HomeTab", () => ({
+  HomeTab: () => <div data-testid="home-tab" />,
+}));
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
 }));
@@ -311,9 +314,6 @@ vi.mock("../components/HostsTab", () => ({
   HostsTab: ({ serversTabElement }: { serversTabElement?: ReactNode }) => (
     <div data-testid="hosts-tab">{serversTabElement}</div>
   ),
-}));
-vi.mock("../components/HomeTab", () => ({
-  HomeTab: () => <div data-testid="home-tab">Home Tab</div>,
 }));
 vi.mock("../components/ToolsTab", () => ({
   ToolsTab: () => <div />,
@@ -2673,7 +2673,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects conformance to the hub when the feature flag is disabled", async () => {
+  it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/conformance");
@@ -2688,7 +2688,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("redirects xaa-flow to the hub when the xaa flag is disabled", async () => {
+  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");

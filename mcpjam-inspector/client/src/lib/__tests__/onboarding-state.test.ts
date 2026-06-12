@@ -121,6 +121,19 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "", false, true)).toBe(false);
     });
 
+    it("local completed state beats a remote false (fresh guest session)", () => {
+      // Guest Convex sessions start with hasSeenOnboarding: false on a new
+      // user row. That must not override a locally-completed state from a
+      // previous session or NUX completion.
+      writeOnboardingState({ status: "completed", completedAt: Date.now() });
+      expect(isFirstRunEligible(false, "", false, false)).toBe(false);
+    });
+
+    it("local dismissed state beats a remote false (fresh guest session)", () => {
+      writeOnboardingState({ status: "dismissed" });
+      expect(isFirstRunEligible(false, "", false, false)).toBe(false);
+    });
+
     it("returns false when onboarding was completed", () => {
       writeOnboardingState({ status: "completed", completedAt: Date.now() });
       expect(isFirstRunEligible(false, "")).toBe(false);
