@@ -1187,26 +1187,18 @@ export function ServersRedirectRoute() {
 }
 
 export function HomeRoute() {
-  const {
-    activeOrganizationId,
-    activeProjectId,
-    activeProject,
-    isHomeContextResolving,
-  } = useAppRouteContext();
+  const { activeProjectId, homeOrganizationId, isHomeContextResolving } =
+    useAppRouteContext();
   const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
   if (!homeEnabled) return <ServersRoute />;
   return (
     <HomeTab
-      // `/home` carries no org segment, so `activeOrganizationId` (set only
-      // from the route) is undefined here. Fall back to the active project's
-      // org — mirroring how billing resolves its org context above — so a
-      // signed-in user with an org-linked project sees their home, not the
-      // empty "Join or create an organization" state.
-      organizationId={
-        activeOrganizationId ?? activeProject?.organizationId ?? null
-      }
+      // Membership-validated org for `/home` (the route carries none, so it is
+      // derived from the active project and checked against the org list — see
+      // App). Null → the welcome "Get started" state.
+      organizationId={homeOrganizationId ?? null}
       projectId={activeProjectId ?? null}
-      isContextLoading={Boolean(isHomeContextResolving)}
+      isContextLoading={isHomeContextResolving}
     />
   );
 }
@@ -3022,12 +3014,27 @@ export default function App() {
         isLoadingOrganizations ||
         isLoadingRemoteProjects));
 
+  // Org shown on `/home`. Falls back to the active project's org (the route
+  // carries none) and then validates membership against the loaded org list —
+  // the same gate billing applies to `rawBillingOrganizationId` above — so a
+  // stale project pointing at an org the user no longer belongs to resolves to
+  // null (→ welcome CTA) instead of firing org-scoped queries that would throw.
+  const rawHomeOrganizationId =
+    activeOrganizationId ?? activeProject?.organizationId ?? null;
+  const homeOrganizationId =
+    !isLoadingOrganizations &&
+    rawHomeOrganizationId &&
+    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+      ? rawHomeOrganizationId
+      : null;
+
   const routeContext: AppRouteContext = {
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
     activeProject,
     isHomeContextResolving,
+    homeOrganizationId,
     activeProjectBillingOrganizationId,
     activeProjectId,
     activeTabBillingFeature,

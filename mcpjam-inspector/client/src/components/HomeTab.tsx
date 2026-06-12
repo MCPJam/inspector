@@ -1,4 +1,10 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -119,6 +125,14 @@ function clearPendingForSession(sessionId: string | null | undefined) {
   }
 }
 
+// Escape hatch: the loading signals feeding `isContextLoading` (notably the db
+// user bootstrap) can stick true indefinitely if a bootstrap mutation fails and
+// never retries. Without a cap, that strands the user on a permanent skeleton
+// instead of the actionable "Get started" CTA. After this long still resolving,
+// fall through to the empty state — a brief skeleton on a genuinely slow load is
+// the acceptable cost. Auth/orgs/projects normally settle in well under a second.
+const HOME_CONTEXT_LOADING_TIMEOUT_MS = 8000;
+
 export function HomeTab({
   organizationId,
   projectId,
@@ -129,6 +143,21 @@ export function HomeTab({
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionParam = searchParams.get("session");
   const composeParam = searchParams.get("compose") === "1";
+
+  // Re-arms whenever loading restarts; only fires while still loading.
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+  useEffect(() => {
+    if (!isContextLoading) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setLoadingTimedOut(true),
+      HOME_CONTEXT_LOADING_TIMEOUT_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [isContextLoading]);
+  const showContextSkeleton = isContextLoading && !loadingTimedOut;
 
   const handleSessionStart = useCallback(
     (id: string, firstMessage: string) => {
@@ -281,7 +310,7 @@ export function HomeTab({
   const greeting = useMemo(() => getGreeting(new Date()), []);
 
   if (!organizationId) {
-    if (isContextLoading) {
+    if (showContextSkeleton) {
       return <HomeContextSkeleton />;
     }
     return (
