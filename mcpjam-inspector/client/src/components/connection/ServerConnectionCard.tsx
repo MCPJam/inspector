@@ -251,6 +251,64 @@ export function ServerConnectionCard({
     };
   }, [getAccessToken, server.name, showTunnelRequests, tunnelUrl]);
 
+  // Revalidate the displayed URL while a tunnel is shown: the relay can end
+  // a tunnel server-side (grant superseded by another inspector, secret
+  // rotated elsewhere, expired token), after which the local server 404s for
+  // it — stop advertising a URL that no longer works. Skipped when the
+  // parent owns the URL via the serverTunnelUrl prop, and while a local
+  // create/rotate/close is in flight (mid-rotation the server briefly has
+  // no entry; polling then would clear a healthy tunnel).
+  useEffect(() => {
+    if (
+      !tunnelUrl ||
+      !showTunnelActions ||
+      serverTunnelUrl !== undefined ||
+      isCreatingTunnel ||
+      isClosingTunnel ||
+      isRotatingTunnel
+    ) {
+      return;
+    }
+    let isCancelled = false;
+
+    const revalidate = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const existingTunnel = await getServerTunnel(server.name, accessToken);
+        if (!isCancelled && existingTunnel === null) {
+          setTunnelUrl(null);
+          setShowTunnelRequests(false);
+          toast.warning(
+            `Tunnel for ${server.name} ended — create it again if you still need it`
+          );
+        }
+      } catch {
+        // Transient (network/auth) — keep the last known state; only an
+        // explicit "no tunnel" answer clears the URL.
+      }
+    };
+
+    // Run once up front: the tunnel can already be dead when the effect
+    // starts (a permanent relay close can race creation, and the create
+    // route answers with the grant URL by design) — don't advertise it for
+    // a full interval before the first check.
+    void revalidate();
+    const intervalId = setInterval(revalidate, 5000);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    getAccessToken,
+    isClosingTunnel,
+    isCreatingTunnel,
+    isRotatingTunnel,
+    server.name,
+    serverTunnelUrl,
+    showTunnelActions,
+    tunnelUrl,
+  ]);
+
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -363,7 +421,7 @@ export function ServerConnectionCard({
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
       if (errorMessage.includes("No access token available")) {
-        toast.error("Sign in to create ngrok tunnels");
+        toast.error("Sign in to create tunnels");
       } else {
         toast.error(`Tunnel creation failed: ${errorMessage}`);
       }
@@ -820,7 +878,11 @@ export function ServerConnectionCard({
                       <button
                         data-server-card-context-menu-exempt
                         onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                        // Rotation revokes the displayed URL at the edge
+                        // before the new one arrives (close kills it too), so
+                        // mid-mutation the URL must not be copyable.
+                        disabled={isTunnelMutationInFlight}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                       >
                         {copiedField === "tunnel" ? (
                           <>
@@ -830,7 +892,7 @@ export function ServerConnectionCard({
                         ) : (
                           <>
                             <Cable className="h-3 w-3" />
-                            <span>Copy ngrok URL</span>
+                            <span>Copy tunnel URL</span>
                           </>
                         )}
                       </button>
@@ -889,7 +951,7 @@ export function ServerConnectionCard({
                       )}
                       <span>
                         {canManageTunnels
-                          ? "Create ngrok tunnel"
+                          ? "Create tunnel"
                           : "Sign in for tunnel"}
                       </span>
                     </button>

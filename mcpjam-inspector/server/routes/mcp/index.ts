@@ -87,7 +87,7 @@ mcp.route("/models", models);
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);
 
-// Tunnel management endpoints - create ngrok tunnels for servers
+// Tunnel management endpoints - create relay tunnels for servers
 mcp.route("/tunnels", tunnelsRoute);
 
 // Logging level endpoint - configure per-server logging verbosity

@@ -103,7 +103,7 @@ function forwardedTunnelHost(c: any): string | undefined {
 }
 
 /**
- * Per-server isolation guard (defense-in-depth behind the ngrok Traffic
+ * Per-server isolation guard (defense-in-depth behind the relay edge
  * Policy path rule): a request that arrived through a per-server tunnel may
  * only address the serverId that tunnel was provisioned for.
  */
@@ -210,7 +210,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         endpointBase = `${origin}/api/mcp/${routePrefix}/${serverId}/messages`;
       }
       // Propagate the tunnel bearer secret into the advertised endpoint:
-      // SSE clients POST to this URL verbatim, and without ?k= the ngrok
+      // SSE clients POST to this URL verbatim, and without ?k= the relay
       // edge policy would 401 their messages.
       const incomingSecret = incomingUrl.searchParams.get("k");
       if (incomingSecret && !/[?&]k=/.test(endpointBase)) {
