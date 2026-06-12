@@ -28,17 +28,18 @@ export function formatDurationMs(
   if (ms < 1000) {
     return `${Math.round(ms)}ms`;
   }
-  if (ms < 60_000) {
+
+  // Derive every unit from one rounded total so a subordinate unit can never
+  // display as 60 (e.g. "59m 60s" or "2h 60m").
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
     return `${(ms / 1000).toFixed(1)}s`;
   }
-  if (ms < 3_600_000) {
-    const minutes = Math.floor(ms / 60_000);
-    const seconds = Math.round((ms % 60_000) / 1000);
-    return `${minutes}m ${seconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m ${totalSeconds % 60}s`;
   }
-  const hours = Math.floor(ms / 3_600_000);
-  const minutes = Math.round((ms % 3_600_000) / 60_000);
-  return `${hours}h ${minutes}m`;
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 }
 
 /**
