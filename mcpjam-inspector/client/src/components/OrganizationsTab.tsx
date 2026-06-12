@@ -80,7 +80,6 @@ import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrent
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
 import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -457,12 +456,10 @@ function OrganizationPage({
     "billing-entitlements-ui"
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const creditsUiEnabled = useCreditTopupsUiEnabled();
-  const billingSectionEnabled = billingUiEnabled || creditsUiEnabled;
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
-      : billingSectionEnabled && section === "billing"
+      : section === "billing"
       ? "billing"
       : "overview";
   const memberInviteGate = resolveBillingGateState({
@@ -1124,21 +1121,19 @@ function OrganizationPage({
             >
               Models
             </button>
-            {billingSectionEnabled ? (
-              <button
-                type="button"
-                onClick={() => navigateToSection("billing")}
-                aria-current={activeSection === "billing" ? "page" : undefined}
-                className={cn(
-                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                  activeSection === "billing"
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Billing
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => navigateToSection("billing")}
+              aria-current={activeSection === "billing" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "billing"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Billing
+            </button>
           </nav>
         </Card>
 
@@ -1153,7 +1148,7 @@ function OrganizationPage({
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
-              showCredits={creditsUiEnabled}
+              showCredits
               billingStatus={billingStatus}
               organizationName={organization.name}
               canManageCredits={canEdit || organization.isCreator === true}

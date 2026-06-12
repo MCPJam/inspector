@@ -13,7 +13,6 @@ let presetsState:
   | undefined;
 let presetsLoadingState: boolean;
 let presetQueryShouldThrow = false;
-let creditsFlagState = true;
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -35,10 +34,6 @@ vi.mock("@/hooks/useCreditTopup", () => ({
     }
     return { presets: presetsState, isLoading: presetsLoadingState };
   },
-}));
-
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditsFlagState,
 }));
 
 // Note: rate-limit errors (`user_rate_limit` / `mcpjam_rate_limit`) are now
@@ -77,7 +72,6 @@ describe("TopupGatedErrorBox", () => {
     ];
     presetsLoadingState = false;
     presetQueryShouldThrow = false;
-    creditsFlagState = true;
   });
 
   it("does not render the Buy credits CTA when canTopUp is false", () => {
@@ -105,25 +99,6 @@ describe("TopupGatedErrorBox", () => {
     expect(
       screen.getByRole("button", { name: /Buy credits to keep chatting/ })
     ).toBeInTheDocument();
-  });
-
-  it("hides credit-specific CTA/copy when the credits UI flag is off", () => {
-    creditsFlagState = false;
-    render(
-      <TopupGatedErrorBox
-        {...RATE_LIMIT_PROPS}
-        canTopUp
-        canManageCredits={false}
-        onTopUp={vi.fn()}
-      />
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/Ask org admin to top up credits/)
-    ).not.toBeInTheDocument();
   });
 
   it("shows the ask-admin hint instead of the Buy credits CTA when the user cannot manage credits", () => {
