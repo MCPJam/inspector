@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -7,19 +7,80 @@ import type { XAADecodedJwt } from "@/lib/xaa/types";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import { NEGATIVE_TEST_MODE_DETAILS } from "@/shared/xaa.js";
 import { copyToClipboard } from "@/lib/clipboard";
+import {
+  lintIdJag,
+  type IdJagLintContext,
+  type IdJagLintVerdict,
+} from "@/lib/xaa/idjag-lint";
 
 interface IdJagInspectorProps {
   rawJwt: string;
   decoded: XAADecodedJwt;
   negativeTestMode: NegativeTestMode;
+  lintContext?: IdJagLintContext;
+}
+
+const LINT_STATUS_STYLES: Record<
+  IdJagLintVerdict["status"],
+  { row: string; icon: string }
+> = {
+  pass: {
+    row: "border-green-200 dark:border-green-900 bg-green-50/50 dark:bg-green-950/10",
+    icon: "text-green-600 dark:text-green-400",
+  },
+  warn: {
+    row: "border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/10",
+    icon: "text-amber-600 dark:text-amber-400",
+  },
+  fail: {
+    row: "border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-950/10",
+    icon: "text-red-600 dark:text-red-400",
+  },
+};
+
+function LintVerdictRow({ verdict }: { verdict: IdJagLintVerdict }) {
+  const styles = LINT_STATUS_STYLES[verdict.status];
+  const Icon = verdict.status === "pass" ? CheckCircle2 : AlertTriangle;
+
+  return (
+    <div
+      data-testid={`idjag-lint-${verdict.id}`}
+      className={`border rounded-md px-3 py-2 ${styles.row}`}
+    >
+      <div className="flex items-center gap-2">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${styles.icon}`} />
+        <code className="text-xs font-mono font-medium">{verdict.claim}</code>
+        {verdict.actual !== undefined && (
+          <code className="min-w-0 truncate text-[11px] font-mono text-muted-foreground">
+            {verdict.actual}
+          </code>
+        )}
+        <Badge
+          variant="outline"
+          className="ml-auto shrink-0 text-[10px] font-normal"
+        >
+          {verdict.citation.spec} {verdict.citation.section}
+        </Badge>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{verdict.detail}</p>
+    </div>
+  );
 }
 
 export function IdJagInspector({
   rawJwt,
   decoded,
   negativeTestMode,
+  lintContext,
 }: IdJagInspectorProps) {
   const [copied, setCopied] = useState(false);
+
+  const lintVerdicts = useMemo(
+    () => lintIdJag(decoded.header, decoded.payload, lintContext),
+    [decoded.header, decoded.payload, lintContext],
+  );
+  const failCount = lintVerdicts.filter((v) => v.status === "fail").length;
+  const warnCount = lintVerdicts.filter((v) => v.status === "warn").length;
 
   const handleCopy = async () => {
     const success = await copyToClipboard(rawJwt);
@@ -78,6 +139,27 @@ export function IdJagInspector({
             </div>
           ))
         )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <h4 className="text-xs font-semibold">Claim lint</h4>
+          <span className="text-[11px] text-muted-foreground">
+            {failCount === 0 && warnCount === 0
+              ? "All claims pass"
+              : [
+                  failCount > 0 ? `${failCount} failing` : null,
+                  warnCount > 0 ? `${warnCount} warning` : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+          </span>
+        </div>
+        <div className="grid gap-1.5">
+          {lintVerdicts.map((verdict) => (
+            <LintVerdictRow key={verdict.id} verdict={verdict} />
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
