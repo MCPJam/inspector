@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import posthog from "posthog-js";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
 import { XAABootstrapDialog } from "./XAABootstrapDialog";
+import { XAAIdpCard } from "./XAAIdpCard";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
@@ -82,6 +85,14 @@ export function XAAFlowTab({
     setFocusedStep(null);
   }, [flowState.currentStep]);
 
+  useEffect(() => {
+    posthog.capture("xaa_tab_viewed", {
+      location: "xaa_flow_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
+
   const flowStateRef = useRef(flowState);
   useEffect(() => {
     flowStateRef.current = flowState;
@@ -153,6 +164,7 @@ export function XAAFlowTab({
 
   return (
     <div className="h-full flex flex-col bg-background">
+      <XAAIdpCard />
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={52} minSize={30}>

@@ -9,17 +9,11 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
+import { getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
 interface XAABootstrapDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-function getIssuerBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
-  }
-  return `${window.location.origin}${HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa"}`;
 }
 
 function CopyRow({
@@ -55,8 +49,7 @@ export function XAABootstrapDialog({
   open,
   onOpenChange,
 }: XAABootstrapDialogProps) {
-  const issuerBaseUrl = getIssuerBaseUrl();
-  const jwksUrl = `${issuerBaseUrl}/.well-known/jwks.json`;
+  const { issuerBaseUrl, jwksUrl } = getXaaIdpUrls();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
