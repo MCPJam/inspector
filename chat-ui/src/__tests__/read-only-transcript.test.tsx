@@ -34,6 +34,15 @@ describe("ReadOnlyTranscript", () => {
     expect(root).not.toHaveClass("dark");
   });
 
+  it("applies a light class for an explicit light theme (forces light over a dark host)", () => {
+    const { container } = render(
+      <ReadOnlyTranscript messages={[userText("hi")]} themeMode="light" />,
+    );
+    const root = container.querySelector(".mcpjam-chat-ui");
+    expect(root).toHaveClass("light");
+    expect(root).not.toHaveClass("dark");
+  });
+
   it("skips hidden internal messages (widget-state-* / model-context-*)", () => {
     const messages = [
       userText("visible prompt", "u1"),

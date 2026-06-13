@@ -14,7 +14,15 @@
  * HSL channel triplets (shadcn convention): `hsl(var(--foreground))`.
  */
 
-.mcpjam-chat-ui {
+/*
+ * Light tokens: the base, an explicit `themeMode="light"`, AND a forced-light
+ * transcript even when embedded in a dark host (a `.dark` ancestor). That last
+ * selector is what makes `themeMode="light"` actually win inside a dark app —
+ * without it, `.dark .mcpjam-chat-ui` would keep the transcript dark.
+ */
+.mcpjam-chat-ui,
+.mcpjam-chat-ui.light,
+.dark .mcpjam-chat-ui.light {
   --background: 0 0% 100%;
   --foreground: 240 10% 3.9%;
   --card: 0 0% 100%;
@@ -24,15 +32,22 @@
   --border: 240 5.9% 90%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 98%;
+}
 
+.mcpjam-chat-ui {
   color: hsl(var(--foreground));
   font-family:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
 }
 
+/*
+ * Dark tokens: an explicit `themeMode="dark"`, OR inherited from a dark host
+ * when `themeMode="system"`. `:not(.light)` keeps a forced-light transcript
+ * from being pulled dark by the host.
+ */
 .mcpjam-chat-ui.dark,
-.dark .mcpjam-chat-ui {
+.dark .mcpjam-chat-ui:not(.light) {
   --background: 240 10% 3.9%;
   --foreground: 0 0% 98%;
   --card: 240 10% 3.9%;

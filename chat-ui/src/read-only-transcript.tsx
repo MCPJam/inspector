@@ -19,7 +19,9 @@ import {
 function themeClass(themeMode: ThemeMode): string | undefined {
   if (themeMode === "dark") return "dark";
   if (themeMode === "light") return "light";
-  return undefined; // "system" -> rely on prefers-color-scheme / host
+  // "system" emits no class: the transcript inherits the host theme (whether a
+  // `.dark` ancestor is present). Explicit "light"/"dark" override the host.
+  return undefined;
 }
 
 export interface TranscriptProps {
