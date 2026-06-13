@@ -146,6 +146,20 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);
+  return getConvexBearerForDelegation(workosUserId, organizationId);
+}
+
+/**
+ * Delegation-direct variant for background callers with no request at all
+ * (the scheduled-evals worker): mint (or reuse) a short-lived org-scoped
+ * JWT for the given WorkOS user id + organization. Same cache + in-flight
+ * dedupe as the request path; membership is re-verified by the backend on
+ * every actual mint.
+ */
+export async function getConvexBearerForDelegation(
+  workosUserId: string,
+  organizationId: string
+): Promise<string> {
   const cacheKey = `${workosUserId}:${organizationId}`;
 
   const cached = mintedTokenCache.get(cacheKey);
