@@ -21,6 +21,11 @@
       "import": "./dist/thread-helpers.js",
       "default": "./dist/thread-helpers.js"
     },
+    "./trace": {
+      "types": "./dist/trace.d.ts",
+      "import": "./dist/trace.js",
+      "default": "./dist/trace.js"
+    },
     "./styles.css": "./dist/styles.css"
   },
   "sideEffects": [

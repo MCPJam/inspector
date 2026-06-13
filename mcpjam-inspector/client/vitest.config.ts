@@ -27,6 +27,7 @@ const chatUiThreadHelpersEntry = path.resolve(
   rootDir,
   "../chat-ui/src/thread-helpers.ts",
 );
+const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -103,11 +104,12 @@ export default defineConfig({
   },
   resolve: {
     alias: [
-      // More specific subpath must precede the bare alias (first match wins).
+      // More specific subpaths must precede the bare alias (first match wins).
       {
         find: "@mcpjam/chat-ui/thread-helpers",
         replacement: chatUiThreadHelpersEntry,
       },
+      { find: "@mcpjam/chat-ui/trace", replacement: chatUiTraceEntry },
       { find: "@mcpjam/chat-ui", replacement: chatUiEntry },
       {
         find: "@mcpjam/sdk/skill-reference",
