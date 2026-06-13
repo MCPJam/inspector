@@ -78,6 +78,15 @@ export function saveStoredXAADebugProfile(profile: XAADebugProfile): void {
   }
 }
 
+/** Delete the persisted debugger profile so nothing is kept across reloads. */
+export function clearStoredXAADebugProfile(): void {
+  try {
+    localStorage.removeItem(XAA_PROFILE_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 export function deriveXAADebugProfileFromServer(
   server?: ServerWithName,
   existingProfile: XAADebugProfile = EMPTY_XAA_DEBUG_PROFILE

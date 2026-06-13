@@ -13,7 +13,6 @@ import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
-import { XAABootstrapDialog } from "./XAABootstrapDialog";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { XAARunChips } from "./XAARunChips";
@@ -27,7 +26,9 @@ import {
   type XaaResourceApp,
 } from "@/lib/xaa/types";
 import {
+  clearStoredXAADebugProfile,
   deriveXAADebugProfileFromServer,
+  EMPTY_XAA_DEBUG_PROFILE,
   loadStoredXAADebugProfile,
   saveStoredXAADebugProfile,
   type XAADebugProfile,
@@ -124,7 +125,6 @@ export function XAAFlowTab({
   organizationId,
 }: XAAFlowTabProps) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [isBootstrapDialogOpen, setIsBootstrapDialogOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
 
@@ -154,6 +154,11 @@ export function XAAFlowTab({
   // sync *synchronously* with every write so a run that resets and then
   // immediately advances never observes a stale snapshot.
   const flowStateRef = useRef(flowState);
+
+  // Set when the user explicitly clears their config, so the auto-derive-from
+  // -server effect below doesn't immediately re-fill the target — letting the
+  // tab return to the initial "Configure XAA Target" screen. Reset on save.
+  const suppressAutoDerive = useRef(false);
 
   const applyFlowState = useCallback((next: XAAFlowState) => {
     flowStateRef.current = next;
@@ -301,7 +306,11 @@ export function XAAFlowTab({
 
   // ── Flow-state lifecycle ────────────────────────────────────────────
   useEffect(() => {
-    if (selectedRegistration || profile.serverUrl.trim()) {
+    if (
+      suppressAutoDerive.current ||
+      selectedRegistration ||
+      profile.serverUrl.trim()
+    ) {
       return;
     }
 
@@ -539,7 +548,6 @@ export function XAAFlowTab({
                 onReset: hasTarget ? () => resetFlow() : undefined,
                 onContinue: continueDisabled ? undefined : handleAdvance,
                 onChangeNegativeTestMode: handleChangeNegativeTestMode,
-                onShowBootstrap: () => setIsBootstrapDialogOpen(true),
                 continueLabel,
                 continueDisabled,
                 resetDisabled: !hasTarget || flowState.isBusy || isRunningAll,
@@ -567,15 +575,24 @@ export function XAAFlowTab({
         onOpenChange={setIsConfigModalOpen}
         value={profile}
         onSave={(nextProfile) => {
+          suppressAutoDerive.current = false;
           saveStoredXAADebugProfile(nextProfile);
           setProfile(nextProfile);
           resetFlow(nextProfile);
         }}
-      />
-
-      <XAABootstrapDialog
-        open={isBootstrapDialogOpen}
-        onOpenChange={setIsBootstrapDialogOpen}
+        onClear={() => {
+          clearStoredXAADebugProfile();
+          // Return to the initial "Configure XAA Target" screen and keep it
+          // there — suppress the auto-derive effect so it doesn't re-fill.
+          suppressAutoDerive.current = true;
+          setSelectedRegistrationId(null);
+          setProfile(EMPTY_XAA_DEBUG_PROFILE);
+          applyFlowState(
+            buildFlowStateFromInput(inputFromProfile(EMPTY_XAA_DEBUG_PROFILE))
+          );
+          setFocusedStep(null);
+          setIsConfigModalOpen(false);
+        }}
       />
     </div>
   );

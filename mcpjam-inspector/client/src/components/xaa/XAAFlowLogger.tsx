@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  KeyRound,
   Lightbulb,
   Loader2,
   Pencil,
@@ -63,7 +62,6 @@ interface XAAFlowLoggerProps {
     onReset?: () => void;
     onContinue?: () => void;
     onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
-    onShowBootstrap?: () => void;
     continueLabel: string;
     continueDisabled?: boolean;
     resetDisabled?: boolean;
@@ -176,12 +174,10 @@ function CompatibilityBanner({ report }: { report: XAACompatibilityReport }) {
 function GuidanceCallout({
   guidance,
   onConfigure,
-  onShowBootstrap,
   onReset,
 }: {
   guidance: XAAErrorGuidance;
   onConfigure?: () => void;
-  onShowBootstrap?: () => void;
   onReset?: () => void;
 }) {
   const toneClass =
@@ -193,7 +189,6 @@ function GuidanceCallout({
 
   const handleAction = (action: XAAErrorAction) => {
     if (action.intent === "configure") onConfigure?.();
-    else if (action.intent === "bootstrap") onShowBootstrap?.();
     else if (action.intent === "reset") onReset?.();
     else if (action.intent === "link" && action.href) {
       window.open(action.href, "_blank", "noopener,noreferrer");
@@ -202,7 +197,6 @@ function GuidanceCallout({
 
   const actionDisabled = (action: XAAErrorAction) => {
     if (action.intent === "configure") return !onConfigure;
-    if (action.intent === "bootstrap") return !onShowBootstrap;
     if (action.intent === "reset") return !onReset;
     if (action.intent === "link") return !action.href;
     return true;
@@ -497,18 +491,6 @@ export function XAAFlowLogger({
                   {summary.scope}
                 </Badge>
               )}
-              {actions.onShowBootstrap && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto h-7 text-xs"
-                  onClick={actions.onShowBootstrap}
-                >
-                  <KeyRound className="h-3 w-3 mr-1" />
-                  Register issuer
-                </Button>
-              )}
             </div>
 
             <p className="text-xs text-muted-foreground">
@@ -541,7 +523,6 @@ export function XAAFlowLogger({
               <GuidanceCallout
                 guidance={guidance}
                 onConfigure={actions.onConfigure}
-                onShowBootstrap={actions.onShowBootstrap}
                 onReset={actions.onReset}
               />
             );
@@ -699,7 +680,6 @@ export function XAAFlowLogger({
                             <GuidanceCallout
                               guidance={guidance}
                               onConfigure={actions.onConfigure}
-                              onShowBootstrap={actions.onShowBootstrap}
                               onReset={actions.onReset}
                             />
                           );

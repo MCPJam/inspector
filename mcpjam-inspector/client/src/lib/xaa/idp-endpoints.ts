@@ -66,29 +66,3 @@ export async function fetchXaaIdpUrls(
     return null;
   }
 }
-
-interface JwksResponse {
-  keys?: Array<{ kid?: unknown }>;
-}
-
-/**
- * Best-effort fetch of the active signing key id from the JWKS endpoint.
- * Returns null on any failure — the kid is a convenience for the user
- * configuring issuer trust, not required for the card to render.
- */
-export async function fetchActiveKeyId(
-  jwksUrl: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  try {
-    const response = await fetch(jwksUrl, { signal });
-    if (!response.ok) {
-      return null;
-    }
-    const body = (await response.json()) as JwksResponse;
-    const kid = body.keys?.[0]?.kid;
-    return typeof kid === "string" && kid.length > 0 ? kid : null;
-  } catch {
-    return null;
-  }
-}

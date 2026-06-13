@@ -23,6 +23,8 @@ interface XAAConfigModalProps {
   onOpenChange: (open: boolean) => void;
   value: XAADebugProfile;
   onSave: (profile: XAADebugProfile) => void;
+  /** Delete the saved profile and reset the debugger to a clean slate. */
+  onClear: () => void;
 }
 
 export function XAAConfigModal({
@@ -30,6 +32,7 @@ export function XAAConfigModal({
   onOpenChange,
   value,
   onSave,
+  onClear,
 }: XAAConfigModalProps) {
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
@@ -249,6 +252,14 @@ export function XAAConfigModal({
           )}
 
           <DialogFooter className="mt-4 flex-shrink-0 border-t border-border pt-3">
+            <Button
+              type="button"
+              variant="destructive"
+              className="mr-auto"
+              onClick={onClear}
+            >
+              Clear configuration
+            </Button>
             <Button
               type="button"
               variant="ghost"
