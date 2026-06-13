@@ -325,8 +325,10 @@ export function assertSuiteRunWithinCap(
  * /api/v1 suiteId-only rerun). Without this, `assertSuiteRunWithinCap` sums
  * an empty list and unattended runs bypass the cap interactive launches
  * enforce. One entry per (case × model) mirrors the interactive fan-out;
- * model-less prompt cases count once (suite-default substitution); widget
- * probes carry `caseType` so the cap reducer excludes them.
+ * model-less prompt cases count once (they are rejected up front by
+ * {@link assertBareRerunCasesRunnable}, but still counted here so cap math
+ * never under-reports); widget probes carry `caseType` so the cap reducer
+ * excludes them.
  */
 export function buildCapEntriesFromPersistedCases(
   cases: Array<{
@@ -362,6 +364,62 @@ export function buildCapEntriesFromPersistedCases(
     }
   }
   return entries;
+}
+
+/**
+ * Reject a bare suite rerun (scheduled worker, /api/v1 suiteId-only) whose
+ * persisted snapshot contains a prompt case that cannot contribute a single
+ * runnable entry.
+ *
+ * The bare-rerun path builds the runner's `config.tests` straight from the
+ * persisted cases (see `startSuiteRunWithRecorder`). A prompt case with an
+ * empty `models` array and no legacy `model`/`provider` relies on
+ * `suite.defaultConfig.modelId` — but that substitution only ever runs
+ * client-side (it needs the model catalog to resolve the provider) and is
+ * absent here, so the recorder's config builder silently drops the case
+ * (`return []`). The run would then execute fewer cases than the cap reserved
+ * for — or, for a model-default-only suite, zero — while reporting success.
+ * For an unattended monitor that silent under-run is the dangerous failure
+ * mode, so surface it loudly instead: a 400 on the /api/v1 surface, and on the
+ * scheduled path a failed claim the backend's failure accounting can pause and
+ * notify on.
+ *
+ * (Honest scope: full suite-default support for bare reruns needs the backend
+ * snapshot + `precreateIterationsForRun` to carry the substituted model so the
+ * recorder has a precreated row to pair against — substituting only in the
+ * inspector's config builder would execute the case with nowhere to record it.
+ * Tracked as a follow-up.)
+ */
+export function assertBareRerunCasesRunnable(
+  cases:
+    | Array<{
+        title?: string;
+        models?: Array<{ model: string; provider: string }>;
+        model?: string;
+        provider?: string;
+        caseType?: string;
+      }>
+    | null,
+): void {
+  const unrunnable = (cases ?? [])
+    .filter(
+      (c) =>
+        c.caseType !== "widget_probe" &&
+        !(c.models && c.models.length > 0) &&
+        !(c.model && c.provider),
+    )
+    .map((c) => c.title?.trim() || "(untitled)");
+  if (unrunnable.length > 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Cannot run this suite unattended: ${unrunnable.length} prompt case(s) ` +
+        `have no model of their own and rely on the suite default model, ` +
+        `which is only applied for interactive launches. Add a per-case ` +
+        `model to run on a schedule or via the API: ${unrunnable.join(", ")}.`,
+      { unrunnableCases: unrunnable },
+    );
+  }
 }
 
 /**
@@ -727,6 +785,12 @@ export async function prepareEvalRun(
       "testSuites:listTestCases" as any,
       { suiteId },
     )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
+    // No client substituted the suite default model onto these cases, so a
+    // model-less prompt case would be silently dropped from execution. Reject
+    // before cap-math so the error names the real cause, not the cap.
+    assertBareRerunCasesRunnable(
+      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0],
+    );
     assertSuiteRunWithinCap({
       ...request,
       tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),

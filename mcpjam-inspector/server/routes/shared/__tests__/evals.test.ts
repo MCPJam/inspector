@@ -5,6 +5,7 @@ import {
   RunEvalsRequestSchema,
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
+  assertBareRerunCasesRunnable,
   buildCapEntriesFromPersistedCases,
   buildUpsertCaseKey,
   probeIdentityKey,
@@ -516,5 +517,71 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     expect(() =>
       assertSuiteRunWithinCap({ tests: entries } as never),
     ).toThrow(WebRouteError);
+  });
+});
+
+describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
+  it("accepts cases with per-case models", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "A", models: [{ model: "m", provider: "p" }] },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts a legacy model/provider case (no models array)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Legacy", model: "m", provider: "p" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts widget probes (no model expected)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Probe", caseType: "widget_probe" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts null / empty case lists", () => {
+    expect(() => assertBareRerunCasesRunnable(null)).not.toThrow();
+    expect(() => assertBareRerunCasesRunnable([])).not.toThrow();
+  });
+
+  it("rejects a model-less prompt case (would be silently dropped)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Default-only", models: [] },
+      ]),
+    ).toThrow(WebRouteError);
+  });
+
+  it("rejects a partial suite and names every offending case", () => {
+    let captured: WebRouteError | undefined;
+    try {
+      assertBareRerunCasesRunnable([
+        { title: "Runs", models: [{ model: "m", provider: "p" }] },
+        { title: "Default-only-1", models: [] },
+        { title: "Default-only-2" },
+      ]);
+    } catch (error) {
+      captured = error as WebRouteError;
+    }
+    expect(captured).toBeInstanceOf(WebRouteError);
+    expect(captured!.message).toContain("Default-only-1");
+    expect(captured!.message).toContain("Default-only-2");
+    expect(captured!.message).not.toContain("Runs");
+    expect(captured!.details?.unrunnableCases).toEqual([
+      "Default-only-1",
+      "Default-only-2",
+    ]);
+  });
+
+  it("labels an untitled offending case rather than dropping it from the message", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([{ models: [] }]),
+    ).toThrow(/\(untitled\)/);
   });
 });
