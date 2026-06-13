@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -9,7 +10,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
-import { getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import { fetchXaaIdpUrls, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
 interface XAABootstrapDialogProps {
   open: boolean;
@@ -49,7 +50,24 @@ export function XAABootstrapDialog({
   open,
   onOpenChange,
 }: XAABootstrapDialogProps) {
-  const { issuerBaseUrl, jwksUrl } = getXaaIdpUrls();
+  // Browser-origin guess up front; swap in the server-advertised issuer once
+  // the dialog opens (the guess can be wrong — see fetchXaaIdpUrls).
+  const [urls, setUrls] = useState(() => getXaaIdpUrls());
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const controller = new AbortController();
+    void fetchXaaIdpUrls(controller.signal).then((serverUrls) => {
+      if (serverUrls && !controller.signal.aborted) {
+        setUrls(serverUrls);
+      }
+    });
+    return () => controller.abort();
+  }, [open]);
+
+  const { issuerBaseUrl, jwksUrl } = urls;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -5,7 +5,11 @@ import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
-import { fetchActiveKeyId, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import {
+  fetchActiveKeyId,
+  fetchXaaIdpUrls,
+  getXaaIdpUrls,
+} from "@/lib/xaa/idp-endpoints";
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
@@ -71,29 +75,39 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 export function XAAIdpCard() {
   const [expanded, setExpanded] = useState(false);
   const [keyId, setKeyId] = useState<string | null>(null);
-  const fetchedKeyId = useRef(false);
+  // Start from the browser-origin guess, then swap in the server-advertised
+  // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
+  const [urls, setUrls] = useState(() => getXaaIdpUrls());
+  const resolved = useRef(false);
 
-  const { issuerBaseUrl, openidConfigUrl, jwksUrl } = getXaaIdpUrls();
+  const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
-  // Fetch the active key id once, the first time the card is expanded.
+  // Resolve the real issuer (and active key id) once, the first time the card
+  // is expanded.
   useEffect(() => {
-    if (!expanded || fetchedKeyId.current) {
+    if (!expanded || resolved.current) {
       return;
     }
     const controller = new AbortController();
-    void fetchActiveKeyId(jwksUrl, controller.signal).then((kid) => {
-      // Mark done only once the fetch completes — setting it up front would
-      // lock out future expansions if the first attempt is aborted.
+    void (async () => {
+      const serverUrls = await fetchXaaIdpUrls(controller.signal);
       if (controller.signal.aborted) {
         return;
       }
-      fetchedKeyId.current = true;
-      if (kid) {
+      // Mark done only after a non-aborted resolution — setting it up front
+      // would lock out future expansions if the first attempt is aborted.
+      resolved.current = true;
+      const active = serverUrls ?? getXaaIdpUrls();
+      if (serverUrls) {
+        setUrls(serverUrls);
+      }
+      const kid = await fetchActiveKeyId(active.jwksUrl, controller.signal);
+      if (kid && !controller.signal.aborted) {
         setKeyId(kid);
       }
-    });
+    })();
     return () => controller.abort();
-  }, [expanded, jwksUrl]);
+  }, [expanded]);
 
   return (
     <Card className="mx-3 mt-3 mb-1 gap-0 p-0">
