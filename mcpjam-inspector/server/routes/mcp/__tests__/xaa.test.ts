@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
@@ -14,7 +14,19 @@ import {
   initXAAIdpKeyPair,
   resetXAAIdpKeyPairForTests,
 } from "../../../services/xaa-idp-keypair.js";
-import xaa from "../xaa.js";
+import xaa, { createXaaRouter } from "../xaa.js";
+
+function jsonResponse(
+  body: unknown,
+  init?: { status?: number; contentType?: string },
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: init?.status ?? 200,
+    headers: {
+      "content-type": init?.contentType ?? "application/json",
+    },
+  });
+}
 
 function decodeJwtPayload(token: string): Record<string, any> {
   const [, payload] = token.split(".");
@@ -139,5 +151,220 @@ describe("mcp xaa routes", () => {
     const tokenExchangeBody = await tokenExchangeResponse.json();
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
+  });
+
+  describe("POST /discover-as", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function authHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "X-MCP-Session-Auth": `Bearer ${getSessionToken() || token}`,
+      };
+    }
+
+    it("resolves metadata via the root well-known form", async () => {
+      const fetchMock = vi.fn(async (input: string | URL) => {
+        const url = input.toString();
+        if (url === "https://as.example.com/.well-known/openid-configuration") {
+          return jsonResponse({
+            issuer: "https://as.example.com",
+            token_endpoint: "https://as.example.com/oauth/token",
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await app.request("/api/mcp/xaa/discover-as", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ issuer: "https://as.example.com" }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.issuer).toBe("https://as.example.com");
+      expect(body.jwtBearerSupport).toBe("pass");
+      expect(body.hasTokenEndpoint).toBe(true);
+      expect(body.issuerMismatch).toBeNull();
+    });
+
+    it("resolves metadata via the path-insertion well-known form", async () => {
+      const fetchMock = vi.fn(async (input: string | URL) => {
+        const url = input.toString();
+        if (
+          url ===
+          "https://login.example.com/.well-known/openid-configuration/realms/acme"
+        ) {
+          return jsonResponse({
+            issuer: "https://login.example.com/realms/acme",
+            token_endpoint:
+              "https://login.example.com/realms/acme/protocol/openid-connect/token",
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await app.request("/api/mcp/xaa/discover-as", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          issuer: "https://login.example.com/realms/acme",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.issuer).toBe("https://login.example.com/realms/acme");
+      expect(body.jwtBearerSupport).toBe("pass");
+    });
+
+    it("reports a scheme-only issuer mismatch", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issuer: "http://as.example.com",
+          token_endpoint: "http://as.example.com/oauth/token",
+          grant_types_supported: [
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await app.request("/api/mcp/xaa/discover-as", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ issuer: "https://as.example.com" }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.issuerMismatch).toMatchObject({
+        requested: "https://as.example.com",
+        advertised: "http://as.example.com",
+        schemeOnly: true,
+      });
+    });
+
+    it("returns 404 when no well-known endpoint has metadata", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 404 })),
+      );
+
+      const response = await app.request("/api/mcp/xaa/discover-as", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ issuer: "https://as.example.com" }),
+      });
+
+      expect(response.status).toBe(404);
+    });
+  });
+});
+
+describe("hosted xaa outbound guards", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+  let app: Hono;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-hosted-route-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    // Hosted-mode router: httpsOnlyProxy rejects http + private/reserved hosts.
+    // No protected middlewares here so the test exercises the guard directly.
+    app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        trustForwardedHeaders: true,
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("rejects discovery against a reserved internal address", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/discover-as", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ issuer: "https://169.254.169.254" }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.message).toBe("URL not allowed");
+    // The guard rejects before any outbound fetch is attempted.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an http health-check target in hosted mode", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/health-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "http://example.com/health" }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.message).toBe("URL not allowed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not follow a health-check redirect to an internal address", async () => {
+    // redirect: manual means the 3xx is returned without being followed, so
+    // the internal Location is never fetched.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/health-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Public literal IP: passes validateUrl (IP literals skip DNS) without a
+      // real network lookup.
+      body: JSON.stringify({ url: "https://93.184.216.34/health" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.reason).toBe("redirect_not_followed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
