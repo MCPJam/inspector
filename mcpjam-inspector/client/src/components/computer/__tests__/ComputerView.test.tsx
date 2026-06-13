@@ -269,6 +269,16 @@ describe("ComputerView usage meter", () => {
     expect(queryByText(/^then /)).toBeNull();
   });
 
+  it("shows a full over-limit bar for zero-allowance plans with usage", () => {
+    mockUsage = usage({ allowanceMs: 0, awakeMs: 10 * 60 * 1000 });
+    const { getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    const fill = getByTestId("computer-usage-meter-fill");
+    expect(fill.style.width).toBe("100%");
+    expect(fill.className).toContain("bg-destructive");
+  });
+
   it("says hours are included when the plan is uncapped", () => {
     mockUsage = usage({ allowanceMs: null, awakeMs: 2 * HOUR_MS });
     const { getByText, queryByText } = render(

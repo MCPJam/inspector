@@ -329,10 +329,17 @@ function ComputerUsageMeter({ projectId }: { projectId: string }) {
 
   const { awakeMs, allowanceMs, creditsPerHour, billedCredits } = usage;
   const overAllowance = allowanceMs !== null && awakeMs > allowanceMs;
+  // A zero-hour allowance with any usage reads as a full (over) bar, not an
+  // empty one. No such plan exists today, but the meter shouldn't lie if one
+  // ships.
   const usedPct =
-    allowanceMs === null || allowanceMs <= 0
+    allowanceMs === null
       ? 0
-      : Math.min(100, (awakeMs / allowanceMs) * 100);
+      : allowanceMs <= 0
+        ? awakeMs > 0
+          ? 100
+          : 0
+        : Math.min(100, (awakeMs / allowanceMs) * 100);
 
   return (
     <div
@@ -370,6 +377,7 @@ function ComputerUsageMeter({ projectId }: { projectId: string }) {
       {allowanceMs !== null ? (
         <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
           <div
+            data-testid="computer-usage-meter-fill"
             className={`h-full rounded-full ${
               overAllowance ? "bg-destructive" : "bg-primary"
             }`}
