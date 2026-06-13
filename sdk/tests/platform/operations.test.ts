@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   callServerToolOperation,
+  closeTunnelOperation,
+  createTunnelOperation,
   diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -252,6 +254,31 @@ function makeClient(overrides: FixtureOverrides = {}): {
       )
     ) {
       return Response.json({ messages: [{ role: "user", content: "hi" }] });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/tunnels$/.test(path)) {
+      expect(init?.method).toBe("POST");
+      const requestBody = JSON.parse(String(init?.body)) as { name?: string };
+      const existed = requestBody.name === "Docs";
+      return Response.json(
+        {
+          serverId: "server-tunnel",
+          name: requestBody.name,
+          existed,
+          ...(existed ? { previousTransportType: "stdio" } : {}),
+          slug: "calm-otter",
+          url: "https://calm-otter.tunnels.example.com/api/mcp/adapter-http/server-tunnel?k=secret",
+          connectToken: "ct_abc",
+          connectTokenExpiresAt: 1234,
+          relayWsUrl: "wss://relay.example.com/agent",
+          secretVersion: 3,
+        },
+        { status: 201 }
+      );
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/tunnels\/[^/]+\/close$/.test(path)) {
+      expect(init?.method).toBe("POST");
+      const serverId = decodeURIComponent(path.split("/")[6] ?? "");
+      return Response.json({ serverId, status: "closed" });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
       return Response.json({ items: CHATBOXES });
@@ -687,6 +714,76 @@ describe("listChatSessionsOperation", () => {
   });
 });
 
+describe("createTunnelOperation", () => {
+  it("resolves the default project and returns the grant verbatim", async () => {
+    const { client } = makeClient();
+
+    const result = await createTunnelOperation.execute(
+      { name: "My Tunnel" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.grant.serverId).toBe("server-tunnel");
+    expect(result.grant.slug).toBe("calm-otter");
+    expect(result.grant.url).toContain("?k=");
+    expect(result.grant.connectToken).toBe("ct_abc");
+    expect(result.grant.relayWsUrl).toBe("wss://relay.example.com/agent");
+    expect(result.grant.existed).toBe(false);
+    expect(result.grant.previousTransportType).toBeUndefined();
+  });
+
+  it("passes existed/previous* through for name collisions", async () => {
+    const { client } = makeClient();
+
+    const result = await createTunnelOperation.execute(
+      { project: "old", name: "Docs" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-old");
+    expect(result.grant.existed).toBe(true);
+    expect(result.grant.previousTransportType).toBe("stdio");
+  });
+
+  it("fails with the project resolution error for unknown projects", async () => {
+    const { client } = makeClient();
+
+    const error = await createTunnelOperation
+      .execute({ project: "Nope", name: "x" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect(String((error as Error).message)).toContain("Nope");
+  });
+
+  it("is a non-read operation, like close", () => {
+    expect(createTunnelOperation.readOnly).toBe(false);
+    expect(closeTunnelOperation.readOnly).toBe(false);
+  });
+});
+
+describe("closeTunnelOperation", () => {
+  it("revokes by resolved project and server id", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await closeTunnelOperation.execute(
+      { project: "new", serverId: "server-tunnel" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.serverId).toBe("server-tunnel");
+    expect(result.status).toBe("closed");
+    const closeCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("/tunnels/")
+    );
+    expect(String(closeCall?.[0])).toContain(
+      "/projects/project-new/tunnels/server-tunnel/close"
+    );
+  });
+});
+
 describe("operation catalog consistency", () => {
   const ALL_OPERATIONS: Array<{
     operation: PlatformOperation<any, any>;
@@ -729,6 +826,8 @@ describe("operation catalog consistency", () => {
       operation: readServerResourceOperation,
       minimalInput: { server: "s", uri: "u" },
     },
+    { operation: createTunnelOperation, minimalInput: { name: "t" } },
+    { operation: closeTunnelOperation, minimalInput: { serverId: "s" } },
   ];
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -746,8 +845,13 @@ describe("operation catalog consistency", () => {
     ).toBe(false);
   });
 
-  it("marks every operation read-only except run_eval_suite and call_server_tool", () => {
-    const writes = new Set(["run_eval_suite", "call_server_tool"]);
+  it("marks every operation read-only except the run/call/tunnel writes", () => {
+    const writes = new Set([
+      "run_eval_suite",
+      "call_server_tool",
+      "create_tunnel",
+      "close_tunnel",
+    ]);
     for (const { operation } of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
     }

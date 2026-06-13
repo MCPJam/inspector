@@ -35,6 +35,11 @@ web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use(
+  "/mcpjam-agent/widget-content",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware
+);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -102,7 +107,7 @@ web.onError((error, c) => {
     routeError.code,
     routeError.message,
     routeError.details,
-    routeError.normalized ? { normalized: routeError.normalized } : undefined,
+    routeError.normalized ? { normalized: routeError.normalized } : undefined
   );
 });
 

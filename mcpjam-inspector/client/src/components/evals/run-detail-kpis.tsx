@@ -60,6 +60,20 @@ export function computeRunDashboardKpis({
   const durationDetail =
     durationText === "—" ? "available when complete" : "";
 
+  // Sum token usage across all iterations
+  const totalTokens = caseGroupsForSelectedRun.reduce(
+    (sum, iter) => sum + (iter.tokensUsed ?? 0),
+    0,
+  );
+  const totalTokensDisplay =
+    totalTokens > 0
+      ? totalTokens >= 1_000_000
+        ? `${(totalTokens / 1_000_000).toFixed(1)}M`
+        : totalTokens >= 1_000
+          ? `${(totalTokens / 1_000).toFixed(1)}k`
+          : totalTokens.toLocaleString()
+      : null;
+
   return [
     {
       label: metricLabel,
@@ -101,6 +115,16 @@ export function computeRunDashboardKpis({
       detail: durationDetail,
       valueClass: undefined,
     },
+    ...(totalTokensDisplay !== null
+      ? [
+          {
+            label: "Tokens",
+            value: totalTokensDisplay,
+            detail: "",
+            valueClass: undefined,
+          },
+        ]
+      : []),
   ];
 }
 

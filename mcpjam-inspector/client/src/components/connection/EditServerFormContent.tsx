@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -44,7 +43,6 @@ export function EditServerFormContent({
   onMcpProtocolVersionOverrideChange,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
   const [envRevealError, setEnvRevealError] = useState<string | null>(null);
@@ -298,11 +296,11 @@ export function EditServerFormContent({
         clientCapabilitiesOverrideError={
           formState.clientCapabilitiesOverrideError
         }
-        /* Render the row whenever the flag is on, regardless of whether
-           a setter is wired. When `onMcpProtocolVersionOverrideChange` is
-           absent (no project/server id, or project config still loading), the
-           select disables but remains visible for discoverability. */
-        showMcpProtocolVersionOverride={Boolean(statelessMcpEnabled)}
+        /* Render the row regardless of whether a setter is wired. When
+           `onMcpProtocolVersionOverrideChange` is absent (no project/server
+           id, or project config still loading), the select disables but
+           remains visible for discoverability. */
+        showMcpProtocolVersionOverride
         mcpProtocolVersionOverride={mcpProtocolVersionOverride}
         onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
         transportKind={formState.type}

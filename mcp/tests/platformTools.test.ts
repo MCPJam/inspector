@@ -284,6 +284,44 @@ describe("runPlatformOperation", () => {
     expect(result.content[0]?.text).toContain("bearer token");
   });
 
+  it("caps the model-visible text while keeping structuredContent complete", async () => {
+    const hugeDescription = "x".repeat(60_000);
+    const hugePage = {
+      items: [
+        {
+          id: "project-1",
+          name: "Big Project",
+          description: hugeDescription,
+          icon: null,
+          organizationId: null,
+          visibility: "private",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(hugePage))
+    );
+
+    const result = (await runPlatformOperation(
+      fakeAgent({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text.length).toBeLessThan(25_000);
+    expect(text).toContain("…[truncated");
+    // The complete payload survives for widgets/programmatic consumers.
+    expect(
+      (result.structuredContent as { items: Array<{ description: string }> })
+        .items[0]!.description
+    ).toBe(hugeDescription);
+  });
+
   it("calls the configured platform API with the agent bearer and returns structured content", async () => {
     const fetchMock = vi.fn(async () => Response.json(PROJECTS_PAGE));
     vi.stubGlobal("fetch", fetchMock);
@@ -301,9 +339,7 @@ describe("runPlatformOperation", () => {
     expect(result.structuredContent.items[0]?.id).toBe("project-1");
 
     const [target, init] = fetchMock.mock.calls[0]!;
-    expect(String(target)).toBe(
-      "https://staging.example.com/api/v1/projects"
-    );
+    expect(String(target)).toBe("https://staging.example.com/api/v1/projects");
     expect(
       new Headers((init as RequestInit).headers as HeadersInit).get(
         "authorization"
@@ -315,10 +351,7 @@ describe("runPlatformOperation", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        Response.json(
-          { code: "FORBIDDEN", message: "Denied" },
-          { status: 403 }
-        )
+        Response.json({ code: "FORBIDDEN", message: "Denied" }, { status: 403 })
       )
     );
 

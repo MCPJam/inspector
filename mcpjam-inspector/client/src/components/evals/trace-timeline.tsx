@@ -2160,6 +2160,23 @@ export function TraceTimeline({
               }
             }}
           />
+          {/* Span type legend */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-muted-foreground">
+            {(
+              [
+                { label: "User", cls: "trace-waterfall-bar-prompt" },
+                { label: "LLM",  cls: "trace-waterfall-bar-llm" },
+                { label: "Tool", cls: "trace-waterfall-bar-tool" },
+                { label: "Step", cls: "trace-waterfall-bar-step" },
+                { label: "Error", cls: "trace-waterfall-bar-error" },
+              ] as const
+            ).map(({ label, cls }) => (
+              <span key={label} className="flex items-center gap-1.5">
+                <span className={cn("h-2 w-2.5 rounded-sm", cls)} />
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
 

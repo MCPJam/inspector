@@ -28,6 +28,7 @@ import type {
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
+  PlatformTunnelGrant,
 } from "./types.js";
 
 export interface PlatformOperationContext {
@@ -1042,6 +1043,110 @@ async function resolveRunServers(
   }
   return [...resolved.values()];
 }
+
+// ── Tunnel operations ────────────────────────────────────────────────
+// Register/revoke relay tunnels for project servers. The grant returned by
+// create_tunnel is a credential: its url embeds the plaintext ?k= bearer
+// secret and its connectToken authenticates the relay WebSocket.
+
+const createTunnelInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel (its URL is overwritten and stdio records are converted to HTTP)."
+    ),
+});
+
+export type CreateTunnelInput = z.infer<typeof createTunnelInput>;
+
+export type CreateTunnelResult = {
+  project: SelectedProjectInfo;
+  grant: PlatformTunnelGrant;
+};
+
+export const createTunnelOperation: PlatformOperation<
+  CreateTunnelInput,
+  CreateTunnelResult
+> = {
+  name: "create_tunnel",
+  title: "Create MCPJam tunnel",
+  description:
+    "Register (or revive) a relay tunnel for a named server in an MCPJam project and return the connection grant. Each call rotates the tunnel secret and disconnects any previous tunnel session for that server, so calling it again is also how a lost or expired grant is replaced.",
+  readOnly: false,
+  inputSchema: createTunnelInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const grant = await client.createTunnel(
+      { projectId: project.id, name: input.name },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), grant };
+  },
+};
+
+const closeTunnelInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Server ID whose tunnel to revoke, as returned by create_tunnel."
+    ),
+});
+
+export type CloseTunnelInput = z.infer<typeof closeTunnelInput>;
+
+export type CloseTunnelResult = {
+  project: SelectedProjectInfo;
+  serverId: string;
+  status: string;
+};
+
+export const closeTunnelOperation: PlatformOperation<
+  CloseTunnelInput,
+  CloseTunnelResult
+> = {
+  name: "close_tunnel",
+  title: "Close MCPJam tunnel",
+  description:
+    "Revoke a tunnel's live grant: the public URL stops working immediately. The server record is kept (with its now-dead URL) so the tunnel revives with the same slug on the next create_tunnel.",
+  readOnly: false,
+  inputSchema: closeTunnelInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.closeTunnel(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      serverId: result.serverId,
+      status: result.status,
+    };
+  },
+};
 
 // ── Chat operations ──────────────────────────────────────────────────
 

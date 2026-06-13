@@ -42,7 +42,7 @@ import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-c
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import {
   detectEnvironment,
   detectPlatform,
@@ -194,9 +194,6 @@ export function ChatTabV2({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
-  const chatHistoryRailEnabled = useFeatureFlagEnabled("chat-history-rail");
-  const sharedThreadsEnabled =
-    useFeatureFlagEnabled("shared-threads-enabled") === true;
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -435,7 +432,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE && !minimalMode && !hostedChatboxId && chatHistoryRailEnabled
+    HOSTED_MODE && !minimalMode && !hostedChatboxId
   );
   const {
     session: reactiveHistorySession,
@@ -2093,7 +2090,6 @@ export function ChatTabV2({
                 hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
-                sharedThreadsEnabled={sharedThreadsEnabled}
                 projectId={effectiveHostedProjectId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}

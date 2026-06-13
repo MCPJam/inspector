@@ -22,7 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -124,29 +124,6 @@ export function filterByFeatureFlags(
 }
 
 /**
- * Resolve the effective "hosts-enabled" rollout flag for the current build,
- * independent of authentication state.
- *
- * Hosted web rolls Hosts/Connect out via PostHog so the flag must be honored
- * server-side. Desktop ships a single binary with no staged rollout — and on
- * the packaged Electron app PostHog may be blocked, slow, or simply hasn't
- * resolved when the sidebar first renders. Treating the flag as off in that
- * window hides the new Connect tab and leaves the legacy Servers item in
- * place, which is what Ray reported.
- *
- * Callers still AND this with `isAuthenticated` at each site — only signed-in
- * users see the Hosts/Connect surface.
- */
-export function computeHostsHubFlagEnabled(opts: {
-  hostsFlag: unknown;
-  hostedMode: boolean;
-}): boolean {
-  const { hostsFlag, hostedMode } = opts;
-  if (!hostedMode) return true;
-  return isPostHogBooleanFlagOn(hostsFlag);
-}
-
-/**
  * Keeps billed nav items visible; marks them disabled when the gate denies access
  * and enforcement is enabled (not soft/disabled).
  *
@@ -242,7 +219,6 @@ const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
-        featureFlag: "evaluate-ui",
         billingFeature: "evals",
         evalsSubnav: true,
       },
@@ -431,7 +407,6 @@ export function SidebarEvalsNavGroup({
   disabledTooltip,
   activeTab,
   showRuns = true,
-  playgroundEnabled = false,
 }: {
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
@@ -439,10 +414,8 @@ export function SidebarEvalsNavGroup({
   disabledTooltip?: string;
   activeTab?: string;
   showRuns?: boolean;
-  playgroundEnabled?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
-  const isPlaygroundLocked = !playgroundEnabled;
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
@@ -451,15 +424,15 @@ export function SidebarEvalsNavGroup({
   const parentButton = (
     <SidebarMenuButton
       tooltip={title}
-      isActive={!disabled && !isPlaygroundLocked && isEvalsFamily}
+      isActive={!disabled && isEvalsFamily}
       onClick={() => {
-        if (disabled || isPlaygroundLocked) return;
+        if (disabled) return;
         navigateToEvalsExploreList();
       }}
-      aria-disabled={disabled || isPlaygroundLocked || undefined}
+      aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : undefined}
       className={
-        disabled || isPlaygroundLocked
+        disabled
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
           ? "[&[data-active=true]]:bg-accent cursor-pointer"
@@ -492,13 +465,6 @@ export function SidebarEvalsNavGroup({
                   </TooltipContent>
                 ) : null}
               </Tooltip>
-            ) : isPlaygroundLocked && !hasSubnav ? (
-              <Tooltip>
-                <TooltipTrigger asChild>{parentButton}</TooltipTrigger>
-                <TooltipContent side="right" sideOffset={6}>
-                  Coming soon. Playground is in beta.
-                </TooltipContent>
-              </Tooltip>
             ) : (
               parentButton
             )}
@@ -506,23 +472,21 @@ export function SidebarEvalsNavGroup({
               <SidebarMenuSub>
                 {subnavItems.map((item) => {
                   const ItemIcon = item.icon;
-                  const isItemDisabled = disabled || isPlaygroundLocked;
 
                   return (
                     <SidebarMenuSubItem key={item.title}>
                       <SidebarMenuSubButton
-                        isActive={!isItemDisabled && item.isActive(activeTab)}
+                        isActive={!disabled && item.isActive(activeTab)}
                         href={item.href}
                         onClick={(e) => {
                           e.preventDefault();
-                          if (isItemDisabled) return;
+                          if (disabled) return;
                           item.onClick();
                         }}
-                        aria-disabled={isItemDisabled || undefined}
+                        aria-disabled={disabled || undefined}
                         className={cn(
-                          isItemDisabled &&
-                            "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
-                          disabled && "pointer-events-none"
+                          disabled &&
+                            "pointer-events-none cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
                         )}
                       >
                         <ItemIcon className="h-4 w-4" />
@@ -567,13 +531,9 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
-  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
-  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
-  const homePageEnabled = useFeatureFlagEnabled("home-page-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -636,13 +596,10 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
-      "hosts-enabled":
-        computeHostsHubFlagEnabled({
-          hostsFlag: hostsEnabled,
-          hostedMode: HOSTED_MODE,
-        }) && isAuthenticated,
-      "home-page-enabled": homePageEnabled === true && isAuthenticated,
-      "evaluate-ui": evaluateUiEnabled === true,
+      // Hosts/Connect and Home are fully rolled out; their nav visibility is
+      // purely auth-driven (signed-out users keep the legacy Servers item).
+      "hosts-enabled": isAuthenticated,
+      "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
     }),
     [
@@ -650,9 +607,6 @@ export function MCPSidebar({
       sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
-      hostsEnabled,
-      homePageEnabled,
-      evaluateUiEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
@@ -792,20 +746,9 @@ export function MCPSidebar({
             const evalsEntry = useEvalsSubnavWrapper
               ? rawEvalsEntry
               : undefined;
-            const flatItems = section.items
-              .map((item) => {
-                if (!item.evalsSubnav) return item;
-                if (useEvalsSubnavWrapper) return null;
-                const locked = playgroundEnabled !== true;
-                return {
-                  ...item,
-                  disabled: locked || item.disabled,
-                  disabledTooltip: locked
-                    ? "Coming soon. Playground is in beta."
-                    : item.disabledTooltip,
-                };
-              })
-              .filter((item): item is NavItem => item !== null);
+            const flatItems = section.items.filter(
+              (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
+            );
 
             return (
               <React.Fragment key={section.id}>
@@ -831,7 +774,6 @@ export function MCPSidebar({
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
                     showRuns={evaluateRunsEnabled === true}
-                    playgroundEnabled={playgroundEnabled === true}
                   />
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}

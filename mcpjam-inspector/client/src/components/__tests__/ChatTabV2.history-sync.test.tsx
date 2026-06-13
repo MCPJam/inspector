@@ -258,13 +258,11 @@ vi.mock("@/components/chat-v2/thread", () => ({
 vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
   ChatHistoryRail: ({
     activeSessionId,
-    sharedThreadsEnabled = true,
     onNewChat,
     onSelectThread,
     onSessionAction,
   }: {
     activeSessionId?: string | null;
-    sharedThreadsEnabled?: boolean;
     onNewChat: (options?: { shared?: boolean }) => void;
     onSelectThread: (session: typeof mockHistorySession) => void;
     onSessionAction?: (event: {
@@ -275,17 +273,14 @@ vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
     <div
       data-testid="history-rail"
       data-active-session-id={activeSessionId ?? "none"}
-      data-shared-threads-enabled={sharedThreadsEnabled ? "true" : "false"}
     >
       <button onClick={() => onSelectThread({ ...mockHistorySession })}>
         Select thread
       </button>
       <button onClick={() => onNewChat()}>New personal thread</button>
-      {sharedThreadsEnabled ? (
-        <button onClick={() => onNewChat({ shared: true })}>
-          New shared thread
-        </button>
-      ) : null}
+      <button onClick={() => onNewChat({ shared: true })}>
+        New shared thread
+      </button>
       <button
         onClick={() =>
           void onSessionAction?.({
@@ -867,28 +862,6 @@ describe("ChatTabV2 history sync", () => {
 
     expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
       "project"
-    );
-  });
-
-  it("keeps the history rail visible while hiding shared-thread affordances when the flag is off", async () => {
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "shared-threads-enabled" ? false : true
-    );
-
-    render(<ChatTabV2 {...defaultProps} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
-
-    expect(screen.getByTestId("history-rail")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "New personal thread" })
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "New shared thread" })
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("history-rail")).toHaveAttribute(
-      "data-shared-threads-enabled",
-      "false"
     );
   });
 

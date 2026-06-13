@@ -1,7 +1,6 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -78,16 +77,10 @@ export function ConvertChatSessionDialog({
   const effectiveProjectId = session?.projectId ?? projectId ?? null;
   // Mirror Create suite's `hostsEnabled` gate: the server/host attachment
   // pickers (and the new-suite branch's serverAttachmentId/hostAttachments
-  // wiring) only apply in the unified-attachment world. Without the flag,
-  // we preserve the legacy path that #395 already covers.
-  // Intentionally tied to the raw PostHog flag, not the desktop-default-on
-  // helper: `attachmentPickersEnabled` also gates the new-suite branch's
-  // requires-attachments check, and flipping it on for desktop blocks the
-  // empty-skeleton-then-attach-later flow.
-  const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
+  // wiring) only apply in the unified-attachment world. Signed-out or
+  // project-less sessions preserve the legacy path that #395 already covers.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
-  const attachmentPickersEnabled =
-    hostsFlagEnabled === true && convexAuthed && Boolean(effectiveProjectId);
+  const attachmentPickersEnabled = convexAuthed && Boolean(effectiveProjectId);
   const { servers, serversById, isLoading: projectServersLoading } =
     useProjectServers({
       isAuthenticated,
