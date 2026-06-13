@@ -1039,7 +1039,11 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
+    // The Team upsell card mirrors the compare table's Team column, so an
+    // "Upgrade" CTA renders in both. Scope to the upsell card so the
+    // intentional dual render doesn't make the count ambiguous.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
+    expect(upsell.getByRole("button", { name: "Upgrade" })).toBeInTheDocument();
   });
 
   it("updates pricing when the billing interval toggle changes", () => {
@@ -1051,12 +1055,16 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    // The upsell card and the compare table each render the Team price and an
+    // interval toggle. Scope to the upsell card, which owns its own interval
+    // state, so the toggle and price assertions are unambiguous.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
     // Default interval is annual — Team lists $30/seat/mo billed annually
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /^Monthly$/ }));
+    expect(upsell.getByText(/\$38/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /Annual/ }));
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
