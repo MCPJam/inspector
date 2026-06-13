@@ -12,6 +12,7 @@ COPY package.json package-lock.json ./
 COPY sdk/package.json ./sdk/package.json
 COPY cli/package.json ./cli/package.json
 COPY design-system/package.json ./design-system/package.json
+COPY chat-ui/package.json ./chat-ui/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
 
 RUN npm ci --legacy-peer-deps
@@ -58,6 +59,11 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
 # disk; `build:server` consumes the generated harness bundle so it runs in the
 # same step.
 COPY design-system ./design-system
+# The inspector client aliases `@mcpjam/chat-ui` to `../chat-ui/src/index.ts`
+# (see client/vite.config.ts) and Tailwind scans the same source, so the
+# chat-ui workspace must be on disk before `build:client` runs. It is consumed
+# from source, not from a built dist, so no chat-ui build step is needed.
+COPY chat-ui ./chat-ui
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
