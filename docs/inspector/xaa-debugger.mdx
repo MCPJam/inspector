@@ -78,6 +78,36 @@ The XAA flow sequence diagram shows four actors:
 
 Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
 
+## Negative-test scorecard
+
+The negative-test scorecard fires 11 deliberately-broken ID-JAG assertions at your authorization server and reports, per case, whether the server correctly rejected the assertion (**pass**) or wrongly issued a token for it (**fail** — a real security finding).
+
+The scorecard appears as a collapsible card below the flow panel. To run it:
+
+1. Complete a successful positive flow for the selected target. This proves you hold valid client credentials the authorization server issued, which unlocks the scorecard.
+2. Expand the **Negative-test scorecard** card and click **Run negative tests**.
+3. Review the per-case results table. Each row shows the broken mode, what the server was expected to reject, and the verdict.
+
+A summary badge on the card header shows **all rejected** (green) or **N failing** (red) after a run.
+
+### Verdicts
+
+| Verdict | Meaning |
+| --- | --- |
+| **Pass** (green) | The authorization server correctly rejected the broken assertion. |
+| **Fail** (red) | The authorization server issued a token for a broken assertion — a security risk. |
+| **Unknown** | The case timed out or encountered an error; no verdict could be reached. |
+
+### Locking and the override
+
+The scorecard is locked until a successful positive run completes for the selected target in the current session. Refreshing the page re-locks it.
+
+If you're building the authorization server (TDD) and haven't completed a positive run yet, type `run anyway` into the override field and click **Unlock** to run the scorecard without the gate.
+
+### Availability
+
+The scorecard is only available when the selected target has its own authorization server. It is disabled with an explanation when using the MCPJam test auth server (there is no external server to fire broken assertions at).
+
 ## Next Steps
 
 - Review the [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) for XAA requirements
