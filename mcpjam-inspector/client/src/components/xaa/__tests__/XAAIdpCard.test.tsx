@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAIdpCard } from "../XAAIdpCard";
@@ -47,11 +47,12 @@ describe("XAAIdpCard", () => {
 
     expect(screen.getByText(issuer)).toBeInTheDocument();
     expect(
-      screen.getByText(`${issuer}/.well-known/openid-configuration`),
-    ).toBeInTheDocument();
-    expect(
       screen.getByText(`${issuer}/.well-known/jwks.json`),
     ).toBeInTheDocument();
+    // The OpenID configuration URL row was removed (derivable from the issuer).
+    expect(
+      screen.queryByText(`${issuer}/.well-known/openid-configuration`),
+    ).not.toBeInTheDocument();
   });
 
   it("copies a URL and shows inline confirmation", async () => {
@@ -67,54 +68,26 @@ describe("XAAIdpCard", () => {
     expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
-  // URL-aware fetch mock: the card first reads the server's OpenID config, then
-  // the JWKS. Each call gets its own Response (bodies are single-read).
-  const mockIdpFetch = (overrides: { issuer?: string; kid?: string } = {}) => {
-    const serverIssuer = overrides.issuer ?? issuer;
-    const kid = overrides.kid ?? "key-2026";
-    return vi.fn((url: string | URL) => {
-      const href = String(url);
-      if (href.includes("openid-configuration")) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              issuer: serverIssuer,
-              jwks_uri: `${serverIssuer}/.well-known/jwks.json`,
-            }),
-            { status: 200 },
-          ),
-        );
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify({ keys: [{ kid }] }), { status: 200 }),
-      );
-    });
-  };
-
-  it("shows the active signing key id fetched from JWKS once expanded", async () => {
-    const fetchMock = mockIdpFetch();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const user = userEvent.setup();
-    render(<XAAIdpCard />);
-    await user.click(
-      screen.getByRole("button", { name: /use mcpjam as your test idp/i }),
+  // On expand the card reads the server's OpenID config to resolve the real
+  // issuer + jwks_uri (the displayed values).
+  const mockIdpFetch = (serverIssuer: string) =>
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            issuer: serverIssuer,
+            jwks_uri: `${serverIssuer}/.well-known/jwks.json`,
+          }),
+          { status: 200 },
+        ),
+      ),
     );
-
-    await waitFor(() =>
-      expect(screen.getByText("kid: key-2026")).toBeInTheDocument(),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${issuer}/.well-known/jwks.json`,
-      expect.objectContaining({ signal: expect.anything() }),
-    );
-  });
 
   it("prefers the issuer advertised by the server over the browser origin", async () => {
     // The jsdom browser origin is not localhost:6274 — simulate the dev-proxy
     // skew where the backend mints a different-origin `iss`.
     const serverIssuer = "http://localhost:6274/api/web/xaa";
-    vi.stubGlobal("fetch", mockIdpFetch({ issuer: serverIssuer }));
+    vi.stubGlobal("fetch", mockIdpFetch(serverIssuer));
 
     const user = userEvent.setup();
     render(<XAAIdpCard />);
@@ -124,10 +97,11 @@ describe("XAAIdpCard", () => {
 
     expect(await screen.findByText(serverIssuer)).toBeInTheDocument();
     expect(
-      screen.getByText(`${serverIssuer}/.well-known/openid-configuration`),
-    ).toBeInTheDocument();
-    expect(
       screen.getByText(`${serverIssuer}/.well-known/jwks.json`),
     ).toBeInTheDocument();
+    // OpenID config URL is no longer shown as its own row.
+    expect(
+      screen.queryByText(`${serverIssuer}/.well-known/openid-configuration`),
+    ).not.toBeInTheDocument();
   });
 });

@@ -60,7 +60,11 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
 }));
 
 vi.mock("../xaa/XAAConfigModal", () => ({
-  XAAConfigModal: () => null,
+  XAAConfigModal: ({ onClear }: { onClear: () => void }) => (
+    <button type="button" data-testid="xaa-clear-config" onClick={onClear}>
+      clear
+    </button>
+  ),
 }));
 
 vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
@@ -71,10 +75,6 @@ vi.mock("../xaa/NegativeTestScorecard", () => ({
   NegativeTestScorecard: () => (
     <div data-testid="xaa-negative-test-scorecard" />
   ),
-}));
-
-vi.mock("../xaa/XAABootstrapDialog", () => ({
-  XAABootstrapDialog: () => null,
 }));
 
 const runAllMock = vi.fn(async () => undefined);
@@ -97,8 +97,10 @@ vi.mock("@/lib/xaa/profile", () => {
   };
 
   return {
+    EMPTY_XAA_DEBUG_PROFILE: emptyProfile,
     loadStoredXAADebugProfile: () => emptyProfile,
     saveStoredXAADebugProfile: vi.fn(),
+    clearStoredXAADebugProfile: vi.fn(),
     deriveXAADebugProfileFromServer: (
       server: ServerWithName | undefined,
       fallback = emptyProfile,
@@ -207,6 +209,36 @@ describe("XAAFlowTab", () => {
     expect(captureMock).toHaveBeenCalledWith(
       "xaa_flow_completed",
       expect.objectContaining({ success: false, error_category: "idle" }),
+    );
+  });
+
+  it("clearing the config returns to the initial no-target screen", async () => {
+    const user = userEvent.setup();
+    const serverConfigs = {
+      "http-server": createServer({
+        name: "http-server",
+        config: { url: "https://mcp.example.com" },
+      }),
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="http-server"
+      />,
+    );
+
+    // The connected HTTP server auto-fills the target.
+    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
+      "https://mcp.example.com",
+    );
+
+    await user.click(screen.getByTestId("xaa-clear-config"));
+
+    // Cleared → back to "no target", and it stays there (auto-derive is
+    // suppressed) rather than re-filling from the connected server.
+    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
+      "No target configured",
     );
   });
 });

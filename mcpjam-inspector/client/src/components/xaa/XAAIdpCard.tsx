@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Copy, KeyRound } from "lucide-react";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
-import {
-  fetchActiveKeyId,
-  fetchXaaIdpUrls,
-  getXaaIdpUrls,
-} from "@/lib/xaa/idp-endpoints";
+import { fetchXaaIdpUrls, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
@@ -74,38 +69,31 @@ function CopyRow({ label, value }: { label: string; value: string }) {
  */
 export function XAAIdpCard() {
   const [expanded, setExpanded] = useState(false);
-  const [keyId, setKeyId] = useState<string | null>(null);
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
   const [urls, setUrls] = useState(() => getXaaIdpUrls());
   const resolved = useRef(false);
 
-  const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
+  const { issuerBaseUrl, jwksUrl } = urls;
 
-  // Resolve the real issuer (and active key id) once, the first time the card
-  // is expanded.
+  // Resolve the real issuer from the server's discovery doc once, the first
+  // time the card is expanded.
   useEffect(() => {
     if (!expanded || resolved.current) {
       return;
     }
     const controller = new AbortController();
-    void (async () => {
-      const serverUrls = await fetchXaaIdpUrls(controller.signal);
+    void fetchXaaIdpUrls(controller.signal).then((serverUrls) => {
       if (controller.signal.aborted) {
         return;
       }
       // Mark done only after a non-aborted resolution — setting it up front
       // would lock out future expansions if the first attempt is aborted.
       resolved.current = true;
-      const active = serverUrls ?? getXaaIdpUrls();
       if (serverUrls) {
         setUrls(serverUrls);
       }
-      const kid = await fetchActiveKeyId(active.jwksUrl, controller.signal);
-      if (kid && !controller.signal.aborted) {
-        setKeyId(kid);
-      }
-    })();
+    });
     return () => controller.abort();
   }, [expanded]);
 
@@ -123,11 +111,6 @@ export function XAAIdpCard() {
             <span className="text-sm font-semibold">
               Use MCPJam as your test IdP
             </span>
-            {keyId && (
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                kid: {keyId}
-              </Badge>
-            )}
           </div>
           <p className="truncate text-xs text-muted-foreground">
             Register these endpoints with your authorization server to trust
@@ -144,17 +127,27 @@ export function XAAIdpCard() {
       {expanded && (
         <div className="space-y-4 px-4 pb-4">
           <CopyRow label="Issuer URL" value={issuerBaseUrl} />
-          <CopyRow label="OpenID configuration URL" value={openidConfigUrl} />
           <CopyRow label="JWKS URL" value={jwksUrl} />
 
-          <p className="text-xs text-muted-foreground">
-            In Okta, Auth0, Keycloak, or your own authorization server, register
-            MCPJam as a trusted identity issuer using the issuer (or JWKS) URL
-            above. Then set the ID-JAG <code className="font-mono">aud</code> to
-            your authorization server&apos;s issuer and the{" "}
-            <code className="font-mono">resource</code> to the MCP server&apos;s
-            resource identifier.
-          </p>
+          <ol className="list-decimal space-y-1.5 pl-5 text-xs text-muted-foreground marker:text-muted-foreground">
+            <li>
+              In Okta, Auth0, Keycloak, or your own authorization server,
+              register MCPJam as a trusted identity issuer using the issuer (or
+              JWKS) URL above.
+            </li>
+            <li>
+              Set the ID-JAG <code className="font-mono">aud</code> to your
+              authorization server&apos;s issuer.
+            </li>
+            <li>
+              Set the ID-JAG <code className="font-mono">resource</code> to the
+              MCP server&apos;s resource identifier.
+            </li>
+            <li>
+              Register MCPJam with the authorization server using the client ID
+              from your config.
+            </li>
+          </ol>
 
           {!HOSTED_MODE && (
             <p className="text-xs text-muted-foreground">
