@@ -26,6 +26,8 @@ import type {
   OpenAiAppsCapabilities,
   ToolRenderOverride,
   ToolServerMap,
+  WidgetCsp,
+  WidgetPermissions,
 } from "../types";
 
 export interface TraceContentPart {
@@ -59,8 +61,8 @@ export interface TraceWidgetSnapshot {
   serverId: string;
   resourceUri?: string;
   toolMetadata: Record<string, unknown>;
-  widgetCsp?: Record<string, unknown> | null;
-  widgetPermissions?: Record<string, unknown> | null;
+  widgetCsp?: WidgetCsp | null;
+  widgetPermissions?: WidgetPermissions | null;
   widgetPermissive?: boolean;
   prefersBorder?: boolean;
   widgetHtmlUrl?: string | null;
@@ -93,8 +95,8 @@ export function snapshotsToTraceWidgetSnapshots(
     serverId: string;
     uiType: "mcp-apps" | "openai-apps";
     resourceUri?: string;
-    widgetCsp: Record<string, unknown> | null;
-    widgetPermissions: Record<string, unknown> | null;
+    widgetCsp: WidgetCsp | null;
+    widgetPermissions: WidgetPermissions | null;
     widgetPermissive: boolean;
     prefersBorder: boolean;
     widgetHtmlUrl?: string | null;

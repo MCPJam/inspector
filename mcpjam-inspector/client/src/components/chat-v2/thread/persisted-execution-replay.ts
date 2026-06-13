@@ -48,10 +48,13 @@ export interface PersistedExecutionReplay {
 export function buildPersistedExecutionReplay(
   input: PersistedExecutionReplayInput,
 ): PersistedExecutionReplay {
-  // Input's real MCP-Apps types widen into the package's `unknown` placeholders;
-  // the produced override's placeholder widget/CSP fields are bridged back to
-  // the inspector's real types here.
-  return buildPersistedExecutionReplayImpl(
-    input,
-  ) as unknown as PersistedExecutionReplay;
+  // Input's real MCP-Apps types widen into the package's `unknown` placeholders.
+  // Only `renderOverride` carries the placeholder widget/CSP types, so narrow
+  // the cast to that field and keep the rest structurally checked against the
+  // package shape.
+  const replay = buildPersistedExecutionReplayImpl(input);
+  return {
+    ...replay,
+    renderOverride: replay.renderOverride as ToolRenderOverride,
+  };
 }
