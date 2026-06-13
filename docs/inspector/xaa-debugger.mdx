@@ -21,12 +21,50 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
-3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
+2. **Configure Target** - Provide your MCP server URL and authorization server details, or select a registered resource app as the run target (see [Registration-backed runs](#registration-backed-runs))
+3. **Run the flow** - Click **Run all** to drive every step automatically, or click **Continue** to advance one step at a time
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Running the flow
+
+### Run all
+
+The **Run all** button drives the entire XAA flow from start to finish in a single click. Each step runs in sequence; if a step fails the run stops at that step and the error guidance panel appears.
+
+The button is disabled when no target is configured and shows a spinner while the run is in progress. While running, the **Continue** and **Reset** buttons are also disabled.
+
+### Per-step progress chips
+
+A strip of small chips sits next to the **Run all** button and shows the outcome of each flow step:
+
+- **Green** — the step completed successfully
+- **Red** — the step failed (the run stopped here)
+- **Grey (untouched)** — the step has not run yet
+
+A partial run (stopped mid-flow) shows a mix of green, red, and grey chips so you can see exactly where the flow broke down without losing the results of earlier steps.
+
+### Step-by-step mode
+
+Click **Continue** to advance one step at a time. This is useful when you want to inspect the network log or sequence diagram between steps. The **Continue** button label changes to reflect the next action: **Start**, **Continue**, or the name of the current step.
+
+## Registration-backed runs
+
+If your MCPJam account has registered resource apps, they appear in the resource apps section above the flow controls. Click a row to select it as the run target — the row highlights and shows a **Run target** badge. Click the same row again to deselect it and return to the manual profile.
+
+When a registration is selected:
+
+- The target URL, authorization server issuer, client ID, and scopes are taken from the registration rather than the manual debug profile.
+- The client secret is resolved server-side and never sent to the browser.
+- The **Run all** and **Continue** buttons run the flow against the registration's stored configuration.
+
+Switching the selected registration (or clearing it) resets the flow to a clean state automatically.
+
+### Deep link to a registration
+
+Append `?resource=<registration-id>` to the XAA Debugger URL to pre-select a registration when the page loads. The parameter is read once at startup and consumed as soon as the registration list resolves.
 
 ## Authorization Server Compatibility
 
