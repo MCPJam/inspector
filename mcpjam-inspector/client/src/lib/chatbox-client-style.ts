@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import claudeCodeLogo from "/claude_code_logo.png";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getHostStyleOrDefault,
@@ -59,12 +60,26 @@ export function getChatboxHostLogo(
     .logoSrc;
 }
 
+/**
+ * Templates that reuse another host's style for their chat surface but
+ * ship their own brand logo. The style-label loop below can't find these
+ * (there's no style whose id/label matches the display name), so they're
+ * matched explicitly first. Keyed by the normalized display name.
+ */
+const TEMPLATE_BRAND_LOGOS: Record<string, string> = {
+  // "Claude Code" reuses hostStyle "claude" but is its own brand.
+  claudecode: claudeCodeLogo,
+};
+
 /** Match a saved host's display name to a built-in style logo when config is unavailable. */
 export function resolveHostLogoByDisplayName(
   displayName: string,
 ): string | null {
   const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
   if (!needle) return null;
+
+  const brandLogo = TEMPLATE_BRAND_LOGOS[needle];
+  if (brandLogo) return brandLogo;
 
   for (const style of listHostStyles()) {
     const id = style.id.toLowerCase();

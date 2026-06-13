@@ -657,9 +657,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         roots: {},
         elicitation: {},
       };
+      // Progressive tool discovery ON. Product choice, not probe data —
+      // tool disclosure isn't an MCP `initialize` capability, so nothing
+      // about it was (or could be) extracted from the host probe.
+      base.progressiveToolDiscovery = true;
       // CLI client: no widget rendering, so `hostContext` stays the
-      // empty object and the preset's hostCapabilities advertise is left
-      // alone — see the Codex template for the full rationale.
+      // empty object.
+      //
+      // Zero out the host-side app advertise. We reuse `hostStyle:
+      // "claude"` for Anthropic chrome, but the Claude style's preset
+      // advertises claude.ai's full app surface (openLinks, serverTools,
+      // serverResources, logging, …) — none of which Claude Code has,
+      // since it renders no MCP Apps. `{}` is the explicit "advertise
+      // nothing" override (resolveEffectiveHostCapabilities treats `{}`
+      // distinctly from `undefined`/preset-inherit), so the Apps tab
+      // honestly shows an empty hostCapabilities for the CLI instead of
+      // inheriting Claude's. None of this was in the probe — the CLI
+      // returned no ui/initialize snapshot at all.
+      base.hostCapabilitiesOverride = {};
       //
       // The CLI's native harness toolset (Bash/Read/Write/etc.) is
       // catalogued in CLAUDE_CODE_NATIVE_TOOLS above for a future
