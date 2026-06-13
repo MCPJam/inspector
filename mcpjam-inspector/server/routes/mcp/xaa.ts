@@ -26,6 +26,8 @@ import {
   buildDiscoveryCandidates,
   evaluateDiscovery,
 } from "../../services/xaa-discovery.js";
+import { WebRouteError } from "../web/errors.js";
+import type { XaaResourceAppSecretResult } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
@@ -58,15 +60,22 @@ const healthCheckSchema = z.object({
   url: z.string().trim().min(1),
 });
 
-const proxyTokenSchema = z.object({
-  tokenEndpoint: z.string().trim().min(1),
-  assertion: z.string().trim().min(1),
-  clientId: z.string().trim().min(1).optional(),
-  clientSecret: z.string().trim().min(1).optional(),
-  scope: z.string().trim().min(1).optional(),
-  resource: z.string().trim().min(1).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-});
+const proxyTokenSchema = z
+  .object({
+    tokenEndpoint: z.string().trim().min(1).optional(),
+    assertion: z.string().trim().min(1),
+    clientId: z.string().trim().min(1).optional(),
+    clientSecret: z.string().trim().min(1).optional(),
+    scope: z.string().trim().min(1).optional(),
+    resource: z.string().trim().min(1).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    // Registration-backed runs: the server resolves the stored secret and
+    // forces the outbound URL to the registration's stored token endpoint.
+    registrationId: z.string().trim().min(1).optional(),
+  })
+  .refine((data) => data.registrationId || data.tokenEndpoint, {
+    message: "tokenEndpoint or registrationId is required",
+  });
 
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
@@ -77,6 +86,14 @@ interface CreateXaaRouterOptions {
   // spoofed into advertising https for a plain-http localhost run.
   trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
+  // Resolves a registered resource app's client secret + stored token
+  // endpoint server-side (hosted instance only). When absent — the
+  // unauthenticated local instance — registration-backed proxy requests are
+  // rejected.
+  resolveRegistrationSecret?: (args: {
+    registrationId: string;
+    bearerToken: string;
+  }) => Promise<XaaResourceAppSecretResult>;
 }
 
 type ParsedJwtPayload = {
@@ -302,20 +319,65 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(proxyTokenSchema, body);
+
+      let url: string;
+      let clientId = parsed.clientId;
+      let clientSecret = parsed.clientSecret;
+      let extraHeaders = parsed.headers;
+
+      if (parsed.registrationId) {
+        if (!options.resolveRegistrationSecret) {
+          return toJsonError(
+            "Registration-backed runs are not available on this instance",
+            { status: 400, code: "VALIDATION_ERROR" },
+          );
+        }
+
+        const authHeader = c.req.header("authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return toJsonError("Missing or invalid bearer token", {
+            status: 401,
+            code: "UNAUTHORIZED",
+          });
+        }
+
+        const resolved = await options.resolveRegistrationSecret({
+          registrationId: parsed.registrationId,
+          bearerToken: authHeader.slice("Bearer ".length),
+        });
+
+        if (!resolved.tokenEndpoint) {
+          return toJsonError("The registration has no stored token endpoint", {
+            status: 400,
+            code: "VALIDATION_ERROR",
+          });
+        }
+
+        // The stored secret is only ever posted to the registration's stored
+        // token endpoint. Client-supplied tokenEndpoint/headers/clientSecret
+        // are discarded so a caller can't redirect the secret elsewhere.
+        url = resolved.tokenEndpoint;
+        clientId = resolved.targetClientId ?? parsed.clientId;
+        clientSecret = resolved.clientSecret;
+        extraHeaders = undefined;
+      } else {
+        url = parsed.tokenEndpoint as string;
+      }
+
       const result = await executeOAuthProxy({
-        url: parsed.tokenEndpoint,
+        url,
         method: "POST",
         body: {
           grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
           assertion: parsed.assertion,
-          ...(parsed.clientId ? { client_id: parsed.clientId } : {}),
-          ...(parsed.clientSecret ? { client_secret: parsed.clientSecret } : {}),
+          ...(clientId ? { client_id: clientId } : {}),
+          ...(clientSecret ? { client_secret: clientSecret } : {}),
           ...(parsed.scope ? { scope: parsed.scope } : {}),
           ...(parsed.resource ? { resource: parsed.resource } : {}),
         },
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          ...(parsed.headers || {}),
+          ...(extraHeaders || {}),
         },
         httpsOnly: options.httpsOnlyProxy,
       });
@@ -327,6 +389,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           status: error.status,
           code:
             error.status === 400 ? "VALIDATION_ERROR" : "SERVER_UNREACHABLE",
+        });
+      }
+
+      if (error instanceof WebRouteError) {
+        return toJsonError(error.message, {
+          status: error.status,
+          code: error.code,
         });
       }
 

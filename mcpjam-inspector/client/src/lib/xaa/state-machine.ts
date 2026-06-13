@@ -365,11 +365,15 @@ function buildIdJagInspection(
   };
 }
 
+// 14 distinct steps with a couple of paired sub-advances; 32 leaves headroom
+// without risking a hot loop if a step ever stops progressing silently.
+const XAA_RUN_ALL_MAX_ADVANCES = 32;
+
 export function createXAAStateMachine(
   config: BaseXAAStateMachineConfig,
 ): XAAStateMachine {
   const {
-    state,
+    state: initialState,
     getState,
     updateState,
     serverUrl,
@@ -381,7 +385,10 @@ export function createXAAStateMachine(
     clientId,
     scope,
     authzServerIssuer,
+    registrationId,
   } = config;
+
+  const state: Partial<XAAFlowState> = initialState ?? {};
 
   const machine: XAAStateMachine = {
     state: createInitialXAAFlowState({
@@ -400,6 +407,7 @@ export function createXAAStateMachine(
       updateState(updates);
     },
     proceedToNextStep: async () => {},
+    runAll: async () => {},
     resetFlow: () => {},
   };
 
@@ -875,7 +883,7 @@ export function createXAAStateMachine(
   const requestAccessToken = async () => {
     const state = currentState();
 
-    if (!state.idJag || !state.tokenEndpoint) {
+    if (!state.idJag || (!state.tokenEndpoint && !registrationId)) {
       machine.updateState({
         currentStep: "jwt_bearer_request",
         error:
@@ -884,19 +892,30 @@ export function createXAAStateMachine(
       return;
     }
 
+    // Registration-backed runs send only the registration id: the server
+    // resolves the stored secret and forces the outbound URL to the
+    // registration's stored token endpoint, so neither ever rides in from
+    // the browser.
     const request = {
       method: "POST",
       url: "/proxy/token",
       headers: {
         "Content-Type": "application/json",
       },
-      body: {
-        tokenEndpoint: state.tokenEndpoint,
-        assertion: state.idJag,
-        clientId: state.clientId,
-        scope: state.scope,
-        resource: state.resourceUrl || state.serverUrl,
-      },
+      body: registrationId
+        ? {
+            registrationId,
+            assertion: state.idJag,
+            scope: state.scope,
+            resource: state.resourceUrl || state.serverUrl,
+          }
+        : {
+            tokenEndpoint: state.tokenEndpoint,
+            assertion: state.idJag,
+            clientId: state.clientId,
+            scope: state.scope,
+            resource: state.resourceUrl || state.serverUrl,
+          },
     };
 
     try {
@@ -1108,6 +1127,30 @@ export function createXAAStateMachine(
       default: {
         const exhaustive: never = step;
         throw new Error(`Unhandled XAA flow step: ${exhaustive}`);
+      }
+    }
+  };
+
+  // Drive the flow to completion: keep advancing until the state machine
+  // reaches `complete`, records an error, or stops making progress (safety
+  // valve — every successful advance changes `currentStep`).
+  machine.runAll = async () => {
+    const MAX_ADVANCES = XAA_RUN_ALL_MAX_ADVANCES;
+    for (let i = 0; i < MAX_ADVANCES; i += 1) {
+      const before = currentState();
+      if (before.currentStep === "complete" || before.error) {
+        return;
+      }
+
+      await machine.proceedToNextStep();
+
+      const after = currentState();
+      if (after.error || after.currentStep === "complete") {
+        return;
+      }
+      if (after.currentStep === before.currentStep) {
+        // No progress and no error — bail rather than loop forever.
+        return;
       }
     }
   };

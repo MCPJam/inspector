@@ -368,3 +368,173 @@ describe("hosted xaa outbound guards", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("registration-backed /proxy/token", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-reg-proxy-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  function buildApp(options: {
+    resolver?: (args: {
+      registrationId: string;
+      bearerToken: string;
+    }) => Promise<{
+      clientSecret: string;
+      tokenEndpoint: string | null;
+      targetClientId: string | null;
+      scopes: string[] | null;
+    }>;
+  }) {
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: false,
+        resolveRegistrationSecret: options.resolver,
+      }),
+    );
+    return app;
+  }
+
+  it("rejects registrationId on an instance without a secret resolver", async () => {
+    const app = buildApp({});
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        registrationId: "app_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { message?: string };
+    expect(body.message).toContain("not available");
+  });
+
+  it("requires a bearer token before resolving the secret", async () => {
+    const resolver = vi.fn();
+    const app = buildApp({ resolver });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        registrationId: "app_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("forces the stored token endpoint and strips client-supplied endpoint/headers/secret", async () => {
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      tokenEndpoint: "https://stored-as.example.com/oauth/token",
+      targetClientId: "stored-client-id",
+      scopes: null,
+    }));
+    const app = buildApp({ resolver });
+
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        registrationId: "app_1",
+        assertion: "aaa.bbb.ccc",
+        // A caller must not be able to redirect the stored secret or smuggle
+        // headers/credentials alongside it.
+        tokenEndpoint: "https://attacker.example.com/exfil",
+        headers: { "X-Evil": "1" },
+        clientSecret: "attacker-secret",
+        clientId: "attacker-client-id",
+        scope: "read:tools",
+        resource: "https://mcp.example.com",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(resolver).toHaveBeenCalledWith({
+      registrationId: "app_1",
+      bearerToken: "user-token",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(calledUrl).toBe("https://stored-as.example.com/oauth/token");
+
+    const headers = calledInit.headers as Record<string, string>;
+    expect(headers["X-Evil"]).toBeUndefined();
+
+    const form = new URLSearchParams(String(calledInit.body));
+    expect(form.get("client_secret")).toBe("stored-secret");
+    expect(form.get("client_id")).toBe("stored-client-id");
+    expect(form.get("assertion")).toBe("aaa.bbb.ccc");
+    expect(form.get("scope")).toBe("read:tools");
+  });
+
+  it("rejects a registration without a stored token endpoint", async () => {
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      tokenEndpoint: null,
+      targetClientId: null,
+      scopes: null,
+    }));
+    const app = buildApp({ resolver });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        registrationId: "app_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { message?: string };
+    expect(body.message).toContain("no stored token endpoint");
+  });
+});
