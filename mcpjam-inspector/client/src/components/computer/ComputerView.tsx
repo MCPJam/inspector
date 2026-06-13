@@ -336,10 +336,10 @@ function ComputerUsageMeter({ projectId }: { projectId: string }) {
     allowanceMs === null
       ? 0
       : allowanceMs <= 0
-        ? awakeMs > 0
-          ? 100
-          : 0
-        : Math.min(100, (awakeMs / allowanceMs) * 100);
+      ? awakeMs > 0
+        ? 100
+        : 0
+      : Math.min(100, (awakeMs / allowanceMs) * 100);
 
   return (
     <div
