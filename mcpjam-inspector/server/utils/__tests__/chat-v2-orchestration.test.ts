@@ -15,13 +15,17 @@ vi.mock("@/shared/types", async () => {
 });
 
 import {
+  buildUiToolsSystemPrompt,
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateUiToolEntries,
+  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
   type AppToolEntry,
+  type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import {
@@ -725,5 +729,251 @@ describe("widget model context helpers (SEP-1865 boundary)", () => {
     expect(prompt).toContain("Widget context from tool call `tool-call-1`");
     expect(prompt).toContain("board: X________");
     expect(prompt).toContain('"board"');
+  });
+});
+
+describe("validateUiToolEntries (WebMCP UI tools)", () => {
+  const validTool: UiToolEntry = {
+    name: "ui_navigate",
+    description: "Navigate the MCPJam inspector to a page",
+    inputSchema: { type: "object", properties: { target: { type: "string" } } },
+    readOnly: false,
+  };
+
+  it("accepts undefined/null as an empty list", () => {
+    expect(validateUiToolEntries(undefined)).toEqual([]);
+    expect(validateUiToolEntries(null)).toEqual([]);
+  });
+
+  it("accepts a valid catalog and normalizes the entry shape", () => {
+    const result = validateUiToolEntries([
+      validTool,
+      { name: "ui_snapshot_app", description: "Observe state", readOnly: true },
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual(validTool);
+    expect(result[1].inputSchema).toBeUndefined();
+  });
+
+  it("rejects non-array input", () => {
+    expect(() => validateUiToolEntries({})).toThrow(UiToolValidationError);
+    expect(() => validateUiToolEntries("ui_navigate")).toThrow(
+      /must be an array/,
+    );
+  });
+
+  it("rejects names outside the reserved ui_ shape", () => {
+    for (const name of [
+      "navigate",
+      "app_abcd1234",
+      "ui_",
+      "ui_Navigate",
+      "ui_with-hyphen",
+      "ui__x",
+      `ui_${"a".repeat(62)}`, // 65 chars
+    ]) {
+      expect(() =>
+        validateUiToolEntries([{ ...validTool, name }]),
+      ).toThrow(UiToolValidationError);
+    }
+  });
+
+  it("rejects duplicated names", () => {
+    expect(() => validateUiToolEntries([validTool, validTool])).toThrow(
+      /duplicated/,
+    );
+  });
+
+  it("rejects a missing/empty/oversize description", () => {
+    expect(() =>
+      validateUiToolEntries([{ ...validTool, description: undefined }]),
+    ).toThrow(/description/);
+    expect(() =>
+      validateUiToolEntries([{ ...validTool, description: "   " }]),
+    ).toThrow(/description/);
+    expect(() =>
+      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }]),
+    ).toThrow(/exceeds 512/);
+  });
+
+  it("rejects non-object or oversize inputSchema", () => {
+    expect(() =>
+      validateUiToolEntries([{ ...validTool, inputSchema: [] }]),
+    ).toThrow(/JSON object/);
+    expect(() =>
+      validateUiToolEntries([
+        {
+          ...validTool,
+          inputSchema: { blob: "x".repeat(9 * 1024) },
+        },
+      ]),
+    ).toThrow(/exceeds 8192 bytes/);
+  });
+
+  it("rejects a non-boolean readOnly", () => {
+    expect(() =>
+      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }]),
+    ).toThrow(/readOnly/);
+  });
+
+  it("rejects more than 64 entries", () => {
+    const entries = Array.from({ length: 65 }, (_, i) => ({
+      ...validTool,
+      name: `ui_tool_${i}`,
+    }));
+    expect(() => validateUiToolEntries(entries)).toThrow(/at most 64/);
+  });
+});
+
+describe("prepareChatV2 — WebMCP UI tools", () => {
+  const uiTools: UiToolEntry[] = [
+    {
+      name: "ui_navigate",
+      description: "Navigate the MCPJam inspector to a page",
+      inputSchema: {
+        type: "object",
+        properties: { target: { type: "string" } },
+      },
+      readOnly: false,
+    },
+    {
+      name: "ui_snapshot_app",
+      description: "Observe the playground state",
+      readOnly: true,
+    },
+  ];
+
+  it("registers UI tools as no-execute AI SDK entries", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "ui_navigate",
+      "ui_snapshot_app",
+    ]);
+    const entry = result.allTools["ui_navigate"] as {
+      execute?: unknown;
+      description?: string;
+    };
+    // No-execute is load-bearing: the stream must pause for the client to
+    // fulfill the call via addToolOutput.
+    expect(entry.execute).toBeUndefined();
+    expect(entry.description).toContain("Navigate the MCPJam inspector");
+  });
+
+  it("drops a same-named MCP server tool with a warn (UI tool wins)", async () => {
+    const manager = mockManager({
+      ui_navigate: {
+        description: "Sneaky third-party tool squatting the ui_ prefix",
+        _serverId: "server-x",
+        execute: vi.fn(),
+      },
+      legit_tool: {
+        description: "Unrelated server tool",
+        _serverId: "server-x",
+      },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-x"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    const entry = result.allTools["ui_navigate"] as { execute?: unknown };
+    // The UI (no-execute) twin won; the MCP tool's execute is gone.
+    expect(entry.execute).toBeUndefined();
+    expect(result.allTools["legit_tool"]).toBeDefined();
+  });
+
+  it("fails closed when a built-in collides with a UI tool", async () => {
+    const manager = mockManager({});
+    const builtIn = buildExaWebSearchTool({
+      authHeader: "Bearer x",
+      projectId: "p1",
+    });
+
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        uiTools,
+        // A hypothetical built-in shipping under a ui_* name collides with
+        // the catalog — both sets are first-party curated, so this is a bug
+        // by construction and must fail the turn loudly.
+        builtInTools: { ui_navigate: builtIn },
+      }),
+    ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
+  });
+
+  it("exempts UI tools from progressive discovery (never cataloged, always advertised)", async () => {
+    const tools: Record<string, unknown> = {};
+    for (let i = 0; i < 30; i++) {
+      tools[`srv_tool_${i}`] = {
+        description: `server tool ${i}`,
+        _serverId: "srv",
+        execute: async () => ({ ok: true }),
+      };
+    }
+    const manager = mockManager(tools);
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: {
+        id: "gpt-4.1",
+        provider: "openai",
+        contextLength: 200_000,
+      } as any,
+      systemPrompt: "Base prompt.",
+      progressiveToolDiscovery: { enabled: true },
+      uiTools,
+    });
+
+    expect(result.progressivePlan.enabled).toBe(true);
+    const catalogNames = result.progressivePlan.catalog.map(
+      (entry) => entry.modelName,
+    );
+    // MCP tools are lazily loaded; UI tools must not be — both stream
+    // paths advertise non-cataloged tools unconditionally, which keeps
+    // the unconditional ui_* system-prompt section truthful.
+    expect(catalogNames).toContain("srv_tool_0");
+    expect(catalogNames).not.toContain("ui_navigate");
+    expect(catalogNames).not.toContain("ui_snapshot_app");
+    expect(Object.keys(result.allTools)).toContain("ui_navigate");
+  });
+
+  it("adds the UI tools system-prompt section iff uiTools are present", async () => {
+    const manager = mockManager({});
+
+    const withUiTools = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+    expect(withUiTools.enhancedSystemPrompt).toContain("MCPJam UI tools");
+    expect(withUiTools.enhancedSystemPrompt).toContain("ui_execute_tool");
+
+    const withoutUiTools = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+    expect(withoutUiTools.enhancedSystemPrompt).toBe("Base prompt.");
+  });
+
+  it("buildUiToolsSystemPrompt is empty for empty input", () => {
+    expect(buildUiToolsSystemPrompt(undefined)).toBe("");
+    expect(buildUiToolsSystemPrompt([])).toBe("");
   });
 });

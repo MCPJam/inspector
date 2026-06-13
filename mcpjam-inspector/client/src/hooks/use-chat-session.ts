@@ -36,6 +36,8 @@ import {
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
+import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -1596,6 +1598,9 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP UI tools snapshot — same drain-fresh contract as appTools;
+          // the server defends the boundary again in `validateUiToolEntries`.
+          uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
           ...(widgetModelContext && widgetModelContext.length > 0
             ? { widgetModelContext }
             : {}),
@@ -1665,6 +1670,21 @@ export function useChatSession(
     // app aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+      // WebMCP UI tools run first: `handleUiToolCall` only claims calls the
+      // UI registry knows (or shipped this session) and supplies the output
+      // itself; everything else falls through to the app-alias path below.
+      if (
+        await handleUiToolCall({
+          toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+          addToolOutput: addToolOutput as Parameters<
+            typeof handleUiToolCall
+          >[0]["addToolOutput"],
+        })
+      ) {
+        return;
+      }
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);

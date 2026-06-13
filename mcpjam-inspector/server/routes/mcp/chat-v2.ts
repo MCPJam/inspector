@@ -44,6 +44,8 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateUiToolEntries,
+  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
@@ -514,6 +516,17 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // WebMCP UI tools: same boundary treatment as appTools.
+    let validatedUiTools;
+    try {
+      validatedUiTools = validateUiToolEntries(body.uiTools);
+    } catch (error) {
+      if (error instanceof UiToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
@@ -567,6 +580,7 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
+        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
