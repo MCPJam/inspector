@@ -15,6 +15,7 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 - **Visual Sequence Diagram** - Four-actor swimlanes showing Agent, IdP, MCP Server, and Authorization Server interactions
 - **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
 - **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
+- **Registered Resource Apps** - Save resource app configurations so you can re-run the full flow without re-entering details each session
 
 ## Getting Started
 
@@ -77,6 +78,32 @@ The XAA flow sequence diagram shows four actors:
 - **Authorization Server** - The OAuth 2.0 authorization server that issues access tokens
 
 Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
+
+## Registered resource apps
+
+The **Registered resource apps** section appears at the top of the XAA Flow tab (hosted mode only, when the feature is enabled for your organization). It lets you save resource app configurations so the flow runner can drive a full end-to-end test without you re-entering connection details each session.
+
+### Registering a resource app
+
+Click **Register** to open the three-step registration wizard:
+
+1. **Basic info** — Name, resource type (MCP or REST), and resource URL.
+2. **Auth server** — Choose between the MCPJam authorization server or your own. For your own AS, provide the token endpoint, issuer, client ID, and an optional client secret.
+3. **Scopes & health** — Optionally enter space-separated OAuth scopes that will be requested on the access token. You can also provide a health-check URL and click **Check** to verify the resource is reachable before saving. A failed health check never blocks saving.
+
+### Managing registrations
+
+Each registered app row shows:
+
+- Name, resource type badge (MCP / REST), and auth-server badge (MCPJam AS / Own AS)
+- Resource URL
+- A key icon when a client secret is stored
+
+Use the **edit** (pencil) or **delete** (trash) icon buttons on each row to update or remove a registration. Deleting requires an explicit confirmation — the registration and its stored credentials are removed, but flow history is unaffected.
+
+### Admin-only access
+
+Only organization owners and admins can create, edit, or delete registrations. Non-admin members see the Register, edit, and delete controls rendered but inert, with a tooltip explaining the restriction.
 
 ## Next Steps
 
