@@ -24,8 +24,12 @@ import {
 } from "@/hooks/usePaymentsHistory";
 
 const formatUsd = (cents: number): string => {
-  const dollars = cents / 100;
-  return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+  const sign = cents < 0 ? "-" : "";
+  const dollars = Math.abs(cents) / 100;
+  const formatted = Number.isInteger(dollars)
+    ? `$${dollars}`
+    : `$${dollars.toFixed(2)}`;
+  return `${sign}${formatted}`;
 };
 
 const formatDate = (epochMs: number): string => {
@@ -110,6 +114,7 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
               <TableHead>Date</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Credits</TableHead>
+              <TableHead>Details</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Receipt</TableHead>
             </TableRow>
@@ -125,6 +130,9 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">
                   {entry.displayCredits}
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {entry.details}
                 </TableCell>
                 <TableCell>
                   <StatusBadge entry={entry} />
@@ -159,6 +167,7 @@ function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
       <div className="text-xs text-muted-foreground">
         {entry.displayCredits}
       </div>
+      <div className="text-xs text-muted-foreground">{entry.details}</div>
       <div className="flex items-center justify-between">
         <StatusBadge entry={entry} />
         <ReceiptCell entry={entry} />
@@ -191,11 +200,33 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
       </Badge>
     );
   }
+  if (status === "pending_refund") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100"
+      >
+        <Clock aria-hidden="true" />
+        Refund pending
+      </Badge>
+    );
+  }
+  if (status === "credited" || status === "refunded_and_credited") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200"
+      >
+        <Undo2 aria-hidden="true" />
+        {status === "credited" ? "Credited" : "Refunded + credited"}
+      </Badge>
+    );
+  }
   if (status === "refunded" || status === "partially_refunded") {
     const isPartial = status === "partially_refunded";
     // Hover detail like "$3 of $5 refunded" when we know the reversed amount.
     const detail =
-      typeof entry.reversedPaidCents === "number"
+      entry.pricePaidCents > 0 && typeof entry.reversedPaidCents === "number"
         ? `${formatUsd(entry.reversedPaidCents)} of ${formatUsd(
             entry.pricePaidCents
           )} refunded`
