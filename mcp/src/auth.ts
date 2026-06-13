@@ -11,6 +11,16 @@ export interface VerifiedToken {
   payload: JWTPayload;
 }
 
+/**
+ * Guest token issuer. Mirrors the inspector's
+ * `server/services/guest-token-keypair.ts` and the backend's
+ * `convex/lib/guestJwt.ts` (`GUEST_ISSUER`). Guest tokens are RS256, carry
+ * `{ iss, sub, iat, exp }` with NO `aud` claim, and must NOT carry a
+ * `purpose` claim (promotion-proof tokens must not double as session
+ * bearers — see `verifyGuestBearerToken` in the backend).
+ */
+export const GUEST_ISSUER = "https://api.mcpjam.com/guest";
+
 export type VerifyResult =
   | { ok: true; verified: VerifiedToken }
   | { ok: false; response: Response };
@@ -88,10 +98,23 @@ export interface VerifyConfig {
   /** Custom AuthKit domain (`env.AUTHKIT_DOMAIN`), added to the issuer set. */
   authkitDomain: string | undefined;
   /**
+   * Guest verification. When set, a token whose `iss` equals `guest.issuer`
+   * is verified against `guest.jwksUrl` (the JWKS the platform publishes for
+   * guest tokens) with NO audience pin. When undefined, guest tokens are
+   * rejected (the guest issuer is absent from the AuthKit allow-list).
+   */
+  guest?: { issuer: string; jwksUrl: string };
+  /**
    * Issuer → key/JWKS resolver. `null` rejects the issuer. Injectable for
    * tests; production derives it from the allow-list above (remote JWKS).
    */
   resolveKey?: (issuer: string) => KeyResolver | null;
+  /**
+   * Guest key resolver, parallel to `resolveKey`. Injectable for tests so the
+   * guest branch doesn't need a remote JWKS; production resolves the remote
+   * JWKS at `guest.jwksUrl`.
+   */
+  resolveGuestKey?: (issuer: string) => KeyResolver | null;
 }
 
 function defaultResolveKey(
@@ -152,6 +175,16 @@ export async function verifyBearerToken(
     return { ok: false, response: invalidTokenResponse(origin) };
   }
 
+  // Guest branch: a guest token (`iss === guest.issuer`) is verified against
+  // the guest JWKS with NO audience pin (guest tokens carry no `aud`). Checked
+  // before the AuthKit path because the guest issuer is intentionally absent
+  // from `authkitIssuerJwks`. The trust decision is still `jwtVerify` —
+  // signature + issuer pin + RS256 + exp — plus an explicit `purpose`
+  // rejection mirroring the backend's `verifyGuestBearerToken`.
+  if (config.guest && issuer === config.guest.issuer) {
+    return verifyGuestToken(token, issuer, config, origin);
+  }
+
   const resolveKey =
     config.resolveKey ?? defaultResolveKey(config.clientId, config.authkitDomain);
   const key = resolveKey(issuer);
@@ -170,6 +203,47 @@ export async function verifyBearerToken(
       algorithms: ["RS256"],
       clockTolerance: 5,
     });
+    return { ok: true, verified: { token, payload } };
+  } catch {
+    return { ok: false, response: invalidTokenResponse(origin) };
+  }
+}
+
+async function verifyGuestToken(
+  token: string,
+  issuer: string,
+  config: VerifyConfig,
+  origin: string,
+): Promise<VerifyResult> {
+  const guest = config.guest;
+  if (!guest) {
+    return { ok: false, response: invalidTokenResponse(origin) };
+  }
+  const key = config.resolveGuestKey
+    ? config.resolveGuestKey(issuer)
+    : remoteJwks(guest.jwksUrl);
+  if (!key) {
+    return { ok: false, response: invalidTokenResponse(origin) };
+  }
+  const getKey: JWTVerifyGetKey =
+    typeof key === "function" ? (key as JWTVerifyGetKey) : async () => key;
+
+  try {
+    const { payload } = await jwtVerify(token, getKey, {
+      issuer: guest.issuer,
+      // No `audience`: guest tokens carry no `aud` claim.
+      algorithms: ["RS256"],
+      clockTolerance: 5,
+    });
+    // Mirror the backend's `verifyGuestBearerToken`: session bearers never
+    // carry a `purpose` (promotion-proof tokens do), and must have a non-empty
+    // string `sub`.
+    if (payload.purpose !== undefined) {
+      return { ok: false, response: invalidTokenResponse(origin) };
+    }
+    if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+      return { ok: false, response: invalidTokenResponse(origin) };
+    }
     return { ok: true, verified: { token, payload } };
   } catch {
     return { ok: false, response: invalidTokenResponse(origin) };
