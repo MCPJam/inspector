@@ -50,6 +50,10 @@ vi.mock("../xaa/XAAConfigModal", () => ({
   XAAConfigModal: () => null,
 }));
 
+vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
+  XAAResourceAppsSection: () => <div data-testid="xaa-resource-apps-section" />,
+}));
+
 vi.mock("../xaa/XAABootstrapDialog", () => ({
   XAABootstrapDialog: () => null,
 }));

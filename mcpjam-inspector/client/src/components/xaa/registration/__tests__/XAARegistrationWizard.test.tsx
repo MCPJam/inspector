@@ -9,6 +9,18 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => flagValue,
 }));
 
+const captureMock = vi.fn();
+vi.mock("posthog-js", () => ({
+  default: {
+    capture: (...args: unknown[]) => captureMock(...args),
+  },
+}));
+
+vi.mock("@/lib/PosthogUtils", () => ({
+  detectEnvironment: vi.fn().mockReturnValue("test"),
+  detectPlatform: vi.fn().mockReturnValue("web"),
+}));
+
 const upsert = vi.fn(async () => ({ id: "app_new" }));
 vi.mock("@/hooks/useXaaResourceApps", () => ({
   useXaaResourceApps: () => ({
@@ -22,8 +34,10 @@ vi.mock("@/hooks/useXaaResourceApps", () => ({
 }));
 
 const discoverMock = vi.fn();
+const healthCheckMock = vi.fn();
 vi.mock("@/lib/xaa/discovery-client", () => ({
   discoverAuthorizationServer: (input: unknown) => discoverMock(input),
+  checkResourceHealth: (url: unknown) => healthCheckMock(url),
 }));
 
 const ORG_ID = "org_test";
@@ -57,6 +71,8 @@ describe("XAARegistrationWizard", () => {
     flagValue = true;
     upsert.mockClear();
     discoverMock.mockReset();
+    healthCheckMock.mockReset();
+    captureMock.mockClear();
   });
 
   describe("flag gating", () => {
@@ -101,14 +117,34 @@ describe("XAARegistrationWizard", () => {
       expect(steps[0]).not.toHaveAttribute("aria-current");
     });
 
-    it("requires a token endpoint in own-AS mode before saving", async () => {
+    it("requires a token endpoint in own-AS mode before advancing past step 2", async () => {
       const user = userEvent.setup();
       renderWizard();
       await fillBasicInfoAndAdvance(user);
 
-      await user.click(screen.getByRole("button", { name: "Save" }));
+      await user.click(screen.getByRole("button", { name: "Next" }));
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Token endpoint is required",
+      );
+      const steps = screen.getAllByRole("listitem");
+      expect(steps[1]).toHaveAttribute("aria-current", "step");
+      expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid health check URL on step 3", async () => {
+      const user = userEvent.setup();
+      renderWizard();
+      await fillBasicInfoAndAdvance(user);
+      await user.type(
+        screen.getByLabelText("Token endpoint"),
+        "https://auth.example.com/oauth/token",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+
+      await user.type(screen.getByLabelText("Health check URL"), "not a url");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Health check URL must be a valid http(s) URL.",
       );
       expect(upsert).not.toHaveBeenCalled();
     });
@@ -224,6 +260,7 @@ describe("XAARegistrationWizard", () => {
       renderWizard({ editing });
 
       await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.click(screen.getByRole("button", { name: "Next" }));
       await user.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
@@ -233,7 +270,7 @@ describe("XAARegistrationWizard", () => {
     });
   });
 
-  it("saves a new registration with the entered values", async () => {
+  it("saves a new registration with the entered values and fires telemetry", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
     renderWizard({ onSaved });
@@ -245,6 +282,13 @@ describe("XAARegistrationWizard", () => {
     );
     await user.type(screen.getByLabelText("Client ID"), "client-abc");
     await user.type(screen.getByLabelText("Client secret"), "cs-secret");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await user.type(screen.getByLabelText("Scopes"), "read write");
+    await user.type(
+      screen.getByLabelText("Health check URL"),
+      "https://resource.example.com/health",
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith("app_new"));
@@ -256,6 +300,79 @@ describe("XAARegistrationWizard", () => {
       tokenEndpoint: "https://auth.example.com/oauth/token",
       targetClientId: "client-abc",
       secret: "cs-secret",
+      scopes: ["read", "write"],
+      healthCheckUrl: "https://resource.example.com/health",
     });
+    expect(captureMock).toHaveBeenCalledWith(
+      "xaa_resource_app_saved",
+      expect.objectContaining({
+        resource_type: "mcp",
+        auth_server_mode: "own",
+      }),
+    );
+  });
+
+  it("runs the health check from step 3 and shows the result", async () => {
+    healthCheckMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      durationMs: 42,
+    });
+
+    const user = userEvent.setup();
+    renderWizard();
+    await fillBasicInfoAndAdvance(user);
+    await user.type(
+      screen.getByLabelText("Token endpoint"),
+      "https://auth.example.com/oauth/token",
+    );
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await user.type(
+      screen.getByLabelText("Health check URL"),
+      "https://resource.example.com/health",
+    );
+    await user.click(screen.getByRole("button", { name: "Check" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-reg-health-result")).toHaveTextContent(
+        "Reachable — HTTP 200 in 42ms",
+      ),
+    );
+    expect(healthCheckMock).toHaveBeenCalledWith(
+      "https://resource.example.com/health",
+    );
+  });
+
+  it("shows the unreachable state without blocking the wizard", async () => {
+    healthCheckMock.mockResolvedValue({
+      ok: false,
+      reason: "timeout",
+      durationMs: 10000,
+    });
+
+    const user = userEvent.setup();
+    renderWizard();
+    await fillBasicInfoAndAdvance(user);
+    await user.type(
+      screen.getByLabelText("Token endpoint"),
+      "https://auth.example.com/oauth/token",
+    );
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await user.type(
+      screen.getByLabelText("Health check URL"),
+      "https://resource.example.com/health",
+    );
+    await user.click(screen.getByRole("button", { name: "Check" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-reg-health-result")).toHaveTextContent(
+        "Timed out",
+      ),
+    );
+    // The failed check doesn't block saving.
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 });

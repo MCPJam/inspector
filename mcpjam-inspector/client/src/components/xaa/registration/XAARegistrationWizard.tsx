@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import posthog from "posthog-js";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -11,22 +12,26 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 import { BasicInfoStep } from "./BasicInfoStep";
 import { AuthServerStep } from "./AuthServerStep";
+import { ScopesConfigStep } from "./ScopesConfigStep";
 import {
   draftFromResourceApp,
   draftToInput,
   EMPTY_DRAFT,
   validateAuthServer,
   validateBasicInfo,
+  validateScopesConfig,
   type RegistrationDraft,
 } from "./wizard-draft";
 
 const STEPS = [
   { id: 1, title: "Basic info" },
   { id: 2, title: "Auth server" },
+  { id: 3, title: "Scopes & health" },
 ] as const;
 
 type StepId = (typeof STEPS)[number]["id"];
@@ -88,16 +93,17 @@ export function XAARegistrationWizard({
   };
 
   const handleNext = () => {
-    const error = validateBasicInfo(draft);
+    const error =
+      step === 1 ? validateBasicInfo(draft) : validateAuthServer(draft);
     if (error) {
       setValidationError(error);
       return;
     }
-    setStep(2);
+    setStep((current) => (current === 1 ? 2 : 3));
   };
 
   const handleSave = async () => {
-    const error = validateAuthServer(draft);
+    const error = validateScopesConfig(draft);
     if (error) {
       setValidationError(error);
       return;
@@ -106,6 +112,12 @@ export function XAARegistrationWizard({
     setSaveError(null);
     try {
       const { id } = await upsert(draftToInput(draft, editing?.id));
+      posthog.capture("xaa_resource_app_saved", {
+        resource_type: draft.resourceType,
+        auth_server_mode: draft.authServerMode,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
       onSaved?.(id);
       onOpenChange(false);
     } catch (err) {
@@ -161,12 +173,14 @@ export function XAARegistrationWizard({
 
         {step === 1 ? (
           <BasicInfoStep draft={draft} onChange={updateDraft} />
-        ) : (
+        ) : step === 2 ? (
           <AuthServerStep
             draft={draft}
             onChange={updateDraft}
             hasStoredSecret={Boolean(editing?.hasSecret)}
           />
+        ) : (
+          <ScopesConfigStep draft={draft} onChange={updateDraft} />
         )}
 
         {(validationError || saveError) && (
@@ -176,17 +190,17 @@ export function XAARegistrationWizard({
         )}
 
         <DialogFooter>
-          {step === 2 && (
+          {step > 1 && (
             <Button
               type="button"
               variant="outline"
-              onClick={() => setStep(1)}
+              onClick={() => setStep((current) => (current === 3 ? 2 : 1))}
               disabled={isSaving}
             >
               Back
             </Button>
           )}
-          {step === 1 ? (
+          {step < 3 ? (
             <Button type="button" onClick={handleNext}>
               Next
             </Button>
