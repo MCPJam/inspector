@@ -11,7 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Construction, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
@@ -40,7 +40,6 @@ import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
@@ -57,10 +56,7 @@ import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import {
-  MCPSidebar,
-  computeHostsHubFlagEnabled,
-} from "./components/mcp-sidebar";
+import { MCPSidebar } from "./components/mcp-sidebar";
 import {
   SidebarInset,
   SidebarProvider,
@@ -516,8 +512,7 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
-    useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
@@ -530,7 +525,7 @@ export function ServersRoute() {
     [navigate]
   );
 
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  if (!isAuthenticated) {
     return <ServersTabBody />;
   }
 
@@ -597,7 +592,6 @@ function ServersTabBody() {
 export function HostsRoute() {
   const {
     convexProjectId,
-    hostsHubFlagEnabled,
     hostsTabSelectedHostId,
     isAuthenticated,
     setHostsTabSelectedHostId,
@@ -629,7 +623,7 @@ export function HostsRoute() {
     [navigate]
   );
 
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  if (!isAuthenticated) {
     return <ServersTabBody />;
   }
 
@@ -645,8 +639,7 @@ export function HostsRoute() {
 }
 
 export function HostCompareRoute() {
-  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
-    useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
 
@@ -657,9 +650,9 @@ export function HostCompareRoute() {
     />
   );
 
-  // Mirror the gating HostsRoute uses: when the hosts hub is off, Compare
-  // has no peer Servers/Client tabs to switch to, so render bare.
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  // Mirror the gating HostsRoute uses: when signed out, Compare has no peer
+  // Servers/Client tabs to switch to, so render bare.
+  if (!isAuthenticated) {
     return compareView;
   }
 
@@ -690,8 +683,7 @@ export function HostCompareRoute() {
 }
 
 export function ComputerRoute() {
-  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
-    useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabled();
@@ -709,7 +701,7 @@ export function ComputerRoute() {
     />
   );
 
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  if (!isAuthenticated) {
     return computerView;
   }
 
@@ -786,7 +778,6 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
@@ -795,16 +786,6 @@ export function EvalsRoute() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
-
-  if (evaluateUiEnabled !== true) {
-    return (
-      <EmptyState
-        icon={Construction}
-        title="Evaluate Coming Soon"
-        description="The Evaluate suite is under construction. Stay tuned!"
-      />
-    );
-  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
@@ -1238,17 +1219,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
-  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
-  // Desktop builds default the Hosts/Connect rollout on (PostHog may be
-  // unreachable on the packaged Electron app), while hosted web keeps the
-  // PostHog gate. See `computeHostsHubFlagEnabled` for details.
-  const hostsHubFlagEnabled = computeHostsHubFlagEnabled({
-    hostsFlag: hostsEnabled,
-    hostedMode: HOSTED_MODE,
-  });
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
-  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -1653,7 +1624,6 @@ export default function App() {
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
-    hostsHubFlagEnabled,
     requestSignIn: () => {
       void signIn();
     },
@@ -1900,10 +1870,10 @@ export default function App() {
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
   useEffect(() => {
-    if (!hostsHubFlagEnabled || !isAuthenticated || !convexProjectId) {
+    if (!isAuthenticated || !convexProjectId) {
       setHostsTabSelectedHostId(null);
     }
-  }, [hostsHubFlagEnabled, isAuthenticated, convexProjectId]);
+  }, [isAuthenticated, convexProjectId]);
   useEffect(() => {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
@@ -2603,10 +2573,7 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
-      activeTab === "clients" &&
-      (!hostsHubFlagEnabled || !isAuthenticated)
-    ) {
+    } else if (activeTab === "clients" && !isAuthenticated) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
@@ -2625,7 +2592,6 @@ export default function App() {
   }, [
     conformanceEnabled,
     defaultHubRoute,
-    hostsHubFlagEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
@@ -2990,7 +2956,7 @@ export default function App() {
 
   const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId && !isEvalsTab
+    isAuthenticated && convexProjectId && !isEvalsTab
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
@@ -3084,8 +3050,6 @@ export default function App() {
     handleUpdate,
     handleUpdateHostContext,
     handleUpdateProject,
-    hostsEnabled,
-    hostsHubFlagEnabled,
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
@@ -3096,8 +3060,6 @@ export default function App() {
     isWorkOsLoading,
     navigateToTarget,
     pendingDashboardOAuth,
-    playgroundEnabled,
-    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,

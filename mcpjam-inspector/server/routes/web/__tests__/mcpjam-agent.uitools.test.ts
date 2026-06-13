@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { streamWebChatTurnMock, disconnectAllServersMock } = vi.hoisted(() => ({
-  streamWebChatTurnMock: vi.fn(),
-  disconnectAllServersMock: vi.fn(),
-}));
+const { streamWebChatTurnMock, disconnectAllServersMock, listToolsMock } =
+  vi.hoisted(() => ({
+    streamWebChatTurnMock: vi.fn(),
+    disconnectAllServersMock: vi.fn(),
+    listToolsMock: vi.fn(async (_serverId?: unknown) => ({ tools: [] })),
+  }));
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
@@ -15,6 +17,7 @@ vi.mock("@mcpjam/sdk", async () => {
     isMCPAuthError: vi.fn().mockReturnValue(false),
     MCPClientManager: vi.fn().mockImplementation(() => ({
       disconnectAllServers: disconnectAllServersMock,
+      listTools: listToolsMock,
     })),
   };
 });
@@ -115,6 +118,11 @@ describe("web routes — mcpjam-agent uiTools boundary", () => {
     expect(response.status).toBe(200);
     const args = streamWebChatTurnMock.mock.calls[0][0];
     expect(args.prepare.appTools).toBeUndefined();
-    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
+    // Both first-party servers pass the preflight under the mock; the
+    // client-supplied ids are still ignored.
+    expect(args.prepare.selectedServerIds).toEqual([
+      "mcpjam-docs",
+      "mcpjam-platform",
+    ]);
   });
 });

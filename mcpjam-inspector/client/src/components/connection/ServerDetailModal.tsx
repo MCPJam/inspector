@@ -47,7 +47,6 @@ import type {
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 export type ServerDetailTab =
@@ -191,8 +190,6 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
-  const serverHistoryEnabled = useFeatureFlagEnabled("server-history-tab");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     projectId ? ({ projectId } as never) : "skip"
@@ -211,10 +208,9 @@ export function ServerDetailModal({
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
   // The History tab + drift chip surface persisted snapshot revisions, which
-  // only exist for project-scoped (hosted) servers. Gated behind the
-  // `server-history-tab` PostHog flag (@mcpjam.com only) and hidden in local
-  // mode. Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId && serverHistoryEnabled);
+  // only exist for project-scoped (hosted) servers — hidden in local mode.
+  // Both surfaces key off `showHistory`, so this is the single gate.
+  const showHistory = Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -660,7 +656,6 @@ export function ServerDetailModal({
               <EffectiveProtocolVersionChip
                 hostDefault={resolvedHostDefaultMcpProtocolVersion}
                 serverOverride={currentMcpProtocolVersionOverride}
-                flagEnabled={Boolean(statelessMcpEnabled)}
               />
               <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                 {isReconnecting ? (
