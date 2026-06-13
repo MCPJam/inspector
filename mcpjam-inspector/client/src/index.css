@@ -4,6 +4,12 @@
 
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../../design-system/src/**/*.tsx";
+/* @mcpjam/chat-ui is aliased to source (outside client/src), so Tailwind must
+   scan it to emit the transcript's utility classes. Includes .ts because
+   thread-helpers.ts carries className strings (tool-state icon styles). The
+   read-only transcript relies on the inspector's existing global shadcn tokens
+   for color values, so no package stylesheet import is needed here. */
+@source "../../../chat-ui/src/**/*.{ts,tsx}";
 
 @layer base {
   * {

@@ -64,7 +64,13 @@ export default defineConfig({
       name: "stub-static-assets",
       enforce: "pre",
       resolveId(id) {
-        return /\.(png|jpe?g|gif|svg|webp|avif|ico)(\?.*)?$/.test(id)
+        // Only stub ABSOLUTE public-dir asset imports (e.g. "/claude_logo.png"
+        // in client-styles/built-ins.ts). Leave relative and query imports to
+        // vite — notably `*.svg?raw` (raw SVG markup, used by
+        // HandDrawnSendHint) and `?url`/`?worker`, whose loader semantics we
+        // must not clobber.
+        return id.startsWith("/") &&
+          /\.(png|jpe?g|gif|svg|webp|avif|ico)$/.test(id)
           ? `\0static-asset:${id}`
           : null;
       },
