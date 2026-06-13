@@ -80,9 +80,14 @@ export function XAAIdpCard() {
     if (!expanded || fetchedKeyId.current) {
       return;
     }
-    fetchedKeyId.current = true;
     const controller = new AbortController();
     void fetchActiveKeyId(jwksUrl, controller.signal).then((kid) => {
+      // Mark done only once the fetch completes — setting it up front would
+      // lock out future expansions if the first attempt is aborted.
+      if (controller.signal.aborted) {
+        return;
+      }
+      fetchedKeyId.current = true;
       if (kid) {
         setKeyId(kid);
       }
