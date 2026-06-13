@@ -1,4 +1,4 @@
-// Public subpath: the pure part/tool shape helpers, without pulling in the
-// React renderer/markdown stack. Lets hosts (e.g. the inspector) single-source
-// these helpers from the package without loading the component graph.
+// Public subpath: the part/tool shape helpers, single-sourced for hosts (e.g.
+// the inspector). It avoids the package's renderer/markdown component graph — it
+// is not React-free, since getToolStateMeta returns lucide icon components.
 export * from "./internal/thread-helpers";
