@@ -579,8 +579,8 @@ export function XAAFlowLogger({
                 <span className="font-medium text-foreground">
                   Run the flow
                 </span>{" "}
-                — MCPJam mints an ID-JAG and exchanges it for an access token,
-                one step at a time.
+                — MCPJam mints an ID-JAG; your authorization server redeems it
+                for an access token, one step at a time.
               </li>
               <li>
                 <span className="font-medium text-foreground">
