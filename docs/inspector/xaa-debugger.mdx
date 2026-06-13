@@ -78,8 +78,12 @@ The XAA flow sequence diagram shows four actors:
 
 Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
 
+## Clearing your configuration
+
+To start fresh, open the target configuration modal and click **Clear configuration**. This deletes the saved profile and returns the tab to the initial "Configure XAA Target" screen. The auto-fill from a connected server is suppressed after a clear, so the tab stays empty until you configure a new target.
+
 ## Next Steps
 
 - Review the [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) for XAA requirements
 - Check your authorization server's documentation for jwt-bearer grant configuration
-- Use the Register Issuer dialog to get the JWKS URL for configuring issuer trust
+- See [Use MCPJam as a Test IdP](/inspector/xaa-test-idp) to register MCPJam's issuer and JWKS with your authorization server
