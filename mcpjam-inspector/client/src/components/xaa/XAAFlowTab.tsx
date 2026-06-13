@@ -55,6 +55,9 @@ interface XAAFlowInput {
   serverUrl: string;
   authzServerIssuer: string;
   clientId: string;
+  /** Manual-profile runs only; registration-backed runs resolve the stored
+   * secret server-side and keep this empty. */
+  clientSecret: string;
   scope: string;
   userId: string;
   email: string;
@@ -69,6 +72,7 @@ function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
     userId: input.userId || undefined,
     email: input.email || undefined,
     clientId: input.clientId || undefined,
+    clientSecret: input.clientSecret || undefined,
     scope: input.scope || undefined,
   });
 }
@@ -79,6 +83,7 @@ function inputFromProfile(profile: XAADebugProfile): XAAFlowInput {
     serverUrl: profile.serverUrl,
     authzServerIssuer: profile.authzServerIssuer,
     clientId: profile.clientId,
+    clientSecret: profile.clientSecret,
     scope: profile.scope,
     userId: profile.userId,
     email: profile.email,
@@ -88,7 +93,7 @@ function inputFromProfile(profile: XAADebugProfile): XAAFlowInput {
 
 function inputFromRegistration(
   registration: XaaResourceApp,
-  profile: XAADebugProfile,
+  profile: XAADebugProfile
 ): XAAFlowInput {
   return {
     mode: "hosted-registration",
@@ -96,6 +101,8 @@ function inputFromRegistration(
     serverUrl: registration.resourceUrl,
     authzServerIssuer: registration.issuer ?? "",
     clientId: registration.targetClientId ?? "",
+    // The stored secret never enters the browser; /proxy/token resolves it.
+    clientSecret: "",
     scope: (registration.scopes ?? []).join(" "),
     // Synthetic identity stays user-configurable regardless of source.
     userId: profile.userId,
@@ -129,17 +136,17 @@ export function XAAFlowTab({
     : undefined;
 
   const [profile, setProfile] = useState(() =>
-    deriveXAADebugProfileFromServer(activeServer, loadStoredXAADebugProfile()),
+    deriveXAADebugProfileFromServer(activeServer, loadStoredXAADebugProfile())
   );
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
     buildFlowStateFromInput(
       inputFromProfile(
         deriveXAADebugProfileFromServer(
           activeServer,
-          loadStoredXAADebugProfile(),
-        ),
-      ),
-    ),
+          loadStoredXAADebugProfile()
+        )
+      )
+    )
   );
 
   // The machine reads state through this ref (lazy getState). Keep it in
@@ -181,7 +188,7 @@ export function XAAFlowTab({
       selectedRegistration
         ? inputFromRegistration(selectedRegistration, profile)
         : inputFromProfile(profile),
-    [selectedRegistration, profile],
+    [selectedRegistration, profile]
   );
 
   // Target identity for the positive-run gate; "local-profile" is its own
@@ -196,7 +203,7 @@ export function XAAFlowTab({
   // In-memory: targets that have completed a successful flow this session.
   // A page refresh clears it, re-locking the scorecard (§ negative-test gate).
   const [positiveRunTargets, setPositiveRunTargets] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set()
   );
 
   const fireFlowStarted = useCallback(() => {
@@ -285,6 +292,7 @@ export function XAAFlowTab({
         audience,
         resource,
         clientId: flowInput.clientId || undefined,
+        clientSecret: flowInput.clientSecret || undefined,
         scope: flowInput.scope || undefined,
       },
     };
@@ -338,7 +346,7 @@ export function XAAFlowTab({
       applyFlowState(buildFlowStateFromInput(input));
       setFocusedStep(null);
     },
-    [flowInput, selectedRegistration, applyFlowState],
+    [flowInput, selectedRegistration, applyFlowState]
   );
 
   const handleChangeNegativeTestMode = useCallback((mode: NegativeTestMode) => {
@@ -372,6 +380,7 @@ export function XAAFlowTab({
       userId: flowInput.userId,
       email: flowInput.email,
       clientId: flowInput.clientId,
+      clientSecret: flowInput.clientSecret,
       scope: flowInput.scope,
       authzServerIssuer: flowInput.authzServerIssuer,
       registrationId: flowInput.registrationId,
@@ -431,14 +440,14 @@ export function XAAFlowTab({
   const continueLabel = !hasTarget
     ? "Configure Target"
     : flowState.currentStep === "idle"
-      ? "Start"
-      : flowState.currentStep === "inspect_id_jag"
-        ? "Request Access Token"
-        : flowState.currentStep === "received_access_token"
-          ? "Call MCP Server"
-          : flowState.currentStep === "complete"
-            ? "Flow Complete"
-            : "Continue";
+    ? "Start"
+    : flowState.currentStep === "inspect_id_jag"
+    ? "Request Access Token"
+    : flowState.currentStep === "received_access_token"
+    ? "Call MCP Server"
+    : flowState.currentStep === "complete"
+    ? "Flow Complete"
+    : "Continue";
 
   const continueDisabled =
     !hasTarget ||
@@ -456,7 +465,7 @@ export function XAAFlowTab({
         selectedId={selectedRegistrationId}
         onSelect={(app) =>
           setSelectedRegistrationId((current) =>
-            current === app.id ? null : app.id,
+            current === app.id ? null : app.id
           )
         }
       />
@@ -484,8 +493,8 @@ export function XAAFlowTab({
           {selectedRegistration
             ? `Target: ${selectedRegistration.name}`
             : hasTarget
-              ? `Target: ${flowInput.serverUrl}`
-              : "No target configured"}
+            ? `Target: ${flowInput.serverUrl}`
+            : "No target configured"}
         </span>
       </div>
       <div className="flex-1 overflow-hidden">

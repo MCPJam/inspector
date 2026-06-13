@@ -52,6 +52,7 @@ export function XAAConfigModal({
     const trimmedServerUrl = draft.serverUrl.trim();
     const trimmedIssuer = draft.authzServerIssuer.trim();
     const trimmedClientId = draft.clientId.trim();
+    const trimmedClientSecret = draft.clientSecret.trim();
     const trimmedScope = draft.scope.trim();
     const trimmedUserId = draft.userId.trim();
     const trimmedEmail = draft.email.trim();
@@ -81,6 +82,7 @@ export function XAAConfigModal({
       serverUrl: trimmedServerUrl,
       authzServerIssuer: trimmedIssuer,
       clientId: trimmedClientId,
+      clientSecret: trimmedClientSecret,
       scope: trimmedScope,
       userId: trimmedUserId || value.userId,
       email: trimmedEmail || value.email,
@@ -96,10 +98,7 @@ export function XAAConfigModal({
           <DialogTitle>Configure XAA Debugger</DialogTitle>
         </DialogHeader>
 
-        <form
-          onSubmit={handleSubmit}
-          className="flex min-h-0 flex-1 flex-col"
-        >
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
             <div className="space-y-3">
               <div className="space-y-2">
@@ -155,6 +154,28 @@ export function XAAConfigModal({
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="xaa-client-secret">Client Secret</Label>
+                <Input
+                  id="xaa-client-secret"
+                  type="password"
+                  autoComplete="off"
+                  value={draft.clientSecret}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      clientSecret: event.target.value,
+                    }))
+                  }
+                  placeholder="Required by confidential-client auth servers"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Needed when the auth server requires client authentication for
+                  the jwt-bearer grant. Test credentials only — masked in the
+                  request log.
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="xaa-scope">Scope</Label>
                 <Input
                   id="xaa-scope"
@@ -178,7 +199,7 @@ export function XAAConfigModal({
                   <ChevronDown
                     className={cn(
                       "h-4 w-4 transition-transform",
-                      identityOpen && "rotate-180",
+                      identityOpen && "rotate-180"
                     )}
                   />
                 </span>

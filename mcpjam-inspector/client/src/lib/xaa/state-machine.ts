@@ -18,6 +18,10 @@ import type {
 import { createInitialXAAFlowState } from "./types";
 import { analyzeAsCompatibility } from "./capability-preflight";
 
+/** What the HTTP history shows in place of a client secret — the real value
+ * is sent on the wire but never enters the logged request. */
+export const CLIENT_SECRET_MASK = "••••••••";
+
 interface AddInfoLogOptions {
   level?: InfoLogLevel;
   error?: LogErrorDetails;
@@ -29,7 +33,7 @@ function addInfoLog(
   id: string,
   label: string,
   data: any,
-  options: AddInfoLogOptions = {},
+  options: AddInfoLogOptions = {}
 ): Array<XAAInfoLogEntry> {
   const { level = "info", error } = options;
 
@@ -70,7 +74,7 @@ function toLogErrorDetails(error: unknown): LogErrorDetails {
 
 function mergeHeadersForAuthServer(
   customHeaders: Record<string, string> | undefined,
-  requestHeaders: Record<string, string> = {},
+  requestHeaders: Record<string, string> = {}
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   const keysByLowercase = new Map<string, string>();
@@ -112,7 +116,7 @@ function buildResourceMetadataUrls(serverUrl: string): string[] {
   const url = new URL(serverUrl);
   const root = new URL(
     "/.well-known/oauth-protected-resource",
-    url.origin,
+    url.origin
   ).toString();
 
   if (url.pathname !== "/" && url.pathname !== "") {
@@ -121,7 +125,7 @@ function buildResourceMetadataUrls(serverUrl: string): string[] {
       : url.pathname;
     const pathInserted = new URL(
       `/.well-known/oauth-protected-resource${pathname}`,
-      url.origin,
+      url.origin
     ).toString();
     return [pathInserted, root];
   }
@@ -152,10 +156,10 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
 
   if (url.pathname === "/" || url.pathname === "") {
     urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString()
     );
     urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString(),
+      new URL("/.well-known/openid-configuration", url.origin).toString()
     );
   } else {
     const pathname = url.pathname.endsWith("/")
@@ -165,20 +169,20 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
     urls.push(
       new URL(
         `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `/.well-known/openid-configuration${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `${pathname}/.well-known/openid-configuration`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
   }
 
@@ -203,10 +207,7 @@ function extractErrorMessage(body: any, fallback: string): string {
   );
 }
 
-function asRecord(
-  value: unknown,
-  label: string,
-): Record<string, any> {
+function asRecord(value: unknown, label: string): Record<string, any> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} did not return a JSON object`);
   }
@@ -243,7 +244,7 @@ function buildIdJagInspection(
     clientId: string;
     scope?: string;
     negativeTestMode: NegativeTestMode;
-  },
+  }
 ): XAADecodedJwt {
   const decoded = decodeJWTParts(token);
   const issues: XAAJWTInspectionIssue[] = [];
@@ -273,7 +274,7 @@ function buildIdJagInspection(
     field: string,
     label: string,
     expectedValue: unknown,
-    actualValue: unknown,
+    actualValue: unknown
   ) => {
     issues.push({
       section,
@@ -285,13 +286,7 @@ function buildIdJagInspection(
   };
 
   if (header.typ !== "oauth-id-jag+jwt") {
-    addIssue(
-      "header",
-      "typ",
-      "JWT type",
-      "oauth-id-jag+jwt",
-      header.typ,
-    );
+    addIssue("header", "typ", "JWT type", "oauth-id-jag+jwt", header.typ);
   }
 
   if (header.kid !== XAA_IDP_KID) {
@@ -311,13 +306,7 @@ function buildIdJagInspection(
   }
 
   if (payload.aud !== expected.audience) {
-    addIssue(
-      "payload",
-      "aud",
-      "Audience",
-      expected.audience,
-      payload.aud,
-    );
+    addIssue("payload", "aud", "Audience", expected.audience, payload.aud);
   }
 
   if (payload.resource !== expected.resource) {
@@ -326,7 +315,7 @@ function buildIdJagInspection(
       "resource",
       "Resource",
       expected.resource,
-      payload.resource,
+      payload.resource
     );
   }
 
@@ -336,22 +325,22 @@ function buildIdJagInspection(
       "client_id",
       "Client ID",
       expected.clientId,
-      payload.client_id,
+      payload.client_id
     );
   }
 
   if (typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000) {
-    addIssue(
-      "payload",
-      "exp",
-      "Expiration",
-      "A future timestamp",
-      payload.exp,
-    );
+    addIssue("payload", "exp", "Expiration", "A future timestamp", payload.exp);
   }
 
   if (expected.scope && payload.scope !== expected.scope) {
-    addIssue("payload", "scope", "Requested scopes", expected.scope, payload.scope);
+    addIssue(
+      "payload",
+      "scope",
+      "Requested scopes",
+      expected.scope,
+      payload.scope
+    );
   }
 
   if (expected.negativeTestMode === "bad_signature") {
@@ -360,7 +349,7 @@ function buildIdJagInspection(
       "signature",
       "Signature / JWKS",
       "Signed by the published XAA issuer key",
-      "Signed with a throwaway private key",
+      "Signed with a throwaway private key"
     );
   }
 
@@ -377,7 +366,7 @@ function buildIdJagInspection(
 const XAA_RUN_ALL_MAX_ADVANCES = 32;
 
 export function createXAAStateMachine(
-  config: BaseXAAStateMachineConfig,
+  config: BaseXAAStateMachineConfig
 ): XAAStateMachine {
   const {
     state: initialState,
@@ -390,6 +379,7 @@ export function createXAAStateMachine(
     userId,
     email,
     clientId,
+    clientSecret,
     scope,
     authzServerIssuer,
     registrationId,
@@ -406,6 +396,7 @@ export function createXAAStateMachine(
       userId: state.userId || userId,
       email: state.email || email,
       clientId: state.clientId || clientId,
+      clientSecret: state.clientSecret || clientSecret,
       scope: state.scope || scope,
       authzServerIssuer: state.authzServerIssuer || authzServerIssuer,
     }),
@@ -425,7 +416,7 @@ export function createXAAStateMachine(
     id: string,
     label: string,
     data: any,
-    options?: AddInfoLogOptions,
+    options?: AddInfoLogOptions
   ) => {
     machine.updateState({
       infoLogs: addInfoLog(currentState(), step, id, label, data, options),
@@ -440,7 +431,7 @@ export function createXAAStateMachine(
       headers: Record<string, string>;
       body?: any;
     },
-    executor: () => Promise<XAARequestResult>,
+    executor: () => Promise<XAARequestResult>
   ): Promise<XAARequestResult> => {
     machine.updateState({
       currentStep: step,
@@ -528,7 +519,7 @@ export function createXAAStateMachine(
           reason:
             "Authorization server issuer is already configured; RFC 9728 discovery is not part of the XAA grant and isn't needed.",
           authz_server_issuer: state.authzServerIssuer,
-        },
+        }
       );
       return;
     }
@@ -549,20 +540,20 @@ export function createXAAStateMachine(
         const result = await runRequest(
           "discover_resource_metadata",
           request,
-          () => requestExecutor.externalRequest(resourceMetadataUrl, request),
+          () => requestExecutor.externalRequest(resourceMetadataUrl, request)
         );
 
         if (!result.ok) {
           lastError = extractErrorMessage(
             result.body,
-            `Resource metadata request failed with ${result.status}`,
+            `Resource metadata request failed with ${result.status}`
           );
           continue;
         }
 
         const resourceMetadata = asRecord(result.body, "Resource metadata");
         const resolvedAuthzIssuer = Array.isArray(
-          resourceMetadata.authorization_servers,
+          resourceMetadata.authorization_servers
         )
           ? resourceMetadata.authorization_servers[0]
           : undefined;
@@ -573,7 +564,7 @@ export function createXAAStateMachine(
 
         if (!resolvedAuthzIssuer) {
           throw new Error(
-            "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually.",
+            "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually."
           );
         }
 
@@ -594,7 +585,7 @@ export function createXAAStateMachine(
           {
             resource: resolvedResource,
             authorization_servers: resourceMetadata.authorization_servers,
-          },
+          }
         );
         return;
       } catch (error) {
@@ -635,7 +626,7 @@ export function createXAAStateMachine(
           ...(state.tokenEndpoint
             ? { token_endpoint: state.tokenEndpoint }
             : {}),
-        },
+        }
       );
       return;
     }
@@ -665,13 +656,13 @@ export function createXAAStateMachine(
         const result = await runRequest(
           "discover_authz_metadata",
           request,
-          () => requestExecutor.externalRequest(url, request),
+          () => requestExecutor.externalRequest(url, request)
         );
 
         if (!result.ok) {
           lastError = extractErrorMessage(
             result.body,
-            `Auth server metadata request failed with ${result.status}`,
+            `Auth server metadata request failed with ${result.status}`
           );
           continue;
         }
@@ -679,7 +670,7 @@ export function createXAAStateMachine(
         const metadata = asRecord(result.body, "Authorization metadata");
         if (typeof metadata.token_endpoint !== "string") {
           throw new Error(
-            "Authorization metadata did not include a token_endpoint.",
+            "Authorization metadata did not include a token_endpoint."
           );
         }
 
@@ -717,7 +708,7 @@ export function createXAAStateMachine(
                   vendor: compatibilityReport.vendor,
                 }
               : undefined,
-          },
+          }
         );
 
         return;
@@ -754,21 +745,23 @@ export function createXAAStateMachine(
           method: "POST",
           headers: request.headers,
           body: JSON.stringify(request.body),
-        }),
+        })
       );
 
       if (!result.ok) {
         throw new Error(
           extractErrorMessage(
             result.body,
-            `Mock authentication failed with ${result.status}`,
-          ),
+            `Mock authentication failed with ${result.status}`
+          )
         );
       }
 
       const body = asRecord(result.body, "Authentication response");
       if (typeof body.id_token !== "string") {
-        throw new Error("Authentication response did not include an `id_token`.");
+        throw new Error(
+          "Authentication response did not include an `id_token`."
+        );
       }
 
       machine.updateState({
@@ -784,15 +777,13 @@ export function createXAAStateMachine(
         {
           userId: state.userId,
           email: state.email,
-        },
+        }
       );
     } catch (error) {
       machine.updateState({
         currentStep: "user_authentication",
         error:
-          error instanceof Error
-            ? error.message
-            : "Mock authentication failed",
+          error instanceof Error ? error.message : "Mock authentication failed",
       });
     }
   };
@@ -803,7 +794,8 @@ export function createXAAStateMachine(
     if (!state.identityAssertion) {
       machine.updateState({
         currentStep: "token_exchange_request",
-        error: "No identity assertion is available. Complete mock authentication first.",
+        error:
+          "No identity assertion is available. Complete mock authentication first.",
       });
       return;
     }
@@ -811,7 +803,8 @@ export function createXAAStateMachine(
     if (!state.authzServerIssuer) {
       machine.updateState({
         currentStep: "token_exchange_request",
-        error: "No authorization server issuer is available for the ID-JAG audience.",
+        error:
+          "No authorization server issuer is available for the ID-JAG audience.",
       });
       return;
     }
@@ -846,15 +839,15 @@ export function createXAAStateMachine(
           method: "POST",
           headers: request.headers,
           body: JSON.stringify(request.body),
-        }),
+        })
       );
 
       if (!result.ok) {
         throw new Error(
           extractErrorMessage(
             result.body,
-            `Token exchange failed with ${result.status}`,
-          ),
+            `Token exchange failed with ${result.status}`
+          )
         );
       }
 
@@ -870,21 +863,15 @@ export function createXAAStateMachine(
         error: undefined,
       });
 
-      pushInfo(
-        "received_id_jag",
-        "xaa-id-jag",
-        "ID-JAG issued",
-        {
-          negativeTestMode: state.negativeTestMode,
-          expectedFailure:
-            NEGATIVE_TEST_MODE_DETAILS[state.negativeTestMode].expectedFailure,
-        },
-      );
+      pushInfo("received_id_jag", "xaa-id-jag", "ID-JAG issued", {
+        negativeTestMode: state.negativeTestMode,
+        expectedFailure:
+          NEGATIVE_TEST_MODE_DETAILS[state.negativeTestMode].expectedFailure,
+      });
     } catch (error) {
       machine.updateState({
         currentStep: "token_exchange_request",
-        error:
-          error instanceof Error ? error.message : "Token exchange failed",
+        error: error instanceof Error ? error.message : "Token exchange failed",
       });
     }
   };
@@ -936,27 +923,37 @@ export function createXAAStateMachine(
     // Registration-backed runs send only the registration id: the server
     // resolves the stored secret and forces the outbound URL to the
     // registration's stored token endpoint, so neither ever rides in from
-    // the browser.
+    // the browser. Manual runs may carry a profile-configured secret —
+    // confidential-client servers reject the jwt-bearer grant without one.
+    const tokenRequestBody = registrationId
+      ? {
+          registrationId,
+          assertion: state.idJag,
+          scope: state.scope,
+          resource: state.resourceUrl || state.serverUrl,
+        }
+      : {
+          tokenEndpoint: state.tokenEndpoint,
+          assertion: state.idJag,
+          clientId: state.clientId,
+          ...(state.clientSecret ? { clientSecret: state.clientSecret } : {}),
+          scope: state.scope,
+          resource: state.resourceUrl || state.serverUrl,
+        };
+
+    // The request object lands verbatim in the HTTP history panel (and any
+    // export of it), so the logged copy masks the secret. Only
+    // `tokenRequestBody` is ever sent.
     const request = {
       method: "POST",
       url: "/proxy/token",
       headers: {
         "Content-Type": "application/json",
       },
-      body: registrationId
-        ? {
-            registrationId,
-            assertion: state.idJag,
-            scope: state.scope,
-            resource: state.resourceUrl || state.serverUrl,
-          }
-        : {
-            tokenEndpoint: state.tokenEndpoint,
-            assertion: state.idJag,
-            clientId: state.clientId,
-            scope: state.scope,
-            resource: state.resourceUrl || state.serverUrl,
-          },
+      body:
+        "clientSecret" in tokenRequestBody
+          ? { ...tokenRequestBody, clientSecret: CLIENT_SECRET_MASK }
+          : tokenRequestBody,
     };
 
     try {
@@ -964,16 +961,16 @@ export function createXAAStateMachine(
         requestExecutor.internalRequest("/proxy/token", {
           method: "POST",
           headers: request.headers,
-          body: JSON.stringify(request.body),
-        }),
+          body: JSON.stringify(tokenRequestBody),
+        })
       );
 
       if (!result.ok) {
         throw new Error(
           extractErrorMessage(
             result.body,
-            `JWT bearer proxy failed with ${result.status}`,
-          ),
+            `JWT bearer proxy failed with ${result.status}`
+          )
         );
       }
 
@@ -985,7 +982,9 @@ export function createXAAStateMachine(
       if (!upstreamStatus || upstreamStatus < 200 || upstreamStatus >= 300) {
         const detail = extractErrorMessage(
           upstreamPayload,
-          `Authorization server returned ${proxyBody.status ?? "an unknown status"}.`,
+          `Authorization server returned ${
+            proxyBody.status ?? "an unknown status"
+          }.`
         );
         machine.updateState({
           currentStep: "jwt_bearer_request",
@@ -999,15 +998,18 @@ export function createXAAStateMachine(
             status: proxyBody.status,
             body: upstreamPayload,
           },
-          { level: "error" },
+          { level: "error" }
         );
         return;
       }
 
-      const tokenResponse = asRecord(upstreamPayload, "JWT bearer token response");
+      const tokenResponse = asRecord(
+        upstreamPayload,
+        "JWT bearer token response"
+      );
       if (typeof tokenResponse.access_token !== "string") {
         throw new Error(
-          "Authorization server response did not include an `access_token`.",
+          "Authorization server response did not include an `access_token`."
         );
       }
 
@@ -1032,7 +1034,7 @@ export function createXAAStateMachine(
         {
           token_type: tokenResponse.token_type,
           expires_in: tokenResponse.expires_in,
-        },
+        }
       );
     } catch (error) {
       machine.updateState({
@@ -1089,7 +1091,7 @@ export function createXAAStateMachine(
             method: "POST",
             headers: request.headers,
             body: JSON.stringify(body),
-          }),
+          })
       );
 
       if (!result.ok) {
@@ -1097,7 +1099,7 @@ export function createXAAStateMachine(
           currentStep: "authenticated_mcp_request",
           error: extractErrorMessage(
             result.body,
-            `Authenticated MCP request failed with ${result.status}`,
+            `Authenticated MCP request failed with ${result.status}`
           ),
         });
         return;
@@ -1115,7 +1117,7 @@ export function createXAAStateMachine(
         {
           status: result.status,
           body: result.body,
-        },
+        }
       );
     } catch (error) {
       machine.updateState({
@@ -1200,16 +1202,17 @@ export function createXAAStateMachine(
     machine.updateState(
       createInitialXAAFlowState({
         serverUrl: currentState().serverUrl || serverUrl,
-        resourceUrl: canonicalizeResourceUrl(currentState().serverUrl || serverUrl),
-        negativeTestMode:
-          currentState().negativeTestMode || negativeTestMode,
+        resourceUrl: canonicalizeResourceUrl(
+          currentState().serverUrl || serverUrl
+        ),
+        negativeTestMode: currentState().negativeTestMode || negativeTestMode,
         userId: currentState().userId || userId,
         email: currentState().email || email,
         clientId: currentState().clientId || clientId,
         scope: currentState().scope || scope,
         authzServerIssuer:
           currentState().authzServerIssuer || authzServerIssuer,
-      }),
+      })
     );
   };
 
