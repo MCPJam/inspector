@@ -4,9 +4,13 @@ description: "Register MCPJam's built-in identity provider with your authorizati
 icon: "key-round"
 ---
 
-When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger plays the IdP for you — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
+<Note>
+This page applies only when you are targeting **your own authorization server**. If you are testing against a third-party authorization server that already trusts an external ID-JAG issuer, you can skip this step.
+</Note>
 
-To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the three endpoints you register to establish that trust.
+When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger acts as both the test IdP and the requesting client — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
+
+To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the endpoints you register to establish that trust.
 
 ## Where to find the endpoints
 
