@@ -1,0 +1,55 @@
+/*
+ * @mcpjam/chat-ui — package-owned tokens.
+ *
+ * The renderer uses shadcn-style semantic utility classes (text-muted-foreground,
+ * bg-card, border-border, ...). Those utilities are produced by Tailwind in the
+ * consuming app; this file supplies sensible *token values* (scoped to
+ * `.mcpjam-chat-ui`) so the colors resolve with reasonable light/dark defaults
+ * even when the host hasn't defined them.
+ *
+ * Consumers need a Tailwind v4-compatible utility layer (or the future compiled
+ * CSS bundle) for spacing/layout utilities. Override any `--token` below to
+ * theme the transcript.
+ *
+ * HSL channel triplets (shadcn convention): `hsl(var(--foreground))`.
+ */
+
+.mcpjam-chat-ui {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --border: 240 5.9% 90%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+
+  color: hsl(var(--foreground));
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+.mcpjam-chat-ui.dark,
+.dark .mcpjam-chat-ui {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --border: 240 3.7% 15.9%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+}
+
+/* Keep long tool input/output readable without a horizontal scrollbar war. */
+.mcpjam-chat-ui .mcpjam-chat-json {
+  white-space: pre;
+  tab-size: 2;
+}
+
+.mcpjam-chat-ui .mcpjam-chat-markdown {
+  overflow-wrap: anywhere;
+}
