@@ -197,7 +197,9 @@ describe("RunDetailView", () => {
     expect(kpi.getByText("Failed")).toBeInTheDocument();
     expect(kpi.getByText("Total")).toBeInTheDocument();
     expect(kpi.getByText("Duration")).toBeInTheDocument();
-    expect(screen.getByText(/^100$/)).toBeInTheDocument();
+    // Tokens KPI. Scoped to the strip: the run hero band also renders a bare
+    // "100" text node (accuracy with its % in a separate span).
+    expect(kpi.getByText(/^100$/)).toBeInTheDocument();
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
     const panelGroup = screen.getByTestId("run-detail-resizable-group");
