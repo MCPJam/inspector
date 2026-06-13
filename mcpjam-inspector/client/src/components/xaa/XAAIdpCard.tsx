@@ -129,25 +129,62 @@ export function XAAIdpCard() {
           <CopyRow label="Issuer URL" value={issuerBaseUrl} />
           <CopyRow label="JWKS URL" value={jwksUrl} />
 
-          <ol className="list-decimal space-y-1.5 pl-5 text-xs text-muted-foreground marker:text-muted-foreground">
-            <li>
-              In Okta, Auth0, Keycloak, or your own authorization server,
-              register MCPJam as a trusted identity issuer using the issuer (or
-              JWKS) URL above.
-            </li>
-            <li>
-              Set the ID-JAG <code className="font-mono">aud</code> to your
-              authorization server&apos;s issuer.
-            </li>
-            <li>
-              Set the ID-JAG <code className="font-mono">resource</code> to the
-              MCP server&apos;s resource identifier.
-            </li>
-            <li>
-              Register MCPJam with the authorization server using the client ID
-              from your config.
-            </li>
-          </ol>
+          <p className="text-xs text-muted-foreground">
+            Use this to test whether your authorization server correctly
+            validates ID-JAGs from an external issuer. MCPJam acts as the test
+            IdP and the requesting client; your authorization server plays the
+            resource app&apos;s authorization server.
+          </p>
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-foreground">
+              In your authorization server
+            </div>
+            <ul className="list-disc space-y-1.5 pl-5 text-xs text-muted-foreground marker:text-muted-foreground">
+              <li>
+                Trust MCPJam as an ID-JAG issuer so it can verify assertion
+                signatures. Give it <em>either</em> the Issuer URL (if your
+                server auto-discovers keys from OAuth/OIDC metadata) <em>or</em>{" "}
+                the JWKS URL directly — both resolve to the same signing keys,
+                so you don&apos;t need both.
+              </li>
+              <li>
+                Register the client ID MCPJam will present, so the token
+                exchange is recognized.
+              </li>
+            </ul>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-foreground">
+              MCPJam stamps these into each ID-JAG
+            </div>
+            <p className="text-xs text-muted-foreground">
+              You set these in the debugger run config, not in your
+              authorization server — make sure your server expects them.
+            </p>
+            <ul className="list-disc space-y-1.5 pl-5 text-xs text-muted-foreground marker:text-muted-foreground">
+              <li>
+                <code className="font-mono">aud</code> → your authorization
+                server&apos;s issuer
+              </li>
+              <li>
+                <code className="font-mono">resource</code> → the MCP
+                server&apos;s resource identifier
+              </li>
+              <li>
+                <code className="font-mono">client_id</code> → the client ID
+                from your config
+              </li>
+            </ul>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Cross-app access is new — some authorization servers don&apos;t yet
+            expose a way to trust an external ID-JAG issuer and redeem it via
+            the <code className="font-mono">jwt-bearer</code> grant. Check that
+            yours supports it before wiring up the steps above.
+          </p>
 
           {!HOSTED_MODE && (
             <p className="text-xs text-muted-foreground">
