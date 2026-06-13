@@ -394,7 +394,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "testSuites:getTestSuite") {
         return {
           _id: "suite-1",
-          environment: { servers: [] },
           hostAttachments: [
             {
               namedHostId: "host-1",

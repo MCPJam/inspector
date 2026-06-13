@@ -544,12 +544,6 @@ export function TestTemplateEditor({
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
 
-  useEffect(() => {
-    if (openCompareFromRoute) {
-      setEditorMode("run");
-    }
-  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
-
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
       const current = previous[modelValue];
@@ -1362,7 +1356,7 @@ export function TestTemplateEditor({
           suite: {
             ...suite,
             environment: {
-              ...suite.environment,
+              ...(suite.environment ?? {}),
               servers: suiteServers,
             },
           },
