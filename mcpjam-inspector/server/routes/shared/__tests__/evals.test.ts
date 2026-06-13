@@ -92,6 +92,55 @@ describe("RunEvalsRequestSchema runs cap", () => {
   });
 });
 
+describe("RunEvalsRequestSchema widget_probe invariant", () => {
+  const baseTest = {
+    title: "t",
+    query: "",
+    runs: 1,
+    model: "widget-probe",
+    provider: "none",
+    expectedToolCalls: [],
+  };
+  const probeConfig = {
+    serverId: "srv-1",
+    serverName: "server-1",
+    toolName: "show_map",
+    arguments: {},
+  };
+  const withTests = (tests: unknown[]) => ({
+    ...(buildSuiteRequest() as Record<string, unknown>),
+    tests,
+  });
+
+  it("accepts a widget_probe row carrying probeConfig", () => {
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([{ ...baseTest, caseType: "widget_probe", probeConfig }]),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a widget_probe row without probeConfig (cap-bypass guard)", () => {
+    // Cap math exempts rows by caseType alone while the runner only forks
+    // off the LLM path when probeConfig is also present — without this
+    // rejection the row would run as a cap-exempt LLM case.
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([
+        { ...baseTest, model: "claude-3", provider: "anthropic", caseType: "widget_probe" },
+      ]),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stray probeConfig on a prompt row", () => {
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([
+        { ...baseTest, model: "claude-3", provider: "anthropic", query: "q", probeConfig },
+      ]),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("RunTestCaseRequestSchema runs cap", () => {
   it("accepts testCaseOverrides.runs up to 10", () => {
     const result = RunTestCaseRequestSchema.safeParse(buildTestCaseRequest(10));

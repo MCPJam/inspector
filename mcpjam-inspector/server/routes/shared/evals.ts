@@ -113,6 +113,28 @@ export const RunEvalsRequestSchema = z.object({
       // `assertSuiteRunWithinCap` excludes them from LLM-call math.
       caseType: z.enum(TEST_CASE_TYPES).optional(),
       probeConfig: probeConfigSchema.optional(),
+    }).superRefine((test, ctx) => {
+      // Cross-field invariant the runner and cap math both assume. The cap
+      // excludes rows purely by caseType while the runner only forks off
+      // the LLM path when probeConfig is ALSO present — a widget_probe row
+      // without probeConfig would be cap-exempt yet still execute as an
+      // LLM case (cap bypass). The reverse direction mirrors the backend's
+      // assertValidResolvedTestCaseState, which rejects stray probeConfig
+      // on prompt cases; failing fast here beats a late Convex error.
+      if (test.caseType === "widget_probe" && !test.probeConfig) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["probeConfig"],
+          message: "probeConfig is required when caseType is widget_probe",
+        });
+      }
+      if (test.caseType !== "widget_probe" && test.probeConfig) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["probeConfig"],
+          message: "probeConfig is only allowed on widget_probe cases",
+        });
+      }
     }),
   ),
   serverIds: z
