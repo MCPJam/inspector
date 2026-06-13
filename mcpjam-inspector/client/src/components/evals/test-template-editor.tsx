@@ -120,6 +120,7 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { WidgetProbeEditor } from "./widget-probe-editor";
 
 interface TestTemplate {
   title: string;
@@ -1868,6 +1869,22 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
+  // Widget probes get a dedicated, much smaller editor — none of the
+  // prompt-turn / model / compare machinery below applies to them. Placed
+  // after every hook call so both editors share identical hook order.
+  if (currentTestCase?.caseType === "widget_probe") {
+    return (
+      <WidgetProbeEditor
+        testCase={currentTestCase}
+        suiteServers={effectiveSuiteServers}
+        availableTools={availableTools}
+        projectServers={projectServers}
+        onBackToList={onBackToList}
+        updateTestCase={updateTestCaseMutation}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (

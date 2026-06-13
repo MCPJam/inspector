@@ -163,6 +163,8 @@ export type {
   TranscriptUsage,
   ToolErrorRecord,
   ToolErrorKind,
+  RenderObservationStatus,
+  RenderObservationSummary,
   CasePredicates,
   PredicatePlaceholder,
 } from "@mcpjam/sdk/predicates";
@@ -170,7 +172,30 @@ export type {
 import type {
   CasePredicates as CasePredicatesType,
   Predicate as PredicateType,
+  RenderObservationSummary as RenderObservationSummaryType,
 } from "@mcpjam/sdk/predicates";
+import type { RunnerWidgetRenderObservation } from "./eval-trace";
+
+/**
+ * Map the runner's widget render observations onto the screenshot-free
+ * summaries the SDK `widget*` predicates evaluate against. Drops the
+ * transient base64 screenshot and other replay-only fields; predicates only
+ * need outcome, latency, and console errors.
+ */
+export function summarizeRenderObservations(
+  observations: readonly RunnerWidgetRenderObservation[] | undefined,
+): RenderObservationSummaryType[] {
+  return (observations ?? []).map((o) => ({
+    toolCallId: o.toolCallId,
+    toolName: o.toolName,
+    serverId: o.serverId,
+    status: o.status,
+    elapsedMs: o.elapsedMs,
+    ...(o.consoleErrors && o.consoleErrors.length > 0
+      ? { consoleErrors: o.consoleErrors }
+      : {}),
+  }));
+}
 
 /**
  * Collapse `matchOptions.maxExtraToolCalls` + the legacy

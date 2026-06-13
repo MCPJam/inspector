@@ -110,6 +110,11 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
 import {
+  isScheduledEvalsWorkerEnabled,
+  startScheduledEvalsWorker,
+  type ScheduledEvalsWorkerHandle,
+} from "./services/scheduled-evals-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -587,6 +592,13 @@ const server = serve({
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
+// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
+// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
+let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
+if (isScheduledEvalsWorkerEnabled()) {
+  scheduledEvalsWorker = startScheduledEvalsWorker();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -616,6 +628,7 @@ async function shutdown() {
   }
 
   shuttingDown = true;
+  await scheduledEvalsWorker?.stop();
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;

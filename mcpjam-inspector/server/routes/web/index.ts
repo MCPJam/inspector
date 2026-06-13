@@ -17,6 +17,7 @@ import serverSecretsWeb from "./server-secrets.js";
 import xaaWeb from "./xaa.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import checks from "./checks.js";
@@ -69,6 +70,10 @@ web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
 web.route("/xaa", xaaWeb);
 web.route("/guest-session", guestSession);
+// Service-token-gated guest minting for the platform MCP worker (anonymous
+// /mcp sessions). Gated inside the router by `x-inspector-service-token`;
+// `sessionAuthMiddleware` bypasses `/api/web/*` entirely.
+web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);

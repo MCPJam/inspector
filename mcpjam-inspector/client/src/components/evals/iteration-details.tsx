@@ -8,6 +8,7 @@ import {
   parseIterationPredicates,
 } from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
+import { BrowserArtifactsView } from "./browser-artifacts-view";
 import {
   MessageSquare,
   Code2,
@@ -812,6 +813,50 @@ export function IterationDetails({
     </div>
   ) : null;
 
+  // Widget probes get an artifacts-first layout: checks + the rendered
+  // widget. Tool-call diff (expected vs actual is meaningless for a pinned
+  // call) and the full trace viewer (no LLM conversation) are hidden.
+  const isProbe = iteration.testCaseSnapshot?.caseType === "widget_probe";
+  const probeObservations = useMemo<
+    import("@/shared/eval-trace").EvalTraceWidgetRenderObservationView[]
+  >(() => {
+    if (!isProbe || !blob || Array.isArray(blob) || typeof blob !== "object") {
+      return [];
+    }
+    const raw = (blob as { widgetRenderObservations?: unknown })
+      .widgetRenderObservations;
+    return Array.isArray(raw) ? raw : [];
+  }, [isProbe, blob]);
+  const probeArtifactsSection = isProbe ? (
+    <div className="space-y-2" data-testid="iteration-probe-artifacts-section">
+      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+        <div className="text-xs font-semibold">Widget Render</div>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : error ? (
+        // A failed artifact load must not masquerade as "no observation" —
+        // reuse the trace section's error panel (with retry) since the probe
+        // layout hides that section.
+        <TraceBlobLoadErrorPanel
+          error={error}
+          layoutMode={layoutMode}
+          onRetry={() => setBlobRetryTick((n) => n + 1)}
+          isDetailsOpen={isBlobErrorDetailsOpen}
+          onDetailsOpenChange={setIsBlobErrorDetailsOpen}
+        />
+      ) : probeObservations.length > 0 ? (
+        <BrowserArtifactsView observations={probeObservations} steps={[]} />
+      ) : (
+        <p className="text-xs italic text-muted-foreground">
+          No render observation recorded for this iteration.
+        </p>
+      )}
+    </div>
+  ) : null;
+
   const traceSection = hasTrace ? (
     <div
       className={cn(
@@ -985,7 +1030,12 @@ export function IterationDetails({
       {caseInsightFallback}
       {promptSummarySection}
 
-      {traceFirst ? (
+      {isProbe ? (
+        <>
+          {predicatesSection}
+          {probeArtifactsSection}
+        </>
+      ) : traceFirst ? (
         <>
           {traceSection}
           {toolCallsSection}

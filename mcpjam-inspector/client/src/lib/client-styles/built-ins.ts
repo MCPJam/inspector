@@ -1,4 +1,5 @@
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
@@ -30,6 +31,7 @@ import {
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
+import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
 import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
@@ -247,6 +249,36 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeMarkIndicator,
+  },
+};
+
+// Claude Code is a terminal agent with no chat chrome of its own, so it
+// borrows Claude's desktop chat surface wholesale (style variables, fonts,
+// background, MCP profile) and only differs in brand identity: its own
+// label, logo, and a CLI spinner busy-state instead of the claude.ai
+// mascot. Mirrors how CODEX_HOST_STYLE borrows ChatGPT's surface.
+//
+// Capabilities reuse Claude's preset here, but the "claude-code" template
+// (`client-templates.ts`) overrides hostCapabilities to `{}` since the CLI
+// renders no MCP Apps — the style preset is just the fallback if a host
+// ever clears that override.
+export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-code",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    label: "Claude Code",
+    shortLabel: "Claude Code-style host",
+    pickerDescription: "Anthropic Claude Code CLI chrome",
+    logoSrc: claudeCodeLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeCodeCliIndicator,
   },
 };
 
@@ -469,4 +501,5 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
+  CLAUDE_CODE_HOST_STYLE,
 ];

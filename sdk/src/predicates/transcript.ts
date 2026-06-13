@@ -12,6 +12,7 @@ import { extractToolErrors } from "../eval-tool-execution.js";
 import type { EvalTraceInput } from "../eval-reporting-types.js";
 import type {
   IterationTranscript,
+  RenderObservationSummary,
   TranscriptToolCall,
   TranscriptUsage,
 } from "./types.js";
@@ -63,6 +64,8 @@ export interface BuildTranscriptInput {
   usage?: TranscriptUsage;
   /** Override the message-derived final assistant text when the runner has it. */
   finalAssistantMessage?: string;
+  /** Widget render observation summaries, when the runner captured any. */
+  renderObservations?: RenderObservationSummary[];
 }
 
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
@@ -77,5 +80,8 @@ export function buildIterationTranscript(
     toolErrors: extractToolErrors(input.trace),
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     ...(input.usage ? { usage: input.usage } : {}),
+    ...(input.renderObservations && input.renderObservations.length > 0
+      ? { renderObservations: input.renderObservations }
+      : {}),
   };
 }

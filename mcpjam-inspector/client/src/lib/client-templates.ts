@@ -10,6 +10,7 @@ import {
 } from "@/config/mcpjam-client-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -208,6 +209,7 @@ const CLAUDE_FONTS_CSS = `
 export type HostTemplateId =
   | "mcpjam"
   | "claude"
+  | "claude-code"
   | "chatgpt"
   | "cursor"
   | "codex"
@@ -240,6 +242,80 @@ export interface HostTemplate {
   logoSrc: string;
   seed: (opts?: SeedHostTemplateOptions) => HostConfigInputV2;
 }
+
+/**
+ * Claude Code's native (non-MCP) tool surface, captured from a live
+ * v2.1.176 session. These are the CLI's own harness tools — they never
+ * cross the MCP wire, so they don't belong in `clientCapabilities`, and
+ * no current host-config field can carry them (`builtInToolIds` is
+ * validated against the backend built-in tool catalog; `computer` is the
+ * Project Computers resource). Recorded verbatim so a future
+ * computer-use / host-native-toolset feature can seed an honest Claude
+ * Code environment instead of guessing. Deliberately NOT wired into the
+ * "claude-code" template seed below.
+ */
+export const CLAUDE_CODE_NATIVE_TOOLS = {
+  /** Always loaded at session start. */
+  topLevel: [
+    { name: "Agent", description: "launch subagents" },
+    {
+      name: "AskUserQuestion",
+      description: "ask the user a multiple-choice question",
+    },
+    { name: "Bash", description: "run shell commands" },
+    { name: "Edit", description: "exact string replacement in a file" },
+    {
+      name: "Read",
+      description: "read files (text, images, PDFs, notebooks)",
+    },
+    { name: "ScheduleWakeup", description: "schedule a /loop resume" },
+    {
+      name: "ShareOnboardingGuide",
+      description: "upload/share ONBOARDING.md",
+    },
+    { name: "Skill", description: "invoke a skill" },
+    {
+      name: "ToolSearch",
+      description: "fetch schemas for deferred tools",
+    },
+    {
+      name: "Workflow",
+      description: "run a multi-agent orchestration script",
+    },
+    { name: "Write", description: "write/overwrite a file" },
+  ],
+  /**
+   * Deferred: names are known up front, but schemas must be loaded via
+   * ToolSearch before calling.
+   */
+  deferred: {
+    taskManagement: [
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput",
+      "TaskStop",
+      "TaskUpdate",
+      "Monitor",
+    ],
+    cronSchedulingTriggers: [
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "RemoteTrigger",
+      "PushNotification",
+    ],
+    planWorktreeMode: [
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "EnterWorktree",
+      "ExitWorktree",
+      "DesignSync",
+    ],
+    filesWeb: ["NotebookEdit", "WebFetch", "WebSearch"],
+    mcpGeneric: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
+  },
+} as const;
 
 export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
@@ -544,6 +620,80 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // sandbox-proxy.html: inner gets spec-4 only), matching real
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    description:
+      "Anthropic's coding CLI. Roots + form elicitation, no widget rendering.",
+    logoSrc: claudeCodeLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Dedicated Claude Code skin (CLAUDE_CODE_HOST_STYLE in
+        // client-styles/built-ins.ts) — borrows Claude's chat surface but
+        // ships its own brand logo and a CLI spinner thinking indicator
+        // instead of the claude.ai mascot.
+        hostStyle: "claude-code",
+        // Same guest-allowed Anthropic model rationale as the Claude
+        // template — the real CLI's model choice never crosses the MCP
+        // wire, so this is a product default, not probe data.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Verbatim from a live mcpjam-learn `start-host-probe` against
+      // Claude Code CLI v2.1.176: raw `initialize` capabilities are
+      // exactly `{ roots: {}, elicitation: {} }` — roots without
+      // `listChanged`, elicitation the SDK parses as form-mode, and NO
+      // `extensions["io.modelcontextprotocol/ui"]`. Replace the SDK
+      // default entirely rather than spreading on top — a spread would
+      // leak the UI extension back in and misrepresent Claude Code as a
+      // UI-capable client (same move as the Codex template).
+      base.clientCapabilities = {
+        roots: {},
+        elicitation: {},
+      };
+      // Progressive tool discovery ON. Product choice, not probe data —
+      // tool disclosure isn't an MCP `initialize` capability, so nothing
+      // about it was (or could be) extracted from the host probe.
+      base.progressiveToolDiscovery = true;
+      // CLI client: no widget rendering, so `hostContext` stays the
+      // empty object.
+      //
+      // Zero out the host-side app advertise. We reuse `hostStyle:
+      // "claude"` for Anthropic chrome, but the Claude style's preset
+      // advertises claude.ai's full app surface (openLinks, serverTools,
+      // serverResources, logging, …) — none of which Claude Code has,
+      // since it renders no MCP Apps. `{}` is the explicit "advertise
+      // nothing" override (resolveEffectiveHostCapabilities treats `{}`
+      // distinctly from `undefined`/preset-inherit), so the Apps tab
+      // honestly shows an empty hostCapabilities for the CLI instead of
+      // inheriting Claude's. None of this was in the probe — the CLI
+      // returned no ui/initialize snapshot at all.
+      base.hostCapabilitiesOverride = {};
+      //
+      // The CLI's native harness toolset (Bash/Read/Write/etc.) is
+      // catalogued in CLAUDE_CODE_NATIVE_TOOLS above for a future
+      // computer-use feature; intentionally not attached to this seed.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          // Verbatim from the same probe. `title` / `description` /
+          // `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2 (backend
+          // soft-validates name/version only).
+          clientInfo: {
+            name: "claude-code",
+            title: "Claude Code",
+            version: "2.1.176",
+            description: "Anthropic's agentic coding tool",
+            websiteUrl: "https://claude.com/claude-code",
           },
         },
       };
