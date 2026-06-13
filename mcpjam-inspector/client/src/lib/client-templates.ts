@@ -634,10 +634,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     logoSrc: claudeCodeLogo,
     seed: () => {
       const base = emptyHostConfigInputV2({
-        // Anthropic chrome. No dedicated CLI skin yet, so reuse the
-        // Claude chat surface (Codex only has its own skin because the
-        // OpenAI Apps SDK compat profile rides on it).
-        hostStyle: "claude",
+        // Dedicated Claude Code skin (CLAUDE_CODE_HOST_STYLE in
+        // client-styles/built-ins.ts) — borrows Claude's chat surface but
+        // ships its own brand logo and a CLI spinner thinking indicator
+        // instead of the claude.ai mascot.
+        hostStyle: "claude-code",
         // Same guest-allowed Anthropic model rationale as the Claude
         // template — the real CLI's model choice never crosses the MCP
         // wire, so this is a product default, not probe data.
