@@ -197,8 +197,8 @@ describe("RunDetailView", () => {
     expect(kpi.getByText("Failed")).toBeInTheDocument();
     expect(kpi.getByText("Total")).toBeInTheDocument();
     expect(kpi.getByText("Duration")).toBeInTheDocument();
-    // Tokens KPI. Scoped to the strip: the run hero band also renders a bare
-    // "100" text node (accuracy with its % in a separate span).
+    // Scope to the KPI strip: the run hero also renders "100" (accuracy 100%),
+    // so a global query is ambiguous.
     expect(kpi.getByText(/^100$/)).toBeInTheDocument();
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
