@@ -51,7 +51,7 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 
 - **Title** - A user-friendly summary of what went wrong
 - **Explanation** - Plain-English description of the root cause
-- **Actions** - Buttons to fix the issue (Configure Target, Register Issuer, Reset Flow)
+- **Actions** - Buttons to fix the issue (Configure Target, Reset Flow)
 
 ### Common Error Scenarios
 
@@ -62,7 +62,7 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 - The AS returned `unsupported_grant_type`. Most authorization servers don't support RFC 7523 yet. Check vendor-specific guidance or run a bridge service.
 
 **Authorization Server Rejected the ID-JAG**
-- The AS returned `invalid_grant`. Common causes: MCPJam isn't registered as a trusted issuer, the `aud` claim doesn't match the AS issuer, or the `resource` claim isn't recognized.
+- The AS returned `invalid_grant`. Common causes: MCPJam isn't registered as a trusted issuer, the `aud` claim doesn't match the AS issuer, or the `resource` claim isn't recognized. Use the **Use MCPJam as your test IdP** card (always visible at the top of the tab) to copy the Issuer URL and JWKS URL for registering trust.
 
 **MCP Server Rejected the Access Token**
 - The AS issued a token but the MCP server returned 401. The `resource` or `aud` claim on the access token likely doesn't match the MCP server's canonical resource URL.
