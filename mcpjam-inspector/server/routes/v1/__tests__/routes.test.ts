@@ -175,13 +175,10 @@ describe("v1 live-op routes", () => {
     expect(body.code).toBe("VALIDATION_ERROR");
   });
 
-  it("rejects a guest JWT at the v1 boundary (401 UNAUTHORIZED, symmetric with Convex /v1/*)", async () => {
-    // Convex /v1/* rejects identity.issuer === GUEST_ISSUER. The Inspector v1
-    // router must mirror that — bearerAuthMiddleware admits guest tokens
-    // (sets c.set('guestId')), so the v1 router-level guard is what enforces
-    // the symmetry. Without it, a guest would pass the perimeter and only get
-    // 403'd by the deep Convex authorize-batch call, which is a different
-    // error code on a different layer.
+  it("admits a guest on an allowlisted platform-tool route (doctor)", async () => {
+    // doctor is part of the platform MCP tool surface, so guests are admitted
+    // and the live-MCP path runs (the deeper Convex authorize call enforces
+    // the guest's own project access).
     validateGuestTokenMock.mockResolvedValue({
       valid: true,
       guestId: "guest_abc",
@@ -192,13 +189,29 @@ describe("v1 live-op routes", () => {
       { serverName: "Example" },
       "guest_bearer"
     );
+    expect(res.status).toBe(200);
+    expect(runServerDoctorMock).toHaveBeenCalled();
+  });
+
+  it("rejects a guest on a non-allowlisted route (export) with 401 UNAUTHORIZED", async () => {
+    // export is NOT part of the platform MCP tool allowlist, so the perimeter
+    // guard rejects guests before the handler runs. Default-deny: only the
+    // enumerated platform-tool routes admit guests.
+    validateGuestTokenMock.mockResolvedValue({
+      valid: true,
+      guestId: "guest_abc",
+    });
+    const res = await post(
+      makeApp(),
+      "/api/v1/projects/p1/servers/s1/export",
+      { serverName: "Example" },
+      "guest_bearer"
+    );
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({
       code: "UNAUTHORIZED",
       message: expect.stringMatching(/guest/i),
     });
-    // The guard short-circuits before the live-MCP path, so the doctor
-    // workflow never runs and the Convex authorize call is never made.
     expect(runServerDoctorMock).not.toHaveBeenCalled();
   });
 
