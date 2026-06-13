@@ -530,23 +530,20 @@ export function TestTemplateEditor({
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
+  }, [openCompareFromRoute]);
+
+  useEffect(() => {
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-  }, [openCompareFromRoute, selectedTestCaseId]);
+  }, [selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
-
-  useEffect(() => {
-    if (openCompareFromRoute) {
-      setEditorMode("run");
-    }
-  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -1357,7 +1354,13 @@ export function TestTemplateEditor({
 
         const preparedRun = await prepareSingleTestCaseRun({
           projectId: isDirectGuest ? null : projectId,
-          suite,
+          suite: {
+            ...suite,
+            environment: {
+              ...(suite.environment ?? {}),
+              servers: suiteServers,
+            },
+          },
           testCase: currentTestCase,
           selectedModel: modelValue,
           getAccessToken: isDirectGuest

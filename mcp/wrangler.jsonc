@@ -28,7 +28,12 @@
       "vars": {
         "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
         "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
-        "PLATFORM_API_URL": "http://localhost:6274/api/v1"
+        "PLATFORM_API_URL": "http://localhost:6274/api/v1",
+        // Guest-token verification + lazy minting (anonymous /mcp sessions).
+        // MCPJAM_INSPECTOR_SERVICE_TOKEN is a secret (`wrangler secret put`),
+        // never a var.
+        "MCPJAM_GUEST_JWKS_URL": "http://localhost:6274/api/web/guest-jwks",
+        "MCPJAM_GUEST_MINT_URL": "http://localhost:6274/api/web/guest-token"
       },
       "migrations": [
         {
@@ -57,7 +62,9 @@
         "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
         // Staging Inspector API: the worker's AuthKit JWTs are staging-tenant
         // tokens, which the production app would reject with 401.
-        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
+        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
+        "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
+        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
       },
       "migrations": [
         {
@@ -85,7 +92,9 @@
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
         "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
-        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
+        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
+        "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
+        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
       },
       "migrations": [
         {
@@ -115,7 +124,9 @@
       "vars": {
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
         "WORKOS_CLIENT_ID": "client_01K4C1TVPBE7JTBFQJF9SDW9P9",
-        "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1"
+        "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1",
+        "MCPJAM_GUEST_JWKS_URL": "https://app.mcpjam.com/api/web/guest-jwks",
+        "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token"
       },
       "migrations": [
         {
