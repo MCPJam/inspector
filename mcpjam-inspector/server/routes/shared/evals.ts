@@ -604,6 +604,44 @@ export type PreparedEvalRun = {
 };
 
 /**
+ * A probe's identity is title + server + tool: every probe shares query ""
+ * and arrives as exactly one wire row (no model fan-out to reassemble).
+ * Used both as the upsert dedupe key for probe rows and to pair a probe
+ * wire entry with its persisted case. NUL-joined so a title containing the
+ * other segments can't forge a collision.
+ */
+export function probeIdentityKey(entry: {
+  title: string;
+  probeConfig?: ProbeConfig;
+}): string {
+  return [
+    "widget_probe",
+    entry.title,
+    entry.probeConfig?.serverId ?? entry.probeConfig?.serverName ?? "",
+    entry.probeConfig?.toolName ?? "",
+  ].join("\u0000");
+}
+
+/**
+ * Dedupe key for `prepareEvalRun`'s per-case upsert map. Prompt rows keep
+ * the historical title+query key (the per-model fan-out sends one row per
+ * model of the same case and must reassemble); probe rows key by probe
+ * identity — title+query would merge distinct same-titled probes (all
+ * probes share query "") or collide a probe with a prompt row, silently
+ * dropping probeConfig or pushing prompt models into a probe entry.
+ */
+export function buildUpsertCaseKey(test: {
+  title: string;
+  query: string;
+  caseType?: TestCaseType;
+  probeConfig?: ProbeConfig;
+}): string {
+  return test.caseType === "widget_probe"
+    ? probeIdentityKey(test)
+    : `${test.title}-${test.query}`;
+}
+
+/**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
  * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
@@ -725,7 +763,7 @@ export async function prepareEvalRun(
   >();
 
   for (const test of tests) {
-    const key = `${test.title}-${test.query}`;
+    const key = buildUpsertCaseKey(test);
     if (!testCaseMap.has(key)) {
       testCaseMap.set(key, {
         title: test.title,
@@ -784,9 +822,18 @@ export async function prepareEvalRun(
     );
 
     for (const [, testCaseData] of testCaseMap.entries()) {
-      const existingTestCase = existingTestCases?.find(
-        (tc: any) =>
-          tc.title === testCaseData.title && tc.query === testCaseData.query,
+      // Match within the same case category. Probes match by the pinned-call
+      // identity used for the wire dedupe above (they all share query "", so
+      // title+query would adopt the first same-titled case — probe or
+      // prompt — as the update target); prompts match by title+query as
+      // before but never against a probe case.
+      const existingTestCase = existingTestCases?.find((tc: any) =>
+        testCaseData.caseType === "widget_probe"
+          ? tc.caseType === "widget_probe" &&
+            probeIdentityKey(tc) === probeIdentityKey(testCaseData)
+          : tc.caseType !== "widget_probe" &&
+            tc.title === testCaseData.title &&
+            tc.query === testCaseData.query,
       );
 
       try {

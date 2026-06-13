@@ -6,6 +6,8 @@ import {
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
   buildCapEntriesFromPersistedCases,
+  buildUpsertCaseKey,
+  probeIdentityKey,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
   filterAndRemapReplayConfigs,
@@ -233,6 +235,68 @@ describe("assertTestCaseRunWithinCap", () => {
 function makeManagerStub(serverIds: string[]): MCPClientManager {
   return { listServers: () => serverIds } as unknown as MCPClientManager;
 }
+
+describe("buildUpsertCaseKey (probe/prompt dedupe identity)", () => {
+  const probe = (overrides?: {
+    title?: string;
+    serverId?: string;
+    toolName?: string;
+  }) => ({
+    title: overrides?.title ?? "Render check",
+    query: "",
+    caseType: "widget_probe" as const,
+    probeConfig: {
+      serverId: overrides?.serverId ?? "srv-1",
+      serverName: "server-1",
+      toolName: overrides?.toolName ?? "show_map",
+      arguments: {},
+    },
+  });
+
+  it("keeps the historical title+query key for prompt rows", () => {
+    expect(
+      buildUpsertCaseKey({ title: "Case A", query: "do the thing" }),
+    ).toBe("Case A-do the thing");
+  });
+
+  it("merges the per-model fan-out rows of one prompt case", () => {
+    expect(buildUpsertCaseKey({ title: "Case A", query: "q" })).toBe(
+      buildUpsertCaseKey({ title: "Case A", query: "q" }),
+    );
+  });
+
+  it("never collides a probe with a prompt row sharing title and empty query", () => {
+    expect(buildUpsertCaseKey(probe())).not.toBe(
+      buildUpsertCaseKey({ title: "Render check", query: "" }),
+    );
+  });
+
+  it("keeps same-titled probes of different tools distinct", () => {
+    expect(buildUpsertCaseKey(probe({ toolName: "show_map" }))).not.toBe(
+      buildUpsertCaseKey(probe({ toolName: "show_weather" })),
+    );
+  });
+
+  it("keeps same-titled probes of different servers distinct", () => {
+    expect(buildUpsertCaseKey(probe({ serverId: "srv-1" }))).not.toBe(
+      buildUpsertCaseKey(probe({ serverId: "srv-2" })),
+    );
+  });
+
+  it("treats the same probe identity as one case", () => {
+    expect(buildUpsertCaseKey(probe())).toBe(buildUpsertCaseKey(probe()));
+  });
+
+  it("a crafted title cannot forge another probe's identity", () => {
+    // Title embedding the other probe's tail must not collide thanks to
+    // the NUL separator.
+    const forged = probeIdentityKey({
+      title: "Render check srv-1 show_map",
+      probeConfig: { serverId: "", serverName: "", toolName: "" } as any,
+    });
+    expect(forged).not.toBe(probeIdentityKey(probe()));
+  });
+});
 
 describe("buildManagerKeyToDisplayNameMap", () => {
   it("maps each manager key to its parallel display name", () => {

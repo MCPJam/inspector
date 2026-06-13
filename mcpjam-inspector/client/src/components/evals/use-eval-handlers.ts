@@ -307,6 +307,7 @@ export function useEvalHandlers({
       // default. Runtime application of suite defaults happens server-side
       // (Convex testSuiteRun hostConfigId snapshot).
 
+      let probesSkippedMissingConfig = 0;
       for (const testCase of testCases) {
         // Widget probes carry no models and no prompt — they must never fall
         // into the LLM fan-out below (a probe with a suite default model
@@ -314,7 +315,10 @@ export function useEvalHandlers({
         // model/provider strings satisfy the wire schema; the server forks
         // probes off the LLM path before any model resolution.
         if (testCase.caseType === "widget_probe") {
-          if (!testCase.probeConfig) continue;
+          if (!testCase.probeConfig) {
+            probesSkippedMissingConfig++;
+            continue;
+          }
           tests.push({
             title: testCase.title,
             query: "",
@@ -374,6 +378,12 @@ export function useEvalHandlers({
             : suite.defaultConfig?.modelId;
           toast.error(
             `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
+          );
+        } else if (probesSkippedMissingConfig > 0) {
+          // Probe-only suites land here when every probe was skipped above;
+          // "add models" would be the wrong prescription for them.
+          toast.error(
+            "No tests to run. The suite's widget probes are missing their probe configuration."
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
