@@ -27,7 +27,7 @@ describe("handleUiToolCall", () => {
     useUiToolsRegistry.setState({
       tools: new Map(),
       nativeDisposers: new Map(),
-      shippedNamesBySession: new Map(),
+      shippedNames: new Set(),
     });
   });
 
@@ -96,7 +96,7 @@ describe("handleUiToolCall", () => {
   it("answers unresolved-but-shipped names with an error so the stream resumes", async () => {
     const registry = useUiToolsRegistry.getState();
     registry.registerUiTool(makeTool());
-    registry.snapshotForChatBody("sess-1");
+    registry.snapshotForChatBody();
     registry.unregisterUiTool("ui_navigate");
     const addToolOutput = vi.fn();
 
@@ -104,7 +104,6 @@ describe("handleUiToolCall", () => {
       toolName: "ui_navigate",
       toolCallId: "tc-1",
       input: {},
-      chatSessionId: "sess-1",
       addToolOutput,
     });
 
@@ -131,8 +130,7 @@ describe("handleUiToolCall", () => {
         toolName,
         toolCallId: "tc-1",
         input: {},
-        chatSessionId: "sess-1",
-        addToolOutput,
+          addToolOutput,
       });
       expect(handled).toBe(false);
     }

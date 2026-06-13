@@ -1600,9 +1600,7 @@ export function useChatSession(
             .snapshotForChatBody(chatSessionIdRef.current),
           // WebMCP UI tools snapshot — same drain-fresh contract as appTools;
           // the server defends the boundary again in `validateUiToolEntries`.
-          uiTools: useUiToolsRegistry
-            .getState()
-            .snapshotForChatBody(chatSessionIdRef.current),
+          uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
           ...(widgetModelContext && widgetModelContext.length > 0
             ? { widgetModelContext }
             : {}),
@@ -1680,7 +1678,6 @@ export function useChatSession(
           toolName,
           toolCallId: (toolCall as { toolCallId: string }).toolCallId,
           input: (toolCall as { input: unknown }).input,
-          chatSessionId: chatSessionIdRef.current,
           addToolOutput: addToolOutput as Parameters<
             typeof handleUiToolCall
           >[0]["addToolOutput"],

@@ -15,7 +15,6 @@ export interface HandleUiToolCallOptions {
   toolName: string;
   toolCallId: string;
   input: unknown;
-  chatSessionId?: string;
   addToolOutput: (output: {
     tool: string;
     toolCallId: string;
@@ -31,16 +30,16 @@ export interface HandleUiToolCallOptions {
 export async function handleUiToolCall(
   opts: HandleUiToolCallOptions,
 ): Promise<boolean> {
-  const { toolName, toolCallId, input, chatSessionId, addToolOutput } = opts;
+  const { toolName, toolCallId, input, addToolOutput } = opts;
   const registry = useUiToolsRegistry.getState();
   const def = registry.resolve(toolName);
 
   if (!def) {
-    // The name was advertised to the server earlier this session but the
+    // The name was advertised to the server in an earlier snapshot but the
     // tool is gone (HMR teardown, unmount). An output MUST still be
     // supplied or the paused server stream waits forever — same rule as
     // closed app iframes in the app-tool path.
-    if (registry.wasShipped(toolName, chatSessionId)) {
+    if (registry.wasShipped(toolName)) {
       addToolOutput({
         tool: toolName,
         toolCallId,

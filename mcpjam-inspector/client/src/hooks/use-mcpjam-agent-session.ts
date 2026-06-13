@@ -188,9 +188,7 @@ export function useMcpjamAgentSession(
           // WebMCP UI tools snapshot, drained fresh at POST time (same
           // contract as `useChatSession`). The server validates again in
           // `validateUiToolEntries`.
-          uiTools: useUiToolsRegistry
-            .getState()
-            .snapshotForChatBody(chatSessionId),
+          uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
         }),
       }),
     [chatSessionId, projectId]
@@ -208,7 +206,6 @@ export function useMcpjamAgentSession(
           toolName: (toolCall as { toolName: string }).toolName,
           toolCallId: (toolCall as { toolCallId: string }).toolCallId,
           input: (toolCall as { input: unknown }).input,
-          chatSessionId,
           addToolOutput: addToolOutput as Parameters<
             typeof handleUiToolCall
           >[0]["addToolOutput"],

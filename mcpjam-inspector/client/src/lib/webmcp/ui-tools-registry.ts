@@ -44,26 +44,22 @@ export interface UiToolDefinition {
 const MAX_SNAPSHOT_ENTRIES = 64;
 const MAX_DESCRIPTION_CHARS = 512;
 const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
-/**
- * Cap on remembered chat sessions in `shippedNamesBySession`. Sessions are
- * dropped FIFO; 16 comfortably covers every concurrent surface (chat tab,
- * agent panel, multi-model cards) without growing unbounded.
- */
-const MAX_SHIPPED_SESSIONS = 16;
-/** Map key for snapshots taken without a chat session id. */
-const NO_SESSION_KEY = "";
 
 interface UiToolsRegistryState {
   tools: Map<string, UiToolDefinition>;
   /** Disposers for native `modelContext` mirrors, keyed by tool name. */
   nativeDisposers: Map<string, () => void>;
   /**
-   * Names shipped to the server per chat session, unioned at snapshot time
-   * and never replaced: an earlier POST's stream can still be in flight when
-   * the next snapshot is taken, and its tool calls must keep resolving as
-   * "ours" (even if only to an error result) so the stream never hangs.
+   * Every name ever shipped to the server in a snapshot, unioned at snapshot
+   * time and NEVER evicted: a `ui_*` tool call only reaches `onToolCall`
+   * when that stream's own snapshot advertised the name, and an in-flight
+   * stream can outlive both the tool's registration and any session-scoped
+   * bookkeeping. The set is bounded by the names this page ever registers
+   * (first-party catalog), so page-lifetime retention is safe — and it is
+   * what guarantees an unresolvable call still gets an error output instead
+   * of hanging the paused stream.
    */
-  shippedNamesBySession: Map<string, Set<string>>;
+  shippedNames: Set<string>;
 
   registerUiTool: (
     def: UiToolDefinition,
@@ -71,18 +67,14 @@ interface UiToolsRegistryState {
   ) => () => void;
   unregisterUiTool: (name: string) => void;
   resolve: (name: string) => UiToolDefinition | null;
-  snapshotForChatBody: (chatSessionId?: string) => UiToolSnapshotEntry[];
-  wasShipped: (name: string, chatSessionId?: string) => boolean;
-}
-
-function sessionKey(chatSessionId?: string): string {
-  return chatSessionId ?? NO_SESSION_KEY;
+  snapshotForChatBody: () => UiToolSnapshotEntry[];
+  wasShipped: (name: string) => boolean;
 }
 
 export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   tools: new Map(),
   nativeDisposers: new Map(),
-  shippedNamesBySession: new Map(),
+  shippedNames: new Set(),
 
   registerUiTool: (def, opts) => {
     if (!isUiToolName(def.name)) {
@@ -133,7 +125,7 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
 
   resolve: (name) => get().tools.get(name) ?? null,
 
-  snapshotForChatBody: (chatSessionId) => {
+  snapshotForChatBody: () => {
     const out: UiToolSnapshotEntry[] = [];
     let dropped = 0;
     for (const def of get().tools.values()) {
@@ -165,25 +157,13 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
     }
     if (out.length > 0) {
       set((s) => {
-        const key = sessionKey(chatSessionId);
-        const shippedNamesBySession = new Map(s.shippedNamesBySession);
-        const shipped = new Set(shippedNamesBySession.get(key));
-        for (const entry of out) shipped.add(entry.name);
-        // Re-insert so the key moves to the back of the FIFO order.
-        shippedNamesBySession.delete(key);
-        shippedNamesBySession.set(key, shipped);
-        while (shippedNamesBySession.size > MAX_SHIPPED_SESSIONS) {
-          const oldest = shippedNamesBySession.keys().next().value;
-          if (oldest === undefined) break;
-          shippedNamesBySession.delete(oldest);
-        }
-        return { shippedNamesBySession };
+        const shippedNames = new Set(s.shippedNames);
+        for (const entry of out) shippedNames.add(entry.name);
+        return { shippedNames };
       });
     }
     return out;
   },
 
-  wasShipped: (name, chatSessionId) =>
-    get().shippedNamesBySession.get(sessionKey(chatSessionId))?.has(name) ===
-    true,
+  wasShipped: (name) => get().shippedNames.has(name),
 }));

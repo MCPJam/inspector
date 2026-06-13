@@ -30,7 +30,7 @@ function resetRegistry() {
   useUiToolsRegistry.setState({
     tools: new Map(),
     nativeDisposers: new Map(),
-    shippedNamesBySession: new Map(),
+    shippedNames: new Set(),
   });
 }
 
@@ -110,7 +110,7 @@ describe("useUiToolsRegistry", () => {
       makeTool("ui_navigate", { description: "x".repeat(600), readOnly: true }),
     );
 
-    const snapshot = useUiToolsRegistry.getState().snapshotForChatBody("sess");
+    const snapshot = useUiToolsRegistry.getState().snapshotForChatBody();
     expect(snapshot).toHaveLength(1);
     expect(snapshot[0]).toEqual({
       name: "ui_navigate",
@@ -132,31 +132,26 @@ describe("useUiToolsRegistry", () => {
     expect(snapshot.map((t) => t.name)).toEqual(["ui_select_server"]);
   });
 
-  it("unions shipped names per session and never un-ships them", () => {
+  it("remembers every shipped name for the page lifetime — no eviction", () => {
     const registry = useUiToolsRegistry.getState();
     registry.registerUiTool(makeTool("ui_navigate"));
-    registry.snapshotForChatBody("sess-a");
+    registry.snapshotForChatBody();
 
     registry.unregisterUiTool("ui_navigate");
     registry.registerUiTool(makeTool("ui_select_server"));
-    registry.snapshotForChatBody("sess-a");
-
-    // Both names stay shipped for sess-a — an in-flight stream from the
-    // first POST may still call ui_navigate.
-    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate", "sess-a")).toBe(true);
-    expect(
-      useUiToolsRegistry.getState().wasShipped("ui_select_server", "sess-a"),
-    ).toBe(true);
-    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate", "sess-b")).toBe(false);
-  });
-
-  it("caps remembered sessions FIFO", () => {
-    const registry = useUiToolsRegistry.getState();
-    registry.registerUiTool(makeTool("ui_navigate"));
-    for (let i = 0; i < 17; i++) {
-      registry.snapshotForChatBody(`sess-${i}`);
+    // Many subsequent snapshots (e.g. other chat surfaces POSTing) must not
+    // evict earlier-shipped names: an in-flight stream from the first POST
+    // can still call ui_navigate, and dropping it would hang that stream.
+    for (let i = 0; i < 50; i++) {
+      registry.snapshotForChatBody();
     }
-    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate", "sess-0")).toBe(false);
-    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate", "sess-16")).toBe(true);
+
+    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate")).toBe(true);
+    expect(useUiToolsRegistry.getState().wasShipped("ui_select_server")).toBe(
+      true,
+    );
+    expect(useUiToolsRegistry.getState().wasShipped("ui_never_shipped")).toBe(
+      false,
+    );
   });
 });

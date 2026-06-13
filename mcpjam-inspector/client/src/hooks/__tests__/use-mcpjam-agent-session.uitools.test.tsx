@@ -108,7 +108,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     useUiToolsRegistry.setState({
       tools: new Map(),
       nativeDisposers: new Map(),
-      shippedNamesBySession: new Map(),
+      shippedNames: new Set(),
     });
   });
 
@@ -136,10 +136,8 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
         readOnly: false,
       },
     ]);
-    // Snapshotting marks the name as shipped for THIS session.
-    expect(
-      useUiToolsRegistry.getState().wasShipped("ui_navigate", SESSION_ID)
-    ).toBe(true);
+    // Snapshotting marks the name as shipped (page-lifetime, no eviction).
+    expect(useUiToolsRegistry.getState().wasShipped("ui_navigate")).toBe(true);
   });
 
   it("fulfills streamed ui_* tool calls via addToolOutput and auto-resumes", async () => {
