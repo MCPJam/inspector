@@ -14,9 +14,12 @@
  *   - `resolve(name)` — looked up by `useChat.onToolCall` (via
  *     `ui-tool-executor.ts`) to execute the tool in-page.
  *
- * Dispatch is gated on registry membership plus the per-session shipped-name
- * set — never on the `ui_` prefix alone — so a genuine MCP server tool that
- * happens to be named `ui_something` is never intercepted.
+ * Dispatch is gated on registry membership (`resolve`) — never on the `ui_`
+ * prefix alone — so a genuine MCP server tool that happens to be named
+ * `ui_something` is never intercepted. The page-global `shippedNames` set is
+ * NOT a dispatch gate: it only decides whether an unresolvable (e.g.
+ * unregistered-while-in-flight) call gets an error output instead of hanging
+ * the paused stream.
  */
 
 import { create } from "zustand";

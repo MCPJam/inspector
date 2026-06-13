@@ -4,8 +4,10 @@
  * `navigate`/`selectServer`/`openPlayground` via the hosted-aware actions in
  * `ui-actions.ts`, the playground-scoped commands via
  * `dispatchInspectorCommand` directly (their handlers are registered while
- * the /playground surface is mounted, so those tools auto-open the
- * playground first when the handler is absent).
+ * the /playground surface is mounted). The mutating playground tools
+ * auto-open the playground first when the handler is absent; the read-only
+ * `ui_snapshot_app` deliberately does not — it errors instead, so a
+ * side-effect-free tool never changes UI state.
  *
  * Tool names live in the reserved `ui_` namespace (see
  * `shared/client-fulfilled-tools.ts`) and must satisfy the server-side
@@ -60,9 +62,9 @@ function fromActionResult(result: UiActionResult): UiToolResult {
 }
 
 function asOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function asOptionalObject(
@@ -309,7 +311,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
     {
       name: "ui_snapshot_app",
       description:
-        "Read the current UI Playground state (focused server, selected tool, form values, app context) without changing anything. Use this to observe before acting.",
+        "Read the current UI Playground state (focused server, selected tool, form values, app context) without changing anything. Use this to observe before acting. Requires the playground to be open — call ui_open_playground first if it is not.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -317,8 +319,18 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
       },
       readOnly: true,
       execute: async () => {
-        const notOpen = await ensurePlaygroundOpen("snapshotApp");
-        if (notOpen) return notOpen;
+        // Honor readOnly: a snapshot must never navigate or mount the
+        // playground. Unlike the mutating tools, it does NOT auto-open via
+        // ensurePlaygroundOpen — if the handler isn't registered, tell the
+        // agent to open the playground explicitly rather than changing UI
+        // state behind a tool the model (and any future approval flow)
+        // treats as side-effect-free.
+        if (!hasInspectorCommandHandler("snapshotApp")) {
+          return errorResult(
+            "The UI Playground is not open, so there is nothing to snapshot. " +
+              "Call ui_open_playground first, then ui_snapshot_app.",
+          );
+        }
         const response = await dispatchInspectorCommand({
           type: "snapshotApp",
           payload: { surface: "playground" },

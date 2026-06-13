@@ -179,11 +179,21 @@ describe("buildUiToolsCatalog", () => {
     ).toBeUndefined();
   });
 
-  it("ui_snapshot_app dispatches a playground snapshot", async () => {
+  it("ui_snapshot_app dispatches a playground snapshot when the playground is open", async () => {
     await getTool("ui_snapshot_app").execute({});
     expect(dispatchedCommands()[0]).toMatchObject({
       type: "snapshotApp",
       payload: { surface: "playground" },
     });
+  });
+
+  it("ui_snapshot_app errors without mutating UI state when the playground is closed (honors readOnly)", async () => {
+    // readOnly tools must not auto-open the playground; with the handler
+    // absent, snapshot returns an error and dispatches nothing.
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
+    const result = await getTool("ui_snapshot_app").execute({});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("ui_open_playground");
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
   });
 });
