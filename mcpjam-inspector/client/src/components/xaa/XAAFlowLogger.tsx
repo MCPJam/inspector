@@ -584,11 +584,10 @@ export function XAAFlowLogger({
               </li>
               <li>
                 <span className="font-medium text-foreground">
-                  Using your own auth server?
+                  Trust MCPJam at your auth server
                 </span>{" "}
-                Register MCPJam as a trusted IdP (the card at the top) so your
-                server accepts the assertion. Skip this if you use the MCPJam
-                test auth server.
+                — register the IdP endpoints (the card at the top) so your
+                authorization server accepts the ID-JAG MCPJam mints.
               </li>
             </ol>
 
