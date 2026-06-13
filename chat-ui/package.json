@@ -16,6 +16,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./thread-helpers": {
+      "types": "./dist/thread-helpers.d.ts",
+      "import": "./dist/thread-helpers.js",
+      "default": "./dist/thread-helpers.js"
+    },
     "./styles.css": "./dist/styles.css"
   },
   "sideEffects": [
