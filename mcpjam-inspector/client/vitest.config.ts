@@ -23,6 +23,10 @@ const sdkHostConfigInternalEntry = path.resolve(
 // Resolve @mcpjam/chat-ui from source (its published exports point at dist,
 // which a clean checkout hasn't built). Mirrors the SDK source aliases above.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
+const chatUiThreadHelpersEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/thread-helpers.ts",
+);
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -99,6 +103,11 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      // More specific subpath must precede the bare alias (first match wins).
+      {
+        find: "@mcpjam/chat-ui/thread-helpers",
+        replacement: chatUiThreadHelpersEntry,
+      },
       { find: "@mcpjam/chat-ui", replacement: chatUiEntry },
       {
         find: "@mcpjam/sdk/skill-reference",

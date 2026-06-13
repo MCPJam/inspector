@@ -25,6 +25,12 @@ const sdkHostConfigInternalEntry = path.resolve(
 // chat-ui/dist until it is built. Resolve the package from source so the
 // inspector's dev/build/typecheck/test never depend on a chat-ui build.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
+// Focused subpath: the pure thread helpers (no React/markdown graph). Inspector
+// modules single-source these from the package via this entry.
+const chatUiThreadHelpersEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/thread-helpers.ts",
+);
 // Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
 // directly to the installed ESM entrypoints.
 const mcpSdkClientAuthEntry = path.resolve(
@@ -68,6 +74,8 @@ export default defineConfig(({ mode }) => {
         "@repo/assets": path.resolve(clientDir, "src/assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
+        // More specific subpath must precede the bare alias (first match wins).
+        "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
