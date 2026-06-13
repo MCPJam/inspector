@@ -88,4 +88,17 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("learning")).toBe(true);
     expect(isHostedHashTabAllowed("learning")).toBe(true);
   });
+
+  it("allows the computer hash in hosted mode without adding a sidebar item", () => {
+    // Project Computers are reachable in hosted mode (E2B-backed), gated by
+    // project membership + entitlement + the `computers-enabled` flag — so the
+    // App hosted-mode effect must NOT bounce /computer back to /servers.
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("computer");
+    expect(isHostedHashTabAllowed("computer")).toBe(true);
+    expect(isHostedHashTabBlocked("computer")).toBe(false);
+    // Computer is reached via the Connect tab switcher, not its own sidebar
+    // entry, so it deliberately stays out of the sidebar allow-list.
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("computer");
+    expect(isHostedSidebarTabAllowed("computer")).toBe(false);
+  });
 });

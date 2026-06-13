@@ -34,6 +34,10 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "profile",
   "organizations",
   "project-settings",
+  // Project Computers are supported in hosted mode (access is enforced
+  // server-side, not by this list). Reached via the Connect tab switcher, not
+  // a standalone sidebar item, so it needs the hash allow-list only — see PR.
+  "computer",
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [

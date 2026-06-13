@@ -51,7 +51,7 @@ import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
-import { useComputersEnabled } from "./hooks/useComputersEnabled";
+import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
@@ -684,12 +684,17 @@ export function ComputerRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
-  const computersEnabled = useComputersEnabled();
+  const computersEnabled = useComputersEnabledState();
 
-  // Flag off ⇒ the feature is hidden; bounce to Servers so a stale /computer
-  // URL doesn't strand the user on a blank route.
-  if (!computersEnabled) {
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /computer directly (the redirect fires before the flag resolves). Render
+  // nothing until it settles — disabled users get the bounce a beat later.
+  if (computersEnabled === false) {
     return <Navigate to={routePaths.servers} replace />;
+  }
+  if (computersEnabled === undefined) {
+    return null;
   }
 
   const computerView = (
