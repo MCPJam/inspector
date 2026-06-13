@@ -1013,7 +1013,7 @@ export function OAuthFlowRoute() {
 }
 
 export function XAAFlowRoute() {
-  const { xaaEnabled, appState } = useAppRouteContext();
+  const { xaaEnabled, appState, activeOrganizationId } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
   return (
@@ -1027,6 +1027,7 @@ export function XAAFlowRoute() {
       <XAAFlowTab
         serverConfigs={appState.servers}
         selectedServerName={appState.selectedServer}
+        organizationId={activeOrganizationId ?? null}
       />
     </ErrorBoundary>
   );

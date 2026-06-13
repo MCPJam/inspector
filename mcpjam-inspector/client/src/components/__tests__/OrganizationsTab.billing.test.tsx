@@ -1039,7 +1039,12 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
+    // Since #2629 a free-plan org sees a dedicated Team upsell card (with its
+    // own Upgrade CTA) in addition to the comparison-table column, so an
+    // unscoped count is now 2. Scope to the upsell card and assert it offers
+    // the purchase affordance — that's what this test is about.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
+    expect(upsell.getByRole("button", { name: "Upgrade" })).toBeInTheDocument();
   });
 
   it("updates pricing when the billing interval toggle changes", () => {
@@ -1051,12 +1056,17 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    // The free-plan Team upsell card (#2629) and the comparison table each
+    // render a price + interval toggle backed by the same `billingInterval`
+    // state, so global queries are now ambiguous. Drive and assert through the
+    // upsell card's own toggle.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
     // Default interval is annual — Team lists $30/seat/mo billed annually
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /^Monthly$/ }));
+    expect(upsell.getByText(/\$38/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {

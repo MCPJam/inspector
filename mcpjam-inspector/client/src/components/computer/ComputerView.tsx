@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { Component, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -7,6 +7,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputersDataPlaneConfig,
   useComputerStatus,
+  useComputerUsage,
   useDeleteComputer,
   useMintTerminalToken,
   useReserveComputer,
@@ -302,6 +303,10 @@ export function ComputerView({
         tools persist between sessions; it sleeps when idle and wakes on use.
       </p>
 
+      <UsageMeterBoundary>
+        <ComputerUsageMeter projectId={projectId} />
+      </UsageMeterBoundary>
+
       {liveStatus === "error" && status?.lastError ? (
         <div className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {status.lastError}
@@ -311,6 +316,105 @@ export function ComputerView({
       <div className="min-h-0 flex-1">{renderTerminalPane()}</div>
     </div>
   );
+}
+
+/**
+ * Awake-time meter for the project's org: "X of Y free hours this month, then
+ * N credits/hour, sleeping is free". Hidden while loading, when the backend
+ * resolves no meter, or when the deployment isn't metering (`mode: "off"`).
+ */
+function ComputerUsageMeter({ projectId }: { projectId: string }) {
+  const usage = useComputerUsage(projectId);
+  if (!usage || usage.mode === "off") return null;
+
+  const { awakeMs, allowanceMs, creditsPerHour, billedCredits } = usage;
+  const overAllowance = allowanceMs !== null && awakeMs > allowanceMs;
+  // A zero-hour allowance with any usage reads as a full (over) bar, not an
+  // empty one. No such plan exists today, but the meter shouldn't lie if one
+  // ships.
+  const usedPct =
+    allowanceMs === null
+      ? 0
+      : allowanceMs <= 0
+      ? awakeMs > 0
+        ? 100
+        : 0
+      : Math.min(100, (awakeMs / allowanceMs) * 100);
+
+  return (
+    <div
+      data-testid="computer-usage-meter"
+      className="flex flex-col gap-2 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <span>
+          Awake time this month:{" "}
+          <span className="font-medium text-foreground">
+            {formatAwakeDuration(awakeMs)}
+          </span>
+          {allowanceMs !== null ? (
+            <> of {formatAwakeDuration(allowanceMs)} free</>
+          ) : (
+            <> — included with your plan</>
+          )}
+        </span>
+        {allowanceMs !== null ? (
+          <span>
+            {billedCredits > 0 ? (
+              <>
+                <span className="font-medium text-foreground">
+                  {billedCredits} credits
+                </span>{" "}
+                used ·{" "}
+              </>
+            ) : (
+              <>then </>
+            )}
+            {creditsPerHour} credits/hour · sleeping is free
+          </span>
+        ) : null}
+      </div>
+      {allowanceMs !== null ? (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            data-testid="computer-usage-meter-fill"
+            className={`h-full rounded-full ${
+              overAllowance ? "bg-destructive" : "bg-primary"
+            }`}
+            style={{ width: `${usedPct}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Sub-hour spans read as minutes; everything else as hours with one decimal
+// ("4.2 h"), trailing-zero trimmed ("30 h").
+function formatAwakeDuration(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  return `${Number((minutes / 60).toFixed(1))} h`;
+}
+
+/**
+ * The meter is a progressive enhancement: against a backend that predates
+ * `getComputerUsage`, the Convex query throws during render — swallow it and
+ * show no meter instead of taking down the whole Computer tab.
+ */
+class UsageMeterBoundary extends Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

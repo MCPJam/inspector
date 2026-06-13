@@ -6,8 +6,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
-import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
+import {
+  ReadOnlyTranscript,
+  type ToolRenderOverride as ChatUiToolRenderOverride,
+} from "@mcpjam/chat-ui";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -28,8 +30,19 @@ import {
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 
-const NOOP = (..._args: unknown[]) => {};
 const EMPTY_SPANS: EvalTraceSpan[] = [];
+
+/**
+ * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
+ * Apps SDK types — to chat-ui's placeholder types. The read-only transcript
+ * never reads those widget-specific fields, so the cast is safe. Kept as a
+ * named seam so future read-only consumers can reuse it.
+ */
+function bridgeToolRenderOverrides(
+  overrides: Record<string, unknown> | undefined,
+): Record<string, ChatUiToolRenderOverride> | undefined {
+  return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
+}
 
 interface ShareUsageThreadDetailProps {
   threadId: string;
@@ -361,27 +374,16 @@ export function ShareUsageThreadDetail({
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <ChatboxSurfaceProvider value={isChatboxThread}>
-              <TranscriptThread
-                messages={adaptedTrace.messages}
-                model={resolvedModel}
-                sendFollowUpMessage={NOOP}
-                toolsMetadata={{}}
-                toolServerMap={{}}
-                pipWidgetId={null}
-                fullscreenWidgetId={null}
-                onRequestPip={NOOP}
-                onExitPip={NOOP}
-                onRequestFullscreen={NOOP}
-                onExitFullscreen={NOOP}
-                toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                showSaveViewButton={false}
-                minimalMode={!isChatboxThread}
-                interactive={false}
-                reasoningDisplayMode={reasoningDisplayMode}
-                contentClassName="max-w-4xl space-y-8 px-4 py-4"
-              />
-            </ChatboxSurfaceProvider>
+            <ReadOnlyTranscript
+              messages={adaptedTrace.messages}
+              model={resolvedModel}
+              toolRenderOverrides={bridgeToolRenderOverrides(
+                adaptedTrace.toolRenderOverrides,
+              )}
+              reasoningDisplayMode={reasoningDisplayMode}
+              widgetPolicy="placeholder"
+              className="mx-auto max-w-4xl px-4 py-4"
+            />
           </div>
         ) : (
           <TraceViewer

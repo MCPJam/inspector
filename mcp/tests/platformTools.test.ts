@@ -65,6 +65,9 @@ function fakeAgent(
 ): McpJamMcpServer {
   return {
     bearerToken: overrides.bearerToken,
+    // runPlatformOperation resolves the bearer via getBearerToken() (async, so
+    // anonymous sessions can mint lazily). The stub just returns the override.
+    getBearerToken: async () => overrides.bearerToken,
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",

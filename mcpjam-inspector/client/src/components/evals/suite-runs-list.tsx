@@ -361,6 +361,11 @@ function StandaloneRunRow({
           <span className="truncate text-xs font-medium">
             Run {formatRunId(run._id)}
           </span>
+          {run.source === "schedule" ? (
+            <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Scheduled
+            </span>
+          ) : null}
           {run.namedHostId ? (
             <HostChip
               name={

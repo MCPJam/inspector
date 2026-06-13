@@ -35,6 +35,24 @@ export interface TerminalTokenResult {
 }
 
 /**
+ * Org-level awake-time meter surfaced by `getComputerUsage`: settled awake
+ * time for the current UTC month against the plan's free allowance, plus the
+ * posted credits-per-hour rate. `allowanceMs: null` means unlimited hours.
+ * `mode` is the deployment's billing posture — `off` means the backend isn't
+ * metering and the UI should hide the meter.
+ */
+export interface ComputerUsageView {
+  mode: "off" | "shadow" | "enforce";
+  creditsPerHour: number;
+  windowStartAt: number;
+  resetsAt: number;
+  awakeMs: number;
+  allowanceMs: number | null;
+  billedCredits: number;
+  forgivenCredits: number;
+}
+
+/**
  * Live status of the caller's computer for a project, or `null` when they
  * have none (or it was deleted). `undefined` while the query loads or when
  * `projectId` is absent.
@@ -46,6 +64,21 @@ export function useComputerStatus(
     "projectComputers:getComputerStatus" as never,
     projectId ? ({ projectId } as never) : "skip"
   ) as ComputerView | null | undefined;
+}
+
+/**
+ * The org's computer-time meter for a project, or `null` when the backend
+ * can't resolve it. `undefined` while loading or when `projectId` is absent.
+ * Throws during render (like any Convex query error) against a backend that
+ * predates `getComputerUsage` — mount it behind an error boundary.
+ */
+export function useComputerUsage(
+  projectId: string | null
+): ComputerUsageView | null | undefined {
+  return useQuery(
+    "projectComputers:getComputerUsage" as never,
+    projectId ? ({ projectId } as never) : "skip"
+  ) as ComputerUsageView | null | undefined;
 }
 
 /** Reserve (provision-on-first-use / wake) the caller's computer. */

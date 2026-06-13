@@ -18,7 +18,7 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import type { Context } from "hono";
-import { createAuthorizedManager } from "../auth.js";
+import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
 import { WebRouteError } from "../errors.js";
 
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
@@ -83,7 +83,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
-        mockContext,
+        callerContextFromHono(mockContext),
         "bearer-token",
         "project-1",
         ["server-b", "server-a"],
@@ -125,7 +125,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     const result = await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -208,7 +208,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -279,7 +279,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -336,7 +336,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
-        mockContext,
+        callerContextFromHono(mockContext),
         "bearer-token",
         "project-1",
         ["server-1"],
@@ -395,7 +395,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -454,7 +454,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],

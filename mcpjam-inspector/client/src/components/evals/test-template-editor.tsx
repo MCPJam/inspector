@@ -120,6 +120,7 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { WidgetProbeEditor } from "./widget-probe-editor";
 
 interface TestTemplate {
   title: string;
@@ -529,23 +530,20 @@ export function TestTemplateEditor({
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
+  }, [openCompareFromRoute]);
+
+  useEffect(() => {
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-  }, [openCompareFromRoute, selectedTestCaseId]);
+  }, [selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
-
-  useEffect(() => {
-    if (openCompareFromRoute) {
-      setEditorMode("run");
-    }
-  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -1356,7 +1354,13 @@ export function TestTemplateEditor({
 
         const preparedRun = await prepareSingleTestCaseRun({
           projectId: isDirectGuest ? null : projectId,
-          suite,
+          suite: {
+            ...suite,
+            environment: {
+              ...(suite.environment ?? {}),
+              servers: suiteServers,
+            },
+          },
           testCase: currentTestCase,
           selectedModel: modelValue,
           getAccessToken: isDirectGuest
@@ -1865,6 +1869,22 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
+  // Widget probes get a dedicated, much smaller editor — none of the
+  // prompt-turn / model / compare machinery below applies to them. Placed
+  // after every hook call so both editors share identical hook order.
+  if (currentTestCase?.caseType === "widget_probe") {
+    return (
+      <WidgetProbeEditor
+        testCase={currentTestCase}
+        suiteServers={effectiveSuiteServers}
+        availableTools={availableTools}
+        projectServers={projectServers}
+        onBackToList={onBackToList}
+        updateTestCase={updateTestCaseMutation}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (

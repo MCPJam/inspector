@@ -1,17 +1,22 @@
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComputerView as ComputerViewModel } from "@/hooks/useProjectComputer";
+import type {
+  ComputerUsageView,
+  ComputerView as ComputerViewModel,
+} from "@/hooks/useProjectComputer";
 
 const reserve = vi.fn(async () => ({} as never));
 const deleteComputer = vi.fn(async () => ({ deleted: true }));
 const mintToken = vi.fn(async () => ({ token: "t", expiresAt: 0 } as never));
 let mockStatus: ComputerViewModel | null | undefined;
+let mockUsage: ComputerUsageView | null | undefined;
 let mockDataPlane:
   | { localConfigured: boolean; remoteDataPlaneUrl: string | null }
   | undefined;
 
 vi.mock("@/hooks/useProjectComputer", () => ({
   useComputerStatus: () => mockStatus,
+  useComputerUsage: () => mockUsage,
   useReserveComputer: () => reserve,
   useDeleteComputer: () => deleteComputer,
   useMintTerminalToken: () => mintToken,
@@ -39,8 +44,25 @@ import { ComputerView } from "../ComputerView";
 afterEach(() => {
   vi.clearAllMocks();
   mockStatus = undefined;
+  mockUsage = undefined;
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 });
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function usage(overrides: Partial<ComputerUsageView> = {}): ComputerUsageView {
+  return {
+    mode: "shadow",
+    creditsPerHour: 10,
+    windowStartAt: 0,
+    resetsAt: HOUR_MS,
+    awakeMs: 0,
+    allowanceMs: 30 * HOUR_MS,
+    billedCredits: 0,
+    forgivenCredits: 0,
+    ...overrides,
+  };
+}
 
 // Default for every test: this server IS a data plane (the pre-remote
 // behavior). Individual tests override to exercise the delegation states.
@@ -210,5 +232,70 @@ describe("ComputerView", () => {
     expect(queryByTestId("terminal-stub")).toBeNull();
     expect(queryByText(/Starting your computer/i)).toBeNull();
     expect(getByText(/no longer available/i)).toBeTruthy();
+  });
+});
+
+describe("ComputerView usage meter", () => {
+  it("shows awake time against the free allowance with the posted rate", () => {
+    mockUsage = usage({ awakeMs: 4.2 * HOUR_MS });
+    const { getByTestId, getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByTestId("computer-usage-meter")).toBeTruthy();
+    expect(getByText("4.2 h")).toBeTruthy();
+    expect(getByText(/of 30 h free/i)).toBeTruthy();
+    expect(getByText(/then 10 credits\/hour/i)).toBeTruthy();
+    expect(getByText(/sleeping is free/i)).toBeTruthy();
+  });
+
+  it("reads sub-hour usage in minutes", () => {
+    mockUsage = usage({ awakeMs: 12 * 60 * 1000 });
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("12 min")).toBeTruthy();
+  });
+
+  it("surfaces charged credits once the allowance is exceeded", () => {
+    mockUsage = usage({
+      mode: "enforce",
+      awakeMs: 31 * HOUR_MS,
+      billedCredits: 10,
+    });
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("10 credits")).toBeTruthy();
+    expect(queryByText(/^then /)).toBeNull();
+  });
+
+  it("shows a full over-limit bar for zero-allowance plans with usage", () => {
+    mockUsage = usage({ allowanceMs: 0, awakeMs: 10 * 60 * 1000 });
+    const { getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    const fill = getByTestId("computer-usage-meter-fill");
+    expect(fill.style.width).toBe("100%");
+    expect(fill.className).toContain("bg-destructive");
+  });
+
+  it("says hours are included when the plan is uncapped", () => {
+    mockUsage = usage({ allowanceMs: null, awakeMs: 2 * HOUR_MS });
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText(/included with your plan/i)).toBeTruthy();
+    expect(queryByText(/credits\/hour/i)).toBeNull();
+  });
+
+  it("hides the meter when the backend is not metering or has no answer", () => {
+    mockUsage = usage({ mode: "off" });
+    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(first.queryByTestId("computer-usage-meter")).toBeNull();
+    first.unmount();
+
+    mockUsage = null;
+    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(second.queryByTestId("computer-usage-meter")).toBeNull();
   });
 });

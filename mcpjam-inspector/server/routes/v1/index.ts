@@ -31,17 +31,48 @@ const v1 = new Hono();
 // the /api/web/* MCP operation routes.
 v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
-// Symmetric with the Convex /v1/* surface (publicApi/routes.ts: authedV1
-// rejects identity.issuer === GUEST_ISSUER): the public API is a developer
-// surface, not a guest surface. bearerAuthMiddleware admits guest tokens (sets
-// c.set("guestId")) so the deep Convex authorize-batch round-trip would
-// eventually 403, but that's a different error path and depends on a layer
-// far below the perimeter. Reject guests at the v1 boundary so the contract
-// is the same on both halves and a regression in the deeper layer can't
-// silently expose live-MCP ops.
+// Guests get a NARROW allowlist of v1 routes — exactly the platform MCP tool
+// surface the worker drives (see mcp/src/tools/platformTools.ts
+// PLATFORM_CATALOG_OPERATIONS + show_servers). Everything else (tunnels,
+// eval-ingest, oauth token import, export, /me) stays guest-rejected. This is
+// default-deny: a newly-added v1 route is closed to guests until it earns a
+// pattern here (and its own guest security review). The catalog reads in this
+// list additionally relax the Convex /v1/* surface (publicApi/routes.ts
+// authedV1) so the proxied reads succeed end-to-end.
+const GUEST_ALLOWED_V1_PATTERNS: readonly RegExp[] = [
+  /^\/chat-sessions$/,
+  /^\/projects$/,
+  /^\/projects\/[^/]+\/servers$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/prompts$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/resources$/,
+  /^\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/,
+  /^\/projects\/[^/]+\/eval-suites$/,
+  /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/,
+  /^\/projects\/[^/]+\/eval-runs$/,
+  /^\/projects\/[^/]+\/eval-runs\/[^/]+$/,
+  /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
+  /^\/projects\/[^/]+\/chatboxes$/,
+  /^\/projects\/[^/]+\/chatboxes\/[^/]+$/,
+];
+
+export function isGuestAllowedV1Path(fullPath: string): boolean {
+  // `c.req.path` is the full request path; strip the mount prefix so the
+  // patterns above stay readable and relative.
+  const relative = fullPath.replace(/^\/api\/v1/, "");
+  return GUEST_ALLOWED_V1_PATTERNS.some((pattern) => pattern.test(relative));
+}
+
 v1.use("*", async (c, next) => {
-  if (c.get("guestId")) {
-    return v1Error(c, "UNAUTHORIZED", "Guests cannot access /api/v1");
+  // Authed (non-guest) callers are unaffected. Guests are admitted only on the
+  // allowlisted platform-tool routes; everything else is rejected at the
+  // boundary so a regression in a deeper layer can't silently expose it.
+  if (c.get("guestId") && !isGuestAllowedV1Path(c.req.path)) {
+    return v1Error(c, "UNAUTHORIZED", "Guests cannot access this endpoint");
   }
   return next();
 });

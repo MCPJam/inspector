@@ -1,6 +1,7 @@
 import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -28,6 +29,8 @@ function getClientLogo(
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam")) return mcpjamLogo;
+  if (haystack.includes("claude-code") || haystack.includes("claude code"))
+    return claudeCodeLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
