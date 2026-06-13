@@ -70,7 +70,11 @@
           {
             "group": "Auth & Conformance",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/xaa-test-idp"
+            ]
           },
           {
             "group": "Primitives",
