@@ -183,12 +183,26 @@ function describeOperationError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Cap on the model-visible text rendering. Resource reads, tool schemas,
+// and doctor reports are unbounded upstream; hosts feed `content` into model
+// context, so an uncapped pretty-print can blow a turn's budget. Mirrors the
+// inspector workspace built-ins' MODEL_OUTPUT_CAP philosophy (never fail
+// over size, degrade to a readable prefix). `structuredContent` stays
+// complete — widgets and programmatic consumers read that, not the text.
+const MODEL_TEXT_CAP = 24_000;
+
 function toolSuccess(payload: object) {
+  let text = JSON.stringify(payload, null, 2);
+  if (text.length > MODEL_TEXT_CAP) {
+    text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
+      text.length - MODEL_TEXT_CAP
+    } chars; the complete payload is in structuredContent]`;
+  }
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(payload, null, 2),
+        text,
       },
     ],
     structuredContent: payload as Record<string, unknown>,

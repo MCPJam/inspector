@@ -49,6 +49,16 @@ export default {
         status: 500,
       });
     }
+    // The token's `aud` and the issuer→JWKS allow-list are both keyed on the
+    // WorkOS client id (public — also shipped to the browser as
+    // VITE_WORKOS_CLIENT_ID), so the worker must know it to verify forwarded
+    // AuthKit tokens. See `authkitIssuerJwks` in auth.ts.
+    const clientId = env.WORKOS_CLIENT_ID;
+    if (!clientId) {
+      return new Response("Server misconfigured: WORKOS_CLIENT_ID is not set", {
+        status: 500,
+      });
+    }
 
     const isWellKnown = url.pathname.startsWith("/.well-known/");
     if (isWellKnown && request.method === "OPTIONS") {
@@ -105,7 +115,11 @@ export default {
         return McpJamMcpServer.serve("/mcp").fetch(request, env, ctx);
       }
 
-      const result = await verifyBearerToken(request, issuer, origin);
+      const result = await verifyBearerToken(
+        request,
+        { clientId, authkitDomain: env.AUTHKIT_DOMAIN },
+        origin,
+      );
       if (!result.ok) return result.response;
 
       const authedCtx: ExecutionContext<Record<string, unknown>> = {

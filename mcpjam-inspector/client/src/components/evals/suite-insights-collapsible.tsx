@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Loader2, ChevronDown } from "lucide-react";
+import { Loader2, ChevronDown, Sparkles } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import posthog from "posthog-js";
 import {
@@ -159,8 +159,14 @@ export function SuiteInsightsCollapsible({
             >
               <ChevronDown className="h-4 w-4" />
             </motion.span>
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-warning/70" aria-hidden />
             <div className="min-w-0 flex-1">
-              <span className={insightHighlightTitleClass}>{title}</span>
+              <div className="flex items-center gap-2">
+                <span className={insightHighlightTitleClass}>{title}</span>
+                <span className="inline-flex items-center rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning/80 dark:border-warning/25 dark:bg-warning/[0.12]">
+                  AI
+                </span>
+              </div>
               <p className={insightHighlightSubtitleClass}>{headerSubtitle}</p>
             </div>
           </motion.button>

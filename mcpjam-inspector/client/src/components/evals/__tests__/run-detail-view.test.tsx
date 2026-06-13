@@ -197,11 +197,9 @@ describe("RunDetailView", () => {
     expect(kpi.getByText("Failed")).toBeInTheDocument();
     expect(kpi.getByText("Total")).toBeInTheDocument();
     expect(kpi.getByText("Duration")).toBeInTheDocument();
-    // One-or-more: both the hero accuracy ("100" + a separate "%" span)
-    // and the strip's Tokens value can render a bare "100", and which of
-    // the two appear differs between local and CI renders — a single-match
-    // getByText flaked on CI whenever both were present.
-    expect(screen.getAllByText(/^100$/).length).toBeGreaterThanOrEqual(1);
+    // Scope to the KPI strip: the run hero also renders "100" (accuracy 100%),
+    // so a global query is ambiguous.
+    expect(kpi.getByText(/^100$/)).toBeInTheDocument();
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
     const panelGroup = screen.getByTestId("run-detail-resizable-group");

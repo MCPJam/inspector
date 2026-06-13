@@ -16,6 +16,35 @@
   // bare `wrangler deploy` (no `--env`) can't silently land on an
   // unrouted default worker; every CI deploy passes `--env <name>`.
   "env": {
+    // Local development against a locally-running inspector (`wrangler dev
+    // --env dev`, see `npm run dev:local`). Verifies tokens from the dev
+    // AuthKit app — the one a locally-signed-in inspector user holds — and
+    // executes platform operations against the local inspector /api/v1.
+    // Deployed workers never use this env; it exists so the MCPJam agent's
+    // platform connection works end-to-end in development
+    // (MCPJAM_PLATFORM_MCP_URL=http://localhost:8787/mcp).
+    "dev": {
+      "workers_dev": true,
+      "vars": {
+        "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
+        "PLATFORM_API_URL": "http://localhost:6274/api/v1"
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
+    },
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
     // No custom-domain routes — they're exclusive per worker, so sharing
     // `env.staging` would cause every PR deploy to conflict with the live
@@ -25,6 +54,7 @@
       "workers_dev": true,
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
         // Staging Inspector API: the worker's AuthKit JWTs are staging-tenant
         // tokens, which the production app would reject with 401.
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
@@ -54,6 +84,7 @@
       ],
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
       },
       "migrations": [
@@ -83,6 +114,7 @@
       ],
       "vars": {
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
+        "WORKOS_CLIENT_ID": "client_01K4C1TVPBE7JTBFQJF9SDW9P9",
         "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1"
       },
       "migrations": [
