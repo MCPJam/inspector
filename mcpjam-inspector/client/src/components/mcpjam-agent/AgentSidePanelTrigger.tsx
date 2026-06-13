@@ -1,13 +1,9 @@
 /**
  * Header sparkle button that toggles the MCPJam Agent side panel.
- *
- * Gated behind the same `home-page-enabled` PostHog flag as the home-tab
- * takeover so the agent's entry points stay in sync. Renders nothing when
- * the flag is off (or still loading).
  */
 import { useCallback } from "react";
 import { MessageCircle } from "lucide-react";
-import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -23,7 +19,6 @@ const SHORTCUT_LABEL =
     : "Ctrl+\\";
 
 export function AgentSidePanelTrigger() {
-  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const toggle = useAgentPanelStore((s) => s.toggle);
   const posthog = usePostHog();
@@ -39,8 +34,6 @@ export function AgentSidePanelTrigger() {
     }
     toggle();
   }, [activeTab, isOpen, posthog, toggle]);
-
-  if (!homeEnabled) return null;
 
   return (
     <Tooltip>

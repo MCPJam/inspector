@@ -24,12 +24,10 @@ type DropdownValue = "inherit" | "latest" | "rc";
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
   label: string;
-  /** When true, the option appears only with `stateless-mcp-enabled` flag. */
-  flagGated?: boolean;
 }> = [
   { value: "inherit", label: "Host default" },
   { value: "latest", label: "Latest (2025-11-25)" },
-  { value: "rc", label: "2026 RC (2026-07-28)", flagGated: true },
+  { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
 interface HeaderEntry {
@@ -63,13 +61,11 @@ interface AdvancedConnectionSettingsSectionProps {
   clientCapabilitiesOverrideError?: string | null;
   headersWarning?: string;
   /**
-   * Visibility flag for the protocol-version override row. Wired from
-   * `useFeatureFlagEnabled("stateless-mcp-enabled")` at the caller. When
-   * false, the entire dropdown is hidden AND the `2026-07-28` RC option
-   * is omitted from the option list (the RC option is the flag-gated
-   * piece; stateful options are always available behind the same flag).
-   * Defaults to false. Host-default JSON keeps working regardless —
-   * just no per-server affordance.
+   * Visibility for the protocol-version override row. Edit-server contexts
+   * (where the per-server override can be persisted on the project layer)
+   * pass true; the Add Server modal leaves it off since no project server
+   * ref exists yet. Defaults to false. Host-default JSON keeps working
+   * regardless — just no per-server affordance.
    */
   showMcpProtocolVersionOverride?: boolean;
   /**
@@ -307,10 +303,9 @@ export function AdvancedConnectionSettingsSection({
           {/* Per-server MCP protocol-version pin. Tri-state picker:
               "Latest" → `"2025-11-25"` (legacy adapter + initialize
               handshake); "2026 RC" → `"2026-07-28"` (stateless RC
-              preview client). Gated by `stateless-mcp-enabled` at the
-              caller. The RC option is hidden on non-HTTP transports
-              because MCPJam's current stateless client requires
-              Streamable HTTP. */}
+              preview client). The RC option is hidden on non-HTTP
+              transports because MCPJam's current stateless client
+              requires Streamable HTTP. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label

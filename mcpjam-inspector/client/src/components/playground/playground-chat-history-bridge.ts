@@ -20,7 +20,6 @@ export interface PlaygroundChatHistoryBridge {
   hostStyle: ChatboxHostStyle | undefined;
   isAuthenticated: boolean;
   isStreaming: boolean;
-  sharedThreadsEnabled: boolean;
   projectId: string | null | undefined;
   enabled: boolean;
   refreshSignal: number;
