@@ -16,19 +16,36 @@ export enum UIType {
   MCP_UI = "mcp-ui",
 }
 
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 /**
- * MCP Apps (SEP-1865) and OpenAI Apps SDK templates both surface their widget
- * resource under `_meta.ui.resourceUri` in this codebase's normalization.
+ * MCP Apps (SEP-1865) / OpenAI Apps SDK templates surface the widget resource
+ * under `_meta`. Producers use a flat slash key (`ui/resourceUri`, mirroring
+ * `openai/outputTemplate`), a flat dot key (`ui.resourceUri`), or a nested
+ * object (`ui: { resourceUri }`). Read all three so detection never silently
+ * misses a widget-bearing tool.
  */
 function readUiResourceUri(
   toolMeta: Record<string, unknown> | undefined,
 ): string | null {
-  const ui = toolMeta?.["ui"];
+  if (!toolMeta) return null;
+  const flat =
+    asNonEmptyString(toolMeta["ui/resourceUri"]) ??
+    asNonEmptyString(toolMeta["ui.resourceUri"]);
+  if (flat) return flat;
+  const ui = toolMeta["ui"];
   if (ui && typeof ui === "object") {
-    const uri = (ui as { resourceUri?: unknown }).resourceUri;
-    if (typeof uri === "string" && uri.length > 0) return uri;
+    return asNonEmptyString((ui as { resourceUri?: unknown }).resourceUri);
   }
   return null;
+}
+
+function readOpenAiOutputTemplate(
+  toolMeta: Record<string, unknown> | undefined,
+): string | null {
+  return asNonEmptyString(toolMeta?.["openai/outputTemplate"]);
 }
 
 function hasInlineUiResource(toolResult: unknown): boolean {
@@ -52,7 +69,7 @@ export function detectUIType(
   toolMeta: Record<string, unknown> | undefined,
   toolResult: unknown,
 ): UIType | null {
-  const hasTemplate = Boolean(toolMeta?.["openai/outputTemplate"]);
+  const hasTemplate = readOpenAiOutputTemplate(toolMeta) !== null;
   const hasResource = readUiResourceUri(toolMeta) !== null;
 
   if (hasTemplate && hasResource) return UIType.OPENAI_SDK_AND_MCP_APPS;
@@ -71,7 +88,7 @@ export function getUIResourceUri(
     case UIType.OPENAI_SDK_AND_MCP_APPS:
       return readUiResourceUri(toolMeta);
     case UIType.OPENAI_SDK:
-      return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
+      return readOpenAiOutputTemplate(toolMeta);
     default:
       return null;
   }

@@ -54,8 +54,17 @@ for (const file of walk(srcDir)) {
   while ((m = SPECIFIER_RE.exec(text)) !== null) {
     const spec = m[1] ?? m[2];
     if (!spec) continue;
+    const segments = spec.split("/");
     for (const bad of FORBIDDEN) {
-      if (spec === bad || spec.startsWith(`${bad}/`) || spec.includes(bad)) {
+      // Match an exact specifier, a subpath import (`bad/...`), or `bad` as a
+      // full path segment (so `./widget-replay` and `../mcp-apps/x` are
+      // caught) — without flagging unrelated names that merely contain the
+      // substring (e.g. `my-convex-helper`).
+      if (
+        spec === bad ||
+        spec.startsWith(`${bad}/`) ||
+        segments.includes(bad)
+      ) {
         violations.push({ file: relative(srcDir, file), spec, bad });
       }
     }

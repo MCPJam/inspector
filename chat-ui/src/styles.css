@@ -61,7 +61,8 @@
 
 /* Keep long tool input/output readable without a horizontal scrollbar war. */
 .mcpjam-chat-ui .mcpjam-chat-json {
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   tab-size: 2;
 }
 

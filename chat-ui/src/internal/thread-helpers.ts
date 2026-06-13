@@ -183,9 +183,9 @@ export function getToolNameFromType(type: string | undefined): string {
   return type.startsWith("tool-") ? type.replace(/^tool-/, "") : "Tool";
 }
 
-export function safeStringify(value: unknown) {
+export function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(value, null, 2) ?? String(value);
   } catch {
     return String(value);
   }

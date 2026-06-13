@@ -22,7 +22,7 @@
     "**/*.css"
   ],
   "scripts": {
-    "build": "tsup && node scripts/copy-css.mjs",
+    "build": "npm run check:tier-b && tsup && node scripts/copy-css.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run check:tier-b && vitest run",
     "check:tier-b": "node scripts/check-no-tier-b-imports.mjs",

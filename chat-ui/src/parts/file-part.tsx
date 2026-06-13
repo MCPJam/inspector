@@ -1,5 +1,6 @@
 import { FileText, Image, FileSpreadsheet, File } from "lucide-react";
 import type { AnyPart } from "../internal/thread-helpers";
+import { isSafeImageUrl } from "../internal/safe-external-url";
 
 type FilePartType = Extract<AnyPart, { type: "file" }>;
 
@@ -44,13 +45,20 @@ function truncateFilename(name: string, maxLength: number = 24): string {
 export function FilePart({ part }: { part: FilePartType }) {
   const filename = part.filename ?? "Attachment";
   const isImage = isImageMediaType(part.mediaType);
+  // Untrusted transcript URLs must not trigger a browser fetch to an arbitrary
+  // host (a client-metadata leak). Only inline data:image/* and absolute
+  // https: sources render as <img>; anything else falls through to the file
+  // card below.
+  const safeImageUrl = isSafeImageUrl(part.url) ? part.url : null;
 
-  if (isImage && part.url) {
+  if (isImage && safeImageUrl) {
     return (
       <div className="inline-block">
         <img
-          src={part.url}
+          src={safeImageUrl}
           alt={filename}
+          referrerPolicy="no-referrer"
+          loading="lazy"
           className="max-w-xs max-h-48 rounded-md object-contain border border-border"
         />
         {part.filename && (

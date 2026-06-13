@@ -113,9 +113,12 @@ export function PartSwitch({
       renderOverride,
     };
 
-    if (renderTool) return <>{renderTool(ctx)}</>;
-
-    const toolBlock = (
+    // `renderTool` replaces only the tool block; widget handling still runs
+    // afterward so a host can supply an interactive tool block AND mount a real
+    // widget (the inspector renders its ToolPart + WidgetReplay as siblings).
+    const toolBlock = renderTool ? (
+      renderTool(ctx)
+    ) : (
       <ToolCallPart
         toolName={info.toolName}
         toolState={info.toolState}
@@ -125,13 +128,16 @@ export function PartSwitch({
       />
     );
 
-    if (!isWidget) return toolBlock;
+    if (!isWidget) return <>{toolBlock}</>;
 
     let widgetNode: ReactNode = null;
     if (renderWidget) {
       widgetNode = renderWidget({
         ...ctx,
-        resourceUri: getUIResourceUri(uiType, effectiveToolMeta) ?? undefined,
+        resourceUri:
+          renderOverride?.resourceUri ??
+          getUIResourceUri(uiType, effectiveToolMeta) ??
+          undefined,
         toolsMetadata,
         toolServerMap,
       });

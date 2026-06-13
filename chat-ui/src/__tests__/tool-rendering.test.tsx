@@ -123,4 +123,52 @@ describe("tool rendering (read-only)", () => {
     // The static block is replaced, so its "Output" label is gone.
     expect(container.textContent).not.toContain("Output");
   });
+
+  it("renders renderTool AND the widget placeholder for a widget-bearing tool", () => {
+    const renderTool = vi.fn(() => <div data-testid="host-tool">HT</div>);
+    const messages = [
+      assistantParts([toolPart({ toolName: "weatherWidget" })]),
+    ];
+    const { container } = render(
+      <Transcript
+        messages={messages}
+        renderTool={renderTool}
+        toolsMetadata={{
+          weatherWidget: { "openai/outputTemplate": "ui://weather" },
+        }}
+      />,
+    );
+    // renderTool replaces only the tool block; widget handling still runs.
+    expect(container.querySelector("[data-testid='host-tool']")).not.toBeNull();
+    expect(
+      container.querySelector("[data-widget-placeholder='true']"),
+    ).not.toBeNull();
+  });
+
+  it("renders both renderTool and renderWidget for a widget-bearing tool", () => {
+    const renderTool = vi.fn(() => <div data-testid="host-tool">HT</div>);
+    const renderWidget = vi.fn(() => <div data-testid="host-widget">HW</div>);
+    const messages = [
+      assistantParts([toolPart({ toolName: "weatherWidget" })]),
+    ];
+    const { container } = render(
+      <Transcript
+        messages={messages}
+        renderTool={renderTool}
+        renderWidget={renderWidget}
+        toolsMetadata={{
+          weatherWidget: { "openai/outputTemplate": "ui://weather" },
+        }}
+      />,
+    );
+    expect(container.querySelector("[data-testid='host-tool']")).not.toBeNull();
+    expect(
+      container.querySelector("[data-testid='host-widget']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[data-widget-placeholder='true']"),
+    ).toBeNull();
+    expect(renderTool).toHaveBeenCalledTimes(1);
+    expect(renderWidget).toHaveBeenCalledTimes(1);
+  });
 });

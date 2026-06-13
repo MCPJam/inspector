@@ -37,3 +37,20 @@ export function filterSafeExternalLinkUrls(value: unknown): string[] {
   }
   return out;
 }
+
+/**
+ * Image-src safety for UNTRUSTED transcript file parts. Rendering an
+ * attacker-controlled URL into `<img src>` forces the browser to fetch it,
+ * leaking client metadata (IP, headers) to an arbitrary host. Allow only
+ * inline `data:image/*` (no network fetch) and absolute `https:` images;
+ * the caller falls back to a non-fetching representation otherwise.
+ */
+export function isSafeImageUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (/^data:image\//i.test(value)) return true;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
