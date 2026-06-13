@@ -78,6 +78,9 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 **Client ID Required**
 - The ID-JAG needs a `client_id` claim. Configure it in the target settings and register the client at your authorization server.
 
+**Authorization Server Requires Client Authentication (401 invalid_client)**
+- The authorization server requires a client secret for the jwt-bearer grant. Enter the client secret in the **Client Secret** field in the Configure Target modal.
+
 **Authorization Server Doesn't Support jwt-bearer Grant**
 - The AS returned `unsupported_grant_type`. Most authorization servers don't support RFC 7523 yet. Check vendor-specific guidance or run a bridge service.
 
