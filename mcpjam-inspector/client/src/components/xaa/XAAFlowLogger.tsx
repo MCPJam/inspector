@@ -556,14 +556,42 @@ export function XAAFlowLogger({
         )}
 
         {!hasProfile ? (
-          <div className="bg-background border border-border rounded-lg p-6 space-y-3">
-            <h3 className="text-base font-semibold">
-              Welcome to the XAA Debugger
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Configure an MCP server, target authorization server, and client
-              ID to step through the full enterprise authorization flow.
-            </p>
+          <div className="bg-background border border-border rounded-lg p-6 space-y-4">
+            <div className="space-y-1.5">
+              <h3 className="text-base font-semibold">
+                Welcome to the XAA Debugger
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Step through the full cross-app access (XAA) authorization flow
+                against an MCP server.
+              </p>
+            </div>
+
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
+              <li>
+                <span className="font-medium text-foreground">
+                  Configure a target
+                </span>{" "}
+                — the MCP server URL, a client ID, and (for your own auth
+                server) its issuer. Start here.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Run the flow
+                </span>{" "}
+                — MCPJam mints an ID-JAG and exchanges it for an access token,
+                one step at a time.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Using your own auth server?
+                </span>{" "}
+                Register MCPJam as a trusted IdP (the card at the top) so your
+                server accepts the assertion. Skip this if you use the MCPJam
+                test auth server.
+              </li>
+            </ol>
+
             <Button onClick={actions.onConfigure}>Configure Target</Button>
           </div>
         ) : groups.length === 0 ? (

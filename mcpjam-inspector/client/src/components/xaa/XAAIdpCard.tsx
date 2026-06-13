@@ -113,8 +113,8 @@ export function XAAIdpCard() {
             </span>
           </div>
           <p className="truncate text-xs text-muted-foreground">
-            Register these endpoints with your authorization server to trust
-            MCPJam-issued assertions.
+            Only when you target your own authorization server — register these
+            endpoints so it trusts MCPJam-issued assertions.
           </p>
         </div>
         {expanded ? (
