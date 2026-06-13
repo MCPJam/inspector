@@ -103,23 +103,30 @@ function mergeHeadersForAuthServer(
   return merged;
 }
 
-function buildResourceMetadataUrl(serverUrl: string): string {
+// RFC 9728 protected-resource metadata locations to probe, in order. The
+// path-insertion form (well-known segment between host and resource path) is
+// the RFC 9728 §3.1 form; the path-less root is the fallback some servers
+// (incl. MCP servers that serve PRM at the origin) use. Deduped so a
+// path-less resource yields a single URL.
+function buildResourceMetadataUrls(serverUrl: string): string[] {
   const url = new URL(serverUrl);
+  const root = new URL(
+    "/.well-known/oauth-protected-resource",
+    url.origin,
+  ).toString();
 
   if (url.pathname !== "/" && url.pathname !== "") {
     const pathname = url.pathname.endsWith("/")
       ? url.pathname.slice(0, -1)
       : url.pathname;
-    return new URL(
+    const pathInserted = new URL(
       `/.well-known/oauth-protected-resource${pathname}`,
       url.origin,
     ).toString();
+    return [pathInserted, root];
   }
 
-  return new URL(
-    "/.well-known/oauth-protected-resource",
-    url.origin,
-  ).toString();
+  return [root];
 }
 
 function canonicalizeResourceUrl(url: string): string {
@@ -500,104 +507,138 @@ export function createXAAStateMachine(
   const discoverResourceMetadata = async () => {
     const state = currentState();
     const activeServerUrl = state.serverUrl || serverUrl;
-    const resourceMetadataUrl = buildResourceMetadataUrl(activeServerUrl);
 
-    const request = {
-      method: "GET",
-      url: resourceMetadataUrl,
-      headers: {
-        Accept: "application/json",
-      },
-    };
-
-    try {
-      const result = await runRequest(
-        "discover_resource_metadata",
-        request,
-        () => requestExecutor.externalRequest(resourceMetadataUrl, request),
-      );
-
-      if (!result.ok) {
-        throw new Error(
-          extractErrorMessage(
-            result.body,
-            `Resource metadata request failed with ${result.status}`,
-          ),
-        );
-      }
-
-      const resourceMetadata = asRecord(result.body, "Resource metadata");
-      const resolvedAuthzIssuer =
-        state.authzServerIssuer ||
-        (Array.isArray(resourceMetadata.authorization_servers)
-          ? resourceMetadata.authorization_servers[0]
-          : undefined);
-      const resolvedResource =
-        typeof resourceMetadata.resource === "string"
-          ? resourceMetadata.resource
-          : canonicalizeResourceUrl(activeServerUrl);
-
-      if (!resolvedAuthzIssuer) {
-        throw new Error(
-          "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually.",
-        );
-      }
-
+    // RFC 9728 protected-resource metadata discovery only exists to learn
+    // which authorization server protects the resource. In XAA the requesting
+    // app already knows its target AS — so when the issuer is configured (a
+    // registration, or entered manually) there is nothing to discover. Skip
+    // the request entirely rather than firing a spurious (often 404ing) probe.
+    if (state.authzServerIssuer) {
       machine.updateState({
         currentStep: "received_resource_metadata",
-        resourceMetadataUrl,
-        resourceMetadata: resourceMetadata as XAAFlowState["resourceMetadata"],
-        resourceUrl: resolvedResource,
-        authzServerIssuer: resolvedAuthzIssuer,
-      });
-
-      pushInfo(
-        "received_resource_metadata",
-        "xaa-resource-metadata",
-        "Resource metadata",
-        {
-          resource: resolvedResource,
-          authorization_servers: resourceMetadata.authorization_servers,
-        },
-      );
-    } catch (error) {
-      if (!state.authzServerIssuer) {
-        machine.updateState({
-          currentStep: "discover_resource_metadata",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to discover resource metadata",
-        });
-        return;
-      }
-
-      machine.updateState({
-        currentStep: "received_resource_metadata",
-        resourceMetadataUrl,
-        resourceUrl: canonicalizeResourceUrl(activeServerUrl),
+        resourceUrl:
+          state.resourceUrl || canonicalizeResourceUrl(activeServerUrl),
         error: undefined,
       });
-
       pushInfo(
         "received_resource_metadata",
-        "xaa-resource-fallback",
-        "Resource metadata fallback",
+        "xaa-resource-metadata-skipped",
+        "Resource metadata discovery skipped",
         {
-          message:
-            error instanceof Error ? error.message : "Resource metadata lookup failed",
-          using_authz_server_issuer: state.authzServerIssuer,
-        },
-        {
-          level: "warning",
+          reason:
+            "Authorization server issuer is already configured; RFC 9728 discovery is not part of the XAA grant and isn't needed.",
+          authz_server_issuer: state.authzServerIssuer,
         },
       );
+      return;
     }
+
+    const candidateUrls = buildResourceMetadataUrls(activeServerUrl);
+    let lastError = "Failed to discover resource metadata";
+
+    for (const resourceMetadataUrl of candidateUrls) {
+      const request = {
+        method: "GET",
+        url: resourceMetadataUrl,
+        headers: {
+          Accept: "application/json",
+        },
+      };
+
+      try {
+        const result = await runRequest(
+          "discover_resource_metadata",
+          request,
+          () => requestExecutor.externalRequest(resourceMetadataUrl, request),
+        );
+
+        if (!result.ok) {
+          lastError = extractErrorMessage(
+            result.body,
+            `Resource metadata request failed with ${result.status}`,
+          );
+          continue;
+        }
+
+        const resourceMetadata = asRecord(result.body, "Resource metadata");
+        const resolvedAuthzIssuer = Array.isArray(
+          resourceMetadata.authorization_servers,
+        )
+          ? resourceMetadata.authorization_servers[0]
+          : undefined;
+        const resolvedResource =
+          typeof resourceMetadata.resource === "string"
+            ? resourceMetadata.resource
+            : canonicalizeResourceUrl(activeServerUrl);
+
+        if (!resolvedAuthzIssuer) {
+          throw new Error(
+            "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually.",
+          );
+        }
+
+        machine.updateState({
+          currentStep: "received_resource_metadata",
+          resourceMetadataUrl,
+          resourceMetadata:
+            resourceMetadata as XAAFlowState["resourceMetadata"],
+          resourceUrl: resolvedResource,
+          authzServerIssuer: resolvedAuthzIssuer,
+          error: undefined,
+        });
+
+        pushInfo(
+          "received_resource_metadata",
+          "xaa-resource-metadata",
+          "Resource metadata",
+          {
+            resource: resolvedResource,
+            authorization_servers: resourceMetadata.authorization_servers,
+          },
+        );
+        return;
+      } catch (error) {
+        lastError =
+          error instanceof Error
+            ? error.message
+            : "Failed to discover resource metadata";
+      }
+    }
+
+    machine.updateState({
+      currentStep: "discover_resource_metadata",
+      error: lastError,
+    });
   };
 
   const discoverAuthzMetadata = async () => {
     const state = currentState();
     const issuer = state.authzServerIssuer;
+
+    // RFC 8414 authorization-server metadata discovery only exists to learn
+    // the token endpoint. A registration-backed run resolves the stored
+    // endpoint server-side, and a manually-set token endpoint is already
+    // known — in either case skip the probe and advance.
+    if (registrationId || state.tokenEndpoint) {
+      machine.updateState({
+        currentStep: "received_authz_metadata",
+        error: undefined,
+      });
+      pushInfo(
+        "received_authz_metadata",
+        "xaa-authz-metadata-skipped",
+        "Authorization metadata discovery skipped",
+        {
+          reason: registrationId
+            ? "The registered resource's token endpoint is resolved server-side; RFC 8414 discovery isn't needed."
+            : "The token endpoint is already configured; RFC 8414 discovery isn't needed.",
+          ...(state.tokenEndpoint
+            ? { token_endpoint: state.tokenEndpoint }
+            : {}),
+        },
+      );
+      return;
+    }
 
     if (!issuer) {
       machine.updateState({
