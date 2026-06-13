@@ -9,6 +9,7 @@ import { fetchActiveKeyId, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
 
   const handleCopy = async () => {
     const success = await copyToClipboard(value);
@@ -16,8 +17,23 @@ function CopyRow({ label, value }: { label: string; value: string }) {
       return;
     }
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    if (resetTimerRef.current !== null) {
+      window.clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetTimerRef.current = null;
+    }, 1500);
   };
+
+  // Clear the pending reset timer on unmount to avoid a stale state update.
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="space-y-1.5">
