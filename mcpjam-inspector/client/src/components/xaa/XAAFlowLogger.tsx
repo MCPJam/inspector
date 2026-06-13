@@ -489,6 +489,13 @@ export function XAAFlowLogger({
             rawJwt={flowState.idJag}
             decoded={flowState.idJagDecoded}
             negativeTestMode={flowState.negativeTestMode}
+            lintContext={{
+              expectedAudience:
+                flowState.authzMetadata?.issuer || flowState.authzServerIssuer,
+              expectedResource:
+                flowState.resourceMetadata?.resource || flowState.resourceUrl,
+              expectedClientId: flowState.clientId,
+            }}
           />
         )}
 
