@@ -5,7 +5,6 @@ import {
   type ServerAttachmentInput,
 } from "@/lib/apis/evals-api";
 import { HOSTED_MODE } from "@/lib/config";
-import { getGuestBearerToken } from "@/lib/guest-session";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
 export type CreateEvalTestCaseInput = {
@@ -190,11 +189,9 @@ export async function generateAndPersistEvalTests(
     modelsToUse = defaultEvalModels();
   }
 
-  const accessToken = HOSTED_MODE
-    ? null
-    : isDirectGuest
-      ? await getGuestBearerToken()
-      : await getAccessToken();
+  // `getAccessToken` already resolves the guest bearer for guests (see
+  // use-convex-access-token), so no `isDirectGuest` branch is needed here.
+  const accessToken = HOSTED_MODE ? null : await getAccessToken();
   if (!HOSTED_MODE && !accessToken) {
     throw new Error("Not authenticated");
   }
