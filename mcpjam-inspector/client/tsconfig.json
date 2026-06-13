@@ -23,7 +23,8 @@
       "@repo/assets/*": ["./src/assets/*"],
       "@mcpjam/sdk": ["../../sdk/src/index.ts"],
       "@mcpjam/sdk/browser": ["../../sdk/src/browser.ts"],
-      "@mcpjam/sdk/*": ["../../sdk/src/*"]
+      "@mcpjam/sdk/*": ["../../sdk/src/*"],
+      "@mcpjam/chat-ui": ["../../chat-ui/src/index.ts"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],

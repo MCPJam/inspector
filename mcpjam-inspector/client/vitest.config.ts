@@ -20,6 +20,9 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+// Resolve @mcpjam/chat-ui from source (its published exports point at dist,
+// which a clean checkout hasn't built). Mirrors the SDK source aliases above.
+const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -52,6 +55,32 @@ export default defineConfig({
         };
       },
     },
+    {
+      // Vite serves static image imports (e.g. `import logo from
+      // "/claude_logo.png"` in client-styles/built-ins.ts) as URL strings from
+      // the public dir, but jsdom/vitest has no public-dir resolution and fails
+      // import-analysis. Stub them to a URL string so modules that pull in the
+      // chat-v2/client-styles graph (e.g. the eval TraceViewer) load in tests.
+      name: "stub-static-assets",
+      enforce: "pre",
+      resolveId(id) {
+        // Only stub ABSOLUTE public-dir asset imports (e.g. "/claude_logo.png"
+        // in client-styles/built-ins.ts). Leave relative and query imports to
+        // vite — notably `*.svg?raw` (raw SVG markup, used by
+        // HandDrawnSendHint) and `?url`/`?worker`, whose loader semantics we
+        // must not clobber.
+        return id.startsWith("/") &&
+          /\.(png|jpe?g|gif|svg|webp|avif|ico)$/.test(id)
+          ? `\0static-asset:${id}`
+          : null;
+      },
+      load(id) {
+        const prefix = "\0static-asset:";
+        return id.startsWith(prefix)
+          ? `export default ${JSON.stringify(id.slice(prefix.length))};`
+          : null;
+      },
+    },
   ],
   test: {
     globals: true,
@@ -70,6 +99,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: "@mcpjam/chat-ui", replacement: chatUiEntry },
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,

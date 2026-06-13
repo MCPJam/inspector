@@ -46,7 +46,7 @@ export function JsonView({
   return (
     <pre
       className={cn(
-        "mcpjam-chat-json overflow-auto rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground",
+        "mcpjam-chat-json overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground",
         className,
       )}
     >
