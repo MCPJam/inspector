@@ -271,8 +271,23 @@ export function ServerAttachmentPicker({
         className="w-64 p-1"
         align="start"
         sideOffset={4}
-        onInteractOutside={() => {
-          if (!isCreating) setShowCreate(false);
+        onInteractOutside={(e) => {
+          // While a create is in flight, don't let an outside click
+          // dismiss the popover mid-request.
+          if (isCreating) {
+            e.preventDefault();
+            return;
+          }
+          // The Create button sits below the fold when the server list
+          // is long, so clicking outside the popover commits the
+          // in-progress attachment instead of discarding it. Keep the
+          // popover open until handleCreate resolves (it closes itself
+          // on success) — closing now would flash the empty trigger
+          // during the mutation.
+          if (showCreate && createName.trim() && createServerIds.size > 0) {
+            e.preventDefault();
+            void handleCreate();
+          }
         }}
       >
         {!showCreate ? (
