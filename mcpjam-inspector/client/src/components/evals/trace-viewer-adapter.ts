@@ -71,7 +71,15 @@ export function adaptTraceToUiMessages(params: {
   connectedServerIds?: string[];
   toolResultDisplay?: ToolResultDisplay;
 }): AdaptedTraceResult {
-  return adaptTraceToUiMessagesImpl(params) as unknown as AdaptedTraceResult;
+  // Only `toolRenderOverrides` needs the placeholder→real widget-type bridge;
+  // narrow the cast to that field so the rest of the result keeps compile-time
+  // checking against the package shape.
+  const result = adaptTraceToUiMessagesImpl(params);
+  return {
+    ...result,
+    toolRenderOverrides:
+      result.toolRenderOverrides as AdaptedTraceResult["toolRenderOverrides"],
+  };
 }
 
 export function buildToolRenderOverridesFromSnapshots(
