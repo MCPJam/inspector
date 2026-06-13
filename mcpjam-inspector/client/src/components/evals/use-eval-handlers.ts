@@ -842,6 +842,15 @@ export function useEvalHandlers({
         return null;
       }
 
+      // Widget probes have no single-case quick-run path yet: the
+      // run-test-case endpoints only execute model-driven cases, and probes
+      // intentionally carry no models. Without this branch the model guard
+      // below would surface a misleading "Add a model first".
+      if (testCase.caseType === "widget_probe") {
+        toast.info("Widget probes run with the full suite or on its schedule.");
+        return null;
+      }
+
       const modelValuesToRun = options?.selectedModel
         ? [options.selectedModel]
         : getConfiguredTestCaseModelValues(testCase);
