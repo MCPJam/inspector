@@ -28,6 +28,26 @@ To begin debugging XAA flows:
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
 
+## Configure Modal Fields
+
+The Configure Target modal accepts the following fields:
+
+| Field | Required | Description |
+|---|---|---|
+| Server URL | Yes | Base URL of your MCP server |
+| Authorization Server Issuer | Yes | Issuer URL of the OAuth 2.0 authorization server |
+| Client ID | No | OAuth client ID registered at the authorization server |
+| Client Secret | No | Client secret for confidential-client auth servers that require client authentication for the jwt-bearer grant. Use test credentials only — the secret is masked in the request log. |
+| Scope | No | Space-separated OAuth scopes to request |
+
+### Confidential clients
+
+Some authorization servers require client authentication for the jwt-bearer grant and reject requests without a `client_secret`. If your authorization server returns `401 invalid_client` or a similar error, enter the client secret in the **Client Secret** field.
+
+The secret is stored in your browser alongside the rest of the debug profile. Use test credentials only — never production secrets. The request log always shows `••••••••` in place of the real value; the plaintext secret is never written to the HTTP history, info logs, or exported request data.
+
+Registration-backed runs resolve their secret server-side and leave this field empty.
+
 ## Authorization Server Compatibility
 
 After step 4 (authorization server discovery), the debugger displays a compatibility banner:
