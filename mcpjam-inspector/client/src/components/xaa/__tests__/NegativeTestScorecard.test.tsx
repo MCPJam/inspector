@@ -127,6 +127,51 @@ describe("NegativeTestScorecard", () => {
     await waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
   });
 
+  it("clears a stale result badge when the target changes (e.g. config cleared)", async () => {
+    runMock.mockResolvedValue({
+      failures: 1,
+      results: [
+        {
+          mode: "expired",
+          label: "Expired",
+          expectedFailure: "AS should reject expired",
+          outcome: "accepted",
+          verdict: "fail",
+          status: 200,
+          detail: "Issued a token for an expired assertion.",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NegativeTestScorecard input={INPUT} unlocked />,
+    );
+    await expand(user);
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i }),
+    );
+
+    // Badge reflects the completed run against this target.
+    await waitFor(() =>
+      expect(screen.getByText("1 failing")).toBeInTheDocument(),
+    );
+
+    // Clearing the configuration drops the target (input → null). The stale
+    // "1 failing" badge must not linger over the now-empty/locked body.
+    rerender(
+      <NegativeTestScorecard
+        input={null}
+        unlocked={false}
+        unavailableReason="Run the flow first so the token endpoint is discovered."
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("1 failing")).toBeNull(),
+    );
+  });
+
   it("surfaces a run error", async () => {
     runMock.mockRejectedValue(new Error("URL not allowed"));
 

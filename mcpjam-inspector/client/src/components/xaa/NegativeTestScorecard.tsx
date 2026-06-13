@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -89,6 +89,22 @@ export function NegativeTestScorecard({
   const [run, setRun] = useState<RunState>({ status: "idle" });
   const [overrideText, setOverrideText] = useState("");
   const [overrideAccepted, setOverrideAccepted] = useState(false);
+
+  // Reset the last run whenever the target changes — including when config is
+  // cleared (input → null). Without this, a stale "N failing" badge from a
+  // previous target lingers and contradicts the empty/locked body.
+  const targetKey = input
+    ? [
+        input.registrationId ?? input.tokenEndpoint ?? "",
+        input.audience,
+        input.resource,
+      ].join("|")
+    : "";
+  useEffect(() => {
+    setRun({ status: "idle" });
+    setOverrideAccepted(false);
+    setOverrideText("");
+  }, [targetKey]);
 
   const canRun = input !== null && (unlocked || overrideAccepted);
 
