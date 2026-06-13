@@ -4,9 +4,13 @@ description: "Register MCPJam's built-in identity provider with your authorizati
 icon: "key-round"
 ---
 
-When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger plays the IdP for you — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
+<Note>
+This page applies only when you are targeting **your own authorization server**. If you are testing against a third-party authorization server that already trusts an external ID-JAG issuer, you can skip this step.
+</Note>
 
-To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the three endpoints you register to establish that trust.
+When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger acts as both the test IdP and the requesting client — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
+
+To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the endpoints you register to establish that trust.
 
 ## Where to find the endpoints
 
@@ -22,13 +26,24 @@ Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the
 
 ## Registering trust
 
-1. Copy the **Issuer URL** from the card. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
-2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's **issuer URL** as the trusted identity issuer. The issuer is the trust anchor; use the JWKS URL only when the server explicitly asks for the key-set endpoint.
-3. Set the ID-JAG `aud` claim to your authorization server's own issuer.
-4. Set the ID-JAG `resource` claim to your MCP server's resource identifier.
-5. Register MCPJam as a client at your authorization server using the client ID from your XAA target configuration.
+### In your authorization server
+
+1. **Trust MCPJam as an ID-JAG issuer** — Register either the **Issuer URL** or the **JWKS URL** from the card. Both resolve to the same signing keys, so you only need one. Use the Issuer URL if your authorization server auto-discovers keys from OAuth/OIDC metadata; use the JWKS URL if it asks for the key-set endpoint directly.
+2. **Register the client** — Register the client ID MCPJam will present (from your XAA target configuration) so the token exchange is recognized.
+
+### MCPJam stamps these into each ID-JAG
+
+You set these values in the debugger run config, not in your authorization server. Make sure your server expects them.
+
+- `aud` — your authorization server's issuer
+- `resource` — the MCP server's resource identifier
+- `client_id` — the client ID from your config
 
 Once trust is established, run the flow from the XAA Flow tab. The sequence diagram shows each step — SSO, token exchange, JWT-bearer, and the authenticated MCP request — with every token decoded inline.
+
+<Note>
+Cross-app access is new. Some authorization servers don't yet expose a way to trust an external ID-JAG issuer and redeem it via the `jwt-bearer` grant. Check that yours supports it before wiring up the steps above.
+</Note>
 
 ## Vendor notes
 
