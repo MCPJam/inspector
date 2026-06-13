@@ -121,6 +121,16 @@
         ]
       },
       {
+        "tab": "Chat UI",
+        "groups": [
+          {
+            "group": "Get Started",
+            "icon": "rocket",
+            "pages": ["chat-ui/overview"]
+          }
+        ]
+      },
+      {
         "tab": "SDK",
         "tag": "v1",
         "groups": [
