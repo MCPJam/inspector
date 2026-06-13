@@ -32,6 +32,18 @@ import {
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
 
+/**
+ * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
+ * Apps SDK types — to chat-ui's placeholder types. The read-only transcript
+ * never reads those widget-specific fields, so the cast is safe. Kept as a
+ * named seam so future read-only consumers can reuse it.
+ */
+function bridgeToolRenderOverrides(
+  overrides: Record<string, unknown> | undefined,
+): Record<string, ChatUiToolRenderOverride> | undefined {
+  return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
+}
+
 interface ShareUsageThreadDetailProps {
   threadId: string;
   /**
@@ -365,16 +377,9 @@ export function ShareUsageThreadDetail({
             <ReadOnlyTranscript
               messages={adaptedTrace.messages}
               model={resolvedModel}
-              // The trace adapter builds inspector ToolRenderOverrides whose
-              // widget/CSP fields use the MCP Apps SDK types; the package's
-              // placeholder types are structural stand-ins the read-only path
-              // never reads. Bridge the two at this seam.
-              toolRenderOverrides={
-                adaptedTrace.toolRenderOverrides as unknown as Record<
-                  string,
-                  ChatUiToolRenderOverride
-                >
-              }
+              toolRenderOverrides={bridgeToolRenderOverrides(
+                adaptedTrace.toolRenderOverrides,
+              )}
               reasoningDisplayMode={reasoningDisplayMode}
               widgetPolicy="placeholder"
               className="mx-auto max-w-4xl px-4 py-4"
