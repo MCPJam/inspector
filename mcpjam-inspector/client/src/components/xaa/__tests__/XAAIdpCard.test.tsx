@@ -67,12 +67,32 @@ describe("XAAIdpCard", () => {
     expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
+  // URL-aware fetch mock: the card first reads the server's OpenID config, then
+  // the JWKS. Each call gets its own Response (bodies are single-read).
+  const mockIdpFetch = (overrides: { issuer?: string; kid?: string } = {}) => {
+    const serverIssuer = overrides.issuer ?? issuer;
+    const kid = overrides.kid ?? "key-2026";
+    return vi.fn((url: string | URL) => {
+      const href = String(url);
+      if (href.includes("openid-configuration")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: serverIssuer,
+              jwks_uri: `${serverIssuer}/.well-known/jwks.json`,
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ keys: [{ kid }] }), { status: 200 }),
+      );
+    });
+  };
+
   it("shows the active signing key id fetched from JWKS once expanded", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ keys: [{ kid: "key-2026" }] }), {
-        status: 200,
-      }),
-    );
+    const fetchMock = mockIdpFetch();
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
@@ -88,5 +108,26 @@ describe("XAAIdpCard", () => {
       `${issuer}/.well-known/jwks.json`,
       expect.objectContaining({ signal: expect.anything() }),
     );
+  });
+
+  it("prefers the issuer advertised by the server over the browser origin", async () => {
+    // The jsdom browser origin is not localhost:6274 — simulate the dev-proxy
+    // skew where the backend mints a different-origin `iss`.
+    const serverIssuer = "http://localhost:6274/api/web/xaa";
+    vi.stubGlobal("fetch", mockIdpFetch({ issuer: serverIssuer }));
+
+    const user = userEvent.setup();
+    render(<XAAIdpCard />);
+    await user.click(
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i }),
+    );
+
+    expect(await screen.findByText(serverIssuer)).toBeInTheDocument();
+    expect(
+      screen.getByText(`${serverIssuer}/.well-known/openid-configuration`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`${serverIssuer}/.well-known/jwks.json`),
+    ).toBeInTheDocument();
   });
 });

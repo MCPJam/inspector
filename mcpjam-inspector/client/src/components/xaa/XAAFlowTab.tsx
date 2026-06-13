@@ -33,6 +33,7 @@ import {
   type XAADebugProfile,
 } from "@/lib/xaa/profile";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
+import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
 // Captured at module load: the XAA route returns null while the feature flag
 // bootstraps and other startup code rewrites location.search, so reading the
@@ -371,6 +372,22 @@ export function XAAFlowTab({
 
   const hasTarget = Boolean(flowInput.serverUrl.trim());
 
+  // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG
+  // inspection step lints against the issuer actually stamped into `iss`, not
+  // the browser origin (which differs from the backend through the dev proxy).
+  const [resolvedIssuerBaseUrl, setResolvedIssuerBaseUrl] = useState<
+    string | undefined
+  >(undefined);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchXaaIdpUrls(controller.signal).then((urls) => {
+      if (urls && !controller.signal.aborted) {
+        setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
       getState: () => flowStateRef.current,
@@ -384,8 +401,9 @@ export function XAAFlowTab({
       scope: flowInput.scope,
       authzServerIssuer: flowInput.authzServerIssuer,
       registrationId: flowInput.registrationId,
+      issuerBaseUrl: resolvedIssuerBaseUrl,
     });
-  }, [flowInput, updateFlowState]);
+  }, [flowInput, updateFlowState, resolvedIssuerBaseUrl]);
 
   const handleAdvance = useCallback(async () => {
     if (!hasTarget) {
