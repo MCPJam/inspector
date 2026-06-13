@@ -529,13 +529,16 @@ export function TestTemplateEditor({
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
+  }, [openCompareFromRoute]);
+
+  useEffect(() => {
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-  }, [openCompareFromRoute, selectedTestCaseId]);
+  }, [selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);

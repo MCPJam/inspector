@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -449,6 +449,47 @@ describe("TestTemplateEditor run view from route", () => {
 
     expect(streamEvalTestCaseMock.mock.calls[0]?.[0]).toMatchObject({
       serverIds: ["srv"],
+    });
+  });
+
+  it("shows live compare results after Run switches the route into compare mode", async () => {
+    const user = userEvent.setup();
+
+    function RoutedEditor() {
+      const [openCompare, setOpenCompare] = useState(false);
+      return (
+        <TestTemplateEditor
+          suiteIterations={[baseIteration]}
+          suiteId="suite-1"
+          selectedTestCaseId="case-1"
+          connectedServerNames={new Set(["srv"])}
+          projectId={null}
+          availableModels={[
+            {
+              provider: "openai",
+              model: "gpt-4",
+              label: "GPT-4",
+            } as any,
+          ]}
+          openCompareFromRoute={openCompare}
+          onSelectTab={(tab) => setOpenCompare(tab === "runs")}
+        />
+      );
+    }
+
+    renderWithProviders(<RoutedEditor />);
+
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading results...")).not.toBeInTheDocument();
+      expect(screen.getByTestId("compare-run-chat-surface")).toHaveTextContent(
+        "iter-openai-gpt-4",
+      );
     });
   });
 
