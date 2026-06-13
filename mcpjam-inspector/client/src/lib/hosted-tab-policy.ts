@@ -34,14 +34,9 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "profile",
   "organizations",
   "project-settings",
-  // Project Computers (E2B-backed) are supported in hosted mode: the server
-  // leaves /api/web/computers/* outside the hosted block partition, and the
-  // control plane gates access by project membership + the `projectComputers`
-  // org entitlement + a per-user HMAC terminal token. The tab is reached via
-  // the Connect tab switcher (gated by the `computers-enabled` flag), not a
-  // standalone sidebar item, so it only needs the hash allow-list — not the
-  // sidebar one. ComputerView itself reports unavailability when no data plane
-  // (local E2B creds or COMPUTERS_REMOTE_DATA_PLANE_URL) is configured.
+  // Project Computers are supported in hosted mode (access is enforced
+  // server-side, not by this list). Reached via the Connect tab switcher, not
+  // a standalone sidebar item, so it needs the hash allow-list only — see PR.
   "computer",
 ] as const;
 
