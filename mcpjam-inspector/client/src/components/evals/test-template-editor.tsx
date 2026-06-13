@@ -1356,7 +1356,13 @@ export function TestTemplateEditor({
 
         const preparedRun = await prepareSingleTestCaseRun({
           projectId: isDirectGuest ? null : projectId,
-          suite,
+          suite: {
+            ...suite,
+            environment: {
+              ...suite.environment,
+              servers: suiteServers,
+            },
+          },
           testCase: currentTestCase,
           selectedModel: modelValue,
           getAccessToken: isDirectGuest

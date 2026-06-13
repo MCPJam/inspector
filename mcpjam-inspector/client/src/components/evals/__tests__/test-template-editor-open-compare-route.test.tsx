@@ -384,6 +384,74 @@ describe("TestTemplateEditor run view from route", () => {
     ).toBeInTheDocument();
   });
 
+  it("runs compare cases with servers from host attachments", async () => {
+    const user = userEvent.setup();
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") {
+        return [activeCaseDoc];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: [] },
+          hostAttachments: [
+            {
+              namedHostId: "host-1",
+              hostName: "Host",
+              resolvedServerNames: ["srv"],
+            },
+          ],
+        };
+      }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        return null;
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /^run$/i }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(streamEvalTestCaseMock.mock.calls[0]?.[0]).toMatchObject({
+      serverIds: ["srv"],
+    });
+  });
+
   it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
     // Iterations are now a prop, not a query — the remaining loading gates
     // are `testCases === undefined`, the init ref mismatch, and the route
