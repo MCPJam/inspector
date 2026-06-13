@@ -1,0 +1,73 @@
+---
+title: "MCPJam MCP worker"
+description: "Connect any MCP client to mcp.mcpjam.com to browse your projects, run eval suites, and inspect chatboxes — all through the MCP protocol."
+icon: "bot"
+tag: "Preview"
+---
+
+The MCPJam MCP worker is a remote MCP server hosted at `mcp.mcpjam.com`. Connect any MCP client that supports OAuth discovery (Claude Desktop, Cursor, or any client that follows the MCP authorization spec) and you get 12 tools that let you operate your MCPJam projects without opening the UI.
+
+## Authentication
+
+The worker is protected by WorkOS AuthKit. When your MCP client connects to `https://mcp.mcpjam.com/mcp`, it receives a `401` with a `WWW-Authenticate` header pointing at the OAuth discovery URL. Clients that support OAuth discovery kick off the flow automatically — you sign in with your MCPJam account and the client stores the resulting token.
+
+Every tool call is made with your own identity, so results respect your project access exactly as the hosted app does.
+
+## Available tools
+
+| Tool | What it does |
+| --- | --- |
+| `show_servers` | Project servers with hosted health probes; renders as an MCP Apps widget when the client supports it |
+| `list_projects` | Projects you can access, most recently updated first |
+| `list_project_servers` | Servers saved in a project (no health probes) |
+| `list_eval_suites` | Eval suites in a project, with latest-run summaries |
+| `list_eval_suite_runs` | Recent runs of a suite (by name or ID), newest first |
+| `run_eval_suite` | Start an async rerun of a suite; returns a `runId` immediately |
+| `get_eval_run` | Run status, result, and summary — poll until terminal |
+| `list_eval_run_iterations` | Per-iteration results: tool calls, token usage, latency |
+| `get_eval_iteration_trace` | Full trace for one iteration (can be large) |
+| `list_chatboxes` | Chatboxes published from a project |
+| `get_chatbox` | One chatbox's settings: model, system prompt, tool-approval policy, servers |
+| `list_chat_sessions` | Chat sessions visible to you, with optional project and status filters |
+
+## Project and resource selectors
+
+Most tools accept an optional `project` argument (name or ID). When omitted, the tool uses your most recently updated accessible project and returns other project names so you can switch.
+
+Selectors that take a suite, chatbox, or server name resolve by exact ID first, then by unique case-insensitive name. If a name matches more than one resource, the tool returns an error listing the IDs so you can be precise.
+
+## Running eval suites
+
+`run_eval_suite` is the only write tool. It starts an asynchronous eval run that executes LLM iterations and consumes your organization's credits. The tool is annotated `readOnlyHint: false` so MCP hosts can gate it appropriately.
+
+**Server selection.** By default, `run_eval_suite` runs against every enabled HTTP server in the project. You can pass an explicit `servers` list (names or IDs) to override this. Disabled servers can be named explicitly — the `enabled` toggle only shapes the default set. stdio servers can never run hosted and are rejected before the run is created.
+
+**Polling loop.** `run_eval_suite` returns a `runId` and the resolved `project` name immediately. Use those to poll:
+
+1. Call `get_eval_run` with the returned `project` and `runId` until `status` is `completed`, `failed`, or `cancelled`.
+2. Call `list_eval_run_iterations` to see per-iteration tool calls, token usage, and latency.
+3. Call `get_eval_iteration_trace` on any iteration to get the full message history and expected-vs-actual tool-call analysis.
+
+`list_eval_suite_runs` also returns the resolved `project`, so you can start the polling loop from a historical run without calling `run_eval_suite` first.
+
+<Note>
+The eval-run polling tools (`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`) require an explicit `project` argument — they do not default to the most recently updated project. `run_eval_suite` and `list_eval_suite_runs` return the project name precisely so the loop is self-contained.
+</Note>
+
+## Chat sessions
+
+`list_chat_sessions` applies no default project filter. When called without a `project` argument it returns sessions across all your accessible projects (personal and shared), which is the most useful answer for "what was I working on?" Pass `project` to narrow to one project, and `status` to filter by session state.
+
+## Connecting a client
+
+Point your MCP client at:
+
+```
+https://mcp.mcpjam.com/mcp
+```
+
+Clients that support OAuth discovery (the MCP authorization spec) will auto-discover the AuthKit issuer and prompt you to sign in. After the OAuth flow completes, the client stores the token and all subsequent tool calls are authenticated automatically.
+
+<Note>
+The MCP worker is in preview. The tool surface and behavior may change while we finish the design. Feedback is welcome on [Discord](https://discord.gg/JEnDtz8X6z) or [GitHub](https://github.com/MCPJam/inspector/issues).
+</Note>
