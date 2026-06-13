@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Hammer, History } from "lucide-react";
-import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
@@ -18,15 +18,7 @@ type LeftRailTab = "sessions" | "tools";
  * `PlaygroundTab`.
  */
 export function PlaygroundLeftRail() {
-  const sessionsTabEnabled =
-    useFeatureFlagEnabled("playground-sessions-enabled") === true;
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
-
-  useEffect(() => {
-    if (!sessionsTabEnabled && activeTab === "sessions") {
-      setActiveTab("tools");
-    }
-  }, [sessionsTabEnabled, activeTab]);
 
   const posthog = usePostHog();
   const handleTabClick = useCallback(
@@ -51,21 +43,15 @@ export function PlaygroundLeftRail() {
           isActive={activeTab === "tools"}
           onClick={() => handleTabClick("tools")}
         />
-        {sessionsTabEnabled ? (
-          <TabButton
-            icon={History}
-            label="Sessions"
-            isActive={activeTab === "sessions"}
-            onClick={() => handleTabClick("sessions")}
-          />
-        ) : null}
+        <TabButton
+          icon={History}
+          label="Sessions"
+          isActive={activeTab === "sessions"}
+          onClick={() => handleTabClick("sessions")}
+        />
       </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "sessions" && sessionsTabEnabled ? (
-          <SessionsBody />
-        ) : (
-          <ToolsBody />
-        )}
+        {activeTab === "sessions" ? <SessionsBody /> : <ToolsBody />}
       </div>
     </div>
   );
@@ -115,7 +101,6 @@ function SessionsBody() {
       hostStyle={bridge.hostStyle}
       isAuthenticated={bridge.isAuthenticated}
       isStreaming={bridge.isStreaming}
-      sharedThreadsEnabled={bridge.sharedThreadsEnabled}
       projectId={bridge.projectId}
       enabled={bridge.enabled}
       refreshSignal={bridge.refreshSignal}
