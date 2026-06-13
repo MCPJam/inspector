@@ -21,9 +21,14 @@ interface McpProps extends Record<string, unknown> {
   clientIp?: string;
 }
 
+// Re-mint a minted guest token this far before its expiry. A guest token is
+// long-lived (~24h) but a long-running anonymous session must not start
+// failing every tool call the moment it lapses — refresh ahead of the edge.
+const GUEST_TOKEN_REFRESH_SLACK_MS = 60_000;
+
 export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
   private sessionToolRegistrar?: SessionToolRegistrar;
-  private mintedGuestToken?: string;
+  private mintedGuest?: { token: string; expiresAt: number };
   private mintInFlight?: Promise<string | undefined>;
 
   server = new McpServer({
@@ -37,7 +42,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
 
   /** Synchronous view: the verified/minted token if one already exists. */
   get bearerToken(): string | undefined {
-    return this.props?.bearerToken ?? this.mintedGuestToken;
+    return this.props?.bearerToken ?? this.mintedGuest?.token;
   }
 
   /**
@@ -45,22 +50,30 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
    * it's the verified token. For an anonymous session it's a guest token
    * minted lazily on first call (NOT at connect/list_tools — listing tools
    * needs no Platform API, so an anonymous preflight must not create a guest
-   * session). Concurrent first calls share one mint; a mint failure surfaces
-   * as a tool error (caller checks for undefined) and is retried next call.
+   * session) and re-minted before it expires, so a long-lived session never
+   * starts 401ing on a lapsed guest token. Concurrent calls share one mint; a
+   * mint failure surfaces as a tool error (caller checks for undefined) and is
+   * retried next call.
    */
   async getBearerToken(): Promise<string | undefined> {
     if (this.props?.bearerToken) return this.props.bearerToken;
-    if (this.mintedGuestToken) return this.mintedGuestToken;
+
+    const cached = this.mintedGuest;
+    if (cached && cached.expiresAt - Date.now() > GUEST_TOKEN_REFRESH_SLACK_MS) {
+      return cached.token;
+    }
+
+    // Absent or within the refresh window → (re)mint once, shared across
+    // concurrent callers.
     if (!this.mintInFlight) {
       this.mintInFlight = mintGuestToken(this.env, this.props?.clientIp)
-        .then((token) => {
-          this.mintedGuestToken = token;
-          if (!token) this.mintInFlight = undefined; // allow retry on failure
-          return token;
+        .then((minted) => {
+          this.mintedGuest = minted; // undefined on failure → cache untouched
+          return minted?.token;
         })
-        .catch(() => {
-          this.mintInFlight = undefined;
-          return undefined;
+        .catch(() => undefined)
+        .finally(() => {
+          this.mintInFlight = undefined; // allow refresh/retry next call
         });
     }
     return this.mintInFlight;
@@ -129,13 +142,14 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
  * that publishes the guest JWKS the worker verifies against, so the token is
  * accepted on the way back in. The client IP is forwarded in a custom header
  * (cf-connecting-ip would be overwritten by Cloudflare on the worker→inspector
- * hop) so the route can rate-limit per client. Returns undefined on any
- * failure; the caller turns that into a tool error.
+ * hop) so the route can rate-limit per client. Returns the token and its
+ * expiry (ms epoch) so the session can refresh before it lapses; returns
+ * undefined on any failure (the caller turns that into a tool error).
  */
 async function mintGuestToken(
   env: Env,
   clientIp: string | undefined
-): Promise<string | undefined> {
+): Promise<{ token: string; expiresAt: number } | undefined> {
   const url = env.MCPJAM_GUEST_MINT_URL;
   const serviceToken = env.MCPJAM_INSPECTOR_SERVICE_TOKEN;
   if (!url || !serviceToken) return undefined;
@@ -152,11 +166,29 @@ async function mintGuestToken(
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return undefined;
-    const data = (await response.json()) as { token?: unknown };
-    return typeof data.token === "string" ? data.token : undefined;
+    const data = (await response.json()) as {
+      token?: unknown;
+      expiresAt?: unknown;
+    };
+    if (typeof data.token !== "string") return undefined;
+    return { token: data.token, expiresAt: normalizeExpiry(data.expiresAt) };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Normalize a mint `expiresAt` to ms epoch. The mint contract is ms (matches
+ * `issueGuestToken`), but tolerate a seconds value defensively. A missing or
+ * non-positive value falls back to a short TTL so the next call re-mints
+ * rather than caching a never-expiring token forever.
+ */
+function normalizeExpiry(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    return Date.now() + GUEST_TOKEN_REFRESH_SLACK_MS;
+  }
+  // Seconds-epoch timestamps are < 1e12; ms-epoch are ~1.7e12 today.
+  return raw < 1e12 ? raw * 1000 : raw;
 }
 
 function uiSupportsResourceMime(
