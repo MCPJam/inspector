@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import { useConvex } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
@@ -34,7 +33,7 @@ import { isHostedMode } from "@/lib/apis/mode-client";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
   prepareSingleTestCaseRun,
@@ -210,7 +209,9 @@ export function useEvalHandlers({
   availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
-  const { getAccessToken } = useAuth();
+  // Resolves the WorkOS token for signed-in users and the guest bearer for
+  // guests (project-owning guests included). See use-convex-access-token.
+  const getAccessToken = useConvexAccessToken();
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -445,11 +446,11 @@ export function useEvalHandlers({
       const replayToastId = toast.loading("Replaying run...");
 
       try {
-        // Hosted guests have no WorkOS access token; the request still
-        // authenticates via authFetch attaching a guest bearer. Treat the
-        // LoginRequired throw as an empty token — `buildEvalConvexAuthPayload`
-        // drops it in hosted mode anyway.
-        const accessToken = await getAccessToken().catch(() => "");
+        // Local guests authenticate via this body token (the guest bearer);
+        // hosted guests authenticate via authFetch's Authorization header and
+        // `buildEvalConvexAuthPayload` drops this field, so an empty string is
+        // harmless there.
+        const accessToken = (await getAccessToken()) ?? "";
         const endpoints = getEvalApiEndpoints();
         const response = await authFetch(endpoints.replayRun, {
           method: "POST",
@@ -654,10 +655,11 @@ export function useEvalHandlers({
 
       const suiteRunStartedAt = Date.now();
       try {
-        // Hosted guests have no WorkOS access token; authFetch attaches the
-        // guest bearer instead. `mergeHostedServerBatch` strips
-        // convexAuthToken in hosted mode so an empty string is harmless.
-        const accessToken = await getAccessToken().catch(() => "");
+        // Local guests authenticate via this body token (the guest bearer);
+        // hosted guests authenticate via authFetch's Authorization header and
+        // `mergeHostedServerBatch` strips convexAuthToken, so an empty string
+        // is harmless there.
+        const accessToken = (await getAccessToken()) ?? "";
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
@@ -924,9 +926,7 @@ export function useEvalHandlers({
                 },
               },
               testCase,
-              getAccessToken: isDirectGuest
-                ? getGuestBearerToken
-                : getAccessToken,
+              getAccessToken,
               selectedModel,
               testCaseOverrides:
                 options?.iterationOverride !== undefined

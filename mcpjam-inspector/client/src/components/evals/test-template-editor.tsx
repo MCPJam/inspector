@@ -7,7 +7,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import posthog from "posthog-js";
 import {
   ArrowLeft,
@@ -105,7 +104,7 @@ import {
   hasUnavailableServers,
   normalizeSuiteServerRefs,
 } from "./use-eval-handlers";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   reduceEvalStreamEvent,
   initialEvalStreamState,
@@ -400,7 +399,9 @@ export function TestTemplateEditor({
   ensureServersReady,
   projectServers,
 }: TestTemplateEditorProps) {
-  const { getAccessToken } = useAuth();
+  // Resolves the WorkOS token for signed-in users and the guest bearer for
+  // guests (project-owning guests included). See use-convex-access-token.
+  const getAccessToken = useConvexAccessToken();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
@@ -1363,9 +1364,7 @@ export function TestTemplateEditor({
           },
           testCase: currentTestCase,
           selectedModel: modelValue,
-          getAccessToken: isDirectGuest
-            ? getGuestBearerToken
-            : getAccessToken,
+          getAccessToken,
           testCaseOverrides: {
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,

@@ -5,12 +5,7 @@ vi.mock("@/lib/apis/evals-api", () => ({
   generateEvalTests: vi.fn(),
 }));
 
-vi.mock("@/lib/guest-session", () => ({
-  getGuestBearerToken: vi.fn(),
-}));
-
 import { generateEvalTests } from "@/lib/apis/evals-api";
-import { getGuestBearerToken } from "@/lib/guest-session";
 
 describe("generateAndPersistEvalTests", () => {
   const mockQuery = vi.fn();
@@ -22,7 +17,6 @@ describe("generateAndPersistEvalTests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAccessToken.mockResolvedValue("token");
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-token");
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
       tests: [],
@@ -132,8 +126,12 @@ describe("generateAndPersistEvalTests", () => {
     );
   });
 
-  it("uses the guest bearer token for direct guest generation", async () => {
+  // The guest bearer is now resolved by the caller's `getAccessToken`
+  // (see resolveConvexAccessToken / useConvexAccessToken); this function just
+  // forwards whatever token it returns. A direct guest still drops projectId.
+  it("forwards the resolved token and nulls projectId for direct guests", async () => {
     mockQuery.mockResolvedValue([]);
+    mockGetAccessToken.mockResolvedValue("guest-token");
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
       tests: [{ title: "T", query: "q", runs: 1, expectedToolCalls: [] }],
@@ -150,8 +148,7 @@ describe("generateAndPersistEvalTests", () => {
       isDirectGuest: true,
     });
 
-    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
-    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(1);
     expect(generateEvalTests).toHaveBeenCalledWith({
       projectId: null,
       serverIds: ["srv"],
