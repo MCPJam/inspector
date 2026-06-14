@@ -15,6 +15,9 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 - **Visual Sequence Diagram** - Four-actor swimlanes showing Agent, IdP, MCP Server, and Authorization Server interactions
 - **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
 - **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
+- **Phase Rail** - A compact five-phase progress indicator (Discovery → SSO → ID-JAG → Access token → MCP call) in the header so you always know where you are in the flow
+- **Clickable Run Chips** - Per-step segments labelled by phase and index (e.g. `2.1`). Click any completed step to jump directly to its card in the step logger; hover to see the step name
+- **Negative Test Scorecard** - Fire deliberately broken assertions at your authorization server to verify it rejects them correctly
 
 ## Getting Started
 
