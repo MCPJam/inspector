@@ -336,6 +336,7 @@ describe("createXAAStateMachine", () => {
     function buildRunnerHarness(options: {
       registrationId?: string;
       failTokenProxy?: boolean;
+      negativeTestMode?: XAAFlowState["negativeTestMode"];
     }) {
       let state: XAAFlowState = createInitialXAAFlowState({
         serverUrl: "https://mcp.example.com",
@@ -343,6 +344,7 @@ describe("createXAAStateMachine", () => {
         userId: "user-12345",
         email: "demo.user@example.com",
         scope: "read:tools",
+        negativeTestMode: options.negativeTestMode,
       });
 
       const idToken = makeJwt(
@@ -470,6 +472,7 @@ describe("createXAAStateMachine", () => {
         email: "demo.user@example.com",
         scope: "read:tools",
         registrationId: options.registrationId,
+        negativeTestMode: options.negativeTestMode,
       });
 
       return {
@@ -530,6 +533,47 @@ describe("createXAAStateMachine", () => {
           (entry) => entry.step === "token_exchange_request"
         )
       ).toBe(true);
+    });
+
+    it("treats a rejection in a negative-test mode as the expected outcome, not an error", async () => {
+      const { machine, getStateSnapshot, tokenProxyBodies } =
+        buildRunnerHarness({
+          registrationId: "app_1",
+          failTokenProxy: true,
+          negativeTestMode: "unknown_kid",
+        });
+
+      await machine.runAll();
+
+      const final = getStateSnapshot();
+      // A rejection is the pass condition here — no flow error.
+      expect(final.error).toBeUndefined();
+      expect(final.negativeProbe).toEqual({
+        outcome: "rejected",
+        status: 400,
+      });
+      expect(final.accessToken).toBeUndefined();
+      // The run stops on the outcome instead of re-firing the bearer request.
+      expect(tokenProxyBodies).toHaveLength(1);
+    });
+
+    it("flags an accepted broken assertion in a negative-test mode as a security risk", async () => {
+      const { machine, getStateSnapshot } = buildRunnerHarness({
+        registrationId: "app_1",
+        failTokenProxy: false,
+        negativeTestMode: "unknown_kid",
+      });
+
+      await machine.runAll();
+
+      const final = getStateSnapshot();
+      expect(final.negativeProbe).toEqual({
+        outcome: "accepted",
+        status: 200,
+      });
+      // It stops at the token step — the bad token is never used on the MCP
+      // server.
+      expect(final.currentStep).toBe("received_access_token");
     });
   });
 
