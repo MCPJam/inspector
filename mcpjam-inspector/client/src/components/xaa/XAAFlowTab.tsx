@@ -520,7 +520,7 @@ export function XAAFlowTab({
           activeStep={focusedStep ?? flowState.currentStep}
           onFocusStep={setFocusedStep}
         />
-        <span className="ml-auto min-w-0 truncate pl-2 text-xs text-muted-foreground">
+        <span className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground">
           {selectedRegistration
             ? `Target: ${selectedRegistration.name}`
             : hasTarget

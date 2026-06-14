@@ -18,20 +18,20 @@ describe("XAARunChips", () => {
     render(
       <XAARunChips
         flowState={{ currentStep: "jwt_bearer_request", error: "boom" }}
-      />,
+      />
     );
 
     // Steps before the failure are green.
     expect(
-      screen.getByTestId("xaa-run-chip-token_exchange_request"),
+      screen.getByTestId("xaa-run-chip-token_exchange_request")
     ).toHaveAttribute("data-status", "pass");
     // The failing step is red.
     expect(
-      screen.getByTestId("xaa-run-chip-jwt_bearer_request"),
+      screen.getByTestId("xaa-run-chip-jwt_bearer_request")
     ).toHaveAttribute("data-status", "fail");
     // Steps after it stay untouched.
     expect(
-      screen.getByTestId("xaa-run-chip-authenticated_mcp_request"),
+      screen.getByTestId("xaa-run-chip-authenticated_mcp_request")
     ).toHaveAttribute("data-status", "untouched");
   });
 
@@ -51,7 +51,7 @@ describe("XAARunChips", () => {
       <XAARunChips
         flowState={{ currentStep: "complete" }}
         onFocusStep={onFocusStep}
-      />,
+      />
     );
 
     await user.click(screen.getByTestId("xaa-run-chip-token_exchange_request"));
@@ -65,5 +65,36 @@ describe("XAARunChips", () => {
     for (const chip of screen.getAllByTestId(/xaa-run-chip-/)) {
       expect(chip).toBeDisabled();
     }
+  });
+
+  it("does not focus a step that has not run yet", async () => {
+    const onFocusStep = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <XAARunChips
+        flowState={{ currentStep: "idle" }}
+        onFocusStep={onFocusStep}
+      />
+    );
+
+    const chip = screen.getByTestId("xaa-run-chip-token_exchange_request");
+    expect(chip).toHaveAttribute("aria-disabled", "true");
+    await user.click(chip);
+
+    expect(onFocusStep).not.toHaveBeenCalled();
+  });
+
+  it("shows the section name when a segment is hovered", async () => {
+    const user = userEvent.setup();
+    render(
+      <XAARunChips
+        flowState={{ currentStep: "complete" }}
+        onFocusStep={vi.fn()}
+      />
+    );
+
+    await user.hover(screen.getByTestId("xaa-run-chip-token_exchange_request"));
+
+    expect(screen.getByText("RFC 8693 Token Exchange")).toBeInTheDocument();
   });
 });
