@@ -721,7 +721,16 @@ export function XAAFlowLogger({
                     )}
                   >
                     <button
-                      onClick={() => toggleStep(group.step)}
+                      onClick={() => {
+                        // Expanding a card also focuses it (highlighting it in
+                        // the sequence diagram); collapsing leaves focus put so
+                        // the auto-expand-on-focus effect can't re-open it.
+                        const willExpand = !expandedSteps.has(group.step);
+                        toggleStep(group.step);
+                        if (willExpand) {
+                          onFocusStep?.(group.step);
+                        }
+                      }}
                       className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
                     >
                       <div className="flex-shrink-0 mt-0.5">
@@ -756,20 +765,6 @@ export function XAAFlowLogger({
                           {stepInfo.summary}
                         </p>
                       </div>
-                      {onFocusStep && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onFocusStep(group.step);
-                          }}
-                        >
-                          Focus
-                        </Button>
-                      )}
                     </button>
 
                     {expandedSteps.has(group.step) && (
