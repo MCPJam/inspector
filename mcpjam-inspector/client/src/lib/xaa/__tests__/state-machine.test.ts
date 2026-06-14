@@ -575,6 +575,23 @@ describe("createXAAStateMachine", () => {
       // server.
       expect(final.currentStep).toBe("received_access_token");
     });
+
+    it("clears a prior probe outcome on reset", async () => {
+      const { machine, getStateSnapshot } = buildRunnerHarness({
+        registrationId: "app_1",
+        failTokenProxy: true,
+        negativeTestMode: "unknown_kid",
+      });
+
+      await machine.runAll();
+      expect(getStateSnapshot().negativeProbe).toBeDefined();
+
+      machine.resetFlow();
+
+      // Merge-based updates would otherwise retain the stale terminal outcome.
+      expect(getStateSnapshot().negativeProbe).toBeUndefined();
+      expect(getStateSnapshot().currentStep).toBe("idle");
+    });
   });
 
   describe("discovery is a fallback, not a mandatory step", () => {
