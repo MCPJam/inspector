@@ -265,7 +265,7 @@ export function NegativeTestScorecard({
                     {passedCount} of {run.result.results.length} broken
                     assertions correctly rejected.
                   </p>
-                  <div className="space-y-2">
+                  <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
                     {run.result.results.map((row) => (
                       <VerdictRow key={row.mode} row={row} />
                     ))}
