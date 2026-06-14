@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Copy, KeyRound } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  KeyRound,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import { HOSTED_MODE } from "@/lib/config";
@@ -173,8 +180,8 @@ export function XAAIdpCard() {
                 server&apos;s resource identifier
               </li>
               <li>
-                <code className="font-mono">client_id</code> → the client ID
-                from your config
+                <code className="font-mono">client_id</code> → the Client ID you
+                set in Configure Target
               </li>
             </ul>
           </div>
@@ -187,10 +194,15 @@ export function XAAIdpCard() {
           </p>
 
           {!HOSTED_MODE && (
-            <p className="text-xs text-muted-foreground">
-              Local URLs only work if your authorization server can reach this
-              machine (e.g. via a public tunnel).
-            </p>
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span>
+                These are local URLs. Your authorization server can only fetch
+                them if it can reach this machine — a cloud-hosted Okta or Auth0
+                tenant cannot reach <code className="font-mono">localhost</code>.
+                Expose the inspector with a public tunnel (e.g. ngrok) first.
+              </span>
+            </div>
           )}
         </div>
       )}
