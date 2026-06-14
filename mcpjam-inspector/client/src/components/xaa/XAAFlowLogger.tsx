@@ -517,6 +517,24 @@ export function XAAFlowLogger({
 
   const getStatus = (step: XAAFlowStep) => {
     const index = getXAAStepIndex(step);
+    // A negative-mode run ends at the step it reached: an accepted broken
+    // assertion is a failure (red), a rejection is the expected success
+    // (green). Without this the step icon would read "complete" next to the
+    // red security-risk banner.
+    if (flowState.negativeProbe && step === flowState.currentStep) {
+      if (flowState.negativeProbe.outcome === "accepted") {
+        return {
+          icon: AlertTriangle,
+          className: "h-4 w-4 text-red-500",
+          label: "Failed",
+        };
+      }
+      return {
+        icon: CheckCircle2,
+        className: "h-4 w-4 text-green-600 dark:text-green-400",
+        label: "Complete",
+      };
+    }
     if (flowState.isBusy && step === flowState.currentStep) {
       return {
         icon: Loader2,

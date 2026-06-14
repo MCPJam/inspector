@@ -243,6 +243,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   httpHistory: [],
   infoLogs: [],
   error: undefined,
+  negativeProbe: undefined,
   compatibilityReport: undefined,
 };
 
