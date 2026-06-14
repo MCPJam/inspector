@@ -78,7 +78,11 @@ export interface WidgetHostEnvironment {
   supportsWidgetRendering: boolean;
   theme: string;
   hostStyle: ResolvedHostStyle;
-  cspMode: CspMode;
+  // NOTE: the effective sandbox CSP mode is intentionally NOT here. It depends
+  // on the per-widget `minimalMode` prop (per-instance, not per-server), so it
+  // cannot be resolved by `resolveEnvironment(serverId)`. The input lives on
+  // `WidgetSurfaceInfo.playgroundCspMode`; the renderer derives the effective
+  // mode (see that field's doc + mcp-apps-renderer.tsx:741-746).
   /**
    * Base `McpUiHostContext`: draftHostContext + extract*() projections +
    * playground globals (locale, timeZone, safeArea, deviceType, displayMode).
@@ -118,7 +122,12 @@ export type WidgetSurfaceKind =
   | "standalone";
 
 export interface WidgetSurfaceInfo {
-  /** useWidgetSurface + useIsChatboxSurface collapsed to one descriptor. */
+  /**
+   * useWidgetSurface + useIsChatboxSurface collapsed to one descriptor.
+   * Phase 1 must confirm chatbox / playground / chat are mutually exclusive
+   * (today they are two separate context signals); if they can overlap, `kind`
+   * must keep both bits rather than collapse to one enum.
+   */
   kind: WidgetSurfaceKind;
   /** usePersistentWidgetSurfaceHost — persistent resource-scoped surfaces. */
   persistentSurfaceHost: boolean;
@@ -126,6 +135,22 @@ export interface WidgetSurfaceInfo {
   webManagedServers: boolean;
   /** SANDBOX_ORIGIN (VITE_MCPJAM_SANDBOX_ORIGIN); "" when unset. */
   sandboxOrigin: string;
+  /**
+   * Playground CSP-mode selection (useUIPlaygroundStore.mcpAppsCspMode) — an
+   * INPUT, not the effective mode. The renderer derives the effective sandbox
+   * CSP mode from `kind` + this + the per-widget `minimalMode` prop, mirroring
+   * mcp-apps-renderer.tsx:741-746:
+   *
+   *   kind === "chatbox" || minimalMode ? "permissive"
+   *     : kind === "playground"         ? playgroundCspMode
+   *     :                                 "widget-declared"
+   *
+   * Kept as an input (not pre-resolved in `resolveEnvironment`) because
+   * `minimalMode` is per-instance. Source it from the WidgetSurfaceContext —
+   * NOT `isPlaygroundActive` — to preserve the first-render iframe-rebuild fix
+   * documented at mcp-apps-renderer.tsx:729-739.
+   */
+  playgroundCspMode: CspMode;
 }
 
 // --- Instrumentation (optional) ----------------------------------------------

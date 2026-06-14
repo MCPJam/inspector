@@ -42,7 +42,8 @@ feed that renderer the inspector state it currently reads ambiently.
 | Source | Examples | Becomes |
 | --- | --- | --- |
 | `usePreferencesStore` | `themeMode`, `hostStyle` | `env.theme` / `env.hostStyle` |
-| `useUIPlaygroundStore` | cspMode, locale, timeZone, displayMode, capabilities, safeArea, deviceType, isPlaygroundActive | `env.cspMode`, `env.baseHostContext` |
+| `useUIPlaygroundStore` | `mcpAppsCspMode` | `surface.playgroundCspMode` (an **input** — effective CSP mode is derived in the renderer from `surface.kind` + per-widget `minimalMode`; see L741-746) |
+| `useUIPlaygroundStore` | locale, timeZone, displayMode, capabilities, safeArea, deviceType, isPlaygroundActive | `env.baseHostContext` |
 | `useActiveMcpProfile` | active profile → capability/sandbox/compat resolution | `env.*` (resolved by inspector) |
 | `useHostContextStore` | `draftHostContext` | `env.baseHostContext` |
 | `useChatboxHost{Style,Theme}` + `…CapabilitiesOverride` | per-chatbox overrides | `env.*` |
@@ -120,6 +121,17 @@ reads for a single `useWidgetHost()`.
   server); the inspector memoizes per `serverId`.
 - **`sandboxOrigin`** is the one true env/build coupling in the sandbox path;
   it becomes `surface.sandboxOrigin` instead of a module-level import.
+- **CSP mode is derived, not passthrough.** The effective sandbox CSP mode is
+  `f(surface.kind, per-widget minimalMode, playground mcpAppsCspMode)`
+  (mcp-apps-renderer.tsx:741-746). The contract exposes the input
+  (`surface.playgroundCspMode`) and the renderer keeps the derivation, so
+  Phase 1 stays behavior-preserving — including sourcing the surface from
+  context (not `isPlaygroundActive`) to preserve the first-render
+  iframe-rebuild fix (L729-739). `minimalMode` being per-instance is why CSP
+  mode is not on the per-server `env`.
+- **Surface collapse:** `kind` merges two distinct context signals
+  (`useIsChatboxSurface`, `useWidgetSurface`); Phase 1 must confirm they are
+  mutually exclusive before collapsing them.
 
 ## Phased plan
 
