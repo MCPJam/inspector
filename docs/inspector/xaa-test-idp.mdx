@@ -38,7 +38,9 @@ Once trust is established, run the flow from the XAA Flow tab. The sequence diag
 
 ## Local mode
 
-If you're running the inspector locally, the endpoint URLs point at your own machine. Your authorization server can only reach them if it can route to that machine — expose the inspector through a public tunnel first.
+<Warning>
+  These are local URLs. Your authorization server can only fetch them if it can reach this machine — a cloud-hosted Okta or Auth0 tenant cannot reach `localhost`. Expose the inspector with a public tunnel (e.g. ngrok) first.
+</Warning>
 
 ## Next steps
 
