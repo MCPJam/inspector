@@ -515,8 +515,12 @@ export function XAAFlowTab({
             </>
           )}
         </Button>
-        <XAARunChips flowState={flowState} />
-        <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+        <XAARunChips
+          flowState={flowState}
+          activeStep={focusedStep ?? flowState.currentStep}
+          onFocusStep={setFocusedStep}
+        />
+        <span className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground">
           {selectedRegistration
             ? `Target: ${selectedRegistration.name}`
             : hasTarget

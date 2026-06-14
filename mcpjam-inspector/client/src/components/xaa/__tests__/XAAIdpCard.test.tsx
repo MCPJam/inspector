@@ -32,7 +32,7 @@ describe("XAAIdpCard", () => {
     expect(screen.getByText("Use MCPJam as your test IdP")).toBeInTheDocument();
     expect(screen.getByRole("button")).toHaveAttribute(
       "aria-expanded",
-      "false",
+      "false"
     );
     expect(screen.queryByText("Issuer URL")).not.toBeInTheDocument();
   });
@@ -42,17 +42,30 @@ describe("XAAIdpCard", () => {
     render(<XAAIdpCard />);
 
     await user.click(
-      screen.getByRole("button", { name: /use mcpjam as your test idp/i }),
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i })
     );
 
     expect(screen.getByText(issuer)).toBeInTheDocument();
     expect(
-      screen.getByText(`${issuer}/.well-known/jwks.json`),
+      screen.getByText(`${issuer}/.well-known/jwks.json`)
     ).toBeInTheDocument();
     // The OpenID configuration URL row was removed (derivable from the issuer).
     expect(
-      screen.queryByText(`${issuer}/.well-known/openid-configuration`),
+      screen.queryByText(`${issuer}/.well-known/openid-configuration`)
     ).not.toBeInTheDocument();
+  });
+
+  it("names the Configure Target Client ID in the registration steps", async () => {
+    const user = userEvent.setup();
+    render(<XAAIdpCard />);
+
+    await user.click(
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i })
+    );
+
+    expect(
+      screen.getByText(/the Client ID you set in Configure Target/i)
+    ).toBeInTheDocument();
   });
 
   it("copies a URL and shows inline confirmation", async () => {
@@ -60,7 +73,7 @@ describe("XAAIdpCard", () => {
     render(<XAAIdpCard />);
 
     await user.click(
-      screen.getByRole("button", { name: /use mcpjam as your test idp/i }),
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i })
     );
     await user.click(screen.getByRole("button", { name: /copy issuer url/i }));
 
@@ -78,9 +91,9 @@ describe("XAAIdpCard", () => {
             issuer: serverIssuer,
             jwks_uri: `${serverIssuer}/.well-known/jwks.json`,
           }),
-          { status: 200 },
-        ),
-      ),
+          { status: 200 }
+        )
+      )
     );
 
   it("prefers the issuer advertised by the server over the browser origin", async () => {
@@ -92,16 +105,43 @@ describe("XAAIdpCard", () => {
     const user = userEvent.setup();
     render(<XAAIdpCard />);
     await user.click(
-      screen.getByRole("button", { name: /use mcpjam as your test idp/i }),
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i })
     );
 
     expect(await screen.findByText(serverIssuer)).toBeInTheDocument();
     expect(
-      screen.getByText(`${serverIssuer}/.well-known/jwks.json`),
+      screen.getByText(`${serverIssuer}/.well-known/jwks.json`)
     ).toBeInTheDocument();
     // OpenID config URL is no longer shown as its own row.
     expect(
-      screen.queryByText(`${serverIssuer}/.well-known/openid-configuration`),
+      screen.queryByText(`${serverIssuer}/.well-known/openid-configuration`)
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("XAAIdpCard (non-hosted mode)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("warns that local URLs need a public tunnel when expanded", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/config", () => ({ HOSTED_MODE: false }));
+    vi.doMock("@/lib/clipboard", () => ({
+      copyToClipboard: async () => true,
+    }));
+    const { XAAIdpCard: LocalIdpCard } = await import("../XAAIdpCard");
+
+    const user = userEvent.setup();
+    render(<LocalIdpCard />);
+
+    await user.click(
+      screen.getByRole("button", { name: /use mcpjam as your test idp/i })
+    );
+
+    expect(
+      screen.getByText(/Expose the\s+inspector with a public tunnel/i)
+    ).toBeInTheDocument();
   });
 });
