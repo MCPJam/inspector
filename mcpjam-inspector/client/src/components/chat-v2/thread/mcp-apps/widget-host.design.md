@@ -54,7 +54,7 @@ feed that renderer the inspector state it currently reads ambiently.
 | `useTrafficLogStore.addLog` | JSON-RPC traffic | `debug.addTrafficLog` |
 | `resolveEffective{HostCapabilities,McpAppsCapabilities,CompatRuntime}`, `resolveHostInfo` (client-config-v2) | capability/compat resolution | `env.*` (inspector calls them) |
 | `fetchMcpAppsWidgetContent` (authFetch + endpoint + HOSTED_MODE) | widget HTML | `services.fetchWidgetContent` |
-| `readResource` / `listResources` / `listPrompts` | MCP transport | `services.*` |
+| `readResource` / `listResources` / `listPrompts` / `listResourceTemplates` | MCP transport (templates are local-only — throw in hosted/web-managed) | `services.*` |
 | `SANDBOX_ORIGIN` (@/lib/config) | sandbox proxy origin | `surface.sandboxOrigin` |
 
 Per-widget props (`MCPAppsRendererProps`, `WidgetReplayProps` — `toolCallId`,
