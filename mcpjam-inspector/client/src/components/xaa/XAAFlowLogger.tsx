@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -31,6 +31,7 @@ import {
   getXAAPhaseNumber,
   getXAAStepInfo,
   getXAAStepIndex,
+  XAA_PHASE_ORDER,
   XAA_PHASES,
   XAA_STEP_ORDER,
   type XAAPhaseKey,
@@ -277,6 +278,68 @@ function PhaseHeader({
   );
 }
 
+/** Short, user-facing labels for the compact progress rail — the full phase
+ * titles are too long to sit five-across in the header. */
+const PHASE_RAIL_LABELS: Record<XAAPhaseKey, string> = {
+  bootstrap: "Discovery",
+  sso: "SSO",
+  token_exchange: "ID-JAG",
+  jwt_bearer: "Access token",
+  mcp_request: "MCP call",
+};
+
+/** At-a-glance "where am I" rail across the five phases, so the developer
+ * keeps their bearings without scrolling the step list. */
+function PhaseRail({ currentStep }: { currentStep: XAAFlowStep }) {
+  const currentPhase = getXAAStepInfo(currentStep).phase;
+  const currentPhaseNumber = currentPhase
+    ? getXAAPhaseNumber(currentPhase)
+    : -1;
+  const isComplete = currentStep === "complete";
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-1 gap-y-1"
+      aria-label="XAA flow progress"
+    >
+      {XAA_PHASE_ORDER.map((phase, index) => {
+        const number = getXAAPhaseNumber(phase);
+        const state =
+          isComplete || number < currentPhaseNumber
+            ? "done"
+            : number === currentPhaseNumber
+            ? "active"
+            : "pending";
+        return (
+          <Fragment key={phase}>
+            {index > 0 && (
+              <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+            )}
+            <span
+              data-testid={`xaa-rail-${phase}`}
+              data-state={state}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
+                state === "active" &&
+                  "bg-blue-500/10 font-medium text-blue-600 dark:text-blue-400",
+                state === "done" && "text-green-600 dark:text-green-400",
+                state === "pending" && "text-muted-foreground"
+              )}
+            >
+              {state === "done" ? (
+                <CheckCircle2 className="h-3 w-3 shrink-0" />
+              ) : (
+                <span className="font-mono">{number}</span>
+              )}
+              {PHASE_RAIL_LABELS[phase]}
+            </span>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 /** A "Tip" callout — visually distinct from diagnostics so static teaching
  * copy can't be mistaken for an error explanation. */
 function TeachableMoments({ moments }: { moments: string[] }) {
@@ -457,6 +520,8 @@ export function XAAFlowLogger({
 
         {hasProfile && (
           <>
+            <PhaseRail currentStep={flowState.currentStep} />
+
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-muted-foreground">Mode</span>
