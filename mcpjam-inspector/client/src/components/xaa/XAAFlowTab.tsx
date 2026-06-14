@@ -466,6 +466,8 @@ export function XAAFlowTab({
 
   const continueLabel = !hasTarget
     ? "Configure Target"
+    : flowState.negativeProbe
+    ? "Negative test complete"
     : flowState.currentStep === "idle"
     ? "Start"
     : flowState.currentStep === "inspect_id_jag"
@@ -480,7 +482,8 @@ export function XAAFlowTab({
     !hasTarget ||
     flowState.isBusy ||
     isRunningAll ||
-    flowState.currentStep === "complete";
+    flowState.currentStep === "complete" ||
+    Boolean(flowState.negativeProbe);
 
   const runAllDisabled = !hasTarget || flowState.isBusy || isRunningAll;
 

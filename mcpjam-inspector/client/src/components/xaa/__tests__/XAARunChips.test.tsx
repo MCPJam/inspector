@@ -84,6 +84,41 @@ describe("XAARunChips", () => {
     expect(onFocusStep).not.toHaveBeenCalled();
   });
 
+  it("colours a negative-mode rejection green at the step it reached", () => {
+    render(
+      <XAARunChips
+        flowState={{
+          currentStep: "jwt_bearer_request",
+          negativeProbe: { outcome: "rejected", status: 400 },
+        }}
+      />
+    );
+
+    // A rejection is the pass condition for a negative test.
+    expect(
+      screen.getByTestId("xaa-run-chip-jwt_bearer_request")
+    ).toHaveAttribute("data-status", "pass");
+    // Downstream steps never ran.
+    expect(
+      screen.getByTestId("xaa-run-chip-authenticated_mcp_request")
+    ).toHaveAttribute("data-status", "untouched");
+  });
+
+  it("colours an accepted broken assertion red at the token step", () => {
+    render(
+      <XAARunChips
+        flowState={{
+          currentStep: "received_access_token",
+          negativeProbe: { outcome: "accepted", status: 200 },
+        }}
+      />
+    );
+
+    expect(
+      screen.getByTestId("xaa-run-chip-received_access_token")
+    ).toHaveAttribute("data-status", "fail");
+  });
+
   it("shows the section name when a segment is hovered", async () => {
     const user = userEvent.setup();
     render(
