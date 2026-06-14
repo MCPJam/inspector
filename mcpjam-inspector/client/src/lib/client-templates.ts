@@ -15,6 +15,8 @@ import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
+import bedrockLogo from "/bedrock_logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -213,7 +215,9 @@ export type HostTemplateId =
   | "chatgpt"
   | "cursor"
   | "codex"
-  | "copilot";
+  | "copilot"
+  | "vscode"
+  | "agentcore";
 
 export interface SeedHostTemplateOptions {
   /**
@@ -1151,6 +1155,157 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // no equivalent capture, so we hold the line.
               allow: {},
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    description:
+      "Visual Studio Code chat panel (GitHub Copilot). MCP UI extension on, no message/updateModelContext.",
+    logoSrc: vscodeLogo,
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "vscode",
+        // VS Code Copilot Chat offers both OpenAI and Anthropic models;
+        // default to the same guest-allowed Anthropic model as Cursor
+        // (Sonnet 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App
+        // Builder works without a BYOK key. Users can swap any model after.
+        modelId: "anthropic/claude-sonnet-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+        // VS Code, like Cursor, doesn't yet implement SEP-1865 visibility
+        // filtering — leave it off to mirror that. Best-effort: no live VS
+        // Code probe yet, so capability values are inherited from Cursor's.
+        respectToolVisibility: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // VS Code is the editor Cursor forks (Cursor's own clientInfo.name is
+      // "cursor-vscode"). Its MCP client declares the UI extension plus
+      // elicitation and roots, same shape as Cursor. Keep the SDK-default
+      // UI extension entry and layer those on top. Values inherited from
+      // Cursor's probe pending a dedicated VS Code capture.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        elicitation: { form: {} },
+        roots: { listChanged: true },
+      };
+      // hostCapabilities: mirror Cursor's subset (VS Code shares the editor
+      // base). No `updateModelContext` / `message`; `listChanged: false`
+      // markers kept explicit so apps gating on them know VS Code doesn't
+      // forward those notifications.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: { listChanged: false },
+        serverResources: { listChanged: false },
+        logging: {},
+      };
+      // Per-resource environment context. Inherits Cursor's editor-surface
+      // shape; `containerDimensions` is a placeholder pending a VS Code
+      // probe. Inline-only — VS Code renders MCP UI in the chat panel
+      // without fullscreen / pip modes.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 649, maxHeight: 800 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "vscode",
+        platform: "desktop",
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // Base MCP protocol clientInfo. Not probed — "Visual Studio Code"
+          // matches VS Code's product identity (Cursor reports the forked
+          // "cursor-vscode"); refine when a live capture lands.
+          clientInfo: { name: "Visual Studio Code", version: "1.105.0" },
+        },
+        apps: {
+          uiInitialize: {
+            // hostInfo sent in `ui/initialize`. Apps branching on
+            // `hostInfo.name === "Visual Studio Code"` need this. Not probed.
+            hostInfo: { name: "Visual Studio Code", version: "1.105.0" },
+          },
+          sandbox: {
+            csp: {
+              // Honor the view's declared CSP — no host-side restrictTo (see
+              // the Claude template for the full intersection-trap rationale).
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "agentcore",
+    label: "AgentCore",
+    description:
+      "AWS Bedrock AgentCore runtime. Text MCP servers only, no widget rendering.",
+    logoSrc: bedrockLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Neutral stand-in skin (MCPJam house tokens + bedrock logo). See
+        // AGENTCORE_HOST_STYLE in client-styles/built-ins.ts.
+        hostStyle: "agentcore",
+        // AgentCore runs models on Amazon Bedrock (typically Claude).
+        // Bedrock ids are BYOK (bare `us.anthropic.claude-*` strings that
+        // need AWS creds), so default to the guest-allowed hosted Claude
+        // analog — Haiku 4.5 — so the App Builder works without AWS
+        // credentials. Users can swap to a real Bedrock model id after.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // AgentCore permits only text-based MCP servers — it does NOT render
+      // MCP Apps widgets. Like Codex, replace `clientCapabilities` entirely
+      // (rather than spreading) so the SDK-default UI extension doesn't leak
+      // back in and misrepresent AgentCore as UI-capable. It still surfaces
+      // elicitation for text-only interaction.
+      //
+      // GUESS (unprobed): kept to `elicitation` only. An agent runtime
+      // plausibly also advertises `roots` and/or `sampling`, but AgentCore
+      // is server-side (no local CLI to run `mcpjam-learn start-host-probe`
+      // against), so we can't confirm — left off rather than invented. Add
+      // them once a live AgentCore→MCP `initialize` capture is available.
+      base.clientCapabilities = {
+        elicitation: {},
+      };
+      // No rendering surface → no hostContext and no hostCapabilitiesOverride
+      // (there's no ui/initialize negotiation). Leaves both as the empty
+      // defaults from emptyHostConfigInputV2. Same reasoning as the Codex
+      // template.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // GUESS (unprobed) — every value below is a best-effort placeholder
+          // chosen to match AWS's product naming, NOT a live capture. Unlike
+          // the Codex / Claude Code templates (which carry real
+          // `start-host-probe` data here), AgentCore runs server-side so we
+          // couldn't probe it locally. Replace verbatim once a real
+          // AgentCore→MCP `initialize` is captured: `protocolVersion`,
+          // `clientInfo.name` (the actual MCP SDK identity the agent sends —
+          // may not be "bedrock-agentcore"), and `version`.
+          supportedProtocolVersions: ["2025-06-18"],
+          // `title` / `description` / `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2 (backend
+          // soft-validates name/version only).
+          clientInfo: {
+            name: "bedrock-agentcore",
+            title: "AgentCore",
+            version: "1.0.0",
+            description: "AWS Bedrock AgentCore agent runtime",
+            websiteUrl: "https://aws.amazon.com/bedrock/agentcore/",
           },
         },
       };
