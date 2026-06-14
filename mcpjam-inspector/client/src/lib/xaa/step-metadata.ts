@@ -153,6 +153,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     phase: "sso",
     teachableMoments: [
       "The ID token is an input to token exchange; it is not sent directly to the target authorization server.",
+      'Naming note: here "identity assertion" means the OIDC ID token. Some IdPs (e.g. Okta) call the ID-JAG itself the "identity assertion" — in this debugger the ID-JAG is the grant minted in Phase 2.',
     ],
   },
   token_exchange_request: {
@@ -163,6 +164,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     teachableMoments: [
       "Spec step 2: the `audience` parameter names the resource authorization server's issuer — the value discovered (or pre-configured) in Phase 0.",
       "This is where broken assertions get created for audience, issuer, header, and claim validation tests.",
+      "On the wire this exchange uses `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`.",
     ],
   },
   received_id_jag: {
@@ -171,6 +173,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     phase: "token_exchange",
     teachableMoments: [
       "A valid ID-JAG includes `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, `iat`, and `exp`.",
+      "ID-JAG stands for Identity Assertion JWT Authorization Grant — the token type defined by the XAA spec.",
     ],
   },
   inspect_id_jag: {
@@ -191,6 +194,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     teachableMoments: [
       "Spec step 3: the resource authorization server validates the ID-JAG's `iss`, `aud`, and `resource` before minting an access token.",
       "If this fails, check whether the server trusts the synthetic issuer JWKS and supports the JWT bearer grant.",
+      "On the wire this is `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` — match this against your authorization server's request logs.",
     ],
   },
   received_access_token: {
