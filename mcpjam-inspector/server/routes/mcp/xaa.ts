@@ -336,12 +336,19 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
       const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
       const subject = identityPayload.sub || "user-12345";
+      // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
+      // Resource AS can use it for subject resolution / JIT provisioning.
+      const email =
+        typeof identityPayload.email === "string"
+          ? identityPayload.email
+          : undefined;
 
       const issued =
         negativeTestMode === "valid"
           ? issueIdJag({
               issuer,
               subject,
+              email,
               audience: parsed.audience,
               resource: parsed.resource,
               clientId: parsed.clientId,
@@ -351,6 +358,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               {
                 issuer,
                 subject,
+                email,
                 audience: parsed.audience,
                 resource: parsed.resource,
                 clientId: parsed.clientId,
@@ -774,7 +782,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           verdict: accepted ? "fail" : "pass",
           status: response.status,
           detail: accepted
-            ? "Authorization server issued an access token for a broken assertion."
+            ? `The auth server returned HTTP ${response.status} with an access token for this broken assertion. ` +
+              `This test ${details.description.charAt(0).toLowerCase()}${details.description.slice(1)} ` +
+              `${details.expectedFailure} Because a token was issued instead, a malformed or unauthorized ` +
+              `assertion would be accepted in production.`
             : undefined,
         };
       } catch (error) {

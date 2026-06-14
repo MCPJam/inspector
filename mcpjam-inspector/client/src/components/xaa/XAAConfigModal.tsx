@@ -209,12 +209,12 @@ export function XAAConfigModal({
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-3 space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  The MCPJam issuer mints a mock ID token for this user.
-                  Defaults work for most flows.
+                  The MCPJam issuer mints a mock ID token for this user, then
+                  exchanges it for an ID-JAG. Defaults work for most flows.
                 </p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="xaa-user-id">User ID</Label>
+                    <Label htmlFor="xaa-user-id">Subject (sub)</Label>
                     <Input
                       id="xaa-user-id"
                       value={draft.userId}
@@ -226,6 +226,10 @@ export function XAAConfigModal({
                       }
                       placeholder="user-12345"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Becomes the <code>sub</code> claim — the end-user identity
+                      carried through the ID-JAG into the access token.
+                    </p>
                   </div>
 
                   <div className="space-y-2">

@@ -151,6 +151,9 @@ describe("mcp xaa routes", () => {
     const tokenExchangeBody = await tokenExchangeResponse.json();
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
+    // The ID token's email rides into the ID-JAG (spec RECOMMENDED) so the
+    // Resource AS can use it for subject resolution.
+    expect(payload.email).toBe("demo.user@example.com");
   });
 
   describe("POST /discover-as", () => {
