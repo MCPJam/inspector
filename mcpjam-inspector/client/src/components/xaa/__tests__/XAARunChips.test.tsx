@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { XAARunChips } from "../XAARunChips";
 
 describe("XAARunChips", () => {
@@ -40,6 +41,29 @@ describe("XAARunChips", () => {
     const chips = screen.getAllByTestId(/xaa-run-chip-/);
     for (const chip of chips) {
       expect(chip).toHaveAttribute("data-status", "pass");
+    }
+  });
+
+  it("focuses a step when its segment is clicked after a full run", async () => {
+    const onFocusStep = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <XAARunChips
+        flowState={{ currentStep: "complete" }}
+        onFocusStep={onFocusStep}
+      />,
+    );
+
+    await user.click(screen.getByTestId("xaa-run-chip-token_exchange_request"));
+
+    expect(onFocusStep).toHaveBeenCalledWith("token_exchange_request");
+  });
+
+  it("renders inert segments when no focus handler is provided", () => {
+    render(<XAARunChips flowState={{ currentStep: "complete" }} />);
+
+    for (const chip of screen.getAllByTestId(/xaa-run-chip-/)) {
+      expect(chip).toBeDisabled();
     }
   });
 });

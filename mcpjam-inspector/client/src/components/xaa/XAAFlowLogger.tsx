@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -370,9 +370,26 @@ export function XAAFlowLogger({
     new Set()
   );
 
+  const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
+
   useEffect(() => {
     setExpandedSteps(new Set([flowState.currentStep]));
   }, [flowState.currentStep]);
+
+  // Bring the focused step (e.g. clicked in the run rail or the diagram) into
+  // view and open it, so focusing actually navigates to that step's card.
+  useEffect(() => {
+    if (!activeStep) return;
+    setExpandedSteps((previous) => {
+      if (previous.has(activeStep)) return previous;
+      const next = new Set(previous);
+      next.add(activeStep);
+      return next;
+    });
+    stepRefs.current
+      .get(activeStep)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeStep]);
 
   const groups = useMemo(() => {
     const steps = new Map<
@@ -693,6 +710,9 @@ export function XAAFlowLogger({
                 return (
                   <div
                     key={group.step}
+                    ref={(el) => {
+                      stepRefs.current.set(group.step, el);
+                    }}
                     className={cn(
                       "bg-background border rounded-lg shadow-sm",
                       focusedStep === group.step

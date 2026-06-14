@@ -61,7 +61,7 @@ export function XAARunChips({
   onFocusStep?: (step: XAAFlowStep) => void;
 }) {
   return (
-    <ol aria-label="Run progress" className="flex flex-1 items-center gap-1">
+    <ol aria-label="Run progress" className="flex flex-wrap items-center gap-1">
       {CHIP_STEPS.map((step) => {
         const status = chipStatusFor(step, flowState);
         const info = getXAAStepInfo(step);
@@ -71,7 +71,7 @@ export function XAARunChips({
         const isFocused = activeStep === step;
 
         return (
-          <li key={step} className="min-w-0 flex-1">
+          <li key={step} className="shrink-0">
             <button
               type="button"
               data-testid={`xaa-run-chip-${step}`}
@@ -80,7 +80,7 @@ export function XAARunChips({
               onClick={() => onFocusStep?.(step)}
               disabled={!onFocusStep}
               className={cn(
-                "flex h-6 w-full items-center justify-center rounded-md border px-1 text-[11px] transition-colors",
+                "flex h-6 items-center justify-center rounded-md border px-2.5 text-[11px] transition-colors",
                 onFocusStep && "cursor-pointer hover:brightness-95",
                 status === "pass" &&
                   "border-green-600/40 bg-green-500/15 text-green-700 dark:text-green-400",
@@ -95,7 +95,7 @@ export function XAARunChips({
                 isFocused && "ring-1 ring-blue-400"
               )}
             >
-              <span className="truncate">{STEP_NUMBERS[step] ?? ""}</span>
+              {STEP_NUMBERS[step] ?? ""}
             </button>
           </li>
         );
