@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
+import type { NegativeTestDiff } from "@/shared/xaa.js";
 
 const XAA_API_BASE = HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
 
@@ -59,7 +60,7 @@ export interface HealthCheckResult {
  * `ok: false` instead.
  */
 export async function checkResourceHealth(
-  url: string,
+  url: string
 ): Promise<HealthCheckResult> {
   const response = await authFetch(`${XAA_API_BASE}/health-check`, {
     method: "POST",
@@ -73,7 +74,7 @@ export async function checkResourceHealth(
 
   if (!response.ok || !body) {
     throw new Error(
-      body?.message || `Health check failed (${response.status})`,
+      body?.message || `Health check failed (${response.status})`
     );
   }
 
@@ -88,6 +89,7 @@ export interface NegativeTestCase {
   verdict: "pass" | "fail" | "unknown";
   status?: number;
   detail?: string;
+  diff?: NegativeTestDiff;
 }
 
 export interface NegativeTestsResult {
@@ -113,7 +115,7 @@ export interface NegativeTestsInput {
  * the stored secret and endpoint.
  */
 export async function runNegativeTests(
-  input: NegativeTestsInput,
+  input: NegativeTestsInput
 ): Promise<NegativeTestsResult> {
   const response = await authFetch(`${XAA_API_BASE}/negative-tests`, {
     method: "POST",
@@ -127,7 +129,7 @@ export async function runNegativeTests(
 
   if (!response.ok || !body) {
     throw new Error(
-      body?.message || `Negative tests failed (${response.status})`,
+      body?.message || `Negative tests failed (${response.status})`
     );
   }
 

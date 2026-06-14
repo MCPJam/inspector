@@ -12,15 +12,17 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
-import { Input } from "@mcpjam/design-system/input";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import {
+  NEGATIVE_TEST_MODE_DETAILS,
+  type NegativeTestMode,
+} from "@/shared/xaa.js";
 import {
   runNegativeTests,
   type NegativeTestCase,
   type NegativeTestsInput,
   type NegativeTestsResult,
 } from "@/lib/xaa/discovery-client";
-
-const OVERRIDE_PHRASE = "run anyway";
 
 interface NegativeTestScorecardProps {
   /** The AS target to fire broken assertions at, or null when there is no
@@ -39,42 +41,76 @@ type RunState =
   | { status: "done"; result: NegativeTestsResult }
   | { status: "error"; message: string };
 
+function StatusPill({ row }: { row: NegativeTestCase }) {
+  const httpSuffix = row.status ? ` · HTTP ${row.status}` : "";
+
+  if (row.verdict === "pass") {
+    return (
+      <span className="shrink-0 text-[11px] font-medium text-green-700 dark:text-green-400">
+        Rejected as expected{httpSuffix}
+      </span>
+    );
+  }
+
+  if (row.verdict === "fail") {
+    return (
+      <span className="shrink-0 text-[11px] font-medium text-red-600 dark:text-red-400">
+        Accepted — security risk{httpSuffix}
+      </span>
+    );
+  }
+
+  return (
+    <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+      {row.outcome === "timeout" ? "Timed out" : "Inconclusive"}
+    </span>
+  );
+}
+
 function VerdictRow({ row }: { row: NegativeTestCase }) {
   const tone =
     row.verdict === "pass"
       ? { Icon: CheckCircle2, className: "text-green-600 dark:text-green-400" }
       : row.verdict === "fail"
-        ? { Icon: ShieldAlert, className: "text-red-500" }
-        : { Icon: HelpCircle, className: "text-muted-foreground" };
+      ? { Icon: ShieldAlert, className: "text-red-500" }
+      : { Icon: HelpCircle, className: "text-muted-foreground" };
+
+  // A correct server rejects every broken assertion, so the "what this checks"
+  // copy is the right explanation on a pass; a fail or timeout has its own
+  // server-supplied detail.
+  const description =
+    NEGATIVE_TEST_MODE_DETAILS[row.mode as NegativeTestMode]?.description;
+  const body = row.verdict === "pass" ? description : row.detail || description;
 
   return (
     <div
       data-testid={`xaa-negtest-row-${row.mode}`}
       data-verdict={row.verdict}
-      className="flex items-start gap-2 border-t border-border/60 px-1 py-1.5 text-xs first:border-t-0"
+      className={`flex items-start gap-2 rounded-md px-2.5 py-2 text-xs ${
+        row.verdict === "fail"
+          ? "bg-red-50 dark:bg-red-950/20"
+          : "bg-background"
+      }`}
     >
       <tone.Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone.className}`} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="flex items-center justify-between gap-2">
           <span className="font-medium">{row.label}</span>
-          {row.verdict === "fail" && (
-            <Badge variant="destructive" className="text-[10px]">
-              security risk
-            </Badge>
-          )}
-          {row.verdict === "unknown" && (
-            <Badge variant="outline" className="text-[10px]">
-              {row.outcome === "timeout" ? "timed out" : "inconclusive"}
-            </Badge>
-          )}
+          <StatusPill row={row} />
         </div>
-        <p className="text-muted-foreground">
-          {row.verdict === "fail"
-            ? row.detail
-            : row.verdict === "pass"
-              ? `Rejected${row.status ? ` (HTTP ${row.status})` : ""} — ${row.expectedFailure}`
-              : row.detail}
-        </p>
+        {body && <p className="text-muted-foreground">{body}</p>}
+        {row.diff && (
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 pt-0.5 font-mono text-[11px] text-muted-foreground">
+            <span>
+              {row.diff.field} sent{" "}
+              <span className="text-foreground">{row.diff.sent}</span>
+            </span>
+            <span>
+              expected{" "}
+              <span className="text-foreground">{row.diff.expected}</span>
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -87,7 +123,6 @@ export function NegativeTestScorecard({
 }: NegativeTestScorecardProps) {
   const [expanded, setExpanded] = useState(false);
   const [run, setRun] = useState<RunState>({ status: "idle" });
-  const [overrideText, setOverrideText] = useState("");
   const [overrideAccepted, setOverrideAccepted] = useState(false);
 
   // Reset the last run whenever the target changes — including when config is
@@ -103,7 +138,6 @@ export function NegativeTestScorecard({
   useEffect(() => {
     setRun({ status: "idle" });
     setOverrideAccepted(false);
-    setOverrideText("");
   }, [targetKey]);
 
   const canRun = input !== null && (unlocked || overrideAccepted);
@@ -122,6 +156,11 @@ export function NegativeTestScorecard({
       });
     }
   };
+
+  const passedCount =
+    run.status === "done"
+      ? run.result.results.filter((r) => r.verdict === "pass").length
+      : 0;
 
   return (
     <Card className="mx-3 mt-1 mb-3 gap-0 p-0">
@@ -189,33 +228,21 @@ export function NegativeTestScorecard({
                 )}
               </div>
 
-              {!unlocked && !overrideAccepted && (
-                <div className="space-y-1.5 rounded-md border border-dashed border-border px-3 py-2">
-                  <p className="text-xs text-muted-foreground">
-                    Building the auth server (TDD)? If you own this server, type{" "}
-                    <code className="font-mono">{OVERRIDE_PHRASE}</code> to run
-                    anyway.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      aria-label="Override confirmation"
-                      value={overrideText}
-                      onChange={(event) => setOverrideText(event.target.value)}
-                      placeholder={OVERRIDE_PHRASE}
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        overrideText.trim().toLowerCase() !== OVERRIDE_PHRASE
-                      }
-                      onClick={() => setOverrideAccepted(true)}
-                    >
-                      Unlock
-                    </Button>
-                  </div>
+              {!unlocked && (
+                <div className="flex items-start gap-2 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                  <Checkbox
+                    checked={overrideAccepted}
+                    onCheckedChange={(value) =>
+                      setOverrideAccepted(value === true)
+                    }
+                    className="mt-0.5"
+                    aria-label="I own this auth server and want to run before a passing flow"
+                  />
+                  <span>
+                    I&apos;m building this auth server — let me run the tests
+                    before a passing happy-path run. Use this only for a server
+                    you own and are developing.
+                  </span>
                 </div>
               )}
 
@@ -229,11 +256,17 @@ export function NegativeTestScorecard({
               )}
 
               {run.status === "done" && (
-                <div className="rounded-md border border-border">
-                  {run.result.results.map((row) => (
-                    <VerdictRow key={row.mode} row={row} />
-                  ))}
-                </div>
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {passedCount} of {run.result.results.length} broken
+                    assertions correctly rejected.
+                  </p>
+                  <div className="space-y-1 rounded-md border border-border p-1">
+                    {run.result.results.map((row) => (
+                      <VerdictRow key={row.mode} row={row} />
+                    ))}
+                  </div>
+                </>
               )}
 
               {run.status === "done" && run.result.failures > 0 && (
