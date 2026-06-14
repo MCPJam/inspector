@@ -340,6 +340,60 @@ function PhaseRail({ currentStep }: { currentStep: XAAFlowStep }) {
   );
 }
 
+/** Outcome banner for a negative-mode run: a rejection is the pass condition
+ * (green), an accepted broken assertion is the security risk (red). Without
+ * this, a (correct) rejection rendered as a generic red error and looked like
+ * a failure — the opposite of what the scorecard reports. */
+function NegativeProbeCallout({
+  probe,
+  mode,
+}: {
+  probe: NonNullable<XAAFlowState["negativeProbe"]>;
+  mode: NegativeTestMode;
+}) {
+  const label = NEGATIVE_TEST_MODE_DETAILS[mode]?.label ?? "negative test";
+
+  if (probe.outcome === "rejected") {
+    return (
+      <div className="rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2.5 text-xs">
+        <div className="flex items-start gap-2">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+          <div className="min-w-0 space-y-1">
+            <div className="font-medium text-foreground">
+              Correctly rejected — exactly what should happen
+            </div>
+            <div className="text-muted-foreground">
+              Your authorization server rejected the {label} assertion
+              {probe.status ? ` with HTTP ${probe.status}` : ""}. In a negative
+              test a rejection is the pass condition — the same result the
+              scorecard reports as a pass.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2.5 text-xs">
+      <div className="flex items-start gap-2">
+        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+        <div className="min-w-0 space-y-1">
+          <div className="font-medium text-foreground">
+            Accepted a broken assertion — security risk
+          </div>
+          <div className="text-muted-foreground">
+            Your authorization server issued an access token for the {label}{" "}
+            assertion
+            {probe.status ? ` (HTTP ${probe.status})` : ""}. It should have
+            rejected it — this is the failure the negative test checks for.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** A "Tip" callout — visually distinct from diagnostics so static teaching
  * copy can't be mistaken for an error explanation. */
 function TeachableMoments({ moments }: { moments: string[] }) {
@@ -585,6 +639,13 @@ export function XAAFlowLogger({
       <div className="flex-1 overflow-auto bg-muted/30 p-4 space-y-4">
         {hasProfile && flowState.compatibilityReport && (
           <CompatibilityBanner report={flowState.compatibilityReport} />
+        )}
+
+        {flowState.negativeProbe && (
+          <NegativeProbeCallout
+            probe={flowState.negativeProbe}
+            mode={flowState.negativeTestMode}
+          />
         )}
 
         {(() => {

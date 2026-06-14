@@ -32,13 +32,18 @@ type ChipStatus = "pass" | "fail" | "untouched";
 
 export function chipStatusFor(
   step: XAAFlowStep,
-  flowState: Pick<XAAFlowState, "currentStep" | "error">
+  flowState: Pick<XAAFlowState, "currentStep" | "error" | "negativeProbe">
 ): ChipStatus {
   const stepIndex = getXAAStepIndex(step);
   const currentIndex = getXAAStepIndex(flowState.currentStep);
 
   if (flowState.error && step === flowState.currentStep) {
     return "fail";
+  }
+  // A negative-mode run ends at the step it reached: a rejection is the pass
+  // condition (green), an accepted broken assertion is the failure (red).
+  if (flowState.negativeProbe && step === flowState.currentStep) {
+    return flowState.negativeProbe.outcome === "rejected" ? "pass" : "fail";
   }
   if (stepIndex < currentIndex || flowState.currentStep === "complete") {
     return "pass";
@@ -58,7 +63,10 @@ export function XAARunChips({
   activeStep,
   onFocusStep,
 }: {
-  flowState: Pick<XAAFlowState, "currentStep" | "error" | "isBusy">;
+  flowState: Pick<
+    XAAFlowState,
+    "currentStep" | "error" | "isBusy" | "negativeProbe"
+  >;
   activeStep?: XAAFlowStep | null;
   onFocusStep?: (step: XAAFlowStep) => void;
 }) {
