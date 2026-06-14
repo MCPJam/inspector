@@ -86,31 +86,35 @@ function VerdictRow({ row }: { row: NegativeTestCase }) {
     <div
       data-testid={`xaa-negtest-row-${row.mode}`}
       data-verdict={row.verdict}
-      className={`flex items-start gap-2 rounded-md px-2.5 py-2 text-xs ${
+      className={`rounded-lg border px-3 py-2.5 text-xs ${
         row.verdict === "fail"
-          ? "bg-red-50 dark:bg-red-950/20"
-          : "bg-background"
+          ? "border-red-300 bg-red-50 dark:border-red-900/60 dark:bg-red-950/20"
+          : "border-border bg-background"
       }`}
     >
-      <tone.Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone.className}`} />
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-medium">{row.label}</span>
-          <StatusPill row={row} />
-        </div>
-        {body && <p className="text-muted-foreground">{body}</p>}
-        {row.diff && (
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 pt-0.5 font-mono text-[11px] text-muted-foreground">
-            <span>
-              {row.diff.field} sent{" "}
-              <span className="text-foreground">{row.diff.sent}</span>
-            </span>
-            <span>
-              expected{" "}
-              <span className="text-foreground">{row.diff.expected}</span>
-            </span>
+      <div className="flex items-start gap-2">
+        <tone.Icon
+          className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone.className}`}
+        />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">{row.label}</span>
+            <StatusPill row={row} />
           </div>
-        )}
+          {body && <p className="text-muted-foreground">{body}</p>}
+          {row.diff && (
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-md bg-muted/50 px-2.5 py-1.5 font-mono text-[11px]">
+              <span className="text-muted-foreground">
+                {row.diff.field} sent
+              </span>
+              <span className="break-all text-foreground">{row.diff.sent}</span>
+              <span className="text-muted-foreground">expected</span>
+              <span className="break-all text-foreground">
+                {row.diff.expected}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -261,7 +265,7 @@ export function NegativeTestScorecard({
                     {passedCount} of {run.result.results.length} broken
                     assertions correctly rejected.
                   </p>
-                  <div className="space-y-1 rounded-md border border-border p-1">
+                  <div className="space-y-2">
                     {run.result.results.map((row) => (
                       <VerdictRow key={row.mode} row={row} />
                     ))}
