@@ -90,7 +90,7 @@ See `widget-host.ts`. Summary:
 ```ts
 interface WidgetHost {
   resolveEnvironment(serverId: string | undefined): WidgetHostEnvironment; // per-server
-  services: WidgetHostServices;          // fetchWidgetContent + readResource/listResources/listPrompts
+  services: WidgetHostServices;          // fetchWidgetContent + readResource/listResources/listPrompts/listResourceTemplates
   surface: WidgetSurfaceInfo;            // kind, persistentSurfaceHost, webManagedServers, sandboxOrigin
   debug?: WidgetDebugSink;               // 1:1 with widget-debug-store + traffic-log addLog
   components?: { Modal?: ComponentType<WidgetModalProps> };
@@ -132,6 +132,12 @@ reads for a single `useWidgetHost()`.
 - **Surface collapse:** `kind` merges two distinct context signals
   (`useIsChatboxSurface`, `useWidgetSurface`); Phase 1 must confirm they are
   mutually exclusive before collapsing them.
+- **`listResourceTemplates` is host-owned, not the raw api fn.** The renderer
+  guards `HOSTED_MODE || webManagedServers` (mcp-apps-renderer.tsx:2861-2868),
+  but `mcp-resource-templates-api.listResourceTemplates` only enforces
+  `HOSTED_MODE`. The provider MUST wrap it and throw when
+  `surface.webManagedServers` is true — Phase 1 must not bind the raw fn
+  directly, or web-managed surfaces would drift.
 
 ## Phased plan
 

@@ -111,14 +111,25 @@ export interface WidgetHostServices {
   listPrompts: typeof import("@/lib/apis/mcp-prompts-api").listPrompts;
   /**
    * `resources/templates/list` for the MCP-Apps bridge
-   * (host-app-bridge `onListResourceTemplates`). Local-only today — the
-   * renderer throws in hosted / web-managed mode
-   * (mcp-apps-renderer.tsx:2861-2868) and the api fn calls `ensureLocalMode`;
-   * the inspector binding preserves that. Without it in the contract, a Phase 1
-   * migration would leave this path on ambient `authFetch` / `HOSTED_MODE` or
-   * silently return empty templates.
+   * (host-app-bridge `onListResourceTemplates`). HOST-OWNED — NOT the raw api
+   * fn. The provider MUST apply the same guard the renderer does today: throw
+   * when `HOSTED_MODE || surface.webManagedServers` is true
+   * (mcp-apps-renderer.tsx:2861-2868). The underlying
+   * `mcp-resource-templates-api.listResourceTemplates` only enforces
+   * `HOSTED_MODE` (via `ensureLocalMode`), NOT web-managed, so binding it
+   * directly in Phase 1 would let web-managed chatbox/widget surfaces drift.
+   * Typed structurally (return shape still pinned to the api) to signal the
+   * provider owns the implementation rather than forwarding the raw fn.
    */
-  listResourceTemplates: typeof import("@/lib/apis/mcp-resource-templates-api").listResourceTemplates;
+  listResourceTemplates: (
+    serverId: string,
+  ) => Promise<
+    Awaited<
+      ReturnType<
+        typeof import("@/lib/apis/mcp-resource-templates-api").listResourceTemplates
+      >
+    >
+  >;
   // Phase 1: OpenAI Apps file bridges (uploadFile / getFileDownloadUrl) bind to
   // widget-file-messages here once their host-facing signatures are firmed up.
 }
