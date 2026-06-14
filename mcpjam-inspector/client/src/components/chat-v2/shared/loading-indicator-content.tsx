@@ -42,6 +42,11 @@ export function usesClaudeInlineStreamingFooter(
   return (
     hostStyle != null &&
     hostStyle !== "mcpjam" &&
+    // Claude Code borrows the "claude" visual family for bubble styling but
+    // is a terminal agent — it shows its own CLI spinner indicator (via the
+    // generic LoadingIndicatorContent path), not the claude.ai mark painted
+    // beneath the assistant bubble. Same opt-out shape as "mcpjam".
+    hostStyle !== "claude-code" &&
     getChatboxHostFamily(hostStyle) === "claude"
   );
 }

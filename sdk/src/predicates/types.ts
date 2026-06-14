@@ -7,7 +7,7 @@
  * the property a CI release gate requires and a stochastic LLM judge cannot
  * provide. The `serverQuality` LLM judge remains the advisory **insight** layer.
  *
- * The union is intentionally small (9 types). It grows only when a real corpus
+ * The union is intentionally small (12 types). It grows only when a real corpus
  * task demands a new one — not speculatively.
  *
  * Hosted in `@mcpjam/sdk` (browser-safe; reuses the `../matchers` argument
@@ -68,7 +68,25 @@ export type Predicate =
   /** The final assistant message is a non-empty (non-whitespace) string. */
   | { type: "finalAssistantMessageNonEmpty" }
   /** Total token usage for the iteration is strictly under `tokens`. */
-  | { type: "tokenBudgetUnder"; tokens: number };
+  | { type: "tokenBudgetUnder"; tokens: number }
+  /**
+   * At least one widget render observation (narrowed to `toolName` when set)
+   * has `status === "rendered"`. Fails closed when the iteration recorded no
+   * render observations in scope.
+   */
+  | { type: "widgetRendered"; toolName?: string }
+  /**
+   * Every rendered widget observation (narrowed to `toolName` when set) mounted
+   * in strictly under `ms` milliseconds. Fails closed when no observation in
+   * scope rendered — an unrendered widget has no latency to attest.
+   */
+  | { type: "widgetRenderLatencyUnder"; ms: number; toolName?: string }
+  /**
+   * No widget render observation (narrowed to `toolName` when set) captured
+   * console errors. Fails closed when the iteration recorded no render
+   * observations in scope.
+   */
+  | { type: "widgetNoConsoleErrors"; toolName?: string };
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
@@ -164,6 +182,19 @@ export const predicateSchema = z.discriminatedUnion("type", [
     type: z.literal("tokenBudgetUnder"),
     tokens: z.number().int().positive(),
   }),
+  z.object({
+    type: z.literal("widgetRendered"),
+    toolName: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("widgetRenderLatencyUnder"),
+    ms: z.number().int().positive(),
+    toolName: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("widgetNoConsoleErrors"),
+    toolName: z.string().min(1).optional(),
+  }),
 ]);
 
 /** Array of predicates — used for both suite defaults and case overrides. */
@@ -221,6 +252,39 @@ export type TranscriptToolCall = {
 };
 
 /**
+ * Outcome states of an MCP App widget render attempt. Hand-mirror of the
+ * inspector's `EvalTraceWidgetRenderStatus` (shared/eval-trace.ts) — the SDK
+ * stays import-free of the inspector app, same arrangement as the Convex
+ * validator mirror. Only `"rendered"` means success; every other literal names
+ * the stage that failed.
+ */
+export type RenderObservationStatus =
+  | "rendered"
+  | "no_ui_resource"
+  | "resource_read_failed"
+  | "mount_failed"
+  | "bridge_timeout"
+  | "render_error"
+  | "blank_screenshot"
+  | "screenshot_failed"
+  | "browser_unavailable";
+
+/**
+ * Screenshot-free summary of one widget render observation, carried on the
+ * transcript for the `widget*` predicates. The runner maps its richer
+ * `RunnerWidgetRenderObservation` (base64 screenshot, blocked requests, …)
+ * down to this shape; fixtures author it directly.
+ */
+export type RenderObservationSummary = {
+  toolCallId?: string;
+  toolName: string;
+  serverId?: string;
+  status: RenderObservationStatus;
+  elapsedMs: number;
+  consoleErrors?: string[];
+};
+
+/**
  * The stable input shape predicates evaluate against.
  *
  * Deliberately minimal: it carries exactly what the 8 V1 predicates need and
@@ -237,6 +301,11 @@ export type IterationTranscript = {
   finalAssistantMessage?: string;
   /** Token usage totals for the whole iteration, if measured. */
   usage?: TranscriptUsage;
+  /**
+   * Widget render observations recorded over the iteration, if any. Absent ⇒
+   * the `widget*` predicates fail closed (no signal is not a pass).
+   */
+  renderObservations?: RenderObservationSummary[];
 };
 
 /** Per-predicate verdict row, persisted to `testIteration.metadata.predicates`. */

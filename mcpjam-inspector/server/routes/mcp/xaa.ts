@@ -6,6 +6,8 @@ import {
   isNegativeTestMode,
   NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
+  XAA_IDP_KID,
+  type NegativeTestDiff,
   type NegativeTestMode,
 } from "../../../shared/xaa.js";
 import {
@@ -114,12 +116,105 @@ type NegativeCaseOutcome = {
   verdict: "pass" | "fail" | "unknown";
   status?: number;
   detail?: string;
+  // What the broken assertion changed vs. a valid one, for the scorecard diff.
+  diff?: NegativeTestDiff;
 };
 
 // The 11 deliberately-broken modes (everything except the happy-path "valid").
 const NEGATIVE_CASE_MODES: NegativeTestMode[] = NEGATIVE_TEST_MODES.filter(
-  (mode): mode is NegativeTestMode => mode !== "valid",
+  (mode): mode is NegativeTestMode => mode !== "valid"
 );
+
+// Build the "sent X / expected Y" diff from the assertion the signer actually
+// emitted (header + payload), so the displayed values can't drift from the
+// real mutation. `expected` is the value a valid ID-JAG would carry.
+function buildNegativeDiff(
+  mode: NegativeTestMode,
+  header: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  expected: {
+    audience: string;
+    resource: string;
+    clientId: string;
+    subject: string;
+    scope?: string;
+    issuer: string;
+  }
+): NegativeTestDiff | undefined {
+  const show = (value: unknown): string =>
+    value === undefined || value === null ? "(omitted)" : String(value);
+
+  switch (mode) {
+    case "bad_signature":
+      return {
+        field: "signature",
+        sent: "signed with a throwaway key",
+        expected: "signed with the published JWKS key",
+      };
+    case "wrong_audience":
+      return {
+        field: "aud",
+        sent: show(payload.aud),
+        expected: expected.audience,
+      };
+    case "expired":
+      return {
+        field: "exp",
+        sent: `${new Date(Number(payload.exp) * 1000).toISOString()} (past)`,
+        expected: "a time in the future",
+      };
+    case "missing_claims":
+      return {
+        field: "sub, resource",
+        sent: "(omitted)",
+        expected: "both present",
+      };
+    case "invalid_type_header":
+      return {
+        field: "typ",
+        sent: show(header.typ),
+        expected: "oauth-id-jag+jwt",
+      };
+    case "wrong_issuer":
+      return {
+        field: "iss",
+        sent: show(payload.iss),
+        expected: expected.issuer,
+      };
+    case "resource_mismatch":
+      return {
+        field: "resource",
+        sent: show(payload.resource),
+        expected: expected.resource,
+      };
+    case "client_id_mismatch":
+      return {
+        field: "client_id",
+        sent: show(payload.client_id),
+        expected: expected.clientId,
+      };
+    case "unknown_kid":
+      return {
+        field: "kid",
+        sent: show(header.kid),
+        expected: XAA_IDP_KID,
+      };
+    case "unknown_sub":
+      return {
+        field: "sub",
+        sent: show(payload.sub),
+        expected: expected.subject,
+      };
+    case "scope_denial":
+      return {
+        field: "scope",
+        sent: show(payload.scope),
+        expected: expected.scope || "only the user's granted scopes",
+      };
+    default:
+      return undefined;
+  }
+}
 
 const proxyTokenSchema = z
   .object({
@@ -168,7 +263,7 @@ function toJsonError(
     status?: number;
     code?: string;
     details?: Record<string, unknown>;
-  },
+  }
 ) {
   const status = options?.status ?? 500;
   const code = options?.code ?? "INTERNAL_ERROR";
@@ -180,14 +275,16 @@ function toJsonError(
       error: message,
       ...(options?.details ? { details: options.details } : {}),
     },
-    { status },
+    { status }
   );
 }
 
 function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message || "Request validation failed");
+    throw new Error(
+      parsed.error.issues[0]?.message || "Request validation failed"
+    );
   }
   return parsed.data;
 }
@@ -195,7 +292,7 @@ function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
 function getIssuerForRequest(
   c: Context,
   issuerBasePath: string,
-  trustForwardedHeaders: boolean,
+  trustForwardedHeaders: boolean
 ): string {
   const parsed = new URL(c.req.url);
 
@@ -223,12 +320,14 @@ function decodeJwtPayloadUnsafe(token: string): ParsedJwtPayload {
 
   try {
     const payload = JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8"),
+      Buffer.from(parts[1], "base64url").toString("utf-8")
     ) as ParsedJwtPayload;
     return payload;
   } catch (error) {
     throw new Error(
-      `Identity assertion payload is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+      `Identity assertion payload is not valid JSON (${
+        error instanceof Error ? error.message : String(error)
+      })`
     );
   }
 }
@@ -268,7 +367,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.get("/.well-known/openid-configuration", (c) => {
     initXAAIdpKeyPair();
-    const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
+    const issuer = getIssuerForRequest(
+      c,
+      options.issuerBasePath,
+      trustForwardedHeaders
+    );
 
     return c.json(
       {
@@ -281,24 +384,28 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         grant_types_supported: [
           "urn:ietf:params:oauth:grant-type:token-exchange",
         ],
-        token_endpoint_auth_methods_supported: [
-          "none",
-          "client_secret_post",
-        ],
+        token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
         id_token_signing_alg_values_supported: ["RS256"],
       },
       200,
       {
         "Cache-Control": "public, max-age=300",
-      },
+      }
     );
   });
 
   router.post("/authenticate", async (c) => {
     try {
       const body = await c.req.json();
-      const { userId, email, audience } = parseRequest(authenticateSchema, body);
-      const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
+      const { userId, email, audience } = parseRequest(
+        authenticateSchema,
+        body
+      );
+      const issuer = getIssuerForRequest(
+        c,
+        options.issuerBasePath,
+        trustForwardedHeaders
+      );
       const subject = userId || "user-12345";
       const resolvedEmail = email || "demo.user@example.com";
       const issued = issueMockIdToken({
@@ -313,7 +420,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         token_type: "Bearer",
         expires_in: Math.max(
           0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000),
+          Math.floor((issued.expiresAt - Date.now()) / 1000)
         ),
         user: {
           sub: subject,
@@ -323,7 +430,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid authenticate request",
-        { status: 400, code: "VALIDATION_ERROR" },
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
   });
@@ -333,15 +440,26 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const body = await c.req.json();
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
-      const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
+      const issuer = getIssuerForRequest(
+        c,
+        options.issuerBasePath,
+        trustForwardedHeaders
+      );
       const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
       const subject = identityPayload.sub || "user-12345";
+      // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
+      // Resource AS can use it for subject resolution / JIT provisioning.
+      const email =
+        typeof identityPayload.email === "string"
+          ? identityPayload.email
+          : undefined;
 
       const issued =
         negativeTestMode === "valid"
           ? issueIdJag({
               issuer,
               subject,
+              email,
               audience: parsed.audience,
               resource: parsed.resource,
               clientId: parsed.clientId,
@@ -351,12 +469,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               {
                 issuer,
                 subject,
+                email,
                 audience: parsed.audience,
                 resource: parsed.resource,
                 clientId: parsed.clientId,
                 scope: parsed.scope,
               },
-              negativeTestMode,
+              negativeTestMode
             );
 
       return c.json({
@@ -365,14 +484,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         issued_token_type: "urn:ietf:params:oauth:token-type:jwt",
         expires_in: Math.max(
           0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000),
+          Math.floor((issued.expiresAt - Date.now()) / 1000)
         ),
         negative_test_mode: negativeTestMode,
       });
     } catch (error) {
       return toJsonError(
-        error instanceof Error ? error.message : "Invalid token exchange request",
-        { status: 400, code: "VALIDATION_ERROR" },
+        error instanceof Error
+          ? error.message
+          : "Invalid token exchange request",
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
   });
@@ -391,7 +512,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         if (!options.resolveRegistrationSecret) {
           return toJsonError(
             "Registration-backed runs are not available on this instance",
-            { status: 400, code: "VALIDATION_ERROR" },
+            { status: 400, code: "VALIDATION_ERROR" }
           );
         }
 
@@ -464,7 +585,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       logger.error("[XAA Token Proxy] Error", error);
       return toJsonError(
         error instanceof Error ? error.message : "Unknown proxy error",
-        { status: 500, code: "INTERNAL_ERROR" },
+        { status: 500, code: "INTERNAL_ERROR" }
       );
     }
   });
@@ -476,7 +597,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid discovery request",
-        { status: 400, code: "VALIDATION_ERROR" },
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
 
@@ -497,14 +618,14 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       for (const candidate of candidates) {
         const result = await fetchOAuthMetadata(
           candidate,
-          options.httpsOnlyProxy,
+          options.httpsOnlyProxy
         );
         if ("metadata" in result) {
           return c.json(
             evaluateDiscovery(result.metadata, {
               requestedIssuer,
               metadataUrl: candidate,
-            }),
+            })
           );
         }
         triedStatuses.push({ url: candidate, status: result.status });
@@ -516,7 +637,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           status: 404,
           code: "DISCOVERY_NOT_FOUND",
           details: { tried: triedStatuses },
-        },
+        }
       );
     } catch (error) {
       // validateUrl inside fetchOAuthMetadata rejects disallowed outbound URLs
@@ -531,7 +652,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       logger.error("[XAA Discover AS] Error", error);
       return toJsonError(
         error instanceof Error ? error.message : "Discovery failed",
-        { status: 502, code: "SERVER_UNREACHABLE" },
+        { status: 502, code: "SERVER_UNREACHABLE" }
       );
     }
   });
@@ -543,7 +664,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid health check request",
-        { status: 400, code: "VALIDATION_ERROR" },
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
 
@@ -551,7 +672,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     try {
       ({ url: validatedUrl } = await validateUrl(
         parsed.url,
-        options.httpsOnlyProxy,
+        options.httpsOnlyProxy
       ));
     } catch (error) {
       if (error instanceof OAuthProxyError) {
@@ -613,7 +734,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         error instanceof Error
           ? error.message
           : "Invalid negative-tests request",
-        { status: 400, code: "VALIDATION_ERROR" },
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
 
@@ -630,7 +751,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         if (!options.resolveRegistrationSecret) {
           return toJsonError(
             "Registration-backed runs are not available on this instance",
-            { status: 400, code: "VALIDATION_ERROR" },
+            { status: 400, code: "VALIDATION_ERROR" }
           );
         }
         const authHeader = c.req.header("authorization");
@@ -649,7 +770,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           // to fire broken assertions at.
           return toJsonError(
             "Negative tests require a registration with its own auth server",
-            { status: 400, code: "VALIDATION_ERROR" },
+            { status: 400, code: "VALIDATION_ERROR" }
           );
         }
         tokenEndpoint = resolved.tokenEndpoint;
@@ -675,7 +796,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     try {
       ({ url: validated } = await validateUrl(
         tokenEndpoint,
-        options.httpsOnlyProxy,
+        options.httpsOnlyProxy
       ));
     } catch (error) {
       if (error instanceof OAuthProxyError) {
@@ -693,34 +814,45 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     if (!checkNegativeTestHostCap(validated.host)) {
       return toJsonError(
         "Daily negative-test limit reached for this authorization server",
-        { status: 429, code: "RATE_LIMITED" },
+        { status: 429, code: "RATE_LIMITED" }
       );
     }
 
     const issuer = getIssuerForRequest(
       c,
       options.issuerBasePath,
-      trustForwardedHeaders,
+      trustForwardedHeaders
     );
     const subject = parsed.subject || "user-12345";
 
     const runCase = async (
-      mode: NegativeTestMode,
+      mode: NegativeTestMode
     ): Promise<NegativeCaseOutcome> => {
       const details = NEGATIVE_TEST_MODE_DETAILS[mode];
+      const resolvedClientId = clientId || "mcpjam-debugger";
       let token: string;
+      let diff: NegativeTestDiff | undefined;
       try {
-        token = issueNegativeIdJag(
+        const issued = issueNegativeIdJag(
           {
             issuer,
             subject,
             audience: parsed.audience,
             resource: parsed.resource,
-            clientId: clientId || "mcpjam-debugger",
+            clientId: resolvedClientId,
             scope: parsed.scope,
           },
-          mode,
-        ).token;
+          mode
+        );
+        token = issued.token;
+        diff = buildNegativeDiff(mode, issued.header, issued.payload, {
+          audience: parsed.audience,
+          resource: parsed.resource,
+          clientId: resolvedClientId,
+          subject,
+          scope: parsed.scope,
+          issuer,
+        });
       } catch (error) {
         return {
           mode,
@@ -774,8 +906,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           verdict: accepted ? "fail" : "pass",
           status: response.status,
           detail: accepted
-            ? "Authorization server issued an access token for a broken assertion."
+            ? `The auth server returned HTTP ${response.status} with an access token for this broken assertion. ` +
+              `This test ${details.description.charAt(0).toLowerCase()}${details.description.slice(1)} ` +
+              `${details.expectedFailure} Because a token was issued instead, a malformed or unauthorized ` +
+              `assertion would be accepted in production.`
             : undefined,
+          diff,
         };
       } catch (error) {
         const isTimeout =
@@ -788,11 +924,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           outcome: isTimeout ? "timeout" : "error",
           // Couldn't reach a verdict — surfaced separately from a real finding.
           verdict: "unknown",
+          diff,
           detail: isTimeout
             ? `No response within ${NEGATIVE_TEST_CASE_TIMEOUT_MS}ms`
             : error instanceof Error
-              ? error.message
-              : "Request failed",
+            ? error.message
+            : "Request failed",
         };
       }
     };

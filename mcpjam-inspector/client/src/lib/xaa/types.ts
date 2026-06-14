@@ -116,6 +116,11 @@ export interface XAAFlowState {
   httpHistory?: Array<XAAHttpHistoryEntry>;
   infoLogs?: Array<XAAInfoLogEntry>;
   error?: string;
+  /** Outcome of a deliberately-broken (negative-mode) run once it reaches the
+   * authorization server. `rejected` is the success case — the server caught
+   * the broken assertion; `accepted` is the security risk — it issued a token
+   * anyway. Unset for the happy-path (valid) flow. */
+  negativeProbe?: { outcome: "rejected" | "accepted"; status?: number };
   compatibilityReport?: XAACompatibilityReport;
 }
 
@@ -238,6 +243,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   httpHistory: [],
   infoLogs: [],
   error: undefined,
+  negativeProbe: undefined,
   compatibilityReport: undefined,
 };
 

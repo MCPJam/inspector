@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -31,6 +31,7 @@ import {
   getXAAPhaseNumber,
   getXAAStepInfo,
   getXAAStepIndex,
+  XAA_PHASE_ORDER,
   XAA_PHASES,
   XAA_STEP_ORDER,
   type XAAPhaseKey,
@@ -277,6 +278,122 @@ function PhaseHeader({
   );
 }
 
+/** Short, user-facing labels for the compact progress rail — the full phase
+ * titles are too long to sit five-across in the header. */
+const PHASE_RAIL_LABELS: Record<XAAPhaseKey, string> = {
+  bootstrap: "Discovery",
+  sso: "SSO",
+  token_exchange: "ID-JAG",
+  jwt_bearer: "Access token",
+  mcp_request: "MCP call",
+};
+
+/** At-a-glance "where am I" rail across the five phases, so the developer
+ * keeps their bearings without scrolling the step list. */
+function PhaseRail({ currentStep }: { currentStep: XAAFlowStep }) {
+  const currentPhase = getXAAStepInfo(currentStep).phase;
+  const currentPhaseNumber = currentPhase
+    ? getXAAPhaseNumber(currentPhase)
+    : -1;
+  const isComplete = currentStep === "complete";
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-1 gap-y-1"
+      aria-label="XAA flow progress"
+    >
+      {XAA_PHASE_ORDER.map((phase, index) => {
+        const number = getXAAPhaseNumber(phase);
+        const state =
+          isComplete || number < currentPhaseNumber
+            ? "done"
+            : number === currentPhaseNumber
+            ? "active"
+            : "pending";
+        return (
+          <Fragment key={phase}>
+            {index > 0 && (
+              <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+            )}
+            <span
+              data-testid={`xaa-rail-${phase}`}
+              data-state={state}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
+                state === "active" &&
+                  "bg-blue-500/10 font-medium text-blue-600 dark:text-blue-400",
+                state === "done" && "text-green-600 dark:text-green-400",
+                state === "pending" && "text-muted-foreground"
+              )}
+            >
+              {state === "done" ? (
+                <CheckCircle2 className="h-3 w-3 shrink-0" />
+              ) : (
+                <span className="font-mono">{number}</span>
+              )}
+              {PHASE_RAIL_LABELS[phase]}
+            </span>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Outcome banner for a negative-mode run: a rejection is the pass condition
+ * (green), an accepted broken assertion is the security risk (red). Without
+ * this, a (correct) rejection rendered as a generic red error and looked like
+ * a failure — the opposite of what the scorecard reports. */
+function NegativeProbeCallout({
+  probe,
+  mode,
+}: {
+  probe: NonNullable<XAAFlowState["negativeProbe"]>;
+  mode: NegativeTestMode;
+}) {
+  const label = NEGATIVE_TEST_MODE_DETAILS[mode]?.label ?? "negative test";
+
+  if (probe.outcome === "rejected") {
+    return (
+      <div className="rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2.5 text-xs">
+        <div className="flex items-start gap-2">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+          <div className="min-w-0 space-y-1">
+            <div className="font-medium text-foreground">
+              Correctly rejected — exactly what should happen
+            </div>
+            <div className="text-muted-foreground">
+              Your authorization server rejected the {label} assertion
+              {probe.status ? ` with HTTP ${probe.status}` : ""}. In a negative
+              test a rejection is the pass condition — the same result the
+              scorecard reports as a pass.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2.5 text-xs">
+      <div className="flex items-start gap-2">
+        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+        <div className="min-w-0 space-y-1">
+          <div className="font-medium text-foreground">
+            Accepted a broken assertion — security risk
+          </div>
+          <div className="text-muted-foreground">
+            Your authorization server issued an access token for the {label}{" "}
+            assertion
+            {probe.status ? ` (HTTP ${probe.status})` : ""}. It should have
+            rejected it — this is the failure the negative test checks for.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** A "Tip" callout — visually distinct from diagnostics so static teaching
  * copy can't be mistaken for an error explanation. */
 function TeachableMoments({ moments }: { moments: string[] }) {
@@ -307,9 +424,26 @@ export function XAAFlowLogger({
     new Set()
   );
 
+  const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
+
   useEffect(() => {
     setExpandedSteps(new Set([flowState.currentStep]));
   }, [flowState.currentStep]);
+
+  // Bring the focused step (e.g. clicked in the run rail or the diagram) into
+  // view and open it, so focusing actually navigates to that step's card.
+  useEffect(() => {
+    if (!activeStep) return;
+    setExpandedSteps((previous) => {
+      if (previous.has(activeStep)) return previous;
+      const next = new Set(previous);
+      next.add(activeStep);
+      return next;
+    });
+    stepRefs.current
+      .get(activeStep)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeStep]);
 
   const groups = useMemo(() => {
     const steps = new Map<
@@ -383,6 +517,24 @@ export function XAAFlowLogger({
 
   const getStatus = (step: XAAFlowStep) => {
     const index = getXAAStepIndex(step);
+    // A negative-mode run ends at the step it reached: an accepted broken
+    // assertion is a failure (red), a rejection is the expected success
+    // (green). Without this the step icon would read "complete" next to the
+    // red security-risk banner.
+    if (flowState.negativeProbe && step === flowState.currentStep) {
+      if (flowState.negativeProbe.outcome === "accepted") {
+        return {
+          icon: AlertTriangle,
+          className: "h-4 w-4 text-red-500",
+          label: "Failed",
+        };
+      }
+      return {
+        icon: CheckCircle2,
+        className: "h-4 w-4 text-green-600 dark:text-green-400",
+        label: "Complete",
+      };
+    }
     if (flowState.isBusy && step === flowState.currentStep) {
       return {
         icon: Loader2,
@@ -457,6 +609,8 @@ export function XAAFlowLogger({
 
         {hasProfile && (
           <>
+            <PhaseRail currentStep={flowState.currentStep} />
+
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-muted-foreground">Mode</span>
@@ -503,6 +657,13 @@ export function XAAFlowLogger({
       <div className="flex-1 overflow-auto bg-muted/30 p-4 space-y-4">
         {hasProfile && flowState.compatibilityReport && (
           <CompatibilityBanner report={flowState.compatibilityReport} />
+        )}
+
+        {flowState.negativeProbe && (
+          <NegativeProbeCallout
+            probe={flowState.negativeProbe}
+            mode={flowState.negativeTestMode}
+          />
         )}
 
         {(() => {
@@ -556,14 +717,41 @@ export function XAAFlowLogger({
         )}
 
         {!hasProfile ? (
-          <div className="bg-background border border-border rounded-lg p-6 space-y-3">
-            <h3 className="text-base font-semibold">
-              Welcome to the XAA Debugger
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Configure an MCP server, target authorization server, and client
-              ID to step through the full enterprise authorization flow.
-            </p>
+          <div className="bg-background border border-border rounded-lg p-6 space-y-4">
+            <div className="space-y-1.5">
+              <h3 className="text-base font-semibold">
+                Welcome to the XAA Debugger
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Step through the full cross-app access (XAA) authorization flow
+                against an MCP server.
+              </p>
+            </div>
+
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
+              <li>
+                <span className="font-medium text-foreground">
+                  Configure a target
+                </span>{" "}
+                — the MCP server URL, a client ID, and (for your own auth
+                server) its issuer. Start here.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Run the flow
+                </span>{" "}
+                — MCPJam mints an ID-JAG; your authorization server redeems it
+                for an access token, one step at a time.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Trust MCPJam at your auth server
+                </span>{" "}
+                — register the IdP endpoints (the card at the top) so your
+                authorization server accepts the ID-JAG MCPJam mints.
+              </li>
+            </ol>
+
             <Button onClick={actions.onConfigure}>Configure Target</Button>
           </div>
         ) : groups.length === 0 ? (
@@ -601,6 +789,9 @@ export function XAAFlowLogger({
                 return (
                   <div
                     key={group.step}
+                    ref={(el) => {
+                      stepRefs.current.set(group.step, el);
+                    }}
                     className={cn(
                       "bg-background border rounded-lg shadow-sm",
                       focusedStep === group.step

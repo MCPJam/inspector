@@ -437,6 +437,7 @@ export function createXAAStateMachine(
       currentStep: step,
       isBusy: true,
       error: undefined,
+      negativeProbe: undefined,
       lastRequest: request,
       lastResponse: undefined,
     });
@@ -980,6 +981,28 @@ export function createXAAStateMachine(
       const upstreamPayload = proxyBody.body;
 
       if (!upstreamStatus || upstreamStatus < 200 || upstreamStatus >= 300) {
+        // In a negative-test mode the broken assertion SHOULD be rejected — a
+        // clean rejection here is the expected, correct outcome, not a flow
+        // failure. (A missing/non-numeric status is a genuine proxy error and
+        // still falls through to the error path below.)
+        if (
+          state.negativeTestMode !== "valid" &&
+          typeof upstreamStatus === "number"
+        ) {
+          machine.updateState({
+            currentStep: "jwt_bearer_request",
+            error: undefined,
+            negativeProbe: { outcome: "rejected", status: upstreamStatus },
+          });
+          pushInfo(
+            "jwt_bearer_request",
+            "xaa-negative-rejected",
+            "Authorization server correctly rejected the broken assertion",
+            { status: upstreamStatus, mode: state.negativeTestMode }
+          );
+          return;
+        }
+
         const detail = extractErrorMessage(
           upstreamPayload,
           `Authorization server returned ${
@@ -1011,6 +1034,34 @@ export function createXAAStateMachine(
         throw new Error(
           "Authorization server response did not include an `access_token`."
         );
+      }
+
+      // In a negative-test mode the assertion was deliberately broken, so a
+      // token here means the server accepted something it should have rejected
+      // — the security risk the test probes for. Stop rather than using it.
+      if (state.negativeTestMode !== "valid") {
+        machine.updateState({
+          currentStep: "received_access_token",
+          accessToken: tokenResponse.access_token,
+          tokenType:
+            typeof tokenResponse.token_type === "string"
+              ? tokenResponse.token_type
+              : "Bearer",
+          expiresIn:
+            typeof tokenResponse.expires_in === "number"
+              ? tokenResponse.expires_in
+              : undefined,
+          error: undefined,
+          negativeProbe: { outcome: "accepted", status: upstreamStatus },
+        });
+        pushInfo(
+          "received_access_token",
+          "xaa-negative-accepted",
+          "Authorization server issued a token for a broken assertion",
+          { status: upstreamStatus, mode: state.negativeTestMode },
+          { level: "error" }
+        );
+        return;
       }
 
       machine.updateState({
@@ -1181,14 +1232,22 @@ export function createXAAStateMachine(
     const MAX_ADVANCES = XAA_RUN_ALL_MAX_ADVANCES;
     for (let i = 0; i < MAX_ADVANCES; i += 1) {
       const before = currentState();
-      if (before.currentStep === "complete" || before.error) {
+      if (
+        before.currentStep === "complete" ||
+        before.error ||
+        before.negativeProbe
+      ) {
         return;
       }
 
       await machine.proceedToNextStep();
 
       const after = currentState();
-      if (after.error || after.currentStep === "complete") {
+      if (
+        after.error ||
+        after.currentStep === "complete" ||
+        after.negativeProbe
+      ) {
         return;
       }
       if (after.currentStep === before.currentStep) {

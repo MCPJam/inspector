@@ -118,8 +118,10 @@ export function TestCaseListSidebar({
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
+  const selectedCaseIsProbe = selectedTestCase?.caseType === "widget_probe";
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
+    !selectedCaseIsProbe &&
     Boolean(selectedTestCase?.models?.length) &&
     Boolean(suite) &&
     Boolean(onRunTestCase) &&
@@ -209,15 +211,17 @@ export function TestCaseListSidebar({
                   ? "Add cases first"
                   : !selectedTestCase
                     ? "Select a case first"
-                    : !selectedTestCase.models?.length
-                      ? "Add a model first"
-                      : !hasConfiguredSuiteServers
-                        ? "Configure suite servers first"
-                        : missingServers.length > 0
-                          ? "Connect and run."
-                        : isRunningSelectedCase
-                          ? "Running..."
-                          : "Run selected case"}
+                    : selectedCaseIsProbe
+                      ? "Widget probes run with the full suite or on its schedule"
+                      : !selectedTestCase.models?.length
+                        ? "Add a model first"
+                        : !hasConfiguredSuiteServers
+                          ? "Configure suite servers first"
+                          : missingServers.length > 0
+                            ? "Connect and run."
+                            : isRunningSelectedCase
+                              ? "Running..."
+                              : "Run selected case"}
               </TooltipContent>
             </Tooltip>
           ) : null}

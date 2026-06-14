@@ -50,4 +50,13 @@ describe("XAA phase metadata", () => {
       }
     }
   });
+
+  it("expands the ID-JAG acronym on the received_id_jag step", () => {
+    const moments = XAA_STEP_METADATA.received_id_jag.teachableMoments ?? [];
+    expect(
+      moments.some((m) =>
+        m.includes("Identity Assertion JWT Authorization Grant")
+      )
+    ).toBe(true);
+  });
 });

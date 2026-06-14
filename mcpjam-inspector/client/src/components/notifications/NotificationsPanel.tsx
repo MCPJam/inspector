@@ -1,4 +1,4 @@
-import { Building2, FolderKanban, Inbox } from "lucide-react";
+import { ActivitySquare, Building2, FolderKanban, Inbox } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PopoverContent } from "@mcpjam/design-system/popover";
@@ -30,6 +30,9 @@ function getNotificationIcon(type: NotificationType) {
   if (type.startsWith("project")) {
     return <FolderKanban className="h-4 w-4" />;
   }
+  if (type.startsWith("scheduled_eval")) {
+    return <ActivitySquare className="h-4 w-4" />;
+  }
   return <Building2 className="h-4 w-4" />;
 }
 
@@ -46,6 +49,10 @@ function getNotificationMessage(notification: Notification): string {
       return `${actor} added you to organization "${entityName}"`;
     case "organization_removed":
       return `${actor} removed you from organization "${entityName}"`;
+    case "scheduled_eval_failed":
+      return `Scheduled run failed for suite "${entityName}"`;
+    case "scheduled_eval_paused":
+      return `Schedule paused for suite "${entityName}" after repeated failures`;
     default:
       return "You have a new notification";
   }

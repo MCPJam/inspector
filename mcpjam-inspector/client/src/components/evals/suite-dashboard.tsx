@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { cn } from "@/lib/utils";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
+import { MonitoringTab } from "./monitoring-tab";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 
 interface RunTrendPoint {
@@ -23,7 +25,7 @@ interface ModelStat {
   total: number;
 }
 
-type SuiteDashboardTab = "runs" | "cases";
+type SuiteDashboardTab = "runs" | "cases" | "monitoring";
 
 export interface SuiteDashboardProps {
   suite: EvalSuite;
@@ -87,6 +89,23 @@ export function SuiteDashboard({
   const [activeTab, setActiveTab] = useState<SuiteDashboardTab>(
     hasRuns ? "runs" : "cases"
   );
+  // Monitoring tab: synthetic-monitors flag AND the suite actually has
+  // monitoring signal (a schedule or at least one widget probe case).
+  const syntheticMonitorsEnabled =
+    useFeatureFlagEnabled("synthetic-monitors") === true;
+  const showMonitoringTab =
+    syntheticMonitorsEnabled &&
+    (Boolean(suite.schedule) ||
+      cases.some((testCase) => testCase.caseType === "widget_probe"));
+  // A stale "monitoring" selection (flag toggled off, schedule/probes
+  // removed) must not strand the tab strip with nothing highlighted —
+  // resolve it to the default tab for both highlighting and content.
+  const effectiveTab: SuiteDashboardTab =
+    activeTab === "monitoring" && !showMonitoringTab
+      ? hasRuns
+        ? "runs"
+        : "cases"
+      : activeTab;
 
   const testCasesSection = (
     <TestCasesOverview
@@ -133,7 +152,7 @@ export function SuiteDashboard({
     label: string,
     count?: number
   ) => {
-    const active = activeTab === next;
+    const active = effectiveTab === next;
     return (
       <button
         key={next}
@@ -176,9 +195,16 @@ export function SuiteDashboard({
       >
         {renderTab("runs", "Runs", runs.length)}
         {renderTab("cases", "Cases", cases.length)}
+        {showMonitoringTab ? renderTab("monitoring", "Monitoring") : null}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        {activeTab === "runs" ? runsSection : testCasesSection}
+        {effectiveTab === "runs" ? (
+          runsSection
+        ) : effectiveTab === "monitoring" ? (
+          <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
+        ) : (
+          testCasesSection
+        )}
       </div>
     </div>
   );

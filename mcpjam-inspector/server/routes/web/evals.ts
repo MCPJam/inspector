@@ -6,6 +6,7 @@ import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
+  callerContextFromHono,
   handleRoute,
   parseWithSchema,
   readJsonBody,
@@ -130,7 +131,7 @@ evals.post("/stream-test-case", async (c) => {
   const oauthTokens = body.oauthTokens;
 
   const { manager } = await createAuthorizedManager(
-    c,
+    callerContextFromHono(c),
     bearerToken,
     body.projectId,
     serverIds,
