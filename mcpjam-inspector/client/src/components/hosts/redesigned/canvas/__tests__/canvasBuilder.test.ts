@@ -124,7 +124,9 @@ describe("buildRedesignedHostCanvas", () => {
     const data = matrixData(
       buildVm({ draft: next, prev: { hostName: "Prev", draft: prev } }),
     );
-    const updated = data.appsCaps.find((c) => c.capKey === "updateModelContext");
+    const updated = data.appsCaps.find(
+      (c) => c.capKey === "updateModelContext",
+    );
     expect(updated?.on).toBe(true);
     expect(updated?.isNewlyOn).toBe(true);
   });
@@ -642,9 +644,7 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
     const draft = emptyHostConfigInputV2();
     draft.builtInToolIds = ["mystery_tool"];
     // No catalog passed (mirrors the loading state).
-    const tools = builtinData(
-      buildVm({ computersEnabled: true, draft }),
-    ).tools;
+    const tools = builtinData(buildVm({ computersEnabled: true, draft })).tools;
     expect(tools).toEqual([
       { id: "mystery_tool", label: "mystery_tool", requiresComputer: false },
     ]);
@@ -686,8 +686,9 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
     // Explicit null (resolved, no machine reserved) is preserved distinct
     // from undefined (still loading) so the renderer can tell them apart.
     expect(
-      computerData(buildVm({ computersEnabled: true, draft, computerStatus: null }))
-        .status,
+      computerData(
+        buildVm({ computersEnabled: true, draft, computerStatus: null }),
+      ).status,
     ).toBeNull();
     expect(
       computerData(buildVm({ computersEnabled: true, draft })).status,
@@ -706,13 +707,13 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
 });
 
 describe("focusTabForNodeId — Project Computers islands", () => {
-  it("routes both island ids to the Agent (Behavior) tab", () => {
+  it("routes each island id to its own dedicated tab", () => {
     expect(focusTabForNodeId(BUILTIN_TOOLS_NODE_ID)).toEqual({
-      tab: "behavior",
+      tab: "tools",
       selectedServerId: null,
     });
     expect(focusTabForNodeId(COMPUTER_NODE_ID)).toEqual({
-      tab: "behavior",
+      tab: "computer",
       selectedServerId: null,
     });
   });

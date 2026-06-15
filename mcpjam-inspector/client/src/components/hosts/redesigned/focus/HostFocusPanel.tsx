@@ -10,9 +10,15 @@ import type {
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
+import { ToolsTab } from "./ToolsTab";
+import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
+import {
+  activeHostFocusTab,
+  useVisibleHostFocusTabs,
+} from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import {
   hostFocusShellHeaderRowClass,
@@ -69,6 +75,12 @@ export function HostFocusPanel({
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
 
+  // Tools is GA; Computer is flag-gated (or shown when already attached).
+  const visibleTabs = useVisibleHostFocusTabs(draft);
+  // Guard against a tab being hidden out from under the user (e.g. detach +
+  // flag off while on Computer) — render the clamped tab everywhere.
+  const activeTab = activeHostFocusTab(tab, visibleTabs);
+
   return (
     <div className={hostFocusShellRootClass}>
       <HostIdentityRow
@@ -83,7 +95,11 @@ export function HostFocusPanel({
           "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <HostFocusTabBar tab={tab} onTabChange={onTabChange} />
+        <HostFocusTabBar
+          tab={activeTab}
+          onTabChange={onTabChange}
+          tabs={visibleTabs}
+        />
         <Button
           size="icon"
           variant="ghost"
@@ -97,17 +113,23 @@ export function HostFocusPanel({
       </header>
 
       <div className={hostFocusShellScrollClass}>
-        {tab === "behavior" ? (
+        {activeTab === "behavior" ? (
           <BehaviorTab
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}
           />
         ) : null}
-        {tab === "appearance" ? (
+        {activeTab === "tools" ? (
+          <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+        ) : null}
+        {activeTab === "computer" ? (
+          <ComputerTab draft={draft} onDraftChange={onDraftChange} />
+        ) : null}
+        {activeTab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
-        {tab === "protocol" ? (
+        {activeTab === "protocol" ? (
           <ProtocolTab
             key={hostId}
             draft={draft}
@@ -115,7 +137,7 @@ export function HostFocusPanel({
             attention={attention}
           />
         ) : null}
-        {tab === "apps" ? (
+        {activeTab === "apps" ? (
           <AppsExtensionTab
             key={hostId}
             draft={draft}

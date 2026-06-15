@@ -10,6 +10,8 @@ import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
  */
 export type HostFocusTabId =
   | "behavior"
+  | "tools"
+  | "computer"
   | "protocol"
   | "apps"
   | "servers"
@@ -521,22 +523,24 @@ export function focusTabForNodeId(nodeId: string): {
   if (nodeId === AGENT_IDENTITY_NODE_ID) {
     return { tab: "behavior", selectedServerId: null };
   }
-  if (nodeId === BUILTIN_TOOLS_NODE_ID || nodeId === COMPUTER_NODE_ID) {
-    // Both Project Computers islands route to the Agent (Behavior) tab —
-    // that's where the personal-computer toggle and the built-in tool
-    // checkboxes live. The islands only visualize that state; the panel
-    // owns it.
-    return { tab: "behavior", selectedServerId: null };
+  if (nodeId === BUILTIN_TOOLS_NODE_ID) {
+    // The Built-in tools island opens its own dedicated Tools tab (the
+    // built-in tool checkbox list). The island only visualizes that
+    // state; the tab owns editing it.
+    return { tab: "tools", selectedServerId: null };
+  }
+  if (nodeId === COMPUTER_NODE_ID) {
+    // The Computer island opens the dedicated Computer tab (the
+    // personal-computer attach/detach toggle). Flag-gated, same as the
+    // island itself.
+    return { tab: "computer", selectedServerId: null };
   }
   // hostContext is a protocol-leaf-shaped node but lives under the
   // apps hub, so route it to the apps tab.
   if (nodeId === protocolLeafNodeId("hostContext")) {
     return { tab: "apps", selectedServerId: null };
   }
-  if (
-    nodeId === PROTOCOL_HUB_NODE_ID ||
-    nodeId.startsWith("protocol-leaf:")
-  ) {
+  if (nodeId === PROTOCOL_HUB_NODE_ID || nodeId.startsWith("protocol-leaf:")) {
     return { tab: "protocol", selectedServerId: null };
   }
   if (
@@ -559,10 +563,7 @@ export function focusTabForNodeId(nodeId: string): {
       ...(focusSubKey ? { focusSubKey } : {}),
     };
   }
-  if (
-    nodeId === SERVERS_HUB_NODE_ID ||
-    nodeId.startsWith("server-card:")
-  ) {
+  if (nodeId === SERVERS_HUB_NODE_ID || nodeId.startsWith("server-card:")) {
     // Server-related canvas clicks intentionally do NOT open the focus
     // panel anymore. The per-host Servers tab was removed when project-
     // scoped server config shipped; the project Servers tab header now
