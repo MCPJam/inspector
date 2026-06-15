@@ -554,6 +554,12 @@ function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
 }
 
 export function MCPAppsRenderer(props: MCPAppsRendererProps) {
+  // Read directly (not via useWidgetHost) because this wrapper gates
+  // persistent-vs-ephemeral routing before MCPAppsRendererSurface mounts;
+  // routing it through the host hook here would widen this wrapper's
+  // subscription set. Centralizing is deferred to the relocation PR — this is a
+  // relative-import context, so it does not affect the Tier-B import guard. See
+  // use-widget-host.ts.
   const persistentHostEnabled = usePersistentWidgetSurfaceHost();
   const isCachedReplay =
     !!props.cachedWidgetHtmlUrl && !props.liveFetchPreferred;
