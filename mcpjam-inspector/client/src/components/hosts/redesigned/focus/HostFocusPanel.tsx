@@ -15,7 +15,10 @@ import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
-import { useVisibleHostFocusTabs } from "./host-focus-tab-defs";
+import {
+  activeHostFocusTab,
+  useVisibleHostFocusTabs,
+} from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import {
   hostFocusShellHeaderRowClass,
@@ -74,6 +77,9 @@ export function HostFocusPanel({
 
   // Tools is GA; Computer is flag-gated (or shown when already attached).
   const visibleTabs = useVisibleHostFocusTabs(draft);
+  // Guard against a tab being hidden out from under the user (e.g. detach +
+  // flag off while on Computer) — render the clamped tab everywhere.
+  const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
     <div className={hostFocusShellRootClass}>
@@ -90,7 +96,7 @@ export function HostFocusPanel({
         )}
       >
         <HostFocusTabBar
-          tab={tab}
+          tab={activeTab}
           onTabChange={onTabChange}
           tabs={visibleTabs}
         />
@@ -107,23 +113,23 @@ export function HostFocusPanel({
       </header>
 
       <div className={hostFocusShellScrollClass}>
-        {tab === "behavior" ? (
+        {activeTab === "behavior" ? (
           <BehaviorTab
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}
           />
         ) : null}
-        {tab === "tools" ? (
+        {activeTab === "tools" ? (
           <ToolsTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
-        {tab === "computer" ? (
+        {activeTab === "computer" ? (
           <ComputerTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
-        {tab === "appearance" ? (
+        {activeTab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
-        {tab === "protocol" ? (
+        {activeTab === "protocol" ? (
           <ProtocolTab
             key={hostId}
             draft={draft}
@@ -131,7 +137,7 @@ export function HostFocusPanel({
             attention={attention}
           />
         ) : null}
-        {tab === "apps" ? (
+        {activeTab === "apps" ? (
           <AppsExtensionTab
             key={hostId}
             draft={draft}

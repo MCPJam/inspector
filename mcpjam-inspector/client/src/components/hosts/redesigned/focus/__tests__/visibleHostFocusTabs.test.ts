@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { visibleHostFocusTabs } from "../host-focus-tab-defs";
+import {
+  activeHostFocusTab,
+  visibleHostFocusTabs,
+} from "../host-focus-tab-defs";
 
 const ids = (opts: Parameters<typeof visibleHostFocusTabs>[0]) =>
   visibleHostFocusTabs(opts).map((t) => t.id);
@@ -49,5 +52,30 @@ describe("visibleHostFocusTabs", () => {
       "tools",
       "computer",
     ]);
+  });
+});
+
+describe("activeHostFocusTab", () => {
+  const allTabs = visibleHostFocusTabs({
+    hasBuiltInTools: true,
+    computersEnabled: true,
+    computerAttached: false,
+  });
+  const noComputer = visibleHostFocusTabs({
+    hasBuiltInTools: true,
+    computersEnabled: false,
+    computerAttached: false,
+  });
+
+  it("keeps the requested tab when it is visible", () => {
+    expect(activeHostFocusTab("computer", allTabs)).toBe("computer");
+    expect(activeHostFocusTab("tools", allTabs)).toBe("tools");
+  });
+
+  it("falls back to the first visible tab when the requested one is hidden", () => {
+    // Computer detached + flag off → the Computer tab is gone; don't keep
+    // rendering it.
+    expect(noComputer.some((t) => t.id === "computer")).toBe(false);
+    expect(activeHostFocusTab("computer", noComputer)).toBe("behavior");
   });
 });

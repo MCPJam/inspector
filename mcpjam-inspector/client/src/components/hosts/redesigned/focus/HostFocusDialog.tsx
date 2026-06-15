@@ -23,7 +23,10 @@ import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
-import { useVisibleHostFocusTabs } from "./host-focus-tab-defs";
+import {
+  activeHostFocusTab,
+  useVisibleHostFocusTabs,
+} from "./host-focus-tab-defs";
 import {
   hostFocusShellDialogChromeClass,
   hostFocusShellHeaderRowClass,
@@ -94,6 +97,9 @@ export function HostFocusDialog({
 
   // Tools is GA; Computer is flag-gated (or shown when already attached).
   const visibleTabs = useVisibleHostFocusTabs(draft);
+  // Clamp to a visible tab so a hidden tab (e.g. detach + flag off on Computer)
+  // can't keep rendering or desync the tab bar.
+  const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   // Click-out / Esc / X all route through this confirm path when the
   // draft is dirty. Without it, the user could lose unsaved work to a
@@ -243,27 +249,27 @@ export function HostFocusDialog({
             )}
           >
             <HostFocusTabBar
-              tab={tab}
+              tab={activeTab}
               onTabChange={onTabChange}
               tabs={visibleTabs}
             />
           </div>
 
           <div className={cn(hostFocusShellScrollClass, "px-6 py-5")}>
-            {tab === "behavior" ? (
+            {activeTab === "behavior" ? (
               <BehaviorTab
                 draft={draft}
                 onDraftChange={onDraftChange}
                 attention={attention}
               />
             ) : null}
-            {tab === "tools" ? (
+            {activeTab === "tools" ? (
               <ToolsTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}
-            {tab === "computer" ? (
+            {activeTab === "computer" ? (
               <ComputerTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}
-            {tab === "protocol" ? (
+            {activeTab === "protocol" ? (
               <ProtocolTab
                 key={hostId}
                 draft={draft}
@@ -271,7 +277,7 @@ export function HostFocusDialog({
                 attention={attention}
               />
             ) : null}
-            {tab === "apps" ? (
+            {activeTab === "apps" ? (
               <AppsExtensionTab
                 key={hostId}
                 draft={draft}
@@ -282,7 +288,7 @@ export function HostFocusDialog({
             {/* Servers tab moved to Project Settings → Servers. Legacy
                 state may still report `tab === "servers"`; we render
                 nothing and the tab bar no longer surfaces the entry. */}
-            {tab === "appearance" ? (
+            {activeTab === "appearance" ? (
               <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}
           </div>

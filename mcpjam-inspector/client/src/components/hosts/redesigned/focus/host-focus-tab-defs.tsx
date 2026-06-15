@@ -49,6 +49,23 @@ export function visibleHostFocusTabs(opts: {
 }
 
 /**
+ * Clamp the requested tab to one that is actually visible. A tab can be hidden
+ * out from under the user — e.g. detaching the computer with the flag off while
+ * the Computer tab is open, or the catalog emptying while on Tools. Without
+ * clamping, the stored `tab` would keep rendering the now-hidden tab's content
+ * (letting the user re-attach from a tab the bar no longer shows) and desync
+ * the tab-bar highlight. Falls back to the first visible tab (always present;
+ * the static Agent/Protocol/Apps tabs are never filtered).
+ */
+export function activeHostFocusTab(
+  tab: HostFocusTabId,
+  visibleTabs: ReadonlyArray<HostFocusTabDef>,
+): HostFocusTabId {
+  if (visibleTabs.some((t) => t.id === tab)) return tab;
+  return visibleTabs[0]?.id ?? "behavior";
+}
+
+/**
  * Hook wrapper around `visibleHostFocusTabs` for the focus surfaces
  * (HostFocusPanel / HostFocusDialog) so the Tools/Computer gating lives in
  * one place. Subscribes to the same catalog + flag the Tools/Computer tab
