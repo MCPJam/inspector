@@ -151,6 +151,7 @@ export function PaymentsHistorySection({
     entries: invoices,
     upcoming,
     isLoading: invoicesLoading,
+    error: invoicesError,
   } = useInvoiceHistory(canViewInvoices ? organizationId : null);
   const posthog = usePostHog();
   const viewedRef = useRef(false);
@@ -205,10 +206,12 @@ export function PaymentsHistorySection({
     <Card className="border-border/60 py-6 shadow-sm">
       <CardContent className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Payment history</h2>
+          <h2 className="text-lg font-semibold">Recent charges</h2>
         </div>
         {isLoading ? (
           <LoadingRows />
+        ) : invoicesError ? (
+          <FailedState />
         ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
@@ -613,6 +616,19 @@ function EmptyState() {
       data-testid="payments-history-empty"
     >
       <p className="text-sm text-muted-foreground">No payments yet.</p>
+    </div>
+  );
+}
+
+function FailedState() {
+  return (
+    <div
+      className="flex flex-col items-center rounded-md border border-dashed border-border/60 py-8 text-center"
+      data-testid="payments-history-error"
+    >
+      <p className="text-sm text-muted-foreground">
+        Couldn&apos;t load recent charges.
+      </p>
     </div>
   );
 }

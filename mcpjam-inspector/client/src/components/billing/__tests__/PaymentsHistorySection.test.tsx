@@ -97,6 +97,29 @@ describe("PaymentsHistorySection", () => {
       expect(empty).toHaveTextContent(/No payments yet/);
       expect(within(empty).queryByRole("button")).not.toBeInTheDocument();
     });
+
+    it("renders a failed-load state instead of the empty state when invoices fail", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [],
+        upcoming: null,
+        isLoading: false,
+        error: "Stripe unavailable",
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getByTestId("payments-history-error")).toHaveTextContent(
+        /Couldn't load recent charges/
+      );
+      expect(
+        screen.queryByTestId("payments-history-empty")
+      ).not.toBeInTheDocument();
+    });
   });
 
   describe("populated table", () => {
