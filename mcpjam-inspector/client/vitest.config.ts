@@ -20,6 +20,13 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+// Tier B Phase 2: @mcpjam/sdk/widget-runtime advertises ./dist via package
+// exports; alias it to source so inspector vitest resolves it without a prior
+// `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
+);
 // Resolve @mcpjam/chat-ui from source (its published exports point at dist,
 // which a clean checkout hasn't built). Mirrors the SDK source aliases above.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
@@ -117,6 +124,10 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: sdkWidgetRuntimeEntry,
+      },
       {
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,

@@ -21,6 +21,13 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+// Tier B Phase 2: @mcpjam/sdk/widget-runtime resolves to dist via package
+// exports; alias it to source so dev:client / build:client resolve it without a
+// prior `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
+);
 // @mcpjam/chat-ui publishes from dist, but a clean checkout has no
 // chat-ui/dist until it is built. Resolve the package from source so the
 // inspector's dev/build/typecheck/test never depend on a chat-ui build.
@@ -81,6 +88,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
+        "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
         "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
