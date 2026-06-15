@@ -32,22 +32,12 @@ import {
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
-import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
-import { useWidgetSurface } from "@/contexts/widget-surface-context";
 import {
   resolveSandboxCsp,
   resolveSandboxPermissions,
 } from "@mcpjam/sdk/browser";
-import {
-  useTrafficLogStore,
-  extractMethod,
-  UiProtocol,
-} from "@/stores/traffic-log-store";
-import {
-  useWidgetDebugStore,
-  type WidgetLifecycleEvent,
-} from "@/stores/widget-debug-store";
+import { extractMethod, UiProtocol } from "@/stores/traffic-log-store";
+import type { WidgetLifecycleEvent } from "@/stores/widget-debug-store";
 import {
   AppBridge,
   PostMessageTransport,
@@ -69,15 +59,12 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
-import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import {
   useAppToolsRegistry,
   type AppToolDescriptor,
 } from "./app-tools-registry";
 import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
-import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
-import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import type { AppToolInvocationUpdate } from "../app-tool-invocations";
 import {
   useChatboxHostStyle,
@@ -101,6 +88,7 @@ import {
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
 import { useWidgetSurfaceStore } from "./widget-surface-store";
+import { useWidgetHost } from "./use-widget-host";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -624,6 +612,8 @@ export function MCPAppsRendererSurface({
   persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
+  // Inspector adapter for the WidgetHost contract (services + surface + debug).
+  const host = useWidgetHost();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -700,50 +690,33 @@ export function MCPAppsRendererSurface({
   const resolvedTheme = isPlaygroundActive
     ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
     : chatboxHostTheme ?? themeMode;
-  const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
-  // Chatbox surfaces (published runtime, Chatboxes → Preview, Chatboxes →
-  // Sessions transcript) default to `permissive`. They are end-user-facing
-  // demo surfaces where an incomplete `_meta.ui.csp` declaration on the MCP
-  // server would manifest as a blank widget; the friction outweighs the
-  // loss of host-side CSP enforcement. Hosts that need strict enforcement
-  // can still pin it via the host config's `apps.sandbox.csp` policy,
-  // applied per-resource below by `resolveSandboxCsp` regardless of this
-  // default.
-  //
-  // Why isChatboxSurface wins over isPlaygroundActive: the Playground store
-  // is persisted to localStorage and shared across browsing contexts on the
-  // same origin, including the chatbox runtime iframe rendered inside the
-  // Preview tab. If the user has Playground active in the inspector with
-  // `mcpAppsCspMode: "widget-declared"`, that selection would otherwise
-  // leak into the chatbox preview iframe and render the published runtime
-  // under strict CSP — surprising and inconsistent with the published
-  // chatbox runtime when opened in a top-level window.
-  const isChatboxSurface = useIsChatboxSurface();
   // Redeemed chatbox sessions resolve servers via Convex on every
   // platform; widget-content fetches and bridge resource/prompt calls
   // must take the hosted API branch even on local builds. Mirrored into
   // a ref because the bridge handlers close over long-lived callbacks.
-  const webManagedServers = useWebManagedServers();
+  const webManagedServers = host.surface.webManagedServers;
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
-  // Surface-derived cspMode: read from the WidgetSurfaceContext set by
-  // PlaygroundMain, NOT from `isPlaygroundActive` in the store. The
-  // store flag was set in a passive `useEffect`, so descendants
-  // observed `false` on the first render and resolved cspMode to
-  // "widget-declared"; the effect then flipped it to true, cspMode
-  // flipped to playgroundCspMode, the fetch-source key changed, and
-  // the iframe was torn down and rebuilt — losing View state. Context
-  // propagates synchronously on first render, so cspMode is stable
-  // from mount #1. Other readers of `isPlaygroundActive` below keep
-  // the store source — those don't gate the iframe-creation-time
-  // policy, so the same race is benign for them.
-  const widgetSurface = useWidgetSurface();
+  // CSP mode is derived from the surface kind + minimalMode + the playground's
+  // selected mode (see WidgetHost). Chatbox surfaces (published runtime,
+  // Preview, Sessions transcript) and minimal mode default to `permissive` —
+  // end-user-facing demo surfaces where an incomplete `_meta.ui.csp`
+  // declaration would render a blank widget; the playground uses its selected
+  // `mcpAppsCspMode`; everything else is `widget-declared`. Hosts that need
+  // strict enforcement still pin it via the host config's `apps.sandbox.csp`
+  // policy, applied per-resource below by `resolveSandboxCsp` regardless of
+  // this default.
+  //
+  // `surface.kind` is sourced from the WidgetSurfaceContext (NOT
+  // `isPlaygroundActive`), so it is stable from the first render — the
+  // iframe-creation-time policy does not flip and tear down/rebuild the iframe
+  // (and "chatbox" wins over "playground", as before).
   const cspMode: CspMode =
-    isChatboxSurface || minimalMode
+    host.surface.kind === "chatbox" || minimalMode
       ? "permissive"
-      : widgetSurface === "playground"
-      ? playgroundCspMode
-      : "widget-declared";
+      : host.surface.kind === "playground"
+        ? host.surface.playgroundCspMode
+        : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -1361,7 +1334,7 @@ export function MCPAppsRendererSurface({
   // the other widget-debug-store bindings live further down because they
   // only fire from async callbacks, but `recordMountStore` is called
   // synchronously inside the effect body, so it has to be in scope here.
-  const recordMountStore = useWidgetDebugStore((s) => s.recordMount);
+  const recordMountStore = host.debug.recordMount;
 
   // SEP-1865 MCP Apps spec-bridge matrix ref. Populated further down
   // in the render (after `effectiveHostStyle` / `activeMcpProfile`
@@ -1525,7 +1498,7 @@ export function MCPAppsRendererSurface({
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
-      } = await fetchMcpAppsWidgetContent({
+      } = await host.services.fetchWidgetContent({
         serverId,
         forceWebEndpoint: webManagedServersRef.current,
         resourceUri,
@@ -1743,7 +1716,7 @@ export function MCPAppsRendererSurface({
   ]);
 
   // UI logging
-  const addUiLog = useTrafficLogStore((s) => s.addLog);
+  const addUiLog = host.debug.addTrafficLog;
   const logUiEvent = useCallback(
     (payload: Parameters<typeof addUiLog>[0]) => {
       if (minimalMode) return;
@@ -1882,20 +1855,16 @@ export function MCPAppsRendererSurface({
   );
 
   // Widget debug store
-  const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
-  const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
-  const setWidgetStateStore = useWidgetDebugStore((s) => s.setWidgetState);
-  const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
-  const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
-  const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
-  const setWidgetModelContext = useWidgetDebugStore(
-    (s) => s.setWidgetModelContext
-  );
-  const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
-  const setSandboxAppliedStore = useWidgetDebugStore(
-    (s) => s.setSandboxApplied
-  );
-  const appendLifecycleStore = useWidgetDebugStore((s) => s.appendLifecycle);
+  const setWidgetDebugInfo = host.debug.setWidgetDebugInfo;
+  const setWidgetGlobals = host.debug.setWidgetGlobals;
+  const setWidgetStateStore = host.debug.setWidgetState;
+  const setWidgetCspStore = host.debug.setWidgetCsp;
+  const addCspViolation = host.debug.addCspViolation;
+  const clearCspViolations = host.debug.clearCspViolations;
+  const setWidgetModelContext = host.debug.setWidgetModelContext;
+  const setWidgetHtmlStore = host.debug.setWidgetHtml;
+  const setSandboxAppliedStore = host.debug.setSandboxApplied;
+  const appendLifecycleStore = host.debug.appendLifecycle;
   // Ref-route the lifecycle setter so logWidgetDebug stays stable-identity
   // without listing the store setter in its deps (matches the logUiEvent
   // pattern above).
@@ -2440,7 +2409,7 @@ export function MCPAppsRendererSurface({
     const userTogglePermissive =
       cspMode === "permissive" &&
       isPlaygroundActive &&
-      !isChatboxSurface &&
+      host.surface.kind !== "chatbox" &&
       !minimalMode;
     if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
@@ -2640,7 +2609,7 @@ export function MCPAppsRendererSurface({
   }, [
     cspMode,
     isPlaygroundActive,
-    isChatboxSurface,
+    host.surface.kind,
     minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
@@ -2846,13 +2815,17 @@ export function MCPAppsRendererSurface({
             onAppToolInvocationChangeRef.current?.(update);
           },
           onReadResource: async (uri) => {
-            const result = await readResource(serverIdRef.current, uri, {
-              forceHosted: webManagedServersRef.current,
-            });
+            const result = await host.services.readResource(
+              serverIdRef.current,
+              uri,
+              {
+                forceHosted: webManagedServersRef.current,
+              },
+            );
             return result.content;
           },
           onListResources: async (params) => {
-            return listResources(
+            return host.services.listResources(
               serverIdRef.current,
               (params as { cursor?: string } | undefined)?.cursor,
               { forceHosted: webManagedServersRef.current },
@@ -2882,9 +2855,12 @@ export function MCPAppsRendererSurface({
             return response.json();
           },
           onListPrompts: async () => {
-            const prompts = await listPrompts(serverIdRef.current, {
-              forceHosted: webManagedServersRef.current,
-            });
+            const prompts = await host.services.listPrompts(
+              serverIdRef.current,
+              {
+                forceHosted: webManagedServersRef.current,
+              },
+            );
             return { prompts };
           },
           onLoggingMessage: ({ level, data, logger }) => {
