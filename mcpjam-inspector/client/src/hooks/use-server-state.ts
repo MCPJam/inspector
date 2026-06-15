@@ -35,6 +35,10 @@ import {
   isElectronMcpCallbackState,
   readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
+import {
+  importHostedOAuthTokens,
+  normalizeImportHostedOAuthTokens,
+} from "@/lib/apis/hosted-oauth-import-tokens-api";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   clearHostedOAuthPendingState,
@@ -2785,6 +2789,46 @@ export function useServerState({
 
       if (!HOSTED_MODE) {
         localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      }
+
+      if (!HOSTED_MODE) {
+        const resolved = tryResolveProjectServer(serverName);
+        const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
+        if (resolved && normalizedTokens) {
+          if (!tokens.clientId) {
+            return {
+              success: false,
+              error:
+                "OAuth client information missing client_id; cannot import tokens to Convex",
+            };
+          }
+          const storedOAuthConfig = readStoredOAuthConfig(serverName);
+          const isRegistry =
+            !!storedOAuthConfig.registryServerId &&
+            storedOAuthConfig.useRegistryOAuthProxy === true;
+          await importHostedOAuthTokens({
+            projectId: resolved.projectId,
+            serverId: resolved.serverId,
+            serverUrl,
+            ...(storedOAuthConfig.resourceUrl
+              ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+              : {}),
+            kind: isRegistry ? "registry" : "generic",
+            ...(isRegistry
+              ? {
+                  registryServerId: storedOAuthConfig.registryServerId,
+                  useRegistryOAuthProxy: true,
+                }
+              : {}),
+            clientInformation: {
+              clientId: tokens.clientId,
+              ...(tokens.clientSecret
+                ? { clientSecret: tokens.clientSecret }
+                : {}),
+            },
+            tokens: normalizedTokens,
+          });
+        }
       }
 
       const serverConfig = {
