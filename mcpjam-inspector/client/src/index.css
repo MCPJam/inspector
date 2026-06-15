@@ -4,6 +4,12 @@
 
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../../design-system/src/**/*.tsx";
+/* @mcpjam/chat-ui is aliased to source (outside client/src), so Tailwind must
+   scan it to emit the transcript's utility classes. Includes .ts because
+   thread-helpers.ts carries className strings (tool-state icon styles). The
+   read-only transcript relies on the inspector's existing global shadcn tokens
+   for color values, so no package stylesheet import is needed here. */
+@source "../../../chat-ui/src/**/*.{ts,tsx}";
 
 @layer base {
   * {
@@ -680,6 +686,71 @@
     animation: none;
     background: none;
     -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* Claude Code CLI spinner — the braille "working" cycle (⠋⠙⠹…) ora and
+   most terminal tools use. Claude Code borrows Claude's chat surface but
+   is a terminal agent, so its busy state is a monospace spinner, not the
+   claude.ai mascot. Colored MCPJam orange via `text-primary` on the
+   element (see the component); the glyph uses `currentColor` so it inherits
+   that. `::before` content is a discrete (non-interpolated) property, so
+   each keyframe snaps to its frame; an engine without content animation
+   simply shows the static base glyph. */
+.claude-code-cli-indicator {
+  display: inline-flex;
+  align-items: center;
+}
+
+.claude-code-cli-indicator__spinner::before {
+  content: "⠋";
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+  animation: claude-code-cli-spinner 1s linear infinite;
+}
+
+.claude-code-cli-indicator__label {
+  margin-left: 0.45em;
+}
+
+@keyframes claude-code-cli-spinner {
+  0% {
+    content: "⠋";
+  }
+  10% {
+    content: "⠙";
+  }
+  20% {
+    content: "⠹";
+  }
+  30% {
+    content: "⠸";
+  }
+  40% {
+    content: "⠼";
+  }
+  50% {
+    content: "⠴";
+  }
+  60% {
+    content: "⠦";
+  }
+  70% {
+    content: "⠧";
+  }
+  80% {
+    content: "⠇";
+  }
+  90% {
+    content: "⠏";
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-code-cli-indicator__spinner::before {
+    content: "⠿";
+    animation: none;
   }
 }
 

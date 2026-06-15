@@ -27,6 +27,12 @@ export interface IssueIdJagParams {
   resource: string;
   clientId: string;
   scope?: string;
+  /**
+   * End-user email. The spec RECOMMENDS the ID-JAG carry an `email` (and/or
+   * `aud_sub`) claim so the Resource Authorization Server can resolve/provision
+   * the subject. Optional — omitted from the payload when absent.
+   */
+  email?: string;
 }
 
 export interface IssueMockIdTokenParams {
@@ -71,6 +77,7 @@ function createValidIdJagPayload(
     iat: now,
     exp: now + ID_JAG_TTL_S,
     ...(params.scope ? { scope: params.scope } : {}),
+    ...(params.email ? { email: params.email } : {}),
   };
 }
 

@@ -155,7 +155,10 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   input: TInput,
   transformPayload?: (payload: TOutput) => object
 ) {
-  const token = agent.bearerToken;
+  // Resolve the bearer: the verified token for an authed session, or a
+  // lazily-minted guest token for an anonymous one. Minting happens here (on
+  // first tool execution), never at connect/list_tools.
+  const token = await agent.getBearerToken();
   if (!token) {
     return toolError("No bearer token on the request.");
   }

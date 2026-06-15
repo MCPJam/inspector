@@ -19,35 +19,16 @@ import {
   type CSSProperties,
 } from "react";
 import { useToolInputStreaming, type ToolState } from "./useToolInputStreaming";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  useUIPlaygroundStore,
-  type CspMode,
-} from "@/stores/ui-playground-store";
 import { ExternalLink, Loader2, X } from "lucide-react";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
-import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
-import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
-import { useWidgetSurface } from "@/contexts/widget-surface-context";
 import {
   resolveSandboxCsp,
   resolveSandboxPermissions,
 } from "@mcpjam/sdk/browser";
-import {
-  useTrafficLogStore,
-  extractMethod,
-  UiProtocol,
-} from "@/stores/traffic-log-store";
-import {
-  useWidgetDebugStore,
-  type WidgetLifecycleEvent,
-} from "@/stores/widget-debug-store";
 import {
   AppBridge,
   PostMessageTransport,
@@ -59,8 +40,6 @@ import type {
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/client";
-import { DEFAULT_HOST_STYLE, getHostStyleOrDefault } from "@/lib/client-styles";
-import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 import { registerHostBridgeHandlers } from "./host-app-bridge";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -69,38 +48,32 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
-import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import {
   useAppToolsRegistry,
   type AppToolDescriptor,
 } from "./app-tools-registry";
 import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
-import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
-import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import type { AppToolInvocationUpdate } from "../app-tool-invocations";
-import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
-import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-client-capabilities-override-context";
-import { useHostContextStore } from "@/stores/client-context-store";
-import {
-  clampDisplayModeToAvailableModes,
-  extractHostDisplayMode,
-  extractHostDisplayModes,
-  extractHostTheme,
-  stableStringifyJson,
-} from "@/lib/client-config";
-import {
-  resolveEffectiveCompatRuntime,
-  resolveEffectiveHostCapabilities,
-  resolveEffectiveMcpAppsCapabilities,
-  resolveHostInfo,
-} from "@/lib/client-config-v2";
-import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
 import { useWidgetSurfaceStore } from "./widget-surface-store";
+import { useWidgetHost } from "./use-widget-host";
+// Tier-B boundary: the renderer reads its ambient ENV inputs + resolver fns
+// through `useWidgetHost()` (see ./widget-host.ts). The type-only symbols and
+// the traffic-log `extractMethod`/`UiProtocol` it still needs are re-exported
+// from the host boundary so the renderer imports zero `@/stores`/`@/contexts`/
+// `@/lib/client-*` modules (enforced by check-renderer-tier-b-imports.mjs).
+import {
+  extractMethod,
+  stableStringifyJson,
+  type UiProtocol,
+  type CspMode,
+  type DisplayMode,
+  type OpenAiAppsCapabilities,
+  type ResolvedMcpAppsCapabilities,
+  type WidgetLifecycleEvent,
+  type WidgetHostResolvers,
+} from "./widget-host";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -195,7 +168,6 @@ const MCPJAM_HOSTED_CLAMP_ORIGINS: ReadonlyArray<string> = [
   "https://mcpjam.com",
 ];
 
-type DisplayMode = "inline" | "pip" | "fullscreen";
 type HostStyleVariables = NonNullable<
   NonNullable<McpUiHostContext["styles"]>["variables"]
 >;
@@ -205,13 +177,29 @@ type HostStyleVariables = NonNullable<
 // legitimate built-in's key set is exactly the SEP enum; pinning the allowlist
 // to it both honors the protocol and strips any extra keys a runtime-registered
 // host might smuggle in via `as any`, which the SDK would reject downstream.
-const SEP_HOST_STYLE_VARIABLE_KEYS: ReadonlySet<string> = new Set([
-  ...Object.keys(DEFAULT_HOST_STYLE.mcp.resolveStyleVariables("light")),
-  ...Object.keys(DEFAULT_HOST_STYLE.mcp.resolveStyleVariables("dark")),
-]);
+//
+// The key set derives from `DEFAULT_HOST_STYLE`, now sourced through the
+// WidgetHost boundary (a hook value) rather than a module import. It's
+// deterministic for a given `DEFAULT_HOST_STYLE`, so compute it once lazily and
+// cache it per definition — preserving the old module-constant semantics while
+// keeping the renderer free of `@/lib/client-styles`.
+const sepHostStyleVariableKeysCache = new WeakMap<object, ReadonlySet<string>>();
+function getSepHostStyleVariableKeys(
+  defaultHostStyle: WidgetHostResolvers["DEFAULT_HOST_STYLE"]
+): ReadonlySet<string> {
+  const cached = sepHostStyleVariableKeysCache.get(defaultHostStyle);
+  if (cached) return cached;
+  const keys: ReadonlySet<string> = new Set([
+    ...Object.keys(defaultHostStyle.mcp.resolveStyleVariables("light")),
+    ...Object.keys(defaultHostStyle.mcp.resolveStyleVariables("dark")),
+  ]);
+  sepHostStyleVariableKeysCache.set(defaultHostStyle, keys);
+  return keys;
+}
 
 function sanitizeHostStyleVariables(
-  variables: unknown
+  variables: unknown,
+  sepHostStyleVariableKeys: ReadonlySet<string>
 ): HostStyleVariables | undefined {
   if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
     return undefined;
@@ -219,7 +207,7 @@ function sanitizeHostStyleVariables(
 
   const sanitized: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(variables)) {
-    if (!SEP_HOST_STYLE_VARIABLE_KEYS.has(key)) {
+    if (!sepHostStyleVariableKeys.has(key)) {
       continue;
     }
     if (typeof value === "string" || value === undefined) {
@@ -567,6 +555,12 @@ function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
 }
 
 export function MCPAppsRenderer(props: MCPAppsRendererProps) {
+  // Read directly (not via useWidgetHost) because this wrapper gates
+  // persistent-vs-ephemeral routing before MCPAppsRendererSurface mounts;
+  // routing it through the host hook here would widen this wrapper's
+  // subscription set. Centralizing is deferred to the relocation PR — this is a
+  // relative-import context, so it does not affect the Tier-B import guard. See
+  // use-widget-host.ts.
   const persistentHostEnabled = usePersistentWidgetSurfaceHost();
   const isCachedReplay =
     !!props.cachedWidgetHtmlUrl && !props.liveFetchPreferred;
@@ -624,21 +618,26 @@ export function MCPAppsRendererSurface({
   persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
-  const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  // Inspector adapter for the WidgetHost contract (environment + resolvers +
+  // services + surface + debug). The renderer's ambient ENV reads and resolver
+  // imports are routed through this boundary; all derivation below is unchanged.
+  const host = useWidgetHost();
+  const { environment, resolvers } = host;
+  const themeMode = environment.themeMode;
+  const sharedHostStyle = environment.sharedHostStyle;
+  const chatboxHostStyle = environment.chatboxHostStyle;
+  const chatboxHostTheme = environment.chatboxHostTheme;
+  const hostCapabilitiesOverride = environment.hostCapabilitiesOverride;
   // Active hostConfig.mcpProfile from the surrounding scope (chatbox
   // session, project default, eval suite). Drives the resolver below
   // when set; undefined preserves widget-derived sandbox behavior.
-  const activeMcpProfile = useActiveMcpProfile();
+  const activeMcpProfile = environment.activeMcpProfile;
   const activeMcpProfileKey = useMemo(
-    () => stableStringifyJson(activeMcpProfile ?? null),
+    () => resolvers.stableStringifyJson(activeMcpProfile ?? null),
     [activeMcpProfile]
   );
   const hostCapabilitiesOverrideKey = useMemo(
-    () => stableStringifyJson(hostCapabilitiesOverride ?? null),
+    () => resolvers.stableStringifyJson(hostCapabilitiesOverride ?? null),
     [hostCapabilitiesOverride]
   );
   // Resolved compat-runtime flag for the active host. Claude/Cursor/
@@ -649,7 +648,7 @@ export function MCPAppsRendererSurface({
   // of silently reusing the old HTML.
   const liveEffectiveCompatRuntime = useMemo(
     () =>
-      resolveEffectiveCompatRuntime({
+      resolvers.resolveEffectiveCompatRuntime({
         profile: activeMcpProfile,
         hostStyle: chatboxHostStyle ?? sharedHostStyle,
       }),
@@ -683,7 +682,7 @@ export function MCPAppsRendererSurface({
     isCachedReplay && typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
       : liveInjectOpenAiCompat;
-  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
+  const draftHostContext = environment.draftHostContext;
   const baseHostContext = useMemo(
     () =>
       draftHostContext &&
@@ -695,59 +694,42 @@ export function MCPAppsRendererSurface({
   );
 
   // Get CSP mode and host style from playground store when in playground
-  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const configuredHostTheme = extractHostTheme(baseHostContext);
+  const isPlaygroundActive = environment.isPlaygroundActive;
+  const configuredHostTheme = resolvers.extractHostTheme(baseHostContext);
   const resolvedTheme = isPlaygroundActive
     ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
     : chatboxHostTheme ?? themeMode;
-  const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
-  // Chatbox surfaces (published runtime, Chatboxes → Preview, Chatboxes →
-  // Sessions transcript) default to `permissive`. They are end-user-facing
-  // demo surfaces where an incomplete `_meta.ui.csp` declaration on the MCP
-  // server would manifest as a blank widget; the friction outweighs the
-  // loss of host-side CSP enforcement. Hosts that need strict enforcement
-  // can still pin it via the host config's `apps.sandbox.csp` policy,
-  // applied per-resource below by `resolveSandboxCsp` regardless of this
-  // default.
-  //
-  // Why isChatboxSurface wins over isPlaygroundActive: the Playground store
-  // is persisted to localStorage and shared across browsing contexts on the
-  // same origin, including the chatbox runtime iframe rendered inside the
-  // Preview tab. If the user has Playground active in the inspector with
-  // `mcpAppsCspMode: "widget-declared"`, that selection would otherwise
-  // leak into the chatbox preview iframe and render the published runtime
-  // under strict CSP — surprising and inconsistent with the published
-  // chatbox runtime when opened in a top-level window.
-  const isChatboxSurface = useIsChatboxSurface();
   // Redeemed chatbox sessions resolve servers via Convex on every
   // platform; widget-content fetches and bridge resource/prompt calls
   // must take the hosted API branch even on local builds. Mirrored into
   // a ref because the bridge handlers close over long-lived callbacks.
-  const webManagedServers = useWebManagedServers();
+  const webManagedServers = host.surface.webManagedServers;
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
-  // Surface-derived cspMode: read from the WidgetSurfaceContext set by
-  // PlaygroundMain, NOT from `isPlaygroundActive` in the store. The
-  // store flag was set in a passive `useEffect`, so descendants
-  // observed `false` on the first render and resolved cspMode to
-  // "widget-declared"; the effect then flipped it to true, cspMode
-  // flipped to playgroundCspMode, the fetch-source key changed, and
-  // the iframe was torn down and rebuilt — losing View state. Context
-  // propagates synchronously on first render, so cspMode is stable
-  // from mount #1. Other readers of `isPlaygroundActive` below keep
-  // the store source — those don't gate the iframe-creation-time
-  // policy, so the same race is benign for them.
-  const widgetSurface = useWidgetSurface();
+  // CSP mode is derived from the surface kind + minimalMode + the playground's
+  // selected mode (see WidgetHost). Chatbox surfaces (published runtime,
+  // Preview, Sessions transcript) and minimal mode default to `permissive` —
+  // end-user-facing demo surfaces where an incomplete `_meta.ui.csp`
+  // declaration would render a blank widget; the playground uses its selected
+  // `mcpAppsCspMode`; everything else is `widget-declared`. Hosts that need
+  // strict enforcement still pin it via the host config's `apps.sandbox.csp`
+  // policy, applied per-resource below by `resolveSandboxCsp` regardless of
+  // this default.
+  //
+  // `surface.kind` is sourced from the WidgetSurfaceContext (NOT
+  // `isPlaygroundActive`), so it is stable from the first render — the
+  // iframe-creation-time policy does not flip and tear down/rebuild the iframe
+  // (and "chatbox" wins over "playground", as before).
   const cspMode: CspMode =
-    isChatboxSurface || minimalMode
+    host.surface.kind === "chatbox" || minimalMode
       ? "permissive"
-      : widgetSurface === "playground"
-      ? playgroundCspMode
-      : "widget-declared";
+      : host.surface.kind === "playground"
+        ? host.surface.playgroundCspMode
+        : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
-  const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
-  const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
+  const playgroundLocale = environment.playgroundLocale;
+  const playgroundTimeZone = environment.playgroundTimeZone;
   const fallbackLocale = isPlaygroundActive
     ? playgroundLocale
     : navigator.language || "en-US";
@@ -764,13 +746,13 @@ export function MCPAppsRendererSurface({
       : fallbackTimeZone;
 
   // Get displayMode from playground store when active (SEP-1865)
-  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const playgroundDisplayMode = environment.playgroundDisplayMode;
   const configuredDisplayMode = useMemo(
-    () => extractHostDisplayMode(draftHostContext),
+    () => resolvers.extractHostDisplayMode(draftHostContext),
     [draftHostContext]
   );
   const configuredAvailableDisplayModes = useMemo(
-    () => extractHostDisplayModes(draftHostContext),
+    () => resolvers.extractHostDisplayModes(draftHostContext),
     [draftHostContext]
   );
   // Resolve `effectiveHostStyle` early (it's a 3-way ternary on values
@@ -794,7 +776,7 @@ export function MCPAppsRendererSurface({
     : chatboxHostStyle;
   const earlyEffectiveMcpAppsCapabilities = useMemo(
     () =>
-      resolveEffectiveMcpAppsCapabilities({
+      resolvers.resolveEffectiveMcpAppsCapabilities({
         profile: activeMcpProfile,
         hostStyle: earlyEffectiveHostStyle,
       }),
@@ -883,7 +865,7 @@ export function MCPAppsRendererSurface({
   }, [effectiveAvailableDisplayModes, appSupportedDisplayModes]);
 
   // Get device capabilities from playground store (SEP-1865)
-  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const playgroundCapabilities = environment.playgroundCapabilities;
   const deviceCapabilities = useMemo(() => {
     const configuredCapabilities =
       draftHostContext?.deviceCapabilities &&
@@ -908,9 +890,7 @@ export function MCPAppsRendererSurface({
   }, [draftHostContext, isPlaygroundActive, playgroundCapabilities]);
 
   // Get safe area insets from playground store (SEP-1865)
-  const playgroundSafeAreaInsets = useUIPlaygroundStore(
-    (s) => s.safeAreaInsets
-  );
+  const playgroundSafeAreaInsets = environment.playgroundSafeAreaInsets;
   const safeAreaInsets = useMemo(() => {
     const configuredSafeAreaInsets =
       draftHostContext?.safeAreaInsets &&
@@ -939,12 +919,12 @@ export function MCPAppsRendererSurface({
   }, [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets]);
 
   // Get device type from playground store for platform derivation (SEP-1865)
-  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const playgroundDeviceType = environment.playgroundDeviceType;
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
-    clampDisplayModeToAvailableModes(
+    resolvers.clampDisplayModeToAvailableModes(
       configuredDisplayMode ??
         (isPlaygroundActive ? playgroundDisplayMode : "inline"),
       configuredAvailableDisplayModes
@@ -977,7 +957,7 @@ export function MCPAppsRendererSurface({
   // because the intersection resolves to `["fullscreen"]`.
   const effectiveDisplayMode = useMemo<DisplayMode>(
     () =>
-      clampDisplayModeToAvailableModes(
+      resolvers.clampDisplayModeToAvailableModes(
         requestedDisplayMode,
         effectiveAvailableDisplayModes
       ),
@@ -1096,10 +1076,10 @@ export function MCPAppsRendererSurface({
   // against byte-frozen HTML.
   const widgetCompatCapabilitiesReloadKey = isCachedReplay
     ? initialInjectedOpenAiCompatCapabilities
-      ? stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
+      ? resolvers.stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
       : null
     : effectiveInjectOpenAiCompat
-    ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
+    ? resolvers.stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
     : null;
   // Sibling reload key for the MCP Apps spec-bridge matrix. The OpenAI
   // shim caps above bake into the iframe HTML at fetch time; MCP Apps
@@ -1113,7 +1093,7 @@ export function MCPAppsRendererSurface({
   // does — byte-frozen snapshots shouldn't churn on live host edits.
   const widgetMcpAppsCapabilitiesReloadKey = isCachedReplay
     ? null
-    : stableStringifyJson(earlyEffectiveMcpAppsCapabilities);
+    : resolvers.stableStringifyJson(earlyEffectiveMcpAppsCapabilities);
   // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
   // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
   // input is still streaming and receive the final result via
@@ -1361,7 +1341,7 @@ export function MCPAppsRendererSurface({
   // the other widget-debug-store bindings live further down because they
   // only fire from async callbacks, but `recordMountStore` is called
   // synchronously inside the effect body, so it has to be in scope here.
-  const recordMountStore = useWidgetDebugStore((s) => s.recordMount);
+  const recordMountStore = host.debug.recordMount;
 
   // SEP-1865 MCP Apps spec-bridge matrix ref. Populated further down
   // in the render (after `effectiveHostStyle` / `activeMcpProfile`
@@ -1525,7 +1505,7 @@ export function MCPAppsRendererSurface({
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
-      } = await fetchMcpAppsWidgetContent({
+      } = await host.services.fetchWidgetContent({
         serverId,
         forceWebEndpoint: webManagedServersRef.current,
         resourceUri,
@@ -1743,7 +1723,7 @@ export function MCPAppsRendererSurface({
   ]);
 
   // UI logging
-  const addUiLog = useTrafficLogStore((s) => s.addLog);
+  const addUiLog = host.debug.addTrafficLog;
   const logUiEvent = useCallback(
     (payload: Parameters<typeof addUiLog>[0]) => {
       if (minimalMode) return;
@@ -1882,20 +1862,16 @@ export function MCPAppsRendererSurface({
   );
 
   // Widget debug store
-  const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
-  const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
-  const setWidgetStateStore = useWidgetDebugStore((s) => s.setWidgetState);
-  const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
-  const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
-  const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
-  const setWidgetModelContext = useWidgetDebugStore(
-    (s) => s.setWidgetModelContext
-  );
-  const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
-  const setSandboxAppliedStore = useWidgetDebugStore(
-    (s) => s.setSandboxApplied
-  );
-  const appendLifecycleStore = useWidgetDebugStore((s) => s.appendLifecycle);
+  const setWidgetDebugInfo = host.debug.setWidgetDebugInfo;
+  const setWidgetGlobals = host.debug.setWidgetGlobals;
+  const setWidgetStateStore = host.debug.setWidgetState;
+  const setWidgetCspStore = host.debug.setWidgetCsp;
+  const addCspViolation = host.debug.addCspViolation;
+  const clearCspViolations = host.debug.clearCspViolations;
+  const setWidgetModelContext = host.debug.setWidgetModelContext;
+  const setWidgetHtmlStore = host.debug.setWidgetHtml;
+  const setSandboxAppliedStore = host.debug.setSandboxApplied;
+  const appendLifecycleStore = host.debug.appendLifecycle;
   // Ref-route the lifecycle setter so logWidgetDebug stays stable-identity
   // without listing the store setter in its deps (matches the logUiEvent
   // pattern above).
@@ -1971,7 +1947,7 @@ export function MCPAppsRendererSurface({
   useEffect(() => {
     if (isPlaygroundActive && !isControlled) {
       setInternalDisplayMode(
-        clampDisplayModeToAvailableModes(
+        resolvers.clampDisplayModeToAvailableModes(
           configuredDisplayMode ?? playgroundDisplayMode,
           configuredAvailableDisplayModes
         )
@@ -2046,7 +2022,7 @@ export function MCPAppsRendererSurface({
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
     : chatboxHostStyle;
-  const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
+  const hostStyleDefinition = resolvers.getHostStyleOrDefault(effectiveHostStyle);
   // Single source of truth for what `hostCapabilities` this view will
   // advertise. The bridge-creation effect (`new AppBridge(...)`) spreads this
   // value into the handshake, and `registerBridgeHandlers` gates each
@@ -2098,7 +2074,7 @@ export function MCPAppsRendererSurface({
 
   const effectiveHostCapabilities = useMemo(
     () =>
-      resolveEffectiveHostCapabilities({
+      resolvers.resolveEffectiveHostCapabilities({
         hostStyle: effectiveHostStyle,
         profile: activeMcpProfile,
         hostCapabilitiesOverride,
@@ -2150,11 +2126,20 @@ export function MCPAppsRendererSurface({
       : undefined;
   // The SDK validates styles.variables against the SEP key enum, so strip
   // host-specific custom properties before they enter ui/initialize. The
-  // allowlist is fixed to the SEP enum (see SEP_HOST_STYLE_VARIABLE_KEYS),
-  // so this memo only depends on the inbound configured variables.
+  // allowlist is fixed to the SEP enum (derived from `DEFAULT_HOST_STYLE`,
+  // sourced via the host boundary and cached per definition by
+  // `getSepHostStyleVariableKeys`), so this memo only depends on the inbound
+  // configured variables (plus the stable `DEFAULT_HOST_STYLE` identity).
+  const sepHostStyleVariableKeys = getSepHostStyleVariableKeys(
+    resolvers.DEFAULT_HOST_STYLE
+  );
   const configuredStyleVariables = useMemo(
-    () => sanitizeHostStyleVariables(configuredStyles?.variables),
-    [configuredStyles?.variables]
+    () =>
+      sanitizeHostStyleVariables(
+        configuredStyles?.variables,
+        sepHostStyleVariableKeys
+      ),
+    [configuredStyles?.variables, sepHostStyleVariableKeys]
   );
   const mergedStyleVariables = useMemo(() => {
     return {
@@ -2440,7 +2425,7 @@ export function MCPAppsRendererSurface({
     const userTogglePermissive =
       cspMode === "permissive" &&
       isPlaygroundActive &&
-      !isChatboxSurface &&
+      host.surface.kind !== "chatbox" &&
       !minimalMode;
     if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
@@ -2640,7 +2625,7 @@ export function MCPAppsRendererSurface({
   }, [
     cspMode,
     isPlaygroundActive,
-    isChatboxSurface,
+    host.surface.kind,
     minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
@@ -2683,7 +2668,7 @@ export function MCPAppsRendererSurface({
   }, [activeMcpProfileKey]);
   const resolvedBridgeHostInfo = useMemo(
     () =>
-      (resolveHostInfo(activeMcpProfile) ?? {
+      (resolvers.resolveHostInfo(activeMcpProfile) ?? {
         name: "mcpjam-inspector",
         version: __APP_VERSION__,
       }) as { name: string; version: string },
@@ -2846,45 +2831,37 @@ export function MCPAppsRendererSurface({
             onAppToolInvocationChangeRef.current?.(update);
           },
           onReadResource: async (uri) => {
-            const result = await readResource(serverIdRef.current, uri, {
-              forceHosted: webManagedServersRef.current,
-            });
+            const result = await host.services.readResource(
+              serverIdRef.current,
+              uri,
+              {
+                forceHosted: webManagedServersRef.current,
+              },
+            );
             return result.content;
           },
           onListResources: async (params) => {
-            return listResources(
+            return host.services.listResources(
               serverIdRef.current,
               (params as { cursor?: string } | undefined)?.cursor,
               { forceHosted: webManagedServersRef.current },
             );
           },
           onListResourceTemplates: async () => {
-            if (HOSTED_MODE || webManagedServersRef.current) {
-              throw new Error(
-                "Resource templates are not supported in hosted mode",
-              );
-            }
-            const response = await authFetch(
-              `/api/mcp/resource-templates/list`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  serverId: serverIdRef.current,
-                }),
-              },
-            );
-            if (!response.ok) {
-              throw new Error(
-                `Resource template list failed: ${response.statusText}`,
-              );
-            }
-            return response.json();
+            // Routed through the WidgetHost boundary; the host service owns the
+            // hosted / web-managed guard. Wrap the array to preserve the
+            // bridge's `{ resourceTemplates }` response shape.
+            const resourceTemplates =
+              await host.services.listResourceTemplates(serverIdRef.current);
+            return { resourceTemplates };
           },
           onListPrompts: async () => {
-            const prompts = await listPrompts(serverIdRef.current, {
-              forceHosted: webManagedServersRef.current,
-            });
+            const prompts = await host.services.listPrompts(
+              serverIdRef.current,
+              {
+                forceHosted: webManagedServersRef.current,
+              },
+            );
             return { prompts };
           },
           onLoggingMessage: ({ level, data, logger }) => {
@@ -2964,7 +2941,7 @@ export function MCPAppsRendererSurface({
               });
               return { mode: "inline" };
             }
-            const hostAvailableModes = extractHostDisplayModes(
+            const hostAvailableModes = resolvers.extractHostDisplayModes(
               hostContextRef.current as Record<string, unknown> | undefined,
             );
             // Use device type for mobile detection (defaults to mobile-like
@@ -2977,7 +2954,7 @@ export function MCPAppsRendererSurface({
               isMobile && requestedMode === "pip"
                 ? "fullscreen"
                 : requestedMode;
-            const actualMode = clampDisplayModeToAvailableModes(
+            const actualMode = resolvers.clampDisplayModeToAvailableModes(
               mobileAdjustedMode,
               hostAvailableModes,
             );

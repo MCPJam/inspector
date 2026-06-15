@@ -79,6 +79,7 @@ describe("usePaymentsHistory", () => {
         sessionId: "cs_1",
         pricePaidCents: 2500,
         displayCredits: "2,500 credits",
+        details: "Credit top-up",
         status: "succeeded",
         occurredAt: 100,
         receiptUrl: "https://pay.stripe.com/receipts/abc",
@@ -100,6 +101,35 @@ describe("usePaymentsHistory", () => {
       expect(result.current.entries).toHaveLength(1);
       expect(result.current.entries?.[0].status).toBe("pending");
       expect(result.current.entries?.[0].receiptUrl).toBeUndefined();
+    });
+
+    it("normalizes a seat refund row with account credit fallback fields", () => {
+      queryReturn = {
+        items: [
+          {
+            id: "seat_refund_1",
+            sessionId: "seat-downgrade:sub:item:period:3->2",
+            pricePaidCents: -35997,
+            displayCredits: "-9,974 credits",
+            details:
+              "-1 Team seat · prorated · $300 card refund + $59.97 account credit",
+            status: "refunded_and_credited",
+            occurredAt: 300,
+            reversedPaidCents: 30000,
+            accountCreditedCents: 5997,
+          },
+        ],
+      };
+      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      expect(result.current.entries).toHaveLength(1);
+      expect(result.current.entries?.[0]).toMatchObject({
+        id: "seat_refund_1",
+        pricePaidCents: -35997,
+        details:
+          "-1 Team seat · prorated · $300 card refund + $59.97 account credit",
+        status: "refunded_and_credited",
+        accountCreditedCents: 5997,
+      });
     });
 
     it("drops malformed rows but keeps valid neighbors", () => {

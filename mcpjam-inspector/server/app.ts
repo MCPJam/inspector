@@ -42,6 +42,7 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
@@ -68,6 +69,7 @@ export function createHonoApp() {
   initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();
+  startLocalBrowserRenderingSetupInBackground();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>

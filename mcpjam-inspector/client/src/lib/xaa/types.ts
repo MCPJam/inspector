@@ -91,6 +91,9 @@ export interface XAAFlowState {
   userId?: string;
   email?: string;
   clientId?: string;
+  /** Test-credential secret for the jwt-bearer grant; never rendered — the
+   * logged copy of any request carrying it is masked. */
+  clientSecret?: string;
   scope?: string;
   identityAssertion?: string;
   idJag?: string;
@@ -113,6 +116,11 @@ export interface XAAFlowState {
   httpHistory?: Array<XAAHttpHistoryEntry>;
   infoLogs?: Array<XAAInfoLogEntry>;
   error?: string;
+  /** Outcome of a deliberately-broken (negative-mode) run once it reaches the
+   * authorization server. `rejected` is the success case — the server caught
+   * the broken assertion; `accepted` is the security risk — it issued a token
+   * anyway. Unset for the happy-path (valid) flow. */
+  negativeProbe?: { outcome: "rejected" | "accepted"; status?: number };
   compatibilityReport?: XAACompatibilityReport;
 }
 
@@ -127,16 +135,18 @@ export interface XAARequestResult {
 export interface XAARequestExecutor {
   internalRequest: (
     path: string,
-    init?: RequestInit,
+    init?: RequestInit
   ) => Promise<XAARequestResult>;
   externalRequest: (
     url: string,
-    init?: RequestInit,
+    init?: RequestInit
   ) => Promise<XAARequestResult>;
 }
 
 export interface BaseXAAStateMachineConfig {
-  state: XAAFlowState;
+  /** Initial state. Optional — prefer `getState` so the machine never holds a
+   * stale snapshot read during render. */
+  state?: XAAFlowState;
   getState?: () => XAAFlowState;
   updateState: (updates: Partial<XAAFlowState>) => void;
   serverUrl: string;
@@ -147,15 +157,63 @@ export interface BaseXAAStateMachineConfig {
   userId?: string;
   email?: string;
   clientId?: string;
+  clientSecret?: string;
   scope?: string;
   authzServerIssuer?: string;
+  /** Hosted registration-backed runs: sent to the token proxy instead of an
+   * inline client secret; the server resolves the stored secret and forces
+   * the outbound URL to the registration's stored token endpoint. */
+  registrationId?: string;
 }
 
 export interface XAAStateMachine {
   state: XAAFlowState;
   updateState: (updates: Partial<XAAFlowState>) => void;
   proceedToNextStep: () => Promise<void>;
+  /** Drive every remaining step until the flow completes or a step fails. */
+  runAll: () => Promise<void>;
   resetFlow: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Registered resource apps (hosted test bench). The wire shape mirrors the
+// backend's sanitized projection: the client secret is never returned, only a
+// `hasSecret` boolean.
+// ---------------------------------------------------------------------------
+
+export type XaaResourceType = "rest" | "mcp";
+export type XaaAuthServerMode = "mcpjam" | "own";
+
+export interface XaaResourceApp {
+  id: string;
+  name: string;
+  resourceType: XaaResourceType;
+  resourceUrl: string;
+  authServerMode: XaaAuthServerMode;
+  tokenEndpoint?: string;
+  issuer?: string;
+  targetClientId?: string;
+  scopes?: string[];
+  healthCheckUrl?: string;
+  hasSecret: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Args accepted by the upsert action. `id` present = update. */
+export interface XaaResourceAppInput {
+  id?: string;
+  name: string;
+  resourceType: XaaResourceType;
+  resourceUrl: string;
+  authServerMode: XaaAuthServerMode;
+  tokenEndpoint?: string;
+  issuer?: string;
+  targetClientId?: string;
+  /** Plaintext secret; sent only when set/changed, never returned. */
+  secret?: string;
+  scopes?: string[];
+  healthCheckUrl?: string;
 }
 
 export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
@@ -172,6 +230,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   userId: undefined,
   email: undefined,
   clientId: undefined,
+  clientSecret: undefined,
   scope: undefined,
   identityAssertion: undefined,
   idJag: undefined,
@@ -184,17 +243,17 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   httpHistory: [],
   infoLogs: [],
   error: undefined,
+  negativeProbe: undefined,
   compatibilityReport: undefined,
 };
 
 export function createInitialXAAFlowState(
-  overrides: Partial<XAAFlowState> = {},
+  overrides: Partial<XAAFlowState> = {}
 ): XAAFlowState {
   return {
     ...EMPTY_XAA_FLOW_STATE,
     ...overrides,
-    negativeTestMode:
-      overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
+    negativeTestMode: overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
     httpHistory: overrides.httpHistory ?? [],
     infoLogs: overrides.infoLogs ?? [],
   };

@@ -14,6 +14,17 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
  */
 export const COMPUTERS_FEATURE_FLAG = "computers-enabled";
 
+/**
+ * Tri-state flag: `true` enabled, `false` explicitly disabled, `undefined`
+ * while PostHog is still loading. Route guards must distinguish "disabled"
+ * from "not resolved yet" so a direct /computer cold load doesn't redirect a
+ * flagged-in user before the flag hydrates (see `ComputerRoute`). Visibility
+ * gates that only hide UI should use `useComputersEnabled` instead.
+ */
+export function useComputersEnabledState(): boolean | undefined {
+  return useFeatureFlagEnabled(COMPUTERS_FEATURE_FLAG);
+}
+
 export function useComputersEnabled(): boolean {
-  return useFeatureFlagEnabled(COMPUTERS_FEATURE_FLAG) === true;
+  return useComputersEnabledState() === true;
 }

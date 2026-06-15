@@ -159,7 +159,6 @@ import {
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
@@ -357,8 +356,6 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const sharedThreadsEnabled =
-    useFeatureFlagEnabled("shared-threads-enabled") === true;
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
   // machinery, scoped down to what the docked rail actually needs.
@@ -1941,7 +1938,6 @@ export function PlaygroundMain({
       // Use the multi-model-aware streaming flag so the rail disables New Chat
       // / row selection while any broadcast lane is still streaming.
       isStreaming: isStreamingActive,
-      sharedThreadsEnabled,
       projectId: convexProjectId,
       enabled: isSessionBootstrapComplete,
       refreshSignal: historyRefreshSignal,
@@ -1970,7 +1966,6 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     isStreamingActive,
     setBridge,
-    sharedThreadsEnabled,
   ]);
 
   // Track streaming baseline + resumedVersion drift while a history session is

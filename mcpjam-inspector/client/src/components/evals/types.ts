@@ -100,6 +100,13 @@ export type EvalSuite = {
   serverAttachmentId?: string;
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
+  /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
+  schedule?: {
+    intervalMinutes: number;
+    enabled: boolean;
+    state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
+    consecutiveFailures?: number;
+  };
 };
 
 export type EvalServerAttachment = {
@@ -145,6 +152,10 @@ export type EvalCase = {
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
    */
   judgeConfigOverride?: EvalJudgeConfigOverride;
+  /** Case kind; absent ⇒ prompt case. */
+  caseType?: import("@/shared/probe-config").TestCaseType;
+  /** Pinned tool call for widget_probe cases. */
+  probeConfig?: import("@/shared/probe-config").ProbeConfig;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
 };
@@ -216,6 +227,14 @@ export type EvalIteration = {
      * snapshot the iteration was actually evaluated against.
      */
     predicates?: Predicate[];
+    /**
+     * Case kind frozen at run-precreate time. Absent ⇒ prompt case. Probe
+     * iterations carry display-only model/provider sentinels
+     * ('none'/'widget-probe') in this snapshot.
+     */
+    caseType?: import("@/shared/probe-config").TestCaseType;
+    /** Pinned probe call, snapshotted for replay stability. */
+    probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
   configRevision?: string;
@@ -364,7 +383,7 @@ export type EvalSuiteRun = {
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
   result?: "pending" | "passed" | "failed" | "cancelled";
-  source?: "ui" | "sdk";
+  source?: "ui" | "sdk" | "api" | "schedule";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

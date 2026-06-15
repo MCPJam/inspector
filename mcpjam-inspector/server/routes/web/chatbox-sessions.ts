@@ -8,6 +8,7 @@ import {
   parseWithSchema,
   readJsonBody,
   createAuthorizedManager,
+  callerContextFromHono,
   withManager,
 } from "./auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -112,7 +113,7 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
 
     const result = await withManager(
       createAuthorizedManager(
-        c,
+        callerContextFromHono(c),
         bearerToken,
         body.projectId,
         selectedServerIds,
@@ -273,7 +274,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         authHeader,
         managerFactory: async () => {
           const { manager } = await createAuthorizedManager(
-            c,
+            callerContextFromHono(c),
             bearerToken,
             projectId,
             selectedServerIds,

@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import { useConvex } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
@@ -19,6 +18,7 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
+import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -33,7 +33,7 @@ import { isHostedMode } from "@/lib/apis/mode-client";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
   prepareSingleTestCaseRun,
@@ -209,7 +209,9 @@ export function useEvalHandlers({
   availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
-  const { getAccessToken } = useAuth();
+  // Resolves the WorkOS token for signed-in users and the guest bearer for
+  // guests (project-owning guests included). See use-convex-access-token.
+  const getAccessToken = useConvexAccessToken();
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -306,7 +308,31 @@ export function useEvalHandlers({
       // default. Runtime application of suite defaults happens server-side
       // (Convex testSuiteRun hostConfigId snapshot).
 
+      let probesSkippedMissingConfig = 0;
       for (const testCase of testCases) {
+        // Widget probes carry no models and no prompt — they must never fall
+        // into the LLM fan-out below (a probe with a suite default model
+        // would otherwise run as an empty-prompt LLM case). The sentinel
+        // model/provider strings satisfy the wire schema; the server forks
+        // probes off the LLM path before any model resolution.
+        if (testCase.caseType === "widget_probe") {
+          if (!testCase.probeConfig) {
+            probesSkippedMissingConfig++;
+            continue;
+          }
+          tests.push({
+            title: testCase.title,
+            query: "",
+            runs: testCase.runs || 1,
+            model: "widget-probe",
+            provider: "none",
+            expectedToolCalls: [],
+            caseType: "widget_probe",
+            probeConfig: testCase.probeConfig,
+            testCaseId: testCase._id,
+          });
+          continue;
+        }
         const hasModels = testCase.models && testCase.models.length > 0;
         if (!hasModels && !suiteDefaultModelDef) {
           continue;
@@ -353,6 +379,12 @@ export function useEvalHandlers({
             : suite.defaultConfig?.modelId;
           toast.error(
             `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
+          );
+        } else if (probesSkippedMissingConfig > 0) {
+          // Probe-only suites land here when every probe was skipped above;
+          // "add models" would be the wrong prescription for them.
+          toast.error(
+            "No tests to run. The suite's widget probes are missing their probe configuration."
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
@@ -414,11 +446,11 @@ export function useEvalHandlers({
       const replayToastId = toast.loading("Replaying run...");
 
       try {
-        // Hosted guests have no WorkOS access token; the request still
-        // authenticates via authFetch attaching a guest bearer. Treat the
-        // LoginRequired throw as an empty token — `buildEvalConvexAuthPayload`
-        // drops it in hosted mode anyway.
-        const accessToken = await getAccessToken().catch(() => "");
+        // Local guests authenticate via this body token (the guest bearer);
+        // hosted guests authenticate via authFetch's Authorization header and
+        // `buildEvalConvexAuthPayload` drops this field, so an empty string is
+        // harmless there.
+        const accessToken = (await getAccessToken()) ?? "";
         const endpoints = getEvalApiEndpoints();
         const response = await authFetch(endpoints.replayRun, {
           method: "POST",
@@ -623,10 +655,11 @@ export function useEvalHandlers({
 
       const suiteRunStartedAt = Date.now();
       try {
-        // Hosted guests have no WorkOS access token; authFetch attaches the
-        // guest bearer instead. `mergeHostedServerBatch` strips
-        // convexAuthToken in hosted mode so an empty string is harmless.
-        const accessToken = await getAccessToken().catch(() => "");
+        // Local guests authenticate via this body token (the guest bearer);
+        // hosted guests authenticate via authFetch's Authorization header and
+        // `mergeHostedServerBatch` strips convexAuthToken, so an empty string
+        // is harmless there.
+        const accessToken = (await getAccessToken()) ?? "";
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
@@ -653,6 +686,14 @@ export function useEvalHandlers({
           // Dropping it here forced the backend to re-derive linkage by
           // title, which silently broke after a case rename.
           testCaseId: (test as { testCaseId?: string }).testCaseId,
+          // Probe fields ride along so cap-math excludes probes and any
+          // non-rerun upsert keeps the case's identity (dropping them here
+          // would re-count probes as LLM calls server-side).
+          caseType: (test as { caseType?: string }).caseType,
+          ...((test as { caseType?: string }).caseType === "widget_probe" &&
+          (test as { probeConfig?: unknown }).probeConfig
+            ? { probeConfig: (test as { probeConfig?: unknown }).probeConfig }
+            : {}),
         }));
 
         // Partial-failure tolerant: a failure on one host shouldn't cancel
@@ -813,6 +854,15 @@ export function useEvalHandlers({
         return null;
       }
 
+      // Widget probes have no single-case quick-run path yet: the
+      // run-test-case endpoints only execute model-driven cases, and probes
+      // intentionally carry no models. Without this branch the model guard
+      // below would surface a misleading "Add a model first".
+      if (testCase.caseType === "widget_probe") {
+        toast.info("Widget probes run with the full suite or on its schedule.");
+        return null;
+      }
+
       const modelValuesToRun = options?.selectedModel
         ? [options.selectedModel]
         : getConfiguredTestCaseModelValues(testCase);
@@ -876,9 +926,7 @@ export function useEvalHandlers({
                 },
               },
               testCase,
-              getAccessToken: isDirectGuest
-                ? getGuestBearerToken
-                : getAccessToken,
+              getAccessToken,
               selectedModel,
               testCaseOverrides:
                 options?.iterationOverride !== undefined
@@ -1277,6 +1325,77 @@ export function useEvalHandlers({
     ]
   );
 
+  // Create a widget probe case (synthetic monitor): no LLM/prompt — a pinned
+  // tool call rendered in the browser harness, gated by widget render checks.
+  // Created with placeholder probeConfig values the probe editor immediately
+  // prompts the user to fix; seeded with a widgetRendered check so an
+  // unedited probe still asserts something meaningful.
+  const handleCreateWidgetProbe = useCallback(
+    async (suiteId: string) => {
+      if (isCreatingTestCase) return;
+
+      setIsCreatingTestCase(true);
+
+      try {
+        const suite = await convex.query("testSuites:getTestSuite" as any, {
+          suiteId,
+        });
+        const firstServer: string =
+          (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
+
+        const testCaseId = await mutations.createTestCaseMutation({
+          suiteId,
+          title: "Untitled widget probe",
+          query: "",
+          models: [],
+          caseType: "widget_probe",
+          probeConfig: {
+            serverName: firstServer,
+            toolName: PROBE_TOOL_NAME_PLACEHOLDER,
+            arguments: {},
+          },
+          predicates: {
+            mode: "replace",
+            list: [{ type: "widgetRendered" }],
+          },
+        });
+
+        toast.success("Widget probe created");
+
+        posthog.capture("eval_test_case_created", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          test_case_id: testCaseId,
+          case_type: "widget_probe",
+        });
+
+        navigateAfterTestCaseMutation({
+          type: "test-edit",
+          suiteId,
+          testId: testCaseId,
+        });
+
+        return testCaseId;
+      } catch (error) {
+        console.error("Failed to create widget probe:", error);
+        toast.error(
+          getBillingErrorMessage(error, "Failed to create widget probe")
+        );
+        return null;
+      } finally {
+        setIsCreatingTestCase(false);
+      }
+    },
+    [
+      isCreatingTestCase,
+      mutations.createTestCaseMutation,
+      convex,
+      navigateAfterTestCaseMutation,
+    ]
+  );
+
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback(
     (testCaseId: string, testCaseTitle: string) => {
@@ -1608,6 +1727,7 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleCreateWidgetProbe,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

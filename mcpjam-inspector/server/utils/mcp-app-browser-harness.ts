@@ -29,6 +29,12 @@ import {
   sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
+import {
+  ensureLocalChromiumInstalled,
+  isChromiumInstalled,
+} from "./browser-rendering-setup";
+
+export { isChromiumInstalled };
 
 /* ------------------------------------------------------------------ *
  * Contract types
@@ -404,6 +410,15 @@ export class McpAppBrowserHarness {
     } catch {
       executablePath = undefined;
     }
+    if (!executablePath || !existsSync(executablePath)) {
+      await ensureLocalChromiumInstalled({ reason: "render" });
+      try {
+        executablePath = chromium.executablePath();
+      } catch {
+        executablePath = undefined;
+      }
+    }
+
     if (!executablePath || !existsSync(executablePath)) {
       throw new ChromiumNotInstalledError(
         "Chromium is not installed for Playwright. Run `npx playwright install chromium`."

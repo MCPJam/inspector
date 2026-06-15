@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
 import {
   ADD_SERVER_NODE_ID,
+  BUILTIN_TOOLS_NODE_ID,
+  COMPUTER_NODE_ID,
   HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
+  focusTabForNodeId,
+  type BuiltinToolsNodeData,
+  type ComputerNodeData,
   type HostMatrixNodeData,
 } from "../../types";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
@@ -118,7 +124,9 @@ describe("buildRedesignedHostCanvas", () => {
     const data = matrixData(
       buildVm({ draft: next, prev: { hostName: "Prev", draft: prev } }),
     );
-    const updated = data.appsCaps.find((c) => c.capKey === "updateModelContext");
+    const updated = data.appsCaps.find(
+      (c) => c.capKey === "updateModelContext",
+    );
     expect(updated?.on).toBe(true);
     expect(updated?.isNewlyOn).toBe(true);
   });
@@ -552,5 +560,161 @@ describe("buildRedesignedHostCanvas — mcpAppsBridge canvas chip", () => {
     const data = matrixData(buildVm({ draft }));
     expect(data.mcpAppsBridge.overrideCount).toBe(1);
     expect(data.compatRuntime.hasMethodOverrides).toBe(true);
+  });
+});
+
+const CATALOG: BuiltInToolCatalogEntry[] = [
+  {
+    id: "web_search",
+    displayLabel: "Web Search",
+    description: "Search the web",
+    category: "search",
+    billable: true,
+  },
+  {
+    id: "bash",
+    displayLabel: "Bash",
+    description: "Run shell commands",
+    category: "compute",
+    billable: false,
+    requiresComputer: true,
+  },
+];
+
+function builtinData(
+  vm: ReturnType<typeof buildRedesignedHostCanvas>,
+): BuiltinToolsNodeData {
+  const node = vm.nodes.find((n) => n.id === BUILTIN_TOOLS_NODE_ID);
+  if (!node || node.type !== "redesignBuiltinTools") {
+    throw new Error("Built-in tools node missing");
+  }
+  return node.data;
+}
+
+function computerData(
+  vm: ReturnType<typeof buildRedesignedHostCanvas>,
+): ComputerNodeData {
+  const node = vm.nodes.find((n) => n.id === COMPUTER_NODE_ID);
+  if (!node || node.type !== "redesignComputer") {
+    throw new Error("Computer node missing");
+  }
+  return node.data;
+}
+
+describe("buildRedesignedHostCanvas — Project Computers islands", () => {
+  it("emits no island nodes or edges when computersEnabled is omitted (GA path)", () => {
+    const vm = buildVm();
+    expect(vm.nodes.some((n) => n.id === BUILTIN_TOOLS_NODE_ID)).toBe(false);
+    expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(false);
+    expect(vm.edges.some((e) => e.id === "host-to-builtin-tools")).toBe(false);
+    expect(vm.edges.some((e) => e.id === "host-to-computer")).toBe(false);
+  });
+
+  it("emits no island nodes when computersEnabled is explicitly false", () => {
+    const vm = buildVm({ computersEnabled: false });
+    expect(vm.nodes.some((n) => n.id === BUILTIN_TOOLS_NODE_ID)).toBe(false);
+    expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(false);
+  });
+
+  it("emits both islands when computersEnabled is true, ghost computer by default", () => {
+    const vm = buildVm({ computersEnabled: true });
+    expect(builtinData(vm).tools).toEqual([]);
+    const computer = computerData(vm);
+    expect(computer.attached).toBe(false);
+    expect(computer.backedToolLabels).toEqual([]);
+  });
+
+  it("maps attached built-in tool ids through the catalog for labels", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.builtInToolIds = ["web_search", "bash"];
+    const tools = builtinData(
+      buildVm({
+        computersEnabled: true,
+        builtInToolCatalog: CATALOG,
+        draft,
+      }),
+    ).tools;
+    expect(tools).toEqual([
+      { id: "web_search", label: "Web Search", requiresComputer: false },
+      { id: "bash", label: "Bash", requiresComputer: true },
+    ]);
+  });
+
+  it("falls back to the raw id when the catalog has no matching row", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.builtInToolIds = ["mystery_tool"];
+    // No catalog passed (mirrors the loading state).
+    const tools = builtinData(buildVm({ computersEnabled: true, draft })).tools;
+    expect(tools).toEqual([
+      { id: "mystery_tool", label: "mystery_tool", requiresComputer: false },
+    ]);
+  });
+
+  it("reflects attachment intent and computer-backed tool labels on the computer node", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.builtInToolIds = ["web_search", "bash"];
+    draft.computer = { kind: "personal", workdir: "/home/dev" };
+    const computer = computerData(
+      buildVm({
+        computersEnabled: true,
+        builtInToolCatalog: CATALOG,
+        draft,
+      }),
+    );
+    expect(computer.attached).toBe(true);
+    expect(computer.workdir).toBe("/home/dev");
+    // Only the computer-backed tool (bash) bridges to the island.
+    expect(computer.backedToolLabels).toEqual(["Bash"]);
+  });
+
+  it("mirrors the caller's live computer status (value / null / loading)", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.computer = { kind: "personal" };
+    expect(
+      computerData(
+        buildVm({
+          computersEnabled: true,
+          draft,
+          computerStatus: {
+            computerId: "c1",
+            status: "ready",
+            provider: "e2b",
+          },
+        }),
+      ).status,
+    ).toBe("ready");
+    // Explicit null (resolved, no machine reserved) is preserved distinct
+    // from undefined (still loading) so the renderer can tell them apart.
+    expect(
+      computerData(
+        buildVm({ computersEnabled: true, draft, computerStatus: null }),
+      ).status,
+    ).toBeNull();
+    expect(
+      computerData(buildVm({ computersEnabled: true, draft })).status,
+    ).toBeUndefined();
+  });
+
+  it("anchors both island edges to the host matrix so the servers reflow can't move them", () => {
+    const vm = buildVm({ computersEnabled: true });
+    const builtinEdge = vm.edges.find((e) => e.id === "host-to-builtin-tools");
+    const computerEdge = vm.edges.find((e) => e.id === "host-to-computer");
+    expect(builtinEdge?.source).toBe(HOST_MATRIX_NODE_ID);
+    expect(builtinEdge?.type).toBe("hostBranch");
+    expect(computerEdge?.source).toBe(HOST_MATRIX_NODE_ID);
+    expect(computerEdge?.type).toBe("hostBranch");
+  });
+});
+
+describe("focusTabForNodeId — Project Computers islands", () => {
+  it("routes each island id to its own dedicated tab", () => {
+    expect(focusTabForNodeId(BUILTIN_TOOLS_NODE_ID)).toEqual({
+      tab: "tools",
+      selectedServerId: null,
+    });
+    expect(focusTabForNodeId(COMPUTER_NODE_ID)).toEqual({
+      tab: "computer",
+      selectedServerId: null,
+    });
   });
 });

@@ -1,7 +1,6 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Loader2 } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -70,8 +69,6 @@ export function SaveAsTestCaseAction({
   promptPreview,
   projectId,
 }: SaveAsTestCaseActionProps) {
-  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
-  const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -91,13 +88,10 @@ export function SaveAsTestCaseAction({
     [],
   );
 
-  // Intentionally tied to the raw PostHog flag, not the desktop-default-on
-  // helper: `attachmentPickersEnabled` also gates the "new suite requires
-  // both a server and a host attachment" requirement (see
-  // `newSuiteRequirementsMet` below). Flipping it on for desktop blocks the
-  // empty-skeleton-then-attach-later flow.
-  const attachmentPickersEnabled =
-    hostsFlagEnabled === true && convexAuthed && Boolean(projectId);
+  // `attachmentPickersEnabled` also gates the "new suite requires both a
+  // server and a host attachment" requirement (see `newSuiteRequirementsMet`
+  // below), so it stays scoped to authed sessions with a project.
+  const attachmentPickersEnabled = convexAuthed && Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({
@@ -224,11 +218,6 @@ export function SaveAsTestCaseAction({
 
   // No projectId => no destination suite => no point showing the action.
   if (!projectId) {
-    return null;
-  }
-
-  // Gated behind the same flag as the Evaluate sidebar entry.
-  if (evaluateUiEnabled !== true) {
     return null;
   }
 

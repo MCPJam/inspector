@@ -442,6 +442,183 @@ function BillingIntervalToggle({
   );
 }
 
+/**
+ * Compact Team upsell shown beside the current-plan card while on Free, so that
+ * panel doesn't sit alone. Mirrors the Team column of the comparison table
+ * (price, Popular badge, Upgrade CTA) and reuses the same CTA logic.
+ */
+function FreePlanTeamUpsell({
+  planCatalog,
+  currentPlan,
+  billingConfigured,
+  canManageBilling,
+  isBillingActionPending,
+  pendingPlanChangeTarget,
+  deferredTrialBillingCopy,
+  onDowngradePlan,
+  onStartPlanChange,
+}: {
+  planCatalog: PlanCatalog;
+  currentPlan: OrganizationPlan;
+  billingConfigured: boolean;
+  canManageBilling: boolean;
+  isBillingActionPending: boolean;
+  pendingPlanChangeTarget: "team" | null;
+  deferredTrialBillingCopy: string | null;
+  onDowngradePlan: (
+    plan: OrganizationPlan,
+    billingInterval: BillingInterval
+  ) => void;
+  onStartPlanChange: (
+    plan: "team",
+    billingInterval: BillingInterval
+  ) => Promise<void>;
+}) {
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("annual");
+  const entry = planCatalog.plans.team;
+  if (!entry) {
+    return null;
+  }
+
+  const displayCents = getDisplayPriceCentsForPlan(
+    "team",
+    billingInterval,
+    entry
+  );
+  const priceLabel = formatPlanPriceLabel(
+    "team",
+    displayCents,
+    planCatalog.currency,
+    billingInterval
+  );
+  const priceSubtext = formatPerSeatCadence("team", entry, billingInterval);
+  const cta = getPlanColumnCta({
+    plan: "team",
+    currentPlan,
+    entry,
+    billingConfigured,
+    canManageBilling,
+    isBillingActionPending,
+    scheduledCancellationDate: null,
+    onDowngradePlan,
+    onStartPlanChange,
+    billingInterval,
+  });
+  const showCtaSpinner =
+    pendingPlanChangeTarget === "team" && cta.label === "Upgrade";
+  const showDeferredTrialBillingCopy =
+    deferredTrialBillingCopy != null &&
+    cta.label === "Upgrade" &&
+    !cta.disabled &&
+    !cta.tooltip;
+
+  return (
+    <div
+      data-testid="free-plan-team-upsell"
+      className="flex h-full flex-col gap-5 rounded-xl border border-primary/35 bg-card p-5 md:p-6"
+    >
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <span className="text-base font-semibold">{entry.displayName}</span>
+          <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+            Popular
+          </Badge>
+        </div>
+        <div className="w-full space-y-1">
+          <div
+            role="group"
+            aria-label="Billing interval"
+            className="mb-2 inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "annual"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("annual")}
+            >
+              Annual
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "monthly"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("monthly")}
+            >
+              Monthly
+            </button>
+          </div>
+          <PlanPriceDisplay label={priceLabel} />
+          <p className="text-xs leading-snug text-muted-foreground">
+            {priceSubtext}
+          </p>
+          {entry.seatMinimum ? (
+            <p className="text-xs leading-snug text-muted-foreground">
+              {entry.seatMinimum} seat minimum
+            </p>
+          ) : null}
+          {showDeferredTrialBillingCopy ? (
+            <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+              {deferredTrialBillingCopy}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {cta.tooltip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              className="w-full shrink-0 rounded-lg"
+              size="sm"
+              variant={cta.variant}
+              aria-disabled={true}
+              tabIndex={0}
+              onClick={undefined}
+            >
+              {showCtaSpinner ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                cta.label
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[14rem] text-center">
+            {cta.tooltip}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <Button
+          className="w-full shrink-0 rounded-lg"
+          size="sm"
+          variant={cta.variant}
+          disabled={cta.disabled}
+          onClick={cta.onClick}
+        >
+          {showCtaSpinner ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Loading...
+            </>
+          ) : (
+            cta.label
+          )}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 interface OrganizationBillingSectionProps {
   organizationId: string;
   showPlanBilling: boolean;
@@ -627,6 +804,14 @@ export function OrganizationBillingSection({
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
   const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
+  const isTrial = billingStatus?.source === "trial";
+  const showFreeTeamUpsell =
+    showPlanBilling &&
+    !isLoadingBilling &&
+    !isTrial &&
+    currentPlan === "free" &&
+    planCatalog != null &&
+    planCatalog.plans.team != null;
 
   return (
     <div className="space-y-5">
@@ -716,7 +901,26 @@ export function OrganizationBillingSection({
         </ErrorBoundary>
       ) : null}
 
-      {currentPlanPanel}
+      {showFreeTeamUpsell && planCatalog ? (
+        <div className="grid items-stretch gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          {currentPlanPanel}
+          <FreePlanTeamUpsell
+            planCatalog={planCatalog}
+            currentPlan={currentPlan}
+            billingConfigured={billingConfigured}
+            canManageBilling={canManageBilling}
+            isBillingActionPending={isBillingActionPending}
+            pendingPlanChangeTarget={pendingPlanChangeTarget}
+            deferredTrialBillingCopy={deferredTrialBillingCopy}
+            onDowngradePlan={(plan, interval) =>
+              void onDowngradePlan(plan, interval)
+            }
+            onStartPlanChange={onStartPlanChange}
+          />
+        </div>
+      ) : (
+        currentPlanPanel
+      )}
 
       {showCredits ? (
         <ErrorBoundary fallback={null}>
