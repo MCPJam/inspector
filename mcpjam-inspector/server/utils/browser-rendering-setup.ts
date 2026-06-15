@@ -1,5 +1,7 @@
+import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { createRequire } from "module";
+import { dirname, resolve as resolvePath } from "path";
 import { logger } from "./logger.js";
 
 const require = createRequire(import.meta.url);
@@ -58,19 +60,54 @@ export async function isChromiumInstalled(): Promise<boolean> {
   }
 }
 
-type PlaywrightRegistryModule = {
-  installBrowsersForNpmInstall: (browsers: string[]) => Promise<unknown>;
-};
-
-function loadPlaywrightRegistry(): PlaywrightRegistryModule {
-  return require(
-    "playwright-core/lib/server/registry/index"
-  ) as PlaywrightRegistryModule;
+/**
+ * Resolve Playwright's CLI entry point via its package `bin` contract. We can't
+ * `require.resolve("playwright/cli.js")` directly because Playwright's `exports`
+ * map doesn't expose `./cli.js`, but `./package.json` is always exported and the
+ * `bin` field is a stable public contract — so resolve the package root and join
+ * the declared bin path off it.
+ */
+function resolvePlaywrightCli(): string {
+  const pkgJsonPath = require.resolve("playwright/package.json");
+  const pkg = require("playwright/package.json") as {
+    bin?: string | Record<string, string>;
+  };
+  const binRel =
+    typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.playwright;
+  if (!binRel) {
+    throw new Error("Could not resolve the playwright CLI bin entry");
+  }
+  return resolvePath(dirname(pkgJsonPath), binRel);
 }
 
+/**
+ * Run `playwright install chromium` through the published CLI rather than
+ * reaching into `playwright-core/lib/server/registry`, which is an internal
+ * module Playwright reorganizes between releases. The CLI is a supported entry
+ * point, survives version bumps, and inheriting its stdio shows the user the
+ * real download progress instead of a single log line.
+ */
 export async function installPlaywrightChromium(): Promise<void> {
-  const { installBrowsersForNpmInstall } = loadPlaywrightRegistry();
-  await installBrowsersForNpmInstall(["chromium"]);
+  const cliPath = resolvePlaywrightCli();
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, [cliPath, "install", "chromium"], {
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `playwright install chromium exited with ${
+              signal ? `signal ${signal}` : `code ${code}`
+            }`
+          )
+        );
+      }
+    });
+  });
 }
 
 export async function ensureLocalChromiumInstalled(
