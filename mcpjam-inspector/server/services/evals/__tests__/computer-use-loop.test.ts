@@ -99,6 +99,7 @@ import * as computerUseModule from "../../../utils/computer-use-tool";
 import {
   McpAppBrowserHarness,
   DEFAULT_VIEWPORT,
+  isChromiumInstalled,
 } from "../../../utils/mcp-app-browser-harness";
 
 // ---------------------------------------------------------------------------
@@ -227,7 +228,15 @@ function streamForFinalText(): LanguageModelV3StreamResult {
 // Test
 // ---------------------------------------------------------------------------
 
-describe("PR 8 — model-driven Computer Use loop (smoke)", () => {
+// Real-browser smoke: run only where a launchable Chromium is installed (CI
+// installs it via `npx playwright install --with-deps chromium`; the hosted
+// image bakes it in). Browser-less envs — locked-down dev containers, some
+// laptops — skip instead of red-failing the suite.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "PR 8 — model-driven Computer Use loop (smoke)",
+  () => {
   const executeToolCalls: Array<{
     sid: string;
     name: string;
