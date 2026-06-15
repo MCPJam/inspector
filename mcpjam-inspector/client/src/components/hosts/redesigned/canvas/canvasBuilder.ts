@@ -10,6 +10,8 @@ import {
 } from "@/lib/client-config-v2";
 import {
   ADD_SERVER_NODE_ID,
+  BUILTIN_TOOLS_NODE_ID,
+  COMPUTER_NODE_ID,
   HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
   type AgentIdentityNodeData,
@@ -57,6 +59,20 @@ const SERVER_CARD_W = 220;
 const SERVER_CARD_H = 88;
 const SERVER_CARD_GAP_X = 16;
 const SERVERS_ROW_GAP = 40;
+
+/* ============================================================
+   Project Computers islands. Built-in tools fan to the LEFT of
+   the matrix and the Computer island to the RIGHT, both flanking
+   the matrix's header band. Emitted only when the builder context
+   has `computersEnabled === true`.
+   ============================================================ */
+const ISLAND_W = 240;
+const ISLAND_GAP = 60;
+const ISLAND_Y = 36;
+// Island edges anchor to the header band rather than the nodes'
+// content-driven vertical center, so the connector lands on the node no
+// matter how many tool rows the list grows to.
+const ISLAND_ANCHOR_Y = ISLAND_Y + 18;
 
 /* ============================================================
    Stable cap orders. Keeping order stable lets row diffs morph
@@ -821,6 +837,99 @@ export function buildRedesignedHostCanvas(
     draggable: false,
     selectable: false,
   });
+
+  // 1b) Project Computers islands — Built-in tools (left) + Computer
+  // (right), flanking the matrix header. Gated entirely behind
+  // `computersEnabled`; when off/omitted the canvas is the GA layout with
+  // no island nodes or edges. Both island edges source from the matrix
+  // (which never reflows — it sits at y=0 and grows downward), so the
+  // RedesignedHostCanvas measured-height shift leaves them pinned.
+  if (context.computersEnabled === true) {
+    const catalog = context.builtInToolCatalog ?? [];
+    const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
+    const tools = draft.builtInToolIds.map((id) => {
+      const entry = catalogById.get(id);
+      return {
+        id,
+        // Catalog rows carry `displayLabel`; fall back to the raw id while
+        // the catalog query is still loading or for an unknown id.
+        label: entry?.displayLabel ?? id,
+        requiresComputer: entry?.requiresComputer === true,
+      };
+    });
+
+    // Built-in tools node (left of the matrix).
+    nodes.push({
+      id: BUILTIN_TOOLS_NODE_ID,
+      type: "redesignBuiltinTools",
+      position: { x: -(ISLAND_W + ISLAND_GAP), y: ISLAND_Y },
+      style: { width: ISLAND_W },
+      data: { kind: "builtin-tools", tools },
+      draggable: false,
+    });
+    edges.push({
+      id: "host-to-builtin-tools",
+      source: HOST_MATRIX_NODE_ID,
+      target: BUILTIN_TOOLS_NODE_ID,
+      type: "hostBranch",
+      // Matrix left edge → built-in node right edge, level on the header band.
+      data: {
+        fixedSourceX: 0,
+        fixedSourceY: ISLAND_ANCHOR_Y,
+        fixedTargetX: -ISLAND_GAP,
+        fixedTargetY: ISLAND_ANCHOR_Y,
+      },
+      style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
+    });
+
+    // Computer node (right of the matrix). `attached` is the config intent
+    // (`draft.computer`); `status` is the orthogonal backend lifecycle.
+    const attached = draft.computer !== undefined;
+    const status =
+      context.computerStatus === undefined
+        ? undefined
+        : context.computerStatus === null
+          ? null
+          : context.computerStatus.status;
+    nodes.push({
+      id: COMPUTER_NODE_ID,
+      type: "redesignComputer",
+      position: { x: MATRIX_W + ISLAND_GAP, y: ISLAND_Y },
+      style: { width: ISLAND_W },
+      data: {
+        kind: "computer",
+        attached,
+        status,
+        ...(draft.computer?.workdir
+          ? { workdir: draft.computer.workdir }
+          : {}),
+        backedToolLabels: tools
+          .filter((tool) => tool.requiresComputer)
+          .map((tool) => tool.label),
+      },
+      draggable: false,
+    });
+    edges.push({
+      id: "host-to-computer",
+      source: HOST_MATRIX_NODE_ID,
+      target: COMPUTER_NODE_ID,
+      type: "hostBranch",
+      // Matrix right edge → computer node left edge, level on the header band.
+      data: {
+        fixedSourceX: MATRIX_W,
+        fixedSourceY: ISLAND_ANCHOR_Y,
+        fixedTargetX: MATRIX_W + ISLAND_GAP,
+        fixedTargetY: ISLAND_ANCHOR_Y,
+      },
+      style: {
+        stroke: "oklch(0.68 0.11 40 / 0.55)",
+        strokeWidth: 1.5,
+        // Dashed until the computer is actually attached, mirroring the
+        // ghost-vs-attached treatment of the node itself.
+        strokeDasharray: attached ? undefined : "4 4",
+      },
+    });
+  }
 
   // 2) Servers hub — sibling, below the matrix. Y tracks whether the
   // Apps section actually renders so there's no dead zone between the
