@@ -1061,6 +1061,9 @@ export function canonicalizeHostConfigV2(
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
     respectToolVisibility: input.respectToolVisibility,
+    // Pure pass-through. Absent ⇒ emulated; JSON.stringify drops undefined so
+    // pre-feature rows hash byte-identically.
+    engine: input.engine,
     // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
     computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output

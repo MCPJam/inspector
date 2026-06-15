@@ -47,6 +47,16 @@ export type ServerId = string;
 export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
 
 /**
+ * Execution engine for a host config. Absent ⇒ the MCPJam **emulated** loop —
+ * the only historical behavior, so pre-feature rows hash byte-identically
+ * (the key is simply never written). `"harness:claude-code"` runs the turn
+ * inside a real Claude Code runtime via the AI SDK harness. Namespaced
+ * (`harness:<runtime>`) so additional real runtimes can be added later
+ * without a schema migration.
+ */
+export type HostEngine = "harness:claude-code";
+
+/**
  * Permissions Policy feature tokens corresponding to the four
  * SEP-1865 spec permissions. These are the KEBAB-CASE browser tokens
  * (as they appear in iframe `allow=` attributes), NOT the camelCase
@@ -255,6 +265,12 @@ export type HostConfigInputV2 = {
   // canonicalizer collapses it to undefined so "cleared" and "never set"
   // hash identically. Legacy `toolset` input is accepted and dropped.
   computer?: HostConfigComputerInput | null;
+  // Execution engine. Absent ⇒ emulated loop; `"harness:claude-code"` runs the
+  // real Claude Code runtime. Optional + pure pass-through (like
+  // progressiveToolDiscovery) so absent hashes byte-identically to pre-feature
+  // rows. Emulated has exactly one canonical form (the key absent), so all
+  // emulated hosts dedupe together.
+  engine?: HostEngine;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); chatbox/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -311,6 +327,9 @@ export type CanonicalHostConfigV2 = {
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.
   computer?: HostConfigComputer;
+  // Mirrors HostConfigInputV2.engine (pure pass-through). Optional so absent
+  // rows hash byte-identically to pre-feature rows.
+  engine?: HostEngine;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
