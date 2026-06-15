@@ -16,3 +16,11 @@ export {
 } from "./tool-visibility.js";
 
 export { LoggingTransport } from "./logging-transport.js";
+
+export {
+  DEFAULT_IFRAME_SANDBOX,
+  buildOuterAllowAttribute,
+  buildOuterSandboxAttribute,
+  resolveIframeSandboxPolicy,
+} from "./iframe-sandbox-policy.js";
+export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
