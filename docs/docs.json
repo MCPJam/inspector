@@ -154,7 +154,8 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
-              "sdk/reference/apps-conformance"
+              "sdk/reference/apps-conformance",
+              "sdk/reference/widget-runtime"
             ]
           }
         ]
