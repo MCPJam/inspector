@@ -1,19 +1,23 @@
-// Tier B widget-runtime extraction — Phase 0 boundary (design only).
+// Tier B — the `WidgetHost` dependency-inversion contract.
 //
 // See ./widget-host.design.md for the rationale and the phased plan.
 //
-// `WidgetHost` is the dependency-inversion seam the interactive MCP-Apps widget
-// renderer (mcp-apps-renderer / widget-replay) will read from, instead of
-// reaching into ~14 inspector stores/contexts/resolvers directly. Today those
-// reads are scattered across mcp-apps-renderer.tsx (lines 22-103, 570-942,
-// 1364-2101). The inversion: the renderer reads ONE `WidgetHost`; the inspector
-// populates it from those sources at a single provider site.
+// `WidgetHost` is the seam the interactive MCP-Apps widget renderer
+// (mcp-apps-renderer) reads from instead of reaching into inspector
+// stores/contexts/resolvers directly. The inspector-side adapter `useWidgetHost`
+// (./use-widget-host.ts) implements it; `mcp-apps-renderer.tsx` consumes it and,
+// as of Phase 1b, imports zero `@/stores`/`@/contexts`/`@/lib/client-*` modules
+// (enforced by check-renderer-tier-b-imports.mjs).
 //
-// This file is the CONTRACT ONLY — nothing imports it yet, and no behavior
-// changes. The in-place refactor that routes the renderer through it lands in
-// Phase 1. The contract is anchored to the real inspector signatures via
+// Scope note: this boundary makes the RENDERER app-state-import-clean. It does
+// NOT yet make the whole widget runtime package-clean — e.g. the
+// `MCPAppsRenderer` wrapper still reads `usePersistentWidgetSurfaceHost`
+// directly, and sibling files (modal/chrome) still touch inspector state. Those
+// relocate in Phases 2-3.
+//
+// The contract is anchored to the real inspector signatures via
 // `typeof import(...)` / named result types, so it fails typecheck loudly if an
-// underlying shape drifts before the migration catches up.
+// underlying shape drifts.
 
 import type { ComponentType, ReactNode } from "react";
 import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps/app-bridge";

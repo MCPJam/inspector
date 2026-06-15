@@ -1,18 +1,19 @@
-// Tier B widget-runtime extraction — Phase 1 (services + surface + debug).
+// Tier B — `useWidgetHost`, the inspector-side adapter for the `WidgetHost`
+// dependency-inversion contract (see ./widget-host.ts). It reads the ambient
+// stores/contexts the widget renderer used to reach into directly and exposes
+// them as `environment` (raw ENV inputs), `resolvers` (bound config/style fns),
+// `services`, `surface`, and `debug`.
 //
-// `useWidgetHost` is the inspector-side adapter that implements the `WidgetHost`
-// dependency-inversion contract (see ./widget-host.ts) by reading the ambient
-// stores/contexts the widget renderer used to reach into directly. It is a
-// COMPOSITE HOOK, not a context provider: the renderer is always already
+// It is a COMPOSITE HOOK, not a context provider: the renderer is always already
 // mounted inside whatever provider hierarchy its surface needs (chat /
 // playground / chatbox / trace), so calling the same hooks the renderer calls
 // works on every surface with zero new mount points.
 //
 // This module — the boundary adapter — is allowed to import @/stores, @/contexts
-// and the api/config layer; the renderer will not. This PR covers the
-// `services`, `surface`, and `debug` slices; `resolveEnvironment` (the
-// security-sensitive profile/sandbox resolution) lands in the follow-up, at
-// which point the return type widens to the full `WidgetHost`.
+// and the api/config layer; `mcp-apps-renderer.tsx` is not (enforced by
+// check-renderer-tier-b-imports.mjs). Phase 1b routes the renderer's ambient
+// reads through `environment`/`resolvers` while keeping its derivation in place;
+// pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
 import { useMemo, useRef } from "react";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
