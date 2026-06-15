@@ -29,7 +29,6 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
-import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import {
@@ -2832,27 +2831,12 @@ export function MCPAppsRendererSurface({
             );
           },
           onListResourceTemplates: async () => {
-            if (HOSTED_MODE || webManagedServersRef.current) {
-              throw new Error(
-                "Resource templates are not supported in hosted mode",
-              );
-            }
-            const response = await authFetch(
-              `/api/mcp/resource-templates/list`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  serverId: serverIdRef.current,
-                }),
-              },
-            );
-            if (!response.ok) {
-              throw new Error(
-                `Resource template list failed: ${response.statusText}`,
-              );
-            }
-            return response.json();
+            // Routed through the WidgetHost boundary; the host service owns the
+            // hosted / web-managed guard. Wrap the array to preserve the
+            // bridge's `{ resourceTemplates }` response shape.
+            const resourceTemplates =
+              await host.services.listResourceTemplates(serverIdRef.current);
+            return { resourceTemplates };
           },
           onListPrompts: async () => {
             const prompts = await host.services.listPrompts(
