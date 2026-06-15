@@ -35,6 +35,7 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -223,6 +224,7 @@ generateSessionToken();
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
+startLocalBrowserRenderingSetupInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 

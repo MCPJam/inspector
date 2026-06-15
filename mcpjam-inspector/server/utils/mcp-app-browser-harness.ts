@@ -29,6 +29,12 @@ import {
   sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
+import {
+  ensureLocalChromiumInstalled,
+  isChromiumInstalled,
+} from "./browser-rendering-setup";
+
+export { isChromiumInstalled };
 
 /* ------------------------------------------------------------------ *
  * Contract types
@@ -143,27 +149,6 @@ export class ChromiumNotInstalledError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ChromiumNotInstalledError";
-  }
-}
-
-/**
- * Whether a launchable Chromium binary is present for Playwright — the same
- * check `ensureLaunched` gates the real launch on, factored out as the single
- * source of truth. Used by browser-render tests to skip (not fail) where no
- * browser is installed, and available to callers that want a deploy-time
- * preflight so a browser-less image fails loudly at boot rather than on the
- * first widget probe. Honors `PLAYWRIGHT_BROWSERS_PATH` because
- * `chromium.executablePath()` resolves against it.
- */
-export async function isChromiumInstalled(): Promise<boolean> {
-  try {
-    const chromium = await import("playwright")
-      .then((m) => m.chromium)
-      .catch(async () => (await import("playwright-core")).chromium);
-    const executablePath = chromium.executablePath();
-    return !!executablePath && existsSync(executablePath);
-  } catch {
-    return false;
   }
 }
 
@@ -425,6 +410,15 @@ export class McpAppBrowserHarness {
     } catch {
       executablePath = undefined;
     }
+    if (!executablePath || !existsSync(executablePath)) {
+      await ensureLocalChromiumInstalled({ reason: "render" });
+      try {
+        executablePath = chromium.executablePath();
+      } catch {
+        executablePath = undefined;
+      }
+    }
+
     if (!executablePath || !existsSync(executablePath)) {
       throw new ChromiumNotInstalledError(
         "Chromium is not installed for Playwright. Run `npx playwright install chromium`."
