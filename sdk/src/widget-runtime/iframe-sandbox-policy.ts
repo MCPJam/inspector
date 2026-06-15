@@ -20,7 +20,23 @@
  * scoped to the outer attributes the renderer constructs.
  */
 
-import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps/app-bridge";
+/**
+ * Minimal structural shape of the resolved widget permissions this module reads
+ * — the 4 SEP-1865 spec features, checked only for truthiness. Declared locally
+ * rather than importing `McpUiResourcePermissions` from
+ * `@modelcontextprotocol/ext-apps` so this leaf stays dependency-free and the
+ * published `.d.ts` resolves cleanly for NodeNext consumers (ext-apps's
+ * `app-bridge` barrel re-exports types via `export *` that NodeNext can't
+ * follow). The real `McpUiResourcePermissions` is structurally assignable to
+ * this. (Slice 3 reintroduces an ext-apps dependency where `host-app-bridge`
+ * needs `AppBridge` as a value.)
+ */
+export interface IframeSandboxPermissions {
+  camera?: unknown;
+  microphone?: unknown;
+  geolocation?: unknown;
+  clipboardWrite?: unknown;
+}
 
 // The 4 SEP-1865 spec permission features (Permissions Policy tokens). Frozen
 // spec list; the canonical definition is `SEP_1865_PERMISSION_FEATURES` in
@@ -53,7 +69,7 @@ export const DEFAULT_IFRAME_SANDBOX =
  * (`local-network-access *`, `midi *`) are dropped.
  */
 export function buildOuterAllowAttribute(input: {
-  permissions?: McpUiResourcePermissions;
+  permissions?: IframeSandboxPermissions;
   allowFeatures?: Record<string, string>;
 }): string {
   const { permissions, allowFeatures } = input;
@@ -130,7 +146,7 @@ export function buildOuterSandboxAttribute(input: {
 export function resolveIframeSandboxPolicy(input: {
   sandbox?: string;
   sandboxAttrs?: string[];
-  permissions?: McpUiResourcePermissions;
+  permissions?: IframeSandboxPermissions;
   allowFeatures?: Record<string, string>;
 }): { sandbox: string; allow: string } {
   return {

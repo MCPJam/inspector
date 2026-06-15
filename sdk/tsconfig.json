@@ -1,14 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    // `bundler` resolution (the SDK is shipped via tsup/esbuild, which bundles)
-    // matches how every consumer resolves these packages. NodeNext fails to
-    // follow `@modelcontextprotocol/ext-apps/app-bridge`'s `export * from
-    // "./types"` re-export chain for type-only members (TS2305/TS2460), which
-    // `widget-runtime/iframe-sandbox-policy.ts` imports `McpUiResourcePermissions`
-    // from; `bundler` resolves it cleanly, as the inspector (also `bundler`) does.
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM"],
     "declaration": true,
     "declarationMap": true,

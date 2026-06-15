@@ -23,3 +23,4 @@ export {
   buildOuterSandboxAttribute,
   resolveIframeSandboxPolicy,
 } from "./iframe-sandbox-policy.js";
+export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
