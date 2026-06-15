@@ -146,6 +146,27 @@ export class ChromiumNotInstalledError extends Error {
   }
 }
 
+/**
+ * Whether a launchable Chromium binary is present for Playwright — the same
+ * check `ensureLaunched` gates the real launch on, factored out as the single
+ * source of truth. Used by browser-render tests to skip (not fail) where no
+ * browser is installed, and available to callers that want a deploy-time
+ * preflight so a browser-less image fails loudly at boot rather than on the
+ * first widget probe. Honors `PLAYWRIGHT_BROWSERS_PATH` because
+ * `chromium.executablePath()` resolves against it.
+ */
+export async function isChromiumInstalled(): Promise<boolean> {
+  try {
+    const chromium = await import("playwright")
+      .then((m) => m.chromium)
+      .catch(async () => (await import("playwright-core")).chromium);
+    const executablePath = chromium.executablePath();
+    return !!executablePath && existsSync(executablePath);
+  } catch {
+    return false;
+  }
+}
+
 export interface RenderWidgetInput {
   toolCallId: string;
   toolName: string;

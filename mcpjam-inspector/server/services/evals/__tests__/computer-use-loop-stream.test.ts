@@ -75,6 +75,7 @@ import * as computerUseModule from "../../../utils/computer-use-tool";
 import {
   McpAppBrowserHarness,
   DEFAULT_VIEWPORT,
+  isChromiumInstalled,
 } from "../../../utils/mcp-app-browser-harness";
 
 const BUTTON_GUEST_SRC = `
@@ -179,7 +180,13 @@ function streamForFinalText(): LanguageModelV3StreamResult {
   ]);
 }
 
-describe("PR 9 — model-driven Computer Use loop, streamed path (smoke)", () => {
+// Real-browser smoke: run only where a launchable Chromium is installed
+// (see the PR 8 companion test). Browser-less envs skip rather than fail.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "PR 9 — model-driven Computer Use loop, streamed path (smoke)",
+  () => {
   const executeToolCalls: Array<{
     sid: string;
     name: string;
