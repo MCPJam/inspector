@@ -61,6 +61,11 @@
       "types": "./dist/platform/index.d.ts",
       "import": "./dist/platform/index.js",
       "default": "./dist/platform/index.js"
+    },
+    "./widget-runtime": {
+      "types": "./dist/widget-runtime/index.d.ts",
+      "import": "./dist/widget-runtime/index.js",
+      "default": "./dist/widget-runtime/index.js"
     }
   },
   "files": [
