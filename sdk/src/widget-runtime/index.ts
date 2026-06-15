@@ -4,9 +4,9 @@
  * inspector-internal imports.
  *
  * Tier B Phase 2: these modules were relocated here from the MCPJam inspector
- * (`client/src/lib/mcp-ui/tool-visibility.ts` and
- * `client/src/components/chat-v2/thread/mcp-apps/mcp-apps-logging-transport.ts`),
- * which now re-export from this subpath for back-compat.
+ * (tool-visibility, the MCP Apps logging transport, the iframe sandbox policy
+ * builders, the host AppBridge surface, and the app-tool invocation lifecycle
+ * types), which now re-export from this subpath for back-compat.
  */
 
 export {
@@ -24,3 +24,25 @@ export {
   resolveIframeSandboxPolicy,
 } from "./iframe-sandbox-policy.js";
 export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
+
+// host-app-bridge: only its UNIQUE members are re-exported here. The bridge
+// module also re-exports the tool-visibility + iframe-sandbox-policy helpers
+// (the "single framework-free module" convenience harness consumers use), but
+// those already flow from the leaf modules above — re-exporting them here too
+// would be a duplicate-export conflict.
+export {
+  createHostAppBridge,
+  registerHostBridgeHandlers,
+} from "./host-app-bridge.js";
+export type {
+  WidgetDebugDirection,
+  HostBridgeMatrix,
+  HostBridgeCallbacks,
+  RegisterHostBridgeHandlersOptions,
+} from "./host-app-bridge.js";
+
+export type {
+  AppToolInvocation,
+  AppToolInvocationStatus,
+  AppToolInvocationUpdate,
+} from "./app-tool-invocations.js";
