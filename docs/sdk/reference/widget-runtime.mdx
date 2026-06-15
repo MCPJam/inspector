@@ -1,0 +1,147 @@
+---
+title: "widget-runtime"
+description: "Framework-free building blocks for MCP widget apps — tool visibility helpers and LoggingTransport"
+icon: "layout-dashboard"
+---
+
+The `@mcpjam/sdk/widget-runtime` subpath provides framework-free utilities for building MCP widget apps. It has no React dependency and is safe to use in both browser and Node environments.
+
+## Import
+
+```typescript
+import {
+  getToolVisibility,
+  isVisibleToModelOnly,
+  isVisibleToAppOnly,
+  LoggingTransport,
+} from "@mcpjam/sdk/widget-runtime";
+```
+
+---
+
+## Tool visibility helpers
+
+These helpers implement the SEP-1865 tool visibility spec. A tool's `_meta.ui.visibility` array controls whether it is exposed to the AI model, to apps, or to both.
+
+The default visibility when `_meta.ui.visibility` is absent is `["model", "app"]` — the tool is visible to both.
+
+### getToolVisibility()
+
+Returns the normalized visibility array from a tool's `_meta` object.
+
+```typescript
+getToolVisibility(
+  toolMeta: Record<string, unknown> | undefined
+): Array<"model" | "app">
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolMeta` | `Record<string, unknown> \| undefined` | The tool's `_meta` object. |
+
+#### Returns
+
+`Array<"model" | "app">` — deduplicated visibility scopes. Returns `["model", "app"]` when `_meta.ui.visibility` is absent or invalid.
+
+#### Example
+
+```typescript
+import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
+
+const meta = { ui: { visibility: ["model"] } };
+getToolVisibility(meta);   // ["model"]
+
+getToolVisibility(undefined);  // ["model", "app"]
+```
+
+---
+
+### isVisibleToModelOnly()
+
+Returns `true` when the tool's visibility is exactly `["model"]` — the tool should not be callable by apps.
+
+```typescript
+isVisibleToModelOnly(
+  toolMeta: Record<string, unknown> | undefined
+): boolean
+```
+
+#### Example
+
+```typescript
+import { isVisibleToModelOnly } from "@mcpjam/sdk/widget-runtime";
+
+isVisibleToModelOnly({ ui: { visibility: ["model"] } });  // true
+isVisibleToModelOnly({ ui: { visibility: ["app"] } });    // false
+isVisibleToModelOnly(undefined);                          // false
+```
+
+---
+
+### isVisibleToAppOnly()
+
+Returns `true` when the tool's visibility is exactly `["app"]` — the tool is hidden from the AI model.
+
+```typescript
+isVisibleToAppOnly(
+  toolMeta: Record<string, unknown> | undefined
+): boolean
+```
+
+#### Example
+
+```typescript
+import { isVisibleToAppOnly } from "@mcpjam/sdk/widget-runtime";
+
+isVisibleToAppOnly({ ui: { visibility: ["app"] } });    // true
+isVisibleToAppOnly({ ui: { visibility: ["model"] } });  // false
+isVisibleToAppOnly(undefined);                          // false
+```
+
+---
+
+## LoggingTransport
+
+A diagnostic wrapper around any MCP `Transport` that intercepts sent and received JSON-RPC messages without altering them.
+
+```typescript
+new LoggingTransport(
+  inner: Transport,
+  handlers: {
+    onSend?: (message: JSONRPCMessage) => void;
+    onReceive?: (message: JSONRPCMessage) => void;
+  }
+)
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `inner` | `Transport` | The underlying transport to wrap. |
+| `handlers.onSend` | `(message: JSONRPCMessage) => void` | Called before each outgoing message is sent. |
+| `handlers.onReceive` | `(message: JSONRPCMessage) => void` | Called when an incoming message is received. |
+
+### Example
+
+```typescript
+import { LoggingTransport } from "@mcpjam/sdk/widget-runtime";
+
+const transport = new LoggingTransport(innerTransport, {
+  onSend: (msg) => console.log("→", msg),
+  onReceive: (msg) => console.log("←", msg),
+});
+
+await transport.start();
+```
+
+`LoggingTransport` implements the full MCP `Transport` interface — `start()`, `send()`, `close()`, `onmessage`, `onerror`, `onclose`, and `setProtocolVersion` — and delegates every call to the wrapped transport.
+
+---
+
+## Related
+
+- [MCPClientManager](/sdk/reference/mcp-client-manager) — `getToolsForAiSdk()` uses SEP-1865 visibility filtering to exclude app-only tools from the model
+- [MCP Apps Conformance SDK](/sdk/reference/apps-conformance) — validate your server's MCP Apps surface
