@@ -347,6 +347,7 @@ export function SaveAsTestCaseAction({
                           projectId={projectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          onClearSelection={() => setServerAttachmentId(null)}
                           disabled={submitting}
                         />
                       </div>
