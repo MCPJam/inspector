@@ -45,6 +45,14 @@ export function useWidgetHost(): WidgetHostServicesSurfaceDebug {
   const isChatboxSurface = useIsChatboxSurface();
   const widgetSurface = useWidgetSurface();
   const webManagedServers = useWebManagedServers();
+  // Mirrored into the surface bundle for completeness, but the
+  // `MCPAppsRenderer` wrapper still reads `usePersistentWidgetSurfaceHost()`
+  // directly — it gates persistent-vs-ephemeral routing *before*
+  // `MCPAppsRendererSurface` (the `useWidgetHost()` caller) mounts. Fully
+  // centralizing this read is intentionally deferred to the renderer-relocation
+  // PR to avoid widening the wrapper's subscription set (it would then re-render
+  // on every host input). It's a relative-import context, so it does not block
+  // the Tier-B `@/stores`/`@/contexts` guard regardless.
   const persistentSurfaceHost = usePersistentWidgetSurfaceHost();
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
 
