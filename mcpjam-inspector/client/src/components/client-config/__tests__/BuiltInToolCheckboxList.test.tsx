@@ -1,4 +1,4 @@
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { BuiltInToolCheckboxList } from "../BuiltInToolCheckboxList";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -37,7 +37,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         available={[WEB_SEARCH, BASH]}
         computerAttached={false}
         onChange={onChange}
-      />
+      />,
     );
 
     expect(checkboxFor(container, "Web Search").disabled).toBe(false);
@@ -59,7 +59,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         available={[BASH]}
         computerAttached
         onChange={onChange}
-      />
+      />,
     );
 
     const bash = checkboxFor(container, "Bash");
@@ -77,7 +77,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         available={[WEB_SEARCH]}
         computerAttached={false}
         onChange={onChange}
-      />
+      />,
     );
     fireEvent.click(checkboxFor(container, "Web Search"));
     expect(onChange).toHaveBeenCalledWith(["web_search"]);
@@ -94,7 +94,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         available={[BASH]}
         computerAttached={false}
         onChange={onChange}
-      />
+      />,
     );
     const bash = checkboxFor(container, "Bash");
     expect(bash.checked).toBe(true);
@@ -113,7 +113,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         computerAttached
         readOnly
         onChange={onChange}
-      />
+      />,
     );
     const webSearch = checkboxFor(container, "Web Search");
     const bash = checkboxFor(container, "Bash");
@@ -123,6 +123,24 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
     fireEvent.click(webSearch);
     fireEvent.click(bash);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("minimal variant renders switch rows without descriptions", () => {
+    const onChange = vi.fn();
+    render(
+      <BuiltInToolCheckboxList
+        variant="minimal"
+        selected={[]}
+        available={[WEB_SEARCH, BASH]}
+        computerAttached={false}
+        onChange={onChange}
+      />,
+    );
+    expect(
+      screen.getByRole("switch", { name: "Web Search" }),
+    ).not.toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Bash" })).toBeDisabled();
+    expect(screen.queryByText("Search the web")).toBeNull();
   });
 
   it("disallows computer-backed tools entirely on eval suites, but stale ones stay removable", () => {
@@ -135,7 +153,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         computerAttached
         computerToolsDisallowed
         onChange={onChange}
-      />
+      />,
     );
     // Even with a (hypothetical) computer attached, eval disallows it.
     expect(checkboxFor(container, "Bash").disabled).toBe(true);
@@ -150,7 +168,7 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
         computerAttached={false}
         computerToolsDisallowed
         onChange={onChange}
-      />
+      />,
     );
     const bash = checkboxFor(container, "Bash");
     expect(bash.disabled).toBe(false);

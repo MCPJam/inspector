@@ -10,9 +10,12 @@ import type {
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
+import { ToolsTab } from "./ToolsTab";
+import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
+import { useVisibleHostFocusTabs } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import {
   hostFocusShellHeaderRowClass,
@@ -69,6 +72,9 @@ export function HostFocusPanel({
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
 
+  // Tools is GA; Computer is flag-gated (or shown when already attached).
+  const visibleTabs = useVisibleHostFocusTabs(draft);
+
   return (
     <div className={hostFocusShellRootClass}>
       <HostIdentityRow
@@ -83,7 +89,11 @@ export function HostFocusPanel({
           "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <HostFocusTabBar tab={tab} onTabChange={onTabChange} />
+        <HostFocusTabBar
+          tab={tab}
+          onTabChange={onTabChange}
+          tabs={visibleTabs}
+        />
         <Button
           size="icon"
           variant="ghost"
@@ -103,6 +113,12 @@ export function HostFocusPanel({
             onDraftChange={onDraftChange}
             attention={attention}
           />
+        ) : null}
+        {tab === "tools" ? (
+          <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+        ) : null}
+        {tab === "computer" ? (
+          <ComputerTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
         {tab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />

@@ -18,9 +18,12 @@ import { fieldsWithIssues } from "./useHostDraftValidation";
 import { HostIdentityRow } from "./HostIdentityRow";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
+import { ToolsTab } from "./ToolsTab";
+import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
+import { useVisibleHostFocusTabs } from "./host-focus-tab-defs";
 import {
   hostFocusShellDialogChromeClass,
   hostFocusShellHeaderRowClass,
@@ -89,6 +92,9 @@ export function HostFocusDialog({
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
   const totalIssues = attention.length;
 
+  // Tools is GA; Computer is flag-gated (or shown when already attached).
+  const visibleTabs = useVisibleHostFocusTabs(draft);
+
   // Click-out / Esc / X all route through this confirm path when the
   // draft is dirty. Without it, the user could lose unsaved work to a
   // stray click on the scrim.
@@ -144,12 +150,7 @@ export function HostFocusDialog({
             Edit client configuration
           </DialogTitle>
 
-          <header
-            className={cn(
-              hostFocusShellHeaderRowClass,
-              "px-4 py-2.5",
-            )}
-          >
+          <header className={cn(hostFocusShellHeaderRowClass, "px-4 py-2.5")}>
             <Button
               size="icon"
               variant="ghost"
@@ -187,8 +188,7 @@ export function HostFocusDialog({
                   variant="outline"
                   className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-800 dark:text-amber-200"
                 >
-                  {totalIssues}{" "}
-                  {totalIssues === 1 ? "issue" : "issues"}
+                  {totalIssues} {totalIssues === 1 ? "issue" : "issues"}
                 </Badge>
               ) : (
                 <Badge
@@ -230,10 +230,7 @@ export function HostFocusDialog({
           </header>
 
           <HostIdentityRow
-            className={cn(
-              hostFocusShellHeaderRowClass,
-              "border-t-0 px-4 py-2",
-            )}
+            className={cn(hostFocusShellHeaderRowClass, "border-t-0 px-4 py-2")}
             hostDisplayName={hostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}
             hasNameIssue={behaviorIssues.has("hostDisplayName")}
@@ -245,7 +242,11 @@ export function HostFocusDialog({
               "border-t-0 py-1 pl-3 pr-4",
             )}
           >
-            <HostFocusTabBar tab={tab} onTabChange={onTabChange} />
+            <HostFocusTabBar
+              tab={tab}
+              onTabChange={onTabChange}
+              tabs={visibleTabs}
+            />
           </div>
 
           <div className={cn(hostFocusShellScrollClass, "px-6 py-5")}>
@@ -255,6 +256,12 @@ export function HostFocusDialog({
                 onDraftChange={onDraftChange}
                 attention={attention}
               />
+            ) : null}
+            {tab === "tools" ? (
+              <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+            ) : null}
+            {tab === "computer" ? (
+              <ComputerTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}
             {tab === "protocol" ? (
               <ProtocolTab
@@ -293,8 +300,8 @@ export function HostFocusDialog({
           <div className="flex flex-col gap-2">
             <h2 className="text-base font-semibold">Discard changes?</h2>
             <p className="text-[12.5px] text-muted-foreground">
-              Your draft hasn't been saved as a snapshot yet. Closing now
-              will revert to the last saved configuration.
+              Your draft hasn't been saved as a snapshot yet. Closing now will
+              revert to the last saved configuration.
             </p>
             <div className="mt-2 flex items-center justify-end gap-2">
               <Button
