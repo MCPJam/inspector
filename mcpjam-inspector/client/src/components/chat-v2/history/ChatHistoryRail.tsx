@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -37,7 +36,6 @@ interface ChatHistoryRailProps {
   hostStyle?: ChatboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
-  sharedThreadsEnabled?: boolean;
   projectId?: string | null;
   requestHeaders?: HeadersInit;
   enabled?: boolean;
@@ -202,7 +200,6 @@ export function ChatHistoryRail({
   hostStyle = "claude",
   isAuthenticated,
   isStreaming,
-  sharedThreadsEnabled = true,
   projectId,
   requestHeaders,
   enabled = true,
@@ -218,8 +215,7 @@ export function ChatHistoryRail({
     useState<ArchiveSectionScope | null>(null);
   const [sessionToConvert, setSessionToConvert] =
     useState<ChatHistorySession | null>(null);
-  const canUseProjectSharing =
-    isAuthenticated && sharedThreadsEnabled && Boolean(projectId);
+  const canUseProjectSharing = isAuthenticated && Boolean(projectId);
   const { personal, project, loading, error, isReactive, refetch, actions } =
     useChatHistory({
       projectId,
@@ -277,9 +273,7 @@ export function ChatHistoryRail({
   }, [enabled, isReactive, refetch, refreshSignal]);
 
   const archiveBusy = archivingScope !== null;
-  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
-  const canConvertToTestCase =
-    Boolean(isAuthenticated) && evaluateUiEnabled === true;
+  const canConvertToTestCase = Boolean(isAuthenticated);
 
   const handleArchiveSection = async (
     scope: ArchiveSectionScope,

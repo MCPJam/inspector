@@ -5,11 +5,13 @@ import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
 
 const {
   mockMessageView,
+  mockReadOnlyTranscript,
   mockAdaptTraceToUiMessages,
   mockThreadState,
   mockBrowserArtifactsState,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
+  mockReadOnlyTranscript: vi.fn(),
   mockAdaptTraceToUiMessages: vi.fn(),
   mockThreadState: {
     sourceType: "chatbox",
@@ -56,6 +58,13 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
   MessageView: (props: Record<string, unknown>) => {
     mockMessageView(props);
     return <div data-testid="message-view" />;
+  },
+}));
+
+vi.mock("@mcpjam/chat-ui", () => ({
+  ReadOnlyTranscript: (props: Record<string, unknown>) => {
+    mockReadOnlyTranscript(props);
+    return <div data-testid="read-only-transcript" />;
   },
 }));
 
@@ -107,11 +116,10 @@ describe("ShareUsageThreadDetail", () => {
           toolResultDisplay: "attached-to-tool",
         }),
       );
-      expect(mockMessageView).toHaveBeenCalledWith(
+      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-          interactive: false,
-          minimalMode: false,
+          widgetPolicy: "placeholder",
         }),
       );
     });
@@ -121,9 +129,8 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(mockMessageView).toHaveBeenCalledWith(
+      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
-          minimalMode: false,
           reasoningDisplayMode: "collapsible",
         }),
       );
@@ -231,6 +238,6 @@ describe("ShareUsageThreadDetail", () => {
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
-    expect(await screen.findByTestId("message-view")).toBeInTheDocument();
+    expect(await screen.findByTestId("read-only-transcript")).toBeInTheDocument();
   });
 });

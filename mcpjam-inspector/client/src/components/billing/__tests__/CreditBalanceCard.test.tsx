@@ -20,8 +20,6 @@ let balanceState:
     }
   | undefined = undefined;
 let isLoadingState = false;
-let creditTopupsFlagState = true;
-let teamCreditsFlagState = true;
 let evalQuotaState:
   | {
       used: number;
@@ -49,14 +47,6 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
         evalQuotaState.used >= evalQuotaState.allowed
     ),
   }),
-}));
-
-vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
-}));
-
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
@@ -92,18 +82,9 @@ describe("CreditBalanceCard", () => {
       walletLocked: false,
     };
     isLoadingState = false;
-    creditTopupsFlagState = true;
-    teamCreditsFlagState = true;
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
     window.location.hash = "";
-  });
-
-  it("renders nothing when the top-ups UI flag is off", () => {
-    creditTopupsFlagState = false;
-    const { container } = render(<CreditBalanceCard organizationId="org-1" />);
-
-    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a skeleton state while balance is loading", () => {
@@ -361,24 +342,6 @@ describe("CreditBalanceCard", () => {
       expect(screen.getByTestId("usage-monthly-exhausted")).toHaveTextContent(
         /Monthly credits used/
       );
-    });
-
-    it("keeps the existing daily and top-up UI when only the team flag is off", async () => {
-      const user = userEvent.setup();
-      teamCreditsFlagState = false;
-
-      render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
-
-      expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
-      expect(screen.getByTestId("usage-daily")).toHaveTextContent(
-        /Free daily credits/
-      );
-      expect(screen.getByTestId("usage-paid")).toHaveTextContent(
-        /1,500 credits/
-      );
-
-      await user.click(screen.getByRole("button", { name: /Buy credits/i }));
-      expect(screen.getByTestId("topup-dialog")).toBeInTheDocument();
     });
   });
 });

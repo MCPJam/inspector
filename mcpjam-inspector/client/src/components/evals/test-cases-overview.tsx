@@ -508,6 +508,9 @@ export function TestCasesOverview({
                           (serverName) => !connectedServerNames.has(serverName)
                         );
                   const hasModels = Boolean(testCase.models?.length);
+                  // Probes have no quick-run path (suite/schedule only); keep
+                  // the gate explicit rather than riding on their empty models.
+                  const isProbeCase = testCase.caseType === "widget_probe";
                   const isThisCaseRunning = runningTestCaseId === testCase._id;
                   const isAnotherCaseRunning =
                     runningTestCaseId != null &&
@@ -522,6 +525,7 @@ export function TestCasesOverview({
                     blockTestCaseRuns ||
                     Boolean(runTestCaseDisabledReason) ||
                     isAnotherCaseRunning ||
+                    isProbeCase ||
                     !hasModels ||
                     serverGateBlocked ||
                     isThisCaseRunning;
@@ -680,7 +684,20 @@ export function TestCasesOverview({
 
                   const runControl =
                     showRunColumn && onRunTestCase ? (
-                      !hasConfiguredSuiteServers ? (
+                      isProbeCase ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                          <TooltipContent
+                            variant="muted"
+                            side="left"
+                            sideOffset={8}
+                            className="max-w-[16rem]"
+                          >
+                            Widget probes run with the full suite or on its
+                            schedule.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : !hasConfiguredSuiteServers ? (
                         <Tooltip>
                           <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                           <TooltipContent

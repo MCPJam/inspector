@@ -393,9 +393,11 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
-  if (Object.keys(effectiveCaps).length > 0) {
-    doc.hostCapabilities = effectiveCaps;
-  }
+  // Always emit, even when empty — mirrors `hostContext` above. An empty
+  // `{}` is a meaningful advertise ("this host offers no app capabilities",
+  // e.g. the Claude Code CLI template's explicit override), so hiding it
+  // would make an intentional empty look like an omission.
+  doc.hostCapabilities = effectiveCaps;
 
   // sandbox — proxy iframe configuration. Maps to `mcpProfile.apps.sandbox`
   // in storage and the "Sandbox proxy iframe" card in the matrix. Spec

@@ -27,6 +27,8 @@ export type {
   TranscriptUsage,
   ToolErrorRecord,
   ToolErrorKind,
+  RenderObservationStatus,
+  RenderObservationSummary,
   CasePredicates,
   PredicatePlaceholder,
 } from "./types.js";

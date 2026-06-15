@@ -23,6 +23,8 @@ export default defineConfig({
     "src/host-config/internal.ts",
     // Runtime-agnostic Platform API client (Workers/browser/Node safe).
     "src/platform/index.ts",
+    // Framework-free widget/app runtime building blocks (SEP-1865).
+    "src/widget-runtime/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

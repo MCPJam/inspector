@@ -159,6 +159,18 @@ export function summarizePredicate(predicate: Predicate): string {
         return "final assistant message non-empty";
       case "tokenBudgetUnder":
         return `tokens < ${predicate.tokens.toLocaleString()}`;
+      case "widgetRendered":
+        return `widget rendered${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "widgetRenderLatencyUnder":
+        return `widget render < ${predicate.ms.toLocaleString()}ms${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "widgetNoConsoleErrors":
+        return `no widget console errors${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
     }
   } catch {
     // A row whose `type` is valid but whose payload is missing/wrong (corruption,

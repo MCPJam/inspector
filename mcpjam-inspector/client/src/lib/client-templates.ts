@@ -10,10 +10,13 @@ import {
 } from "@/config/mcpjam-client-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
+import bedrockLogo from "/bedrock_logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -208,10 +211,13 @@ const CLAUDE_FONTS_CSS = `
 export type HostTemplateId =
   | "mcpjam"
   | "claude"
+  | "claude-code"
   | "chatgpt"
   | "cursor"
   | "codex"
-  | "copilot";
+  | "copilot"
+  | "vscode"
+  | "agentcore";
 
 export interface SeedHostTemplateOptions {
   /**
@@ -240,6 +246,80 @@ export interface HostTemplate {
   logoSrc: string;
   seed: (opts?: SeedHostTemplateOptions) => HostConfigInputV2;
 }
+
+/**
+ * Claude Code's native (non-MCP) tool surface, captured from a live
+ * v2.1.176 session. These are the CLI's own harness tools — they never
+ * cross the MCP wire, so they don't belong in `clientCapabilities`, and
+ * no current host-config field can carry them (`builtInToolIds` is
+ * validated against the backend built-in tool catalog; `computer` is the
+ * Project Computers resource). Recorded verbatim so a future
+ * computer-use / host-native-toolset feature can seed an honest Claude
+ * Code environment instead of guessing. Deliberately NOT wired into the
+ * "claude-code" template seed below.
+ */
+export const CLAUDE_CODE_NATIVE_TOOLS = {
+  /** Always loaded at session start. */
+  topLevel: [
+    { name: "Agent", description: "launch subagents" },
+    {
+      name: "AskUserQuestion",
+      description: "ask the user a multiple-choice question",
+    },
+    { name: "Bash", description: "run shell commands" },
+    { name: "Edit", description: "exact string replacement in a file" },
+    {
+      name: "Read",
+      description: "read files (text, images, PDFs, notebooks)",
+    },
+    { name: "ScheduleWakeup", description: "schedule a /loop resume" },
+    {
+      name: "ShareOnboardingGuide",
+      description: "upload/share ONBOARDING.md",
+    },
+    { name: "Skill", description: "invoke a skill" },
+    {
+      name: "ToolSearch",
+      description: "fetch schemas for deferred tools",
+    },
+    {
+      name: "Workflow",
+      description: "run a multi-agent orchestration script",
+    },
+    { name: "Write", description: "write/overwrite a file" },
+  ],
+  /**
+   * Deferred: names are known up front, but schemas must be loaded via
+   * ToolSearch before calling.
+   */
+  deferred: {
+    taskManagement: [
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput",
+      "TaskStop",
+      "TaskUpdate",
+      "Monitor",
+    ],
+    cronSchedulingTriggers: [
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "RemoteTrigger",
+      "PushNotification",
+    ],
+    planWorktreeMode: [
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "EnterWorktree",
+      "ExitWorktree",
+      "DesignSync",
+    ],
+    filesWeb: ["NotebookEdit", "WebFetch", "WebSearch"],
+    mcpGeneric: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
+  },
+} as const;
 
 export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
@@ -544,6 +624,80 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // sandbox-proxy.html: inner gets spec-4 only), matching real
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    description:
+      "Anthropic's coding CLI. Roots + form elicitation, no widget rendering.",
+    logoSrc: claudeCodeLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Dedicated Claude Code skin (CLAUDE_CODE_HOST_STYLE in
+        // client-styles/built-ins.ts) — borrows Claude's chat surface but
+        // ships its own brand logo and a CLI spinner thinking indicator
+        // instead of the claude.ai mascot.
+        hostStyle: "claude-code",
+        // Same guest-allowed Anthropic model rationale as the Claude
+        // template — the real CLI's model choice never crosses the MCP
+        // wire, so this is a product default, not probe data.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Verbatim from a live mcpjam-learn `start-host-probe` against
+      // Claude Code CLI v2.1.176: raw `initialize` capabilities are
+      // exactly `{ roots: {}, elicitation: {} }` — roots without
+      // `listChanged`, elicitation the SDK parses as form-mode, and NO
+      // `extensions["io.modelcontextprotocol/ui"]`. Replace the SDK
+      // default entirely rather than spreading on top — a spread would
+      // leak the UI extension back in and misrepresent Claude Code as a
+      // UI-capable client (same move as the Codex template).
+      base.clientCapabilities = {
+        roots: {},
+        elicitation: {},
+      };
+      // Progressive tool discovery ON. Product choice, not probe data —
+      // tool disclosure isn't an MCP `initialize` capability, so nothing
+      // about it was (or could be) extracted from the host probe.
+      base.progressiveToolDiscovery = true;
+      // CLI client: no widget rendering, so `hostContext` stays the
+      // empty object.
+      //
+      // Zero out the host-side app advertise. We reuse `hostStyle:
+      // "claude"` for Anthropic chrome, but the Claude style's preset
+      // advertises claude.ai's full app surface (openLinks, serverTools,
+      // serverResources, logging, …) — none of which Claude Code has,
+      // since it renders no MCP Apps. `{}` is the explicit "advertise
+      // nothing" override (resolveEffectiveHostCapabilities treats `{}`
+      // distinctly from `undefined`/preset-inherit), so the Apps tab
+      // honestly shows an empty hostCapabilities for the CLI instead of
+      // inheriting Claude's. None of this was in the probe — the CLI
+      // returned no ui/initialize snapshot at all.
+      base.hostCapabilitiesOverride = {};
+      //
+      // The CLI's native harness toolset (Bash/Read/Write/etc.) is
+      // catalogued in CLAUDE_CODE_NATIVE_TOOLS above for a future
+      // computer-use feature; intentionally not attached to this seed.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          // Verbatim from the same probe. `title` / `description` /
+          // `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2 (backend
+          // soft-validates name/version only).
+          clientInfo: {
+            name: "claude-code",
+            title: "Claude Code",
+            version: "2.1.176",
+            description: "Anthropic's agentic coding tool",
+            websiteUrl: "https://claude.com/claude-code",
           },
         },
       };
@@ -1001,6 +1155,157 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // no equivalent capture, so we hold the line.
               allow: {},
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    description:
+      "Visual Studio Code chat panel (GitHub Copilot). MCP UI extension on, no message/updateModelContext.",
+    logoSrc: vscodeLogo,
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "vscode",
+        // VS Code Copilot Chat offers both OpenAI and Anthropic models;
+        // default to the same guest-allowed Anthropic model as Cursor
+        // (Sonnet 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App
+        // Builder works without a BYOK key. Users can swap any model after.
+        modelId: "anthropic/claude-sonnet-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+        // VS Code, like Cursor, doesn't yet implement SEP-1865 visibility
+        // filtering — leave it off to mirror that. Best-effort: no live VS
+        // Code probe yet, so capability values are inherited from Cursor's.
+        respectToolVisibility: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // VS Code is the editor Cursor forks (Cursor's own clientInfo.name is
+      // "cursor-vscode"). Its MCP client declares the UI extension plus
+      // elicitation and roots, same shape as Cursor. Keep the SDK-default
+      // UI extension entry and layer those on top. Values inherited from
+      // Cursor's probe pending a dedicated VS Code capture.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        elicitation: { form: {} },
+        roots: { listChanged: true },
+      };
+      // hostCapabilities: mirror Cursor's subset (VS Code shares the editor
+      // base). No `updateModelContext` / `message`; `listChanged: false`
+      // markers kept explicit so apps gating on them know VS Code doesn't
+      // forward those notifications.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: { listChanged: false },
+        serverResources: { listChanged: false },
+        logging: {},
+      };
+      // Per-resource environment context. Inherits Cursor's editor-surface
+      // shape; `containerDimensions` is a placeholder pending a VS Code
+      // probe. Inline-only — VS Code renders MCP UI in the chat panel
+      // without fullscreen / pip modes.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 649, maxHeight: 800 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "vscode",
+        platform: "desktop",
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // Base MCP protocol clientInfo. Not probed — "Visual Studio Code"
+          // matches VS Code's product identity (Cursor reports the forked
+          // "cursor-vscode"); refine when a live capture lands.
+          clientInfo: { name: "Visual Studio Code", version: "1.105.0" },
+        },
+        apps: {
+          uiInitialize: {
+            // hostInfo sent in `ui/initialize`. Apps branching on
+            // `hostInfo.name === "Visual Studio Code"` need this. Not probed.
+            hostInfo: { name: "Visual Studio Code", version: "1.105.0" },
+          },
+          sandbox: {
+            csp: {
+              // Honor the view's declared CSP — no host-side restrictTo (see
+              // the Claude template for the full intersection-trap rationale).
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "agentcore",
+    label: "AgentCore",
+    description:
+      "AWS Bedrock AgentCore runtime. Text MCP servers only, no widget rendering.",
+    logoSrc: bedrockLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Neutral stand-in skin (MCPJam house tokens + bedrock logo). See
+        // AGENTCORE_HOST_STYLE in client-styles/built-ins.ts.
+        hostStyle: "agentcore",
+        // AgentCore runs models on Amazon Bedrock (typically Claude).
+        // Bedrock ids are BYOK (bare `us.anthropic.claude-*` strings that
+        // need AWS creds), so default to the guest-allowed hosted Claude
+        // analog — Haiku 4.5 — so the App Builder works without AWS
+        // credentials. Users can swap to a real Bedrock model id after.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // AgentCore permits only text-based MCP servers — it does NOT render
+      // MCP Apps widgets. Like Codex, replace `clientCapabilities` entirely
+      // (rather than spreading) so the SDK-default UI extension doesn't leak
+      // back in and misrepresent AgentCore as UI-capable. It still surfaces
+      // elicitation for text-only interaction.
+      //
+      // GUESS (unprobed): kept to `elicitation` only. An agent runtime
+      // plausibly also advertises `roots` and/or `sampling`, but AgentCore
+      // is server-side (no local CLI to run `mcpjam-learn start-host-probe`
+      // against), so we can't confirm — left off rather than invented. Add
+      // them once a live AgentCore→MCP `initialize` capture is available.
+      base.clientCapabilities = {
+        elicitation: {},
+      };
+      // No rendering surface → no hostContext and no hostCapabilitiesOverride
+      // (there's no ui/initialize negotiation). Leaves both as the empty
+      // defaults from emptyHostConfigInputV2. Same reasoning as the Codex
+      // template.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // GUESS (unprobed) — every value below is a best-effort placeholder
+          // chosen to match AWS's product naming, NOT a live capture. Unlike
+          // the Codex / Claude Code templates (which carry real
+          // `start-host-probe` data here), AgentCore runs server-side so we
+          // couldn't probe it locally. Replace verbatim once a real
+          // AgentCore→MCP `initialize` is captured: `protocolVersion`,
+          // `clientInfo.name` (the actual MCP SDK identity the agent sends —
+          // may not be "bedrock-agentcore"), and `version`.
+          supportedProtocolVersions: ["2025-06-18"],
+          // `title` / `description` / `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2 (backend
+          // soft-validates name/version only).
+          clientInfo: {
+            name: "bedrock-agentcore",
+            title: "AgentCore",
+            version: "1.0.0",
+            description: "AWS Bedrock AgentCore agent runtime",
+            websiteUrl: "https://aws.amazon.com/bedrock/agentcore/",
           },
         },
       };

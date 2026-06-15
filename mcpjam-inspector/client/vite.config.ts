@@ -21,6 +21,25 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+// Tier B Phase 2: @mcpjam/sdk/widget-runtime resolves to dist via package
+// exports; alias it to source so dev:client / build:client resolve it without a
+// prior `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
+);
+// @mcpjam/chat-ui publishes from dist, but a clean checkout has no
+// chat-ui/dist until it is built. Resolve the package from source so the
+// inspector's dev/build/typecheck/test never depend on a chat-ui build.
+const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
+// Focused subpaths resolved from source. They avoid the package's
+// renderer/markdown component graph (not React-free — thread-helpers still
+// exposes lucide icon components via getToolStateMeta).
+const chatUiThreadHelpersEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/thread-helpers.ts",
+);
+const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
 // Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
 // directly to the installed ESM entrypoints.
 const mcpSdkClientAuthEntry = path.resolve(
@@ -64,7 +83,12 @@ export default defineConfig(({ mode }) => {
         "@repo/assets": path.resolve(clientDir, "src/assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
+        // More specific subpaths must precede the bare alias (first match wins).
+        "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
+        "@mcpjam/chat-ui/trace": chatUiTraceEntry,
+        "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
+        "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
         "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,

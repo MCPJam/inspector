@@ -1,8 +1,11 @@
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
+import vscodeLogo from "/vscode_logo.svg";
+import bedrockLogo from "/bedrock_logo.svg";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -30,6 +33,7 @@ import {
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
+import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
 import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
@@ -250,6 +254,36 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+// Claude Code is a terminal agent with no chat chrome of its own, so it
+// borrows Claude's desktop chat surface wholesale (style variables, fonts,
+// background, MCP profile) and only differs in brand identity: its own
+// label, logo, and a CLI spinner busy-state instead of the claude.ai
+// mascot. Mirrors how CODEX_HOST_STYLE borrows ChatGPT's surface.
+//
+// Capabilities reuse Claude's preset here, but the "claude-code" template
+// (`client-templates.ts`) overrides hostCapabilities to `{}` since the CLI
+// renders no MCP Apps — the style preset is just the fallback if a host
+// ever clears that override.
+export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-code",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    label: "Claude Code",
+    shortLabel: "Claude Code-style host",
+    pickerDescription: "Anthropic Claude Code CLI chrome",
+    logoSrc: claudeCodeLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeCodeCliIndicator,
+  },
+};
+
 export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   id: "chatgpt",
   mcp: {
@@ -421,6 +455,95 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Visual Studio Code host style (GitHub Copilot Chat MCP client). VS Code
+ * is the editor Cursor itself forks — Cursor's `clientInfo.name` is
+ * literally "cursor-vscode" and its chat panel mirrors "VS Code / Cursor's
+ * standard editor surface" (see cursor-client-context.ts). So VS Code
+ * reuses Cursor's chrome base verbatim (platform, font, style variables,
+ * chat background, shine indicator); only the label, picker description,
+ * and logo are VS Code-specific.
+ *
+ * Capability surface mirrors Cursor's MCP Apps subset — VS Code renders
+ * MCP UI resources (`text/html;profile=mcp-app`) inline in the chat panel
+ * but, like Cursor, does not surface `updateModelContext` / `message`
+ * back-channels for widgets. Treat as a best-effort mock until a live VS
+ * Code probe lands (no captured `ui/initialize` yet — values inherited
+ * from Cursor's probe).
+ */
+export const VSCODE_HOST_STYLE: HostStyleDefinition = {
+  id: "vscode",
+  mcp: {
+    // VS Code advertises the MCP UI extension (`text/html;profile=mcp-app`),
+    // same as Cursor.
+    protocolOverride: UIType.MCP_APPS,
+    platform: CURSOR_PLATFORM,
+    fontCss: CURSOR_FONT_CSS,
+    // Inherited from Cursor's probe (VS Code shares the editor base). No
+    // `updateModelContext` / `message`; carry the `listChanged: false`
+    // markers as a preset-only augment so apps gating on `listChanged: true`
+    // know they aren't forwarded.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      updateModelContext: false,
+      message: false,
+    },
+    hostCapabilitiesAugment: {
+      serverTools: { listChanged: false },
+      serverResources: { listChanged: false },
+    },
+    resolveStyleVariables: getCursorStyleVariables,
+  },
+  chatUi: {
+    label: "VS Code",
+    shortLabel: "VS Code-style host",
+    pickerDescription: "Visual Studio Code chat panel chrome",
+    logoSrc: vscodeLogo,
+    // Flat, dark, IDE-like surface — same visual family as Cursor/ChatGPT.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
+ * AWS Bedrock AgentCore host style. AgentCore is a server-side agent
+ * runtime that permits only text-based MCP servers — it does not render
+ * MCP Apps widgets (analogous to the Codex CLI; see the AgentCore template
+ * in `client-templates.ts`, which advertises `elicitation`-only client
+ * capabilities). This entry is therefore a playground stand-in, not a
+ * faithful clone of a real rendering surface.
+ *
+ * Chrome reuses MCPJam's neutral house tokens — AgentCore has no published
+ * chat UI of its own to copy, and the neutral surface is the honest choice
+ * (don't invent AWS-branded chrome). The capability surface is the
+ * spec-default "no claims" set because AgentCore renders nothing; the `mcp`
+ * blob is unread in practice (no iframe is ever created).
+ */
+export const AGENTCORE_HOST_STYLE: HostStyleDefinition = {
+  id: "agentcore",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    // No widget rendering → advertise nothing. Honest baseline for a
+    // text-only host.
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "AgentCore",
+    shortLabel: "AgentCore-style host",
+    pickerDescription: "AWS Bedrock AgentCore runtime (text servers only)",
+    logoSrc: bedrockLogo,
+    // Maps onto the claude visual family (warm bubble chat language) like
+    // MCPJam, whose neutral tokens AgentCore borrows.
+    family: "claude",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
+/**
  * MCPJam's own house chrome. Used as the inspector's default host style so
  * "no host selected" doesn't silently render as Claude. Capability blob is
  * the inspector's actual MCP Apps renderer support — same baseline as
@@ -469,4 +592,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
+  CLAUDE_CODE_HOST_STYLE,
+  VSCODE_HOST_STYLE,
+  AGENTCORE_HOST_STYLE,
 ];

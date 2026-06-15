@@ -179,7 +179,6 @@ export function useAppState({
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
-  hostsHubFlagEnabled,
   requestSignIn,
 }: {
   currentUserId: string | null;
@@ -194,12 +193,6 @@ export function useAppState({
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
-  /**
-   * Hosts-hub feature flag. When off, host queries are skipped and the
-   * connection path falls back to the project default (still authoritative
-   * via its shadow `projects.clientConfig`).
-   */
-  hostsHubFlagEnabled: boolean;
   requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
@@ -507,7 +500,7 @@ export function useAppState({
     activeSharedProjectId ?? null,
   );
   const { host: selectedHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
+    isAuthenticated,
     hostId: activeHostId,
   });
   const activeHost = resolveEffectiveHost({

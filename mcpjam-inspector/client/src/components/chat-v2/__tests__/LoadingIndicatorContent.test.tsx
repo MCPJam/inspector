@@ -88,6 +88,21 @@ describe("LoadingIndicatorContent", () => {
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
   });
 
+  it("renders the CLI spinner (not the Claude mascot) for Claude Code hosts", () => {
+    render(
+      <ChatboxHostStyleProvider value="claude-code">
+        <LoadingIndicatorContent />
+      </ChatboxHostStyleProvider>,
+    );
+
+    expect(
+      screen.getByTestId("loading-indicator-claude-code-cli"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-claude"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the GPT pulse for ChatGPT-style chatbox hosts", () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
@@ -143,5 +158,10 @@ describe("inline streaming footer host helpers", () => {
     expect(usesClaudeInlineStreamingFooter("mcpjam")).toBe(false);
     expect(usesMcpjamInlineStreamingFooter("mcpjam")).toBe(true);
     expect(usesMcpjamInlineStreamingFooter("claude")).toBe(false);
+  });
+
+  it("excludes Claude Code from the Claude mark footer (CLI agent, own spinner)", () => {
+    expect(usesClaudeInlineStreamingFooter("claude-code")).toBe(false);
+    expect(usesMcpjamInlineStreamingFooter("claude-code")).toBe(false);
   });
 });
