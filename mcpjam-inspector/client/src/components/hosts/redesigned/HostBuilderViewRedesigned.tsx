@@ -34,6 +34,8 @@ import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useComputerStatus } from "@/hooks/useProjectComputer";
+import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
   hasBlockingErrors,
   useHostDraftValidation,
@@ -69,6 +71,11 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  // Project Computers canvas inputs. Both queries resolve to `undefined`
+  // until their backend functions are deployed and stay cheap when the
+  // feature flag is off (the islands they feed aren't emitted then).
+  const computerStatus = useComputerStatus(projectId);
+  const builtInToolCatalog = useBuiltInToolCatalog();
   const { updateHost } = useHostMutations();
   const { createServer } = useServerMutations();
 
@@ -262,6 +269,9 @@ export function HostBuilderViewRedesigned({
         isDirty,
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
+        computersEnabled,
+        computerStatus,
+        builtInToolCatalog,
       },
       attention
     );
@@ -273,6 +283,9 @@ export function HostBuilderViewRedesigned({
     availableServersForCanvas,
     attention,
     prevHostSnapshot,
+    computersEnabled,
+    computerStatus,
+    builtInToolCatalog,
   ]);
 
   const openFocus = useCallback(
@@ -483,6 +496,7 @@ export function HostBuilderViewRedesigned({
                     onSelectNode={handleSelectNode}
                     onClearSelection={() => setSelectedNodeId(null)}
                     onAddServer={() => setShowAddServer(true)}
+                    onOpenComputer={() => navigate("/computer")}
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>
