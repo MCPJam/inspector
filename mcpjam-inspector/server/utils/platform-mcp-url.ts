@@ -34,9 +34,15 @@ const PLATFORM_MCP_URL_BY_ENV: Record<Environment, string> = {
 export function resolvePlatformMcpUrl(): string {
   const override = process.env.MCPJAM_PLATFORM_MCP_URL?.trim();
   if (override) {
-    logger.info(
-      `[platform-mcp] using MCPJAM_PLATFORM_MCP_URL override: ${override}`,
-    );
+    // Log only the origin — the value is operator-supplied and could carry a
+    // query token; the full URL doesn't belong in server logs.
+    let origin: string;
+    try {
+      origin = new URL(override).origin;
+    } catch {
+      origin = "(unparseable)";
+    }
+    logger.info(`[platform-mcp] using MCPJAM_PLATFORM_MCP_URL override (${origin})`);
     return override;
   }
   return PLATFORM_MCP_URL_BY_ENV[resolveEnvironment()];

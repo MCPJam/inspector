@@ -82,7 +82,7 @@ The platform MCP worker backs the Home/MCPJam agent's workspace tools (`list_pro
 agent connects to it on `:8787` — no env var to set. If you only need the UI/server and
 want to skip the worker (and its one-time UI build), use `npm run dev:app` instead.
 
-#### Dev Convex configuration (for the Home agent's platform tools)
+### Dev Convex configuration (for the Home agent's platform tools)
 
 The platform worker forwards your dev AuthKit token through `/api/v1` to the dev **Convex**
 deployment (the one your `.env.development` `CONVEX_HTTP_URL` points at). That deployment
