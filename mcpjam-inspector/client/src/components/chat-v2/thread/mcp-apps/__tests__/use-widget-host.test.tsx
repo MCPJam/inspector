@@ -7,6 +7,7 @@ import {
   WidgetSurfaceProvider,
   type WidgetSurface,
 } from "@/contexts/widget-surface-context";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { useWidgetHost } from "../use-widget-host";
 
 // Pin HOSTED_MODE off so the listResourceTemplates guard is exercised purely via
@@ -54,6 +55,16 @@ function makeWrapper(opts: {
         </WebManagedServersProvider>
       );
     }
+    // Phase 1b: useWidgetHost now also reads the preferences store
+    // (themeMode / hostStyle) for the renderer's environment inputs.
+    // `usePreferencesStore` throws without its provider, so wrap the hook
+    // in a provider on every surface (mirrors the renderer always being
+    // mounted inside PreferencesStoreProvider in the real app).
+    node = (
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        {node}
+      </PreferencesStoreProvider>
+    );
     return node;
   };
 }

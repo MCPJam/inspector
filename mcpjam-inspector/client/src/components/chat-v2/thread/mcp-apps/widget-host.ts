@@ -22,7 +22,16 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
-import type { CspMode } from "@/stores/ui-playground-store";
+import type {
+  CspMode,
+  DeviceCapabilities,
+  DeviceType,
+  PlaygroundGlobals,
+  SafeAreaInsets,
+} from "@/stores/ui-playground-store";
+import type { PreferencesState } from "@/stores/preferences/preferences-store";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import type {
   CspViolation,
   WidgetDebugInfo,
@@ -90,6 +99,128 @@ export interface WidgetHostEnvironment {
    */
   baseHostContext: McpUiHostContext;
 }
+
+// --- Environment (Phase 1b: raw ambient inputs) ------------------------------
+
+/**
+ * Raw ambient ENV inputs the renderer reads directly today (preferences,
+ * chatbox style/theme/capability overrides, the active mcpProfile, the draft
+ * host context, and the playground globals). Phase 1b routes these through the
+ * host so the renderer keeps ALL of its existing derivation in place
+ * (memoization, ternaries, dependency arrays) but stops importing `@/stores`
+ * and `@/contexts`. The adapter (`useWidgetHost`) subscribes to the same
+ * fine-grained selectors/hooks the renderer used, so reactivity is unchanged.
+ *
+ * Every field is pinned to its real source type so a source-shape drift fails
+ * typecheck loudly before this contract goes stale. Phase 3 replaces these raw
+ * inputs with `WidgetHost.resolveEnvironment` (see below).
+ */
+export interface WidgetHostEnvironmentInputs {
+  /** usePreferencesStore((s) => s.themeMode). */
+  themeMode: PreferencesState["themeMode"];
+  /** usePreferencesStore((s) => s.hostStyle) — the "shared" host style. */
+  sharedHostStyle: PreferencesState["hostStyle"];
+  /** useChatboxHostStyle(). */
+  chatboxHostStyle: ReturnType<
+    typeof import("@/contexts/chatbox-client-style-context").useChatboxHostStyle
+  >;
+  /** useChatboxHostTheme(). */
+  chatboxHostTheme: ReturnType<
+    typeof import("@/contexts/chatbox-client-style-context").useChatboxHostTheme
+  >;
+  /** useChatboxHostCapabilitiesOverride(). */
+  hostCapabilitiesOverride: ReturnType<
+    typeof import("@/contexts/chatbox-client-capabilities-override-context").useChatboxHostCapabilitiesOverride
+  >;
+  /**
+   * useActiveMcpProfile(). Drives the capability / compat / sandbox resolvers
+   * AND the renderer's `apps.sandbox.*` reads (csp, permissions, sandboxAttrs,
+   * allowFeatures, cspDirectives) + `apps.uiInitialize.hostInfo`.
+   */
+  activeMcpProfile: HostConfigMcpProfileV1 | undefined;
+  /** useHostContextStore((s) => s.draftHostContext). */
+  draftHostContext: ProjectHostContextDraft;
+  /** useUIPlaygroundStore((s) => s.isPlaygroundActive). */
+  isPlaygroundActive: boolean;
+  /** useUIPlaygroundStore((s) => s.globals.locale). */
+  playgroundLocale: PlaygroundGlobals["locale"];
+  /** useUIPlaygroundStore((s) => s.globals.timeZone). */
+  playgroundTimeZone: PlaygroundGlobals["timeZone"];
+  /** useUIPlaygroundStore((s) => s.displayMode). */
+  playgroundDisplayMode: DisplayMode;
+  /** useUIPlaygroundStore((s) => s.capabilities). */
+  playgroundCapabilities: DeviceCapabilities;
+  /** useUIPlaygroundStore((s) => s.safeAreaInsets). */
+  playgroundSafeAreaInsets: SafeAreaInsets;
+  /** useUIPlaygroundStore((s) => s.deviceType). */
+  playgroundDeviceType: DeviceType;
+}
+
+// --- Resolvers (Phase 1b: bound util/resolver fns) ---------------------------
+
+/**
+ * Resolver / projection functions the renderer imports from the inspector
+ * config layer today (`client-config-v2`, `client-styles`, `client-config`).
+ * Phase 1b binds them here so the renderer keeps its call sites verbatim
+ * (`host.resolvers.x(...)`) while dropping the `@/lib/client-*` imports.
+ *
+ * Each member is pinned to the live exported function via `typeof import(...)`
+ * so the bound surface can't silently drift from the source signatures.
+ * `DEFAULT_HOST_STYLE` is the one non-function member — the renderer reads it
+ * once to pin the SEP style-variable allowlist.
+ */
+export interface WidgetHostResolvers {
+  resolveEffectiveCompatRuntime: typeof import("@/lib/client-config-v2").resolveEffectiveCompatRuntime;
+  resolveEffectiveMcpAppsCapabilities: typeof import("@/lib/client-config-v2").resolveEffectiveMcpAppsCapabilities;
+  resolveEffectiveHostCapabilities: typeof import("@/lib/client-config-v2").resolveEffectiveHostCapabilities;
+  resolveHostInfo: typeof import("@/lib/client-config-v2").resolveHostInfo;
+  getHostStyleOrDefault: typeof import("@/lib/client-styles").getHostStyleOrDefault;
+  DEFAULT_HOST_STYLE: typeof import("@/lib/client-styles").DEFAULT_HOST_STYLE;
+  extractHostTheme: typeof import("@/lib/client-config").extractHostTheme;
+  extractHostDisplayMode: typeof import("@/lib/client-config").extractHostDisplayMode;
+  extractHostDisplayModes: typeof import("@/lib/client-config").extractHostDisplayModes;
+  clampDisplayModeToAvailableModes: typeof import("@/lib/client-config").clampDisplayModeToAvailableModes;
+  stableStringifyJson: typeof import("@/lib/client-config").stableStringifyJson;
+}
+
+// --- Type re-exports for the renderer ----------------------------------------
+//
+// The Tier-B import guard forbids the renderer from importing `@/stores/*` and
+// `@/lib/client-styles` even for `import type`. Re-export the type-only symbols
+// the renderer still needs here so it can import them from the host boundary.
+
+export type {
+  OpenAiAppsCapabilities,
+  ResolvedMcpAppsCapabilities,
+} from "@/lib/client-styles";
+export type { CspMode } from "@/stores/ui-playground-store";
+export type { WidgetLifecycleEvent } from "@/stores/widget-debug-store";
+export type { UiProtocol } from "@/stores/traffic-log-store";
+
+// `extractMethod` is a pure JSON-RPC message parser (no store state, no React)
+// the renderer uses for traffic-log wiring. Re-exported through the boundary —
+// alongside the `UiProtocol` type and the `WidgetDebugSink.addTrafficLog`
+// sink — so the renderer's call sites stay verbatim while it stops importing
+// `@/stores/*` (Tier-B guard). The function relocates with the traffic-log
+// utilities in a later phase.
+export { extractMethod } from "@/stores/traffic-log-store";
+
+// `stableStringifyJson` is exposed for components via `WidgetHostResolvers`
+// (read off `host.resolvers`), but `mcp-apps-renderer.tsx` also calls it from
+// MODULE scope (`getPersistentSurfaceId`, used by the `MCPAppsRenderer`
+// wrapper's persistent path) where no host instance exists. Re-export the pure
+// canonicalizer here so that module-level call site can import it from the
+// boundary instead of `@/lib/client-config` (Tier-B guard). Same underlying fn
+// as `resolvers.stableStringifyJson`, so the two paths can't diverge.
+export { stableStringifyJson } from "@/lib/client-config";
+
+/**
+ * Widget display-mode union. Mirrors the inspector playground store's
+ * `DisplayMode` (and the SEP `HostDisplayMode`); re-declared here (rather than
+ * re-exported from `@/stores`) so the renderer can import it from the host
+ * boundary and satisfy the Tier-B guard.
+ */
+export type DisplayMode = "inline" | "pip" | "fullscreen";
 
 // --- Services ----------------------------------------------------------------
 
@@ -249,8 +380,33 @@ export interface WidgetHostComponents {
 // --- The seam ----------------------------------------------------------------
 
 export interface WidgetHost {
-  /** Resolved per-server host environment (see WidgetHostEnvironment). */
-  resolveEnvironment: (serverId: string | undefined) => WidgetHostEnvironment;
+  /**
+   * Resolved per-server host environment (see WidgetHostEnvironment) — the
+   * documented Phase-3 target: the inspector resolves the full per-server
+   * environment once and the renderer drops its derivation logic.
+   *
+   * OPTIONAL in the contract because Phase 1b deliberately does NOT implement
+   * it. Phase 1b is a behavior-preserving IN-PLACE inversion: it keeps the
+   * renderer's derivation byte-for-byte and only routes the renderer's raw
+   * ambient reads (see `environment`) and imported resolver fns (see
+   * `resolvers`) through the host. Pre-resolving the environment is a separate,
+   * higher-risk change saved for Phase 3; leaving this required would force
+   * `useWidgetHost` to implement the security-sensitive sandbox/profile
+   * resolution before its tests exist.
+   */
+  resolveEnvironment?: (serverId: string | undefined) => WidgetHostEnvironment;
+  /**
+   * Raw ambient ENV inputs (Phase 1b). The renderer keeps its existing
+   * derivation; this just relocates the store/context read sites behind the
+   * host so the renderer imports zero `@/stores`/`@/contexts`. Folded into
+   * `resolveEnvironment` in Phase 3.
+   */
+  environment: WidgetHostEnvironmentInputs;
+  /**
+   * Bound resolver/projection fns (Phase 1b) the renderer used to import from
+   * `@/lib/client-*` directly. Call sites stay verbatim as `resolvers.x(...)`.
+   */
+  resolvers: WidgetHostResolvers;
   services: WidgetHostServices;
   surface: WidgetSurfaceInfo;
   debug?: WidgetDebugSink;

@@ -19,9 +19,31 @@ import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
 import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-client-style-context";
+import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-client-capabilities-override-context";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import {
+  resolveEffectiveCompatRuntime,
+  resolveEffectiveHostCapabilities,
+  resolveEffectiveMcpAppsCapabilities,
+  resolveHostInfo,
+} from "@/lib/client-config-v2";
+import { DEFAULT_HOST_STYLE, getHostStyleOrDefault } from "@/lib/client-styles";
+import {
+  clampDisplayModeToAvailableModes,
+  extractHostDisplayMode,
+  extractHostDisplayModes,
+  extractHostTheme,
+  stableStringifyJson,
+} from "@/lib/client-config";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
@@ -29,18 +51,23 @@ import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type {
   WidgetHost,
+  WidgetHostEnvironmentInputs,
+  WidgetHostResolvers,
   WidgetHostServices,
   WidgetSurfaceInfo,
   WidgetDebugSink,
   WidgetSurfaceKind,
 } from "./widget-host";
 
-/** The slices of `WidgetHost` implemented in this PR. */
-type WidgetHostServicesSurfaceDebug = Required<
-  Pick<WidgetHost, "services" | "surface" | "debug">
+/** The slices of `WidgetHost` implemented in this adapter. */
+type WidgetHostImpl = Required<
+  Pick<
+    WidgetHost,
+    "environment" | "resolvers" | "services" | "surface" | "debug"
+  >
 >;
 
-export function useWidgetHost(): WidgetHostServicesSurfaceDebug {
+export function useWidgetHost(): WidgetHostImpl {
   // --- surface inputs --------------------------------------------------------
   const isChatboxSurface = useIsChatboxSurface();
   const widgetSurface = useWidgetSurface();
@@ -103,6 +130,85 @@ export function useWidgetHost(): WidgetHostServicesSurfaceDebug {
     [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
   );
 
+  // --- environment inputs (Phase 1b raw ambient reads) -----------------------
+  //
+  // These are the exact fine-grained selectors / context hooks the renderer
+  // used to call inline. Subscribing here (rather than in the renderer)
+  // relocates the read site without changing reactivity — each selector still
+  // re-renders only on its own field's change. The renderer keeps ALL of its
+  // derivation (memos, ternaries, deps) and just reads `host.environment.*`.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
+  const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  const activeMcpProfile = useActiveMcpProfile();
+  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
+  const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
+  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const playgroundSafeAreaInsets = useUIPlaygroundStore(
+    (s) => s.safeAreaInsets,
+  );
+  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+
+  const environment = useMemo<WidgetHostEnvironmentInputs>(
+    () => ({
+      themeMode,
+      sharedHostStyle,
+      chatboxHostStyle,
+      chatboxHostTheme,
+      hostCapabilitiesOverride,
+      activeMcpProfile,
+      draftHostContext,
+      isPlaygroundActive,
+      playgroundLocale,
+      playgroundTimeZone,
+      playgroundDisplayMode,
+      playgroundCapabilities,
+      playgroundSafeAreaInsets,
+      playgroundDeviceType,
+    }),
+    [
+      themeMode,
+      sharedHostStyle,
+      chatboxHostStyle,
+      chatboxHostTheme,
+      hostCapabilitiesOverride,
+      activeMcpProfile,
+      draftHostContext,
+      isPlaygroundActive,
+      playgroundLocale,
+      playgroundTimeZone,
+      playgroundDisplayMode,
+      playgroundCapabilities,
+      playgroundSafeAreaInsets,
+      playgroundDeviceType,
+    ],
+  );
+
+  // --- resolvers (Phase 1b bound util/resolver fns) --------------------------
+  // Module-level fns with stable identity; the object is frozen for the
+  // adapter's lifetime so it never invalidates a renderer memo/dep.
+  const resolvers = useMemo<WidgetHostResolvers>(
+    () => ({
+      resolveEffectiveCompatRuntime,
+      resolveEffectiveMcpAppsCapabilities,
+      resolveEffectiveHostCapabilities,
+      resolveHostInfo,
+      getHostStyleOrDefault,
+      DEFAULT_HOST_STYLE,
+      extractHostTheme,
+      extractHostDisplayMode,
+      extractHostDisplayModes,
+      clampDisplayModeToAvailableModes,
+      stableStringifyJson,
+    }),
+    [],
+  );
+
   // --- debug sink (1:1 with the stores) --------------------------------------
   const recordMount = useWidgetDebugStore((s) => s.recordMount);
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
@@ -151,7 +257,7 @@ export function useWidgetHost(): WidgetHostServicesSurfaceDebug {
   );
 
   return useMemo(
-    () => ({ services, surface, debug }),
-    [services, surface, debug],
+    () => ({ environment, resolvers, services, surface, debug }),
+    [environment, resolvers, services, surface, debug],
   );
 }
