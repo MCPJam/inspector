@@ -173,8 +173,22 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     const payload = await operation.execute(input, { client });
     return toolSuccess(transformPayload ? transformPayload(payload) : payload);
   } catch (error) {
-    return toolError(describeOperationError(error));
+    return toolError(describeOperationError(error), errorStructuredContent(error));
   }
+}
+
+// Carry a machine-readable error code into the widget so it can tell an empty
+// state (NOT_FOUND: no accessible projects, or a selector that matched nothing)
+// apart from a real failure (network, timeout, auth) and render the former
+// calmly instead of with the alarming destructive styling. The model/CLI still
+// see `isError` plus the human-readable text message.
+function errorStructuredContent(
+  error: unknown
+): Record<string, unknown> | undefined {
+  if (isPlatformApiError(error)) {
+    return { error: { code: error.code, message: error.message } };
+  }
+  return undefined;
 }
 
 function describeOperationError(error: unknown): string {
@@ -212,9 +226,13 @@ function toolSuccess(payload: object) {
   };
 }
 
-function toolError(message: string) {
+function toolError(
+  message: string,
+  structuredContent?: Record<string, unknown>
+) {
   return {
     isError: true,
     content: [{ type: "text" as const, text: message }],
+    ...(structuredContent ? { structuredContent } : {}),
   };
 }
