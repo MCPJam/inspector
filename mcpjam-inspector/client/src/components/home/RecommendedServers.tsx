@@ -55,7 +55,9 @@ export function RecommendedServers({
   // create-if-missing makes a repeat click on an already-connected server
   // idempotent (returns the existing server) instead of throwing
   // "already exists", which was being logged server-side.
-  const createServer = useMutation("servers:createServerIfMissing" as any);
+  const createServerIfMissing = useMutation(
+    "servers:createServerIfMissing" as any,
+  );
   const navigate = useAppNavigate();
   const [connectingUrl, setConnectingUrl] = useState<string | null>(null);
 
@@ -66,7 +68,7 @@ export function RecommendedServers({
     }
     setConnectingUrl(server.url);
     try {
-      await createServer({
+      await createServerIfMissing({
         projectId,
         name: slugifyName(server.name),
         enabled: true,
