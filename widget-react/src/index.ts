@@ -9,6 +9,21 @@ export {
   useWidgetHost,
   type WidgetHostProviderProps,
 } from "./widget-host-context";
+// UI-type detection + tool-visibility (relocated from the inspector, 3d-ii).
+export {
+  UIType,
+  detectUIType,
+  detectUiTypeFromTool,
+  getUIResourceUri,
+  getToolVisibility,
+  isVisibleToModelOnly,
+  isVisibleToAppOnly,
+} from "./mcp-apps-utils";
+export {
+  readToolResultObject,
+  readToolResultMeta,
+  readToolResultServerId,
+} from "./tool-result-utils";
 export type {
   WidgetHost,
   // primitives
