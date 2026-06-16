@@ -126,6 +126,7 @@ const agent = new HarnessAgent({
 async function main() {
   console.log("[spike] creating session (proves bridge reachable via getHost)…");
   const session = await agent.createSession();
+  let primaryError: unknown;
   try {
     console.log(`[spike] ✅ TEST 1 PASS — session ${session.sessionId} started; ` +
       `the Claude Code bridge connected over E2B getHost/getPortUrl.`);
@@ -177,9 +178,18 @@ async function main() {
     }
     console.log("[spike] ✅ TEST 2 PASS — Claude Code called the MCP tool and its " +
       "result (name + args + output) was observable for grading.");
+  } catch (err) {
+    primaryError = err;
+    throw err;
   } finally {
-    // Guarantee teardown even if streaming or the assertion throws.
-    await session.destroy();
+    // Tear down even on failure — but never let a destroy error mask the real
+    // cause of a test failure.
+    try {
+      await session.destroy();
+    } catch (destroyErr) {
+      if (primaryError === undefined) throw destroyErr;
+      console.error("[spike] WARN: session.destroy failed:", destroyErr);
+    }
   }
   console.log("[spike] done.");
 }
