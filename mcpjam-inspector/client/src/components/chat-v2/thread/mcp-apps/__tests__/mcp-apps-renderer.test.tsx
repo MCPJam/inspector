@@ -133,7 +133,11 @@ vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
 }));
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
-vi.mock("@/components/ui/sandboxed-iframe", () => ({
+// The renderer relocated to @mcpjam/widget-react imports `./sandboxed-iframe`
+// (package-internal), so the mock must target the package module — the inspector
+// `@/components/ui/sandboxed-iframe` path is now only a re-export shim and no
+// longer intercepts the renderer's import.
+vi.mock("../../../../../../../../widget-react/src/sandboxed-iframe", () => ({
   SandboxedIframe: React.forwardRef((props: any, ref: any) => {
     sandboxedIframePropsRef.current = props;
     const iframeElementRef = React.useRef<HTMLElement | null>(null);
@@ -241,7 +245,9 @@ vi.mock("lucide-react", () => ({
 const mcpAppsModalPropsRef: { current: Record<string, unknown> | null } = {
   current: null,
 };
-vi.mock("../mcp-apps-modal", () => ({
+// The modal relocated to @mcpjam/widget-react too; mock the package module so the
+// real design-system <Dialog> is never mounted in these unit tests.
+vi.mock("../../../../../../../../widget-react/src/mcp-apps-modal", () => ({
   McpAppsModal: (props: Record<string, unknown>) => {
     mcpAppsModalPropsRef.current = props;
     return null;
@@ -265,6 +271,33 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import { InspectorWidgetHostProvider } from "../use-widget-host";
+
+// The renderer relocated to @mcpjam/widget-react reads its host through the
+// package `useWidgetHost()` context. Wrap each mount in the inspector's provider
+// boundary — INSIDE any per-test inline context providers, so the host the
+// boundary composes still reflects those overrides. `HostedRenderer` /
+// `HostedSurfaceHost` are drop-in stand-ins for `<MCPAppsRenderer>` /
+// `<WidgetSurfaceHost>` used throughout the assertions below.
+function HostedRenderer(
+  props: React.ComponentProps<typeof MCPAppsRenderer>,
+) {
+  return (
+    <InspectorWidgetHostProvider>
+      <MCPAppsRenderer {...props} />
+    </InspectorWidgetHostProvider>
+  );
+}
+
+function HostedSurfaceHost(
+  props: React.ComponentProps<typeof WidgetSurfaceHost>,
+) {
+  return (
+    <InspectorWidgetHostProvider>
+      <WidgetSurfaceHost {...props} />
+    </InspectorWidgetHostProvider>
+  );
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -388,7 +421,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("forces permissive replay for cached HTML when widgetPermissive is missing", async () => {
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         widgetCsp={{
@@ -415,7 +448,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("advertises hostCapabilities from the active host style preset (claude)", async () => {
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
 
@@ -430,7 +463,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("keeps the iframe and bridge alive when only the tool call id changes", async () => {
-    const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
+    const { rerender } = render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
@@ -442,7 +475,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     act(() => triggerReady());
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolCallId="call-2"
         toolOutput={{ content: [{ type: "text" as const, text: "next" }] }}
@@ -463,7 +496,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("does not rebuild when the active MCP profile is recreated without semantic changes", async () => {
     const renderTree = () => (
       <ActiveMcpProfileProvider value={createEquivalentMcpProfile()}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ActiveMcpProfileProvider>
     );
 
@@ -494,7 +527,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       <ChatboxHostCapabilitiesOverrideProvider
         value={{ openLinks: {}, logging: {}, serverTools: {} }}
       >
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -527,21 +560,21 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
     const renderTree = (includeSecondCall: boolean) => (
       <WidgetSurfaceHostProvider>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolCallId="call-1"
           toolInput={{ move: "e4" }}
           toolOutput={firstOutput}
         />
         {includeSecondCall ? (
-          <MCPAppsRenderer
+          <HostedRenderer
             {...baseProps}
             toolCallId="call-2"
             toolInput={{ move: "c5" }}
             toolOutput={secondOutput}
           />
         ) : null}
-        <WidgetSurfaceHost />
+        <HostedSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
@@ -583,20 +616,20 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("mounts a separate live-preferred surface per cached tool call", async () => {
     render(
       <WidgetSurfaceHostProvider>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolCallId="call-1"
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolCallId="call-2"
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
           toolOutput={{ content: [{ type: "text" as const, text: "next" }] }}
         />
-        <WidgetSurfaceHost />
+        <HostedSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
@@ -615,12 +648,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const sameOutput = { content: [{ type: "text" as const, text: "same" }] };
     const renderTree = (toolCallId: string) => (
       <WidgetSurfaceHostProvider>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolCallId={toolCallId}
           toolOutput={sameOutput}
         />
-        <WidgetSurfaceHost />
+        <HostedSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
@@ -650,9 +683,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const renderTree = (showCall: boolean) => (
       <WidgetSurfaceHostProvider>
         {showCall ? (
-          <MCPAppsRenderer {...baseProps} toolCallId="call-1" />
+          <HostedRenderer {...baseProps} toolCallId="call-1" />
         ) : null}
-        <WidgetSurfaceHost />
+        <HostedSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
@@ -683,13 +716,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("keeps fullscreen ownership for a persistent resource surface", async () => {
     render(
       <WidgetSurfaceHostProvider>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolCallId="call-1"
           displayMode="fullscreen"
           fullscreenWidgetId="call-1"
         />
-        <WidgetSurfaceHost />
+        <HostedSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
@@ -708,7 +741,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("uses window.openai.setOpenInAppUrl messages for the fullscreen Open in button", async () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -757,7 +790,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -798,7 +831,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -827,7 +860,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     rerender(
       <ActiveMcpProfileProvider value={disabledProfile}>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           cachedWidgetHtmlUrl="blob:cached"
           displayMode="fullscreen"
@@ -860,7 +893,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // No ChatboxHostStyleProvider, isPlaygroundActive is false in this test
     // setup, so effectiveHostStyle is null. The resolver MUST NOT silently
     // impersonate Claude here — it returns the spec-default {}.
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -875,7 +908,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
         <ChatboxHostThemeProvider value="dark">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
       </ChatboxHostStyleProvider>
     );
@@ -906,7 +939,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mcpAppsModalPropsRef.current = null;
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
 
@@ -931,7 +964,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("includes HostContext.toolInfo when the matrix has toolInfo: true (Claude default)", async () => {
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -952,7 +985,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // for that field must see undefined — same as real Copilot.
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -974,7 +1007,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -994,7 +1027,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // ["inline", "fullscreen"] (dropping the inspector's permissive pip).
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1012,7 +1045,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("advertises all three modes on Claude (full surface matrix)", async () => {
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1041,7 +1074,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // first allowed mode (inline), not fullscreen.
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           displayMode="pip"
           pipWidgetId="call-1"
@@ -1078,7 +1111,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ActiveMcpProfileProvider value={profile}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer
+          <HostedRenderer
             {...baseProps}
             displayMode="fullscreen"
             fullscreenWidgetId="call-1"
@@ -1126,7 +1159,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1170,7 +1203,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1209,7 +1242,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1284,7 +1317,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
     render(
       <ActiveMcpProfileProvider value={copilotPermissionsOff}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -1319,7 +1352,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -1339,7 +1372,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
@@ -1359,7 +1392,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("waits for completed tool output before booting legacy OpenAI outputTemplate widgets", async () => {
     const { rerender } = render(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
@@ -1378,7 +1411,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     rerender(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolState="output-available"
           toolInput={{ query: "yellow" }}
@@ -1411,7 +1444,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("still waits for completed compat output when live fetch is preferred over a cached URL", async () => {
     const { rerender } = render(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
@@ -1433,7 +1466,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     rerender(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           toolState="output-available"
           toolInput={{ query: "yellow" }}
@@ -1475,7 +1508,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={override}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -1492,7 +1525,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
         <ChatboxHostThemeProvider value="dark">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
       </ChatboxHostStyleProvider>
     );
@@ -1545,7 +1578,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <ChatboxHostThemeProvider value="dark">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
       </ChatboxHostStyleProvider>
     );
@@ -1596,7 +1629,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       theme: "light",
     };
 
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1626,7 +1659,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       timeZone: "Europe/Paris",
     };
 
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1662,7 +1695,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
 
@@ -1713,7 +1746,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostStyleProvider>
     );
 
@@ -1753,7 +1786,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <ChatboxHostStyleProvider value="claude">
-        <MCPAppsRenderer {...baseProps} prefersBorder={false} />
+        <HostedRenderer {...baseProps} prefersBorder={false} />
       </ChatboxHostStyleProvider>
     );
 
@@ -1776,7 +1809,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="pip"
@@ -1802,7 +1835,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -1821,7 +1854,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("keeps the sandbox iframe mounted when toggling fullscreen", async () => {
     const renderInline = () => (
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="inline"
@@ -1837,7 +1870,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(initialIframeElement).not.toBeNull();
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -1857,7 +1890,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("preserves inline height when fullscreen widgets report viewport size", async () => {
     const renderInline = () => (
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="inline"
@@ -1877,7 +1910,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
@@ -1896,7 +1929,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("keeps inline renderer width host-controlled when the app reports size", async () => {
     const renderInline = () => (
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="inline"
@@ -1926,7 +1959,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("pushes updated host context when the project client profile changes", async () => {
-    const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
+    const { rerender } = render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1955,7 +1988,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       },
     };
 
-    rerender(<MCPAppsRenderer {...baseProps} />);
+    rerender(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
@@ -1973,7 +2006,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("forces permissive replay for cached HTML even when strict replay metadata is stored", async () => {
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         widgetCsp={{
@@ -2000,7 +2033,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("forces permissive replay for cached HTML even when permissive replay metadata is stored", async () => {
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         widgetCsp={{
@@ -2026,7 +2059,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("keeps the live fetch path on server-declared strict widget settings", async () => {
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
@@ -2048,7 +2081,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("prefers the live fetch over cached HTML when liveFetchPreferred is set", async () => {
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
@@ -2071,7 +2104,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("uses the current live compat recipe for live-preferred cached revisits", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
@@ -2102,7 +2135,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
@@ -2141,7 +2174,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <WidgetSurfaceProvider value="playground">
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </WidgetSurfaceProvider>
     );
 
@@ -2166,7 +2199,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mcpAppsCspMode: "permissive",
     });
 
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(<HostedRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
       expect(vi.mocked(authFetch)).toHaveBeenCalled();
@@ -2189,7 +2222,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     vi.mocked(authFetch).mockImplementationOnce(() => staleResponse);
 
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         resourceUri="mcp-app://stale"
         cachedWidgetHtmlUrl="blob:cached"
@@ -2206,7 +2239,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // A second live fetch is queued for the new key; we let it resolve
     // normally with the default authFetch mock.
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         resourceUri="mcp-app://fresh"
         cachedWidgetHtmlUrl="blob:cached"
@@ -2273,7 +2306,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
@@ -2302,7 +2335,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2327,7 +2360,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     sandboxProxyBehaviorRef.current.autoReady = false;
 
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2371,7 +2404,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // store's lifecycle array. This is the runtime feed the Sandbox debug
     // panel reads — if it stops happening the panel silently goes blank.
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2402,7 +2435,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={partialInput}
@@ -2426,7 +2459,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("keeps iframe hidden until first tool input chunk is delivered", async () => {
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={undefined}
@@ -2449,7 +2482,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     const partialInput = { elements: '[{"type":"rectangle"' };
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={partialInput}
@@ -2475,7 +2508,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       elements: '[{"type":"rectangle"},{"type":"ellipse"',
     };
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={firstPartial}
@@ -2492,7 +2525,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={secondPartial}
@@ -2507,7 +2540,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={{ ...secondPartial }}
@@ -2521,7 +2554,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const firstPartial = { config: { width: 100, height: 200 } };
     const secondPartial = { config: { width: 500, height: 200 } };
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={firstPartial}
@@ -2541,7 +2574,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={secondPartial}
@@ -2561,7 +2594,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const firstPartial = { points: [1, 2, 3] };
     const secondPartial = { points: [1, 9, 3] };
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={firstPartial}
@@ -2581,7 +2614,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={secondPartial}
@@ -2599,7 +2632,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("resumes partial input when tool state restarts streaming for same toolCallId", async () => {
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={{ elements: '[{"type":"rectangle"' }}
@@ -2617,7 +2650,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     const completeInput = { elements: '[{"type":"rectangle"}]' };
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-available"
         toolInput={completeInput}
@@ -2632,7 +2665,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="input-streaming"
         toolInput={{ elements: '[{"type":"triangle"' }}
@@ -2645,7 +2678,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="output-available"
         toolInput={{ elements: '[{"type":"ellipse"}]' }}
@@ -2659,7 +2692,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("sends tool output when widget becomes ready", async () => {
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2677,7 +2710,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("re-sends tool output when prop changes", async () => {
     const { rerender } = render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2690,7 +2723,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     const newOutput = { content: [{ type: "text" as const, text: "updated" }] };
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolOutput={newOutput}
         cachedWidgetHtmlUrl="blob:cached"
@@ -2705,7 +2738,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("re-sends complete tool input when input changes in output-available", async () => {
     const { rerender } = render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="output-available"
         toolInput={{ elements: '[{"type":"rectangle"}]' }}
@@ -2726,7 +2759,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     rerender(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         toolState="output-available"
         toolInput={{ elements: '[{"type":"ellipse"}]' }}
@@ -2744,7 +2777,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("rejects invalid fileId in getFileDownloadUrl widget messages", async () => {
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2771,7 +2804,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("hides MCP app resource URI metadata row in minimal mode", async () => {
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         minimalMode={true}
         cachedWidgetHtmlUrl="blob:cached"
@@ -2792,7 +2825,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     render(
-      <MCPAppsRenderer
+      <HostedRenderer
         {...baseProps}
         minimalMode={true}
         cachedWidgetHtmlUrl="blob:cached"
@@ -2860,7 +2893,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
   it("does not register chip-bound handlers when no capability is advertised", async () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{}}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -2881,7 +2914,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
   it("keeps non-gated handlers wired regardless of cap surface", async () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{}}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -2913,7 +2946,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     async (cap, handlerKey) => {
       render(
         <ChatboxHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostCapabilitiesOverrideProvider>
       );
 
@@ -2933,7 +2966,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
-        <MCPAppsRenderer
+        <HostedRenderer
           {...baseProps}
           onCallTool={onCallTool}
           onAppToolInvocationChange={onAppToolInvocationChange}
@@ -2979,7 +3012,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
   it("registers all three serverResources handlers under a single cap", async () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -2995,7 +3028,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
   it("leaves serverResources handlers unregistered without the cap", async () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
-        <MCPAppsRenderer {...baseProps} />
+        <HostedRenderer {...baseProps} />
       </ChatboxHostCapabilitiesOverrideProvider>
     );
 
@@ -3032,7 +3065,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("accept")}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
@@ -3050,7 +3083,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("decline")}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
@@ -3072,7 +3105,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("user-initiated-only")}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
@@ -3157,7 +3190,7 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer
+          <HostedRenderer
             {...baseProps}
             onRequestTeardown={onRequestTeardown}
           />
@@ -3184,11 +3217,11 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
       <WidgetSurfaceHostProvider>
         <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
           <ChatboxHostStyleProvider value="claude">
-            <MCPAppsRenderer
+            <HostedRenderer
               {...baseProps}
               onRequestTeardown={onRequestTeardown}
             />
-            <WidgetSurfaceHost />
+            <HostedSurfaceHost />
           </ChatboxHostStyleProvider>
         </ActiveMcpProfileProvider>
       </WidgetSurfaceHostProvider>
@@ -3216,7 +3249,7 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(false)}>
         <ChatboxHostStyleProvider value="claude">
-          <MCPAppsRenderer {...baseProps} />
+          <HostedRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
       </ActiveMcpProfileProvider>
     );

@@ -15,8 +15,9 @@
 // reads through `environment`/`resolvers` while keeping its derivation in place;
 // pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import { authFetch } from "@/lib/session-token";
 import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -48,23 +49,83 @@ import {
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
-import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import type { CheckoutSession } from "@/shared/acp-types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import {
+  WidgetHostProvider,
+  usePersistentWidgetSurfaceHost,
+} from "@mcpjam/widget-react";
 import type {
   WidgetHost,
   WidgetHostEnvironmentInputs,
   WidgetHostResolvers,
   WidgetHostServices,
+  WidgetHostComponents,
+  WidgetModalProps,
+  WidgetCheckoutProps,
   WidgetSurfaceInfo,
   WidgetDebugSink,
   WidgetSurfaceKind,
-} from "./widget-host";
+} from "@mcpjam/widget-react";
+
+// --- Injected chrome adapters ------------------------------------------------
+//
+// The package owns the widget lifecycle + bridge but not the inspector's UI; it
+// asks for modal + checkout chrome through `components.{Modal,Checkout}`. These
+// adapters bridge the package's structural props to the inspector's
+// design-system <Dialog> and <CheckoutDialogV2>.
+
+/** WidgetModalProps → the inspector design-system <Dialog> (widget-modal sizing). */
+function WidgetModalChrome({ open, onClose, title, children }: WidgetModalProps) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * WidgetCheckoutProps → the inspector <CheckoutDialogV2>. The package hands the
+ * checkout session opaquely (`unknown`); narrow it to the inspector's ACP
+ * `CheckoutSession` here.
+ */
+function WidgetCheckoutChrome({ session, ...rest }: WidgetCheckoutProps) {
+  return <CheckoutDialogV2 session={session as CheckoutSession} {...rest} />;
+}
+
+// Stable module-level identity so it never invalidates a renderer memo/dep.
+const WIDGET_HOST_COMPONENTS: WidgetHostComponents = {
+  Modal: WidgetModalChrome,
+  Checkout: WidgetCheckoutChrome,
+};
 
 /** The slices of `WidgetHost` implemented in this adapter. */
 type WidgetHostImpl = Required<
   Pick<
     WidgetHost,
-    "environment" | "resolvers" | "services" | "surface" | "debug"
+    | "environment"
+    | "resolvers"
+    | "services"
+    | "surface"
+    | "debug"
+    | "components"
   >
 >;
 
@@ -116,6 +177,7 @@ export function useWidgetHost(): WidgetHostImpl {
         }
         return listResourceTemplates(serverId);
       },
+      authFetch,
     }),
     [],
   );
@@ -125,6 +187,7 @@ export function useWidgetHost(): WidgetHostImpl {
       kind,
       persistentSurfaceHost,
       webManagedServers,
+      hostedMode: HOSTED_MODE,
       sandboxOrigin: SANDBOX_ORIGIN ?? "",
       playgroundCspMode,
     }),
@@ -144,6 +207,12 @@ export function useWidgetHost(): WidgetHostImpl {
   const chatboxHostTheme = useChatboxHostTheme();
   const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
+  // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
+  // the inspector as a typed object. Read into a ref so the resolver fns keep a
+  // stable identity (never invalidating a renderer memo) while still resolving
+  // against the live profile; the renderer recomputes via `environment.profileKey`.
+  const activeMcpProfileRef = useRef(activeMcpProfile);
+  activeMcpProfileRef.current = activeMcpProfile;
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -162,7 +231,11 @@ export function useWidgetHost(): WidgetHostImpl {
       chatboxHostStyle,
       chatboxHostTheme,
       hostCapabilitiesOverride,
-      activeMcpProfile,
+      // Profile is bound in `resolvers`; expose only the reactivity hash + the
+      // minimal projections the renderer inspects (no `HostConfigMcpProfileV1`).
+      profileKey: stableStringifyJson(activeMcpProfile ?? null),
+      profileSandbox: activeMcpProfile?.apps?.sandbox,
+      profileHostInfo: activeMcpProfile?.apps?.uiInitialize?.hostInfo,
       draftHostContext,
       isPlaygroundActive,
       playgroundLocale,
@@ -191,14 +264,29 @@ export function useWidgetHost(): WidgetHostImpl {
   );
 
   // --- resolvers (Phase 1b bound util/resolver fns) --------------------------
-  // Module-level fns with stable identity; the object is frozen for the
-  // adapter's lifetime so it never invalidates a renderer memo/dep.
+  // Stable identity (frozen for the adapter's lifetime) so it never invalidates
+  // a renderer memo/dep. The profile-dependent resolvers BIND the active MCP
+  // profile here (read live via the ref) so `HostConfigMcpProfileV1` stays out
+  // of the public `WidgetHostResolvers` surface (3d-iii).
   const resolvers = useMemo<WidgetHostResolvers>(
     () => ({
-      resolveEffectiveCompatRuntime,
-      resolveEffectiveMcpAppsCapabilities,
-      resolveEffectiveHostCapabilities,
-      resolveHostInfo,
+      resolveEffectiveCompatRuntime: ({ hostStyle }) =>
+        resolveEffectiveCompatRuntime({
+          profile: activeMcpProfileRef.current,
+          hostStyle,
+        }),
+      resolveEffectiveMcpAppsCapabilities: ({ hostStyle }) =>
+        resolveEffectiveMcpAppsCapabilities({
+          profile: activeMcpProfileRef.current,
+          hostStyle,
+        }),
+      resolveEffectiveHostCapabilities: ({ hostStyle, hostCapabilitiesOverride }) =>
+        resolveEffectiveHostCapabilities({
+          hostStyle,
+          profile: activeMcpProfileRef.current,
+          hostCapabilitiesOverride,
+        }),
+      resolveHostInfo: () => resolveHostInfo(activeMcpProfileRef.current),
       getHostStyleOrDefault,
       DEFAULT_HOST_STYLE,
       extractHostTheme,
@@ -258,7 +346,35 @@ export function useWidgetHost(): WidgetHostImpl {
   );
 
   return useMemo(
-    () => ({ environment, resolvers, services, surface, debug }),
+    () => ({
+      environment,
+      resolvers,
+      services,
+      surface,
+      debug,
+      components: WIDGET_HOST_COMPONENTS,
+    }),
     [environment, resolvers, services, surface, debug],
   );
+}
+
+/**
+ * Inspector-side provider boundary for the package renderer. Builds the concrete
+ * `WidgetHost` from the surrounding stores/contexts (via {@link useWidgetHost})
+ * and feeds it through the package's `<WidgetHostProvider>` so the relocated
+ * `@mcpjam/widget-react` renderer can read it through `useWidgetHost()` (the
+ * package context hook).
+ *
+ * Mount it as close to each renderer surface as the renderer itself was — it
+ * subscribes to the same ~14 stores/contexts, so it must sit inside the same
+ * provider hierarchy (chat / playground / chatbox / trace) and only where a
+ * widget actually mounts (to avoid widening that subscription set).
+ */
+export function InspectorWidgetHostProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const host = useWidgetHost();
+  return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
 }

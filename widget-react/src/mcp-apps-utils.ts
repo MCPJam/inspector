@@ -5,7 +5,16 @@
 // need an inspector api type) and re-exports this core.
 import { isUIResource } from "@mcp-ui/client";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { Tool } from "@modelcontextprotocol/client";
+
+/**
+ * Minimal structural shape `detectUiTypeFromTool` needs — just the `_meta` bag.
+ * Kept structural (rather than importing `Tool` from
+ * `@modelcontextprotocol/client`) so the package's public detection surface
+ * doesn't pin a specific MCP SDK Tool type; any `{ _meta }`-bearing tool works.
+ */
+export interface ToolLike {
+  _meta?: Record<string, unknown>;
+}
 
 // SEP-1865 tool-visibility helpers live in the framework-free SDK leaf so the
 // host bridge and the renderer share one model-only visibility check. Re-exported
@@ -23,7 +32,7 @@ export enum UIType {
   MCP_UI = "mcp-ui",
 }
 
-export function detectUiTypeFromTool(tool: Tool): UIType | null {
+export function detectUiTypeFromTool(tool: ToolLike): UIType | null {
   const toolMeta = tool._meta;
   if (!toolMeta) return null;
   return detectUIType(toolMeta, undefined);

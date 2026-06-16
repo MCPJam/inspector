@@ -1,29 +1,28 @@
 #!/usr/bin/env node
 /**
- * Tier-B import guard for the interactive widget-runtime cluster.
+ * Tier-B import guard for the inspector-side widget-runtime glue.
  *
- * Phase 1b inverts `mcp-apps-renderer.tsx`'s ambient inspector-app-state reads
- * (preferences / playground / chatbox / active-profile / host-context stores +
- * contexts, and the `client-config*` / `client-styles` resolvers) behind the
- * `useWidgetHost()` adapter (see ../src/components/chat-v2/thread/mcp-apps/
- * widget-host.ts + use-widget-host.ts). Once inverted, the renderer must import
- * ZERO inspector-app-state modules — that decoupling is what lets a later phase
- * relocate the renderer into a framework-free widget package.
+ * As of Phase 3d-ii-c the interactive renderer cluster (renderer, modal,
+ * surfaces, sandboxed-iframe, file-message bridge, app-tools registry,
+ * tool-input streaming) has RELOCATED into `@mcpjam/widget-react`, where the
+ * package's own `scripts/check-tier-imports.mjs` enforces it imports zero `@/`
+ * inspector internals. The renderer reads inspector app-state only through the
+ * `WidgetHost` contract, supplied via `<InspectorWidgetHostProvider>`
+ * (use-widget-host.tsx) — the one module that legitimately owns those reads.
  *
- * This guard fails (exit 1) if any guarded cluster file (see GUARDED_FILES)
- * re-acquires a forbidden import. The adapter (`use-widget-host.ts`) and the
- * renderer-path glue (`part-switch.tsx`) are EXEMPT: they are the inspector-side
- * boundary that legitimately owns these reads.
+ * What stays in the inspector is thin routing/util glue. This guard keeps that
+ * glue from re-acquiring direct inspector-app-state imports (it must reach state
+ * through the provider/host, not ad-hoc store/context reads). It fails (exit 1)
+ * if any guarded file (see GUARDED_FILES) imports a forbidden module.
  *
  * Matching mirrors the requested "exact specifier, `bad/` subpath, or
  * path-segment" style: a forbidden entry `F` trips on `spec === F`,
  * `spec` starting with `F + "/"`, or `F` appearing as a full slash-delimited
  * segment of `spec`.
  *
- * Deliberately NOT forbidden (widget-runtime deps that relocate with the
- * renderer in a later phase): `@modelcontextprotocol/ext-apps`,
- * `@mcp-ui/client`, `@/components/ui/sandboxed-iframe`, `@mcpjam/sdk/*`, and
- * relative `./` sibling imports.
+ * Deliberately NOT forbidden: `@mcpjam/widget-react` (the package the glue
+ * delegates to), `@mcpjam/sdk/*`, `@modelcontextprotocol/*`, `@mcp-ui/client`,
+ * and relative `./` sibling imports.
  */
 
 import { readFileSync } from "node:fs";
@@ -32,19 +31,13 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Widget-runtime cluster files under guard (relative to client/). These are the
-// modules slated to relocate into the framework-free widget package; each must
-// import ZERO inspector-app-state modules. The inspector-side adapter
-// (`use-widget-host.ts`) and the renderer-path glue (`part-switch.tsx`) are NOT
-// listed — they legitimately own these reads and stay in the inspector. The
-// modal + sandboxed-iframe join once their chrome/util couplings are inverted
-// (Phase 3d).
+// Inspector-side widget glue under guard (relative to client/). The renderer
+// cluster itself now lives in `@mcpjam/widget-react` (guarded there); these are
+// the thin inspector files that route into it and must not reach into app-state
+// directly — they go through `<InspectorWidgetHostProvider>` / the host. The
+// adapter (`use-widget-host.tsx`) and renderer-path glue (`part-switch.tsx`) are
+// NOT listed: they legitimately own the inspector-state reads.
 const GUARDED_FILES = [
-  "src/components/chat-v2/thread/mcp-apps/mcp-apps-renderer.tsx",
-  "src/components/chat-v2/thread/mcp-apps/app-tools-registry.ts",
-  "src/components/chat-v2/thread/mcp-apps/useToolInputStreaming.ts",
-  "src/components/chat-v2/thread/mcp-apps/widget-surface-store.ts",
-  "src/components/chat-v2/thread/mcp-apps/widget-file-messages.ts",
   "src/components/chat-v2/thread/widget-replay.tsx",
   "src/lib/mcp-ui/mcp-apps-utils.ts",
 ].map((rel) => resolve(__dirname, "..", rel));

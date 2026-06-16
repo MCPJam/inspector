@@ -14,6 +14,17 @@ vi.mock("../mcp-apps/mcp-apps-renderer", () => ({
   ),
 }));
 
+// WidgetReplay wraps the renderer in <InspectorWidgetHostProvider> (which composes
+// the host from ~14 stores/contexts). These routing tests mock the renderer to a
+// stub, so the provider is a pass-through here.
+vi.mock("../mcp-apps/use-widget-host", () => ({
+  InspectorWidgetHostProvider: ({
+    children,
+  }: {
+    children: import("react").ReactNode;
+  }) => children,
+}));
+
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   detectUIType: (...args: unknown[]) => mockDetectUIType(...args),
   getUIResourceUri: () => "ui://widget/test.html",

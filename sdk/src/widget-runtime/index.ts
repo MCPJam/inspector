@@ -17,6 +17,9 @@ export {
 
 export { LoggingTransport } from "./logging-transport.js";
 
+// Pure JSON helpers shared with the inspector + widget renderer (Phase 3d-ii).
+export { extractMethod, stableStringifyJson } from "./json-utils.js";
+
 export {
   DEFAULT_IFRAME_SANDBOX,
   buildOuterAllowAttribute,
