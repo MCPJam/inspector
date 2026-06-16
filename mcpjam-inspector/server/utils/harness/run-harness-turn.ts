@@ -245,12 +245,17 @@ export async function runHarnessTurn(
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
-        let assistantText = "";
-        const turnToolCalls: Array<{
-          toolCallId: string;
-          toolName: string;
-          input: unknown;
-        }> = [];
+        // Assistant content parts in STREAM ORDER (text interleaved with
+        // tool-calls) so the persisted transcript matches the real turn order.
+        const assistantParts: Array<
+          | { type: "text"; text: string }
+          | {
+              type: "tool-call";
+              toolCallId: string;
+              toolName: string;
+              input: unknown;
+            }
+        > = [];
         const turnToolResults: Array<{
           toolCallId: string;
           toolName: string | undefined;
@@ -275,7 +280,14 @@ export async function runHarnessTurn(
               textId = crypto.randomUUID();
               writer.write({ type: "text-start", id: textId });
             }
-            assistantText += delta;
+            // Append to the open trailing text part, or start a new one, so
+            // text keeps its order relative to tool-calls.
+            const lastPart = assistantParts[assistantParts.length - 1];
+            if (lastPart && lastPart.type === "text") {
+              lastPart.text += delta;
+            } else {
+              assistantParts.push({ type: "text", text: delta });
+            }
             writer.write({ type: "text-delta", id: textId, delta });
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
@@ -303,7 +315,7 @@ export async function runHarnessTurn(
               promptIndex: 0,
               serverId: undefined,
             });
-            turnToolCalls.push({ toolCallId, toolName, input });
+            assistantParts.push({ type: "tool-call", toolCallId, toolName, input });
           } else if (
             type === "tool-result" ||
             type === "tool-output-available"
@@ -366,25 +378,14 @@ export async function runHarnessTurn(
 
         // Reconstruct the turn transcript so runAssistantTurn can derive
         // toolCalls/toolResults and onConversationComplete persists a complete
-        // history — not just assistant prose. Shapes mirror the emulated
-        // engine; built from the same loosely-read parts, so cast at the
-        // boundary.
-        const assistantContent: Array<Record<string, unknown>> = [];
-        if (assistantText) {
-          assistantContent.push({ type: "text", text: assistantText });
-        }
-        for (const tc of turnToolCalls) {
-          assistantContent.push({
-            type: "tool-call",
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            input: tc.input,
-          });
-        }
-        if (assistantContent.length > 0) {
+        // history — not just assistant prose. assistantParts is already in
+        // stream order; shapes mirror the emulated engine, built from
+        // loosely-read parts, so cast at the boundary. (Full multi-step
+        // interleaving of tool results awaits a live-box pass.)
+        if (assistantParts.length > 0) {
           messageHistory.push({
             role: "assistant",
-            content: assistantContent,
+            content: assistantParts,
           } as unknown as ModelMessage);
         }
         for (const tr of turnToolResults) {
