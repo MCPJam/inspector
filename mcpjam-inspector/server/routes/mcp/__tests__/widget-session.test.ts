@@ -95,6 +95,11 @@ const WIDGET_HTML = "<html><body>seats</body></html>";
 
 function renderableManager(): MockMCPClientManager {
   return createMockMcpClientManager({
+    // The gate resolves renderability from each tools/list page's `_meta`
+    // directly (the manager's metadata cache only retains the last page).
+    listTools: vi
+      .fn()
+      .mockResolvedValue({ tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }] }),
     getAllToolsMetadata: vi.fn().mockReturnValue({ [TOOL_NAME]: MCP_APP_META }),
     readResource: vi.fn().mockResolvedValue({
       contents: [{ text: WIDGET_HTML, _meta: { ui: {} } }],
@@ -155,8 +160,8 @@ describe("widget-session route", () => {
     });
 
     it("returns no_ui_resource with no session for a non-widget tool", async () => {
-      mcpClientManager.getAllToolsMetadata.mockReturnValue({
-        [TOOL_NAME]: { description: "plain" },
+      mcpClientManager.listTools.mockResolvedValue({
+        tools: [{ name: TOOL_NAME, _meta: { description: "plain" } }],
       });
       const res = await startSession(app);
       const data = await res.json();

@@ -26,6 +26,11 @@ import {
 /** Actionable hint surfaced when the harness reports `browser_unavailable`. */
 export const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
 
+/** Safety bound on `tools/list` pages drained while resolving a tool's metadata
+ *  (a server that loops cursors forever can't hang the gate). 50 pages covers
+ *  any realistic tool count. */
+const MAX_TOOL_LIST_PAGES = 50;
+
 export interface RenderWidgetForRequestParams {
   mcpClientManager: MCPClientManager;
   serverId: string;
@@ -58,12 +63,31 @@ export async function renderWidgetForRequest(
   const { mcpClientManager, serverId, toolName, parameters } = params;
   const startedAt = Date.now();
 
-  // Populate the tool-metadata cache first: connecting a server does NOT list
-  // its tools, and executeTool doesn't cache metadata, so without this the gate
-  // below would always see empty metadata (=> always no_ui_resource).
-  await mcpClientManager.listTools(serverId);
-  const toolMetadata =
-    mcpClientManager.getAllToolsMetadata(serverId)?.[toolName] ?? {};
+  // Resolve the tool's declared `_meta` by listing the server's tools:
+  // connecting does NOT list them, and executeTool doesn't cache metadata, so
+  // without this the gate below would always see empty metadata (=>
+  // no_ui_resource). `tools/list` can paginate, and the manager's metadata cache
+  // only retains the LAST page — so read each page's `_meta` directly and drain
+  // pages until we find `toolName` (a renderable tool on page 2+ must not be
+  // missed).
+  let toolMetadata: Record<string, unknown> = {};
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  for (let page = 0; page < MAX_TOOL_LIST_PAGES; page++) {
+    const { tools, nextCursor } = await mcpClientManager.listTools(
+      serverId,
+      cursor ? { cursor } : undefined,
+    );
+    const match = tools.find((tool) => tool.name === toolName);
+    if (match) {
+      toolMetadata = (match._meta ?? {}) as Record<string, unknown>;
+      break;
+    }
+    // Stop at the last page, or if the server loops a cursor (no progress).
+    if (!nextCursor || seenCursors.has(nextCursor)) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
 
   // Gate BEFORE executing — a non-MCP-App / resource-less tool has no widget to
   // mount, so report no_ui_resource without running a possibly side-effectful

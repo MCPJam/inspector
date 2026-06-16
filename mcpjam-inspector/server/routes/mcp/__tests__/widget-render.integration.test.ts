@@ -53,6 +53,10 @@ describe.skipIf(!CHROMIUM_AVAILABLE)(
     it("renders an ext-apps fixture widget end-to-end", async () => {
       const html = await bundleGuestHtml();
       const mcpClientManager = createMockMcpClientManager({
+        // The gate resolves renderability from each tools/list page's `_meta`.
+        listTools: vi
+          .fn()
+          .mockResolvedValue({ tools: [{ name: "show_seats", _meta: MCP_APP_META }] }),
         getAllToolsMetadata: vi
           .fn()
           .mockReturnValue({ show_seats: MCP_APP_META }),

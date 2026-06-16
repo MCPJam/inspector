@@ -197,6 +197,9 @@ async function runCli(
           ...process.env,
           MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
           MCPJAM_TELEMETRY_DISABLED: "1",
+          // Keep the tsx runner's Node deprecation warnings (e.g. [DEP0205])
+          // out of stdout/stderr so the CLI's JSON is the only content there.
+          NODE_NO_WARNINGS: "1",
           ...options.env,
         },
       },
@@ -598,8 +601,8 @@ test("apps render rejects a malformed viewport before contacting Inspector", asy
 
   assert.equal(result.exitCode, 2);
   assert.match(
-    (JSON.parse(result.stderr) as { error?: { message?: string } }).error
-      ?.message ?? "",
+    (JSON.parse(lastJsonLine(result.stderr)) as { error?: { message?: string } })
+      .error?.message ?? "",
     /Invalid viewport "wide"/,
   );
 });

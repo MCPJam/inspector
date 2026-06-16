@@ -80,6 +80,11 @@ function renderableManager(
   overrides: Parameters<typeof createMockMcpClientManager>[0] = {},
 ): MockMCPClientManager {
   return createMockMcpClientManager({
+    // The gate resolves renderability from each tools/list page's `_meta`
+    // directly (the manager's metadata cache only retains the last page).
+    listTools: vi
+      .fn()
+      .mockResolvedValue({ tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }] }),
     getAllToolsMetadata: vi.fn().mockReturnValue({ [TOOL_NAME]: MCP_APP_META }),
     readResource: vi.fn().mockResolvedValue({
       contents: [{ text: WIDGET_HTML, _meta: { ui: {} } }],
@@ -209,8 +214,9 @@ describe("POST /api/mcp/widget-render", () => {
 
   describe("renderability gate", () => {
     it("returns no_ui_resource WITHOUT executing the tool (gate-first)", async () => {
-      mcpClientManager.getAllToolsMetadata.mockReturnValue({
-        [TOOL_NAME]: { description: "plain tool" },
+      // A listed tool with no UI resource in its `_meta` is not renderable.
+      mcpClientManager.listTools.mockResolvedValue({
+        tools: [{ name: TOOL_NAME, _meta: { description: "plain tool" } }],
       });
       const res = await postRender(app, {
         serverId: SERVER_ID,
@@ -222,30 +228,53 @@ describe("POST /api/mcp/widget-render", () => {
       expect(data.screenshotBase64).toBeUndefined();
       expect(harnessState.constructorOpts).toHaveLength(0);
       // Gate-first: a non-widget tool must NOT be run just to learn it has no
-      // UI. Tools are listed (to populate metadata); the tool itself is not
-      // executed.
-      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID);
+      // UI. Tools are listed (to resolve metadata); the tool is not executed.
+      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID, undefined);
       expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
     });
 
-    it("lists tools to populate metadata before gating", async () => {
-      // Metadata only becomes available AFTER listTools — proves the route
-      // doesn't rely on a pre-warmed cache (connect doesn't list tools, and
-      // executeTool doesn't cache metadata).
-      let listed = false;
-      // Flip `listed` on a microtask (not synchronously) so the test fails if
-      // the route ever stops awaiting listTools before reading metadata.
+    it("reads the tool's _meta from the awaited listTools result", async () => {
+      // The gate resolves renderability from the listTools RESULT, so it must
+      // await it — proving it doesn't rely on a pre-warmed metadata cache
+      // (connect doesn't list tools, and executeTool doesn't cache metadata).
+      let resolved = false;
       mcpClientManager.listTools.mockImplementation(
         () =>
           new Promise((resolve) => {
             queueMicrotask(() => {
-              listed = true;
-              resolve({ tools: [] });
+              resolved = true;
+              resolve({ tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }] });
             });
           }),
       );
-      mcpClientManager.getAllToolsMetadata.mockImplementation(() =>
-        listed ? { [TOOL_NAME]: MCP_APP_META } : {},
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect(resolved).toBe(true);
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("rendered");
+      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID, undefined);
+      expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("finds a renderable tool on a later tools/list page", async () => {
+      // Regression: the gate must DRAIN pages, not read only page 1 — the
+      // manager's metadata cache is replaced per page, so a renderable tool on
+      // page 2+ would otherwise be reported no_ui_resource and never render.
+      mcpClientManager.listTools.mockImplementation(
+        async (_serverId: string, params?: { cursor?: string }) => {
+          if (!params?.cursor) {
+            return {
+              tools: [{ name: "other_tool", _meta: {} }],
+              nextCursor: "page-2",
+            };
+          }
+          return {
+            tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }],
+            nextCursor: undefined,
+          };
+        },
       );
       const res = await postRender(app, {
         serverId: SERVER_ID,
@@ -253,8 +282,43 @@ describe("POST /api/mcp/widget-render", () => {
       });
       expect(res.status).toBe(200);
       expect((await res.json()).status).toBe("rendered");
-      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID);
+      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
+      expect(mcpClientManager.listTools).toHaveBeenLastCalledWith(SERVER_ID, {
+        cursor: "page-2",
+      });
       expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns no_ui_resource after draining every page without the tool", async () => {
+      mcpClientManager.listTools.mockImplementation(
+        async (_serverId: string, params?: { cursor?: string }) => {
+          if (!params?.cursor) {
+            return { tools: [{ name: "a", _meta: {} }], nextCursor: "page-2" };
+          }
+          return { tools: [{ name: "b", _meta: {} }], nextCursor: undefined };
+        },
+      );
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect((await res.json()).status).toBe("no_ui_resource");
+      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
+      expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    });
+
+    it("stops draining if the server loops the same cursor", async () => {
+      // A server that returns the same cursor forever must not hang the gate.
+      mcpClientManager.listTools.mockResolvedValue({
+        tools: [{ name: "x", _meta: {} }],
+        nextCursor: "same",
+      });
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect((await res.json()).status).toBe("no_ui_resource");
+      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
     });
   });
 
