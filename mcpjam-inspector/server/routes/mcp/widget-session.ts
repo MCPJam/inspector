@@ -10,8 +10,10 @@ import {
 import {
   widgetRenderSessions,
   wireWidgetSessionShutdown,
+  WidgetSessionBusyError,
   WidgetSessionCapacityError,
   WidgetSessionNotFoundError,
+  WidgetSessionUnavailableError,
 } from "../../services/widget-render-session";
 import { logger } from "../../utils/logger";
 
@@ -147,6 +149,9 @@ widgetSession.post("/", async (c) => {
     if (error instanceof WidgetSessionCapacityError) {
       return c.json({ error: error.message }, 429);
     }
+    if (error instanceof WidgetSessionUnavailableError) {
+      return c.json({ error: error.message }, 503);
+    }
     throw error;
   }
 
@@ -212,10 +217,13 @@ widgetSession.post("/", async (c) => {
       200,
     );
   } catch (error) {
-    // Defensive: registration shouldn't fail on a reserved slot, but never
-    // leak the browser or the reservation if it somehow does.
+    // Never leak the browser or the reserved slot. Registration can legitimately
+    // fail if shutdown began mid-render (the in-flight start is refused).
     widgetRenderSessions.release(reservation);
     await result.harness?.dispose().catch(() => {});
+    if (error instanceof WidgetSessionUnavailableError) {
+      return c.json({ error: error.message }, 503);
+    }
     throw error;
   }
 });
@@ -259,6 +267,9 @@ widgetSession.post("/:id/action", async (c) => {
   } catch (error) {
     if (error instanceof WidgetSessionNotFoundError) {
       return c.json({ error: error.message }, 404);
+    }
+    if (error instanceof WidgetSessionBusyError) {
+      return c.json({ error: error.message }, 409);
     }
     return c.json(
       {

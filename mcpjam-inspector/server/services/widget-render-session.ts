@@ -56,6 +56,23 @@ export class WidgetSessionNotFoundError extends Error {
   }
 }
 
+/** A session already has an action in flight (the harness is a single page and
+ *  can't run overlapping actions). */
+export class WidgetSessionBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WidgetSessionBusyError";
+  }
+}
+
+/** The registry is shutting down and won't accept new sessions. */
+export class WidgetSessionUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WidgetSessionUnavailableError";
+  }
+}
+
 interface RegisteredSession extends WidgetRenderSession {
   harness: SessionHarness;
   /** Count of in-flight actions. A busy session is never idle-swept, and the
@@ -111,6 +128,9 @@ export class WidgetRenderSessionRegistry {
    *  `register`/`release`), so concurrent starts respect the cap before a
    *  browser is launched. */
   private reservedCount = 0;
+  /** Set once a permanent (shutdown) disposeAll runs; new reserves/registers
+   *  are refused so an in-flight start can't register a survivor after SIGTERM. */
+  private shuttingDown = false;
 
   constructor(options: WidgetRenderSessionRegistryOptions = {}) {
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
@@ -152,6 +172,11 @@ export class WidgetRenderSessionRegistry {
    * successful render) or `release` (otherwise) the returned reservation.
    */
   reserve(): WidgetSessionReservation {
+    if (this.shuttingDown) {
+      throw new WidgetSessionUnavailableError(
+        "Widget session registry is shutting down.",
+      );
+    }
     this.sweepExpired();
     if (this.activeCount() >= this.maxSessions) {
       throw this.capacityError();
@@ -182,6 +207,14 @@ export class WidgetRenderSessionRegistry {
     input: RegisterSessionInput,
     reservation?: WidgetSessionReservation,
   ): WidgetRenderSession {
+    // A start that finished rendering after shutdown began must not register a
+    // surviving browser; throw with the reservation intact so the caller
+    // releases it and disposes the harness.
+    if (this.shuttingDown) {
+      throw new WidgetSessionUnavailableError(
+        "Widget session registry is shutting down.",
+      );
+    }
     if (reservation?.active) {
       // Convert the held slot into a live session (no re-check — it was
       // reserved up front).
@@ -237,6 +270,13 @@ export class WidgetRenderSessionRegistry {
         `Widget session "${sessionId}" not found or expired.`,
       );
     }
+    // The harness is a single page — overlapping actions would interleave input
+    // and corrupt the result. Serialize by rejecting while one is in flight.
+    if (session.inFlight > 0) {
+      throw new WidgetSessionBusyError(
+        `Widget session "${sessionId}" is already running an action.`,
+      );
+    }
 
     // Mark busy so a concurrent idle sweep won't dispose the session (and its
     // browser) out from under an in-flight action.
@@ -266,8 +306,16 @@ export class WidgetRenderSessionRegistry {
     return this.disposeSession(sessionId, "close");
   }
 
-  /** Dispose ALL sessions (idle reclamation on shutdown). */
-  async disposeAll(): Promise<void> {
+  /**
+   * Dispose ALL live sessions. Pass `{ permanent: true }` for process shutdown:
+   * it also blocks new reserves/registers so an in-flight start can't register
+   * a survivor after teardown. Without it (test cleanup) the registry stays
+   * usable.
+   */
+  async disposeAll(options: { permanent?: boolean } = {}): Promise<void> {
+    if (options.permanent) {
+      this.shuttingDown = true;
+    }
     const ids = [...this.sessions.keys()];
     await Promise.all(ids.map((id) => this.disposeSession(id, "shutdown")));
     this.stopSweeping();
@@ -366,7 +414,7 @@ export function wireWidgetSessionShutdown(
   if (shutdownWired) return;
   shutdownWired = true;
   const dispose = () => {
-    void registry.disposeAll();
+    void registry.disposeAll({ permanent: true });
   };
   process.once("SIGINT", dispose);
   process.once("SIGTERM", dispose);

@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   WidgetRenderSessionRegistry,
+  WidgetSessionBusyError,
   WidgetSessionCapacityError,
   WidgetSessionNotFoundError,
+  WidgetSessionUnavailableError,
   type SessionHarness,
 } from "../widget-render-session";
 
@@ -341,6 +343,56 @@ describe("WidgetRenderSessionRegistry", () => {
     await expect(actionPromise).rejects.toBeInstanceOf(
       WidgetSessionNotFoundError,
     );
+  });
+
+  it("rejects an overlapping action on the same session", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const { harness, resolveAction } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    // First action in flight (pending).
+    const first = registry.executeAction(session.sessionId, {
+      action: "screenshot",
+    });
+    // A second action on the same single-page session while the first runs is
+    // rejected rather than interleaved.
+    await expect(
+      registry.executeAction(session.sessionId, {
+        action: "left_click",
+        coordinate: [1, 2],
+      }),
+    ).rejects.toBeInstanceOf(WidgetSessionBusyError);
+    expect(harness.executeAction).toHaveBeenCalledTimes(1);
+
+    resolveAction();
+    await first;
+  });
+
+  it("refuses new sessions once shutting down", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const harness = makeFakeHarness();
+    register(registry, harness);
+
+    await registry.disposeAll({ permanent: true });
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    expect(registry.size()).toBe(0);
+
+    expect(() => registry.reserve()).toThrow(WidgetSessionUnavailableError);
+    expect(() => register(registry, makeFakeHarness())).toThrow(
+      WidgetSessionUnavailableError,
+    );
+  });
+
+  it("refuses to register an in-flight start that finished after shutdown", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    // A start reserves a slot, then shutdown begins, then its render completes
+    // and tries to register a (would-be surviving) browser.
+    const reservation = registry.reserve();
+    await registry.disposeAll({ permanent: true });
+    expect(() => register2(registry, reservation)).toThrow(
+      WidgetSessionUnavailableError,
+    );
+    expect(registry.size()).toBe(0);
   });
 
   it("disposes every session on shutdown (orphan cleanup)", async () => {
