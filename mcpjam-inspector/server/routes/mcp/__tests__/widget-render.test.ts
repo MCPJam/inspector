@@ -318,8 +318,6 @@ describe("POST /api/mcp/widget-render", () => {
         toolName: TOOL_NAME,
       });
       expect((await res.json()).status).toBe("no_ui_resource");
-      // page 1 (no cursor) -> "same"; page 2 (cursor "same") -> "same" already
-      // seen -> stop.
       expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
     });
   });
