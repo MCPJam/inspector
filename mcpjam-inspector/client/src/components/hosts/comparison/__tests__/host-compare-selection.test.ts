@@ -82,4 +82,41 @@ describe("host-compare-selection", () => {
       }),
     ).toEqual(["b"]);
   });
+
+  it("resolveInitialHostCompareSelection keeps a preset id from the URL via knownHostIds", () => {
+    // A preset is not a live host, so it must be reconciled against the
+    // known superset — otherwise a shared/reloaded preset column vanishes.
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a"],
+        knownHostIds: ["a", "preset:claude"],
+        previousSelection: [],
+        urlSelection: ["a", "preset:claude"],
+      }),
+    ).toEqual(["a", "preset:claude"]);
+  });
+
+  it("resolveInitialHostCompareSelection resolves a preset selection with zero live hosts", () => {
+    writeHostCompareSelection("proj_1", ["preset:chatgpt"]);
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: ["preset:chatgpt", "preset:claude"],
+        previousSelection: [],
+      }),
+    ).toEqual(["preset:chatgpt"]);
+  });
+
+  it("resolveInitialHostCompareSelection default stays real-hosts-only (presets opt-in)", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b"],
+        knownHostIds: ["a", "b", "preset:claude", "preset:chatgpt"],
+        previousSelection: [],
+      }),
+    ).toEqual(["a", "b"]);
+  });
 });
