@@ -9,6 +9,7 @@ import {
   applyHostDefaultsToPlayground,
 } from "../apply-client-defaults";
 import { seedFromHostTemplate } from "@/lib/client-templates";
+import { MISTRAL_HOST_STYLE } from "@/lib/client-styles";
 import * as selectedModelStorage from "@/lib/selected-model-storage";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -184,6 +185,26 @@ describe("applyHostDefaultsToPlayground", () => {
         },
       },
     });
+  });
+
+  it("seeds Mistral host context and chrome from the selected theme", () => {
+    const seed = seedFromHostTemplate("mistral", { theme: "light" });
+
+    expect(seed.hostContext).toMatchObject({
+      theme: "light",
+      styles: {
+        variables: {
+          "--color-background-primary": "#fff",
+          "--color-text-primary": "#111115",
+        },
+      },
+    });
+    expect(MISTRAL_HOST_STYLE.chatUi.resolveChatBackground("light")).toBe(
+      "#fff",
+    );
+    expect(MISTRAL_HOST_STYLE.chatUi.resolveChatBackground("dark")).toBe(
+      "#111115",
+    );
   });
 
   it("snapshots Cursor template defaults: container metadata stays in host context, playground viewport stays fill, model anthropic/claude-sonnet-4.5 (guest-allowed)", () => {

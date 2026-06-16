@@ -358,9 +358,9 @@ export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
     resolveStyleVariables: getMistralStyleVariables,
   },
   chatUi: {
-    label: "Le Chat",
-    shortLabel: "Le Chat-style host",
-    pickerDescription: "Mistral Le Chat web host",
+    label: "Mistral",
+    shortLabel: "Mistral-style host",
+    pickerDescription: "Mistral web host",
     logoSrc: mistralLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],

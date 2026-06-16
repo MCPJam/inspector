@@ -235,6 +235,30 @@ describe("MessageView", () => {
         screen.queryByLabelText("GPT-4 assistant"),
       ).not.toBeInTheDocument();
     });
+
+    it("renders Mistral's static assistant avatar for Mistral host-style messages", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hello" }],
+      });
+
+      renderMessageView(
+        <ChatboxHostStyleProvider value="mistral">
+          <MessageView {...defaultProps} message={message} />
+        </ChatboxHostStyleProvider>,
+      );
+
+      const avatar = screen.getByLabelText("Mistral assistant");
+      expect(avatar).toHaveAttribute("data-testid", "mistral-static-avatar");
+      expect(avatar).toHaveClass("size-7", "self-start");
+      expect(avatar).toHaveStyle({ borderRadius: "25%" });
+      expect(avatar.querySelector('[role="progressbar"]')).toBeNull();
+      expect(avatar.querySelector('[data-slot="avatar"]')).toHaveClass(
+        "h-7",
+        "w-7",
+        "rounded-md",
+      );
+    });
   });
 
   describe("special messages", () => {

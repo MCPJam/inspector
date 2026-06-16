@@ -100,6 +100,26 @@
     color: var(--text-white-default, #ffffff);
   }
 
+  .mistral-mark-colors,
+  .mistral-spinner-indicator {
+    --mistral-spinner-badge: #faeee7;
+    --mistral-spinner-strong: #c4290a;
+    --mistral-spinner-brand: #fa500e;
+    --mistral-spinner-white: #ffffff;
+  }
+
+  .dark .mistral-spinner-indicator,
+  .dark .mistral-mark-colors,
+  .app-theme-scope.dark .mistral-spinner-indicator,
+  .app-theme-scope.dark .mistral-mark-colors,
+  [data-thread-theme="dark"] .mistral-mark-colors,
+  [data-thread-theme="dark"] .mistral-spinner-indicator {
+    --mistral-spinner-badge: #53330f;
+    --mistral-spinner-strong: #ff8a00;
+    --mistral-spinner-brand: #fa500f;
+    --mistral-spinner-white: #ffffff;
+  }
+
   /* Trace timeline waterfall — category bar fills */
   .trace-waterfall-bar-prompt {
     background-color: var(--trace-waterfall-bar-prompt);

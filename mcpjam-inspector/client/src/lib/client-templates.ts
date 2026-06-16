@@ -868,10 +868,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "mistral",
-    label: "Le Chat",
-    description: "Mistral Le Chat web host. MCP Apps, no OpenAI shim.",
+    label: "Mistral",
+    description: "Mistral web host. MCP Apps, no OpenAI shim.",
     logoSrc: mistralLogo,
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
         // Local model catalog carries Mistral's provider ids as bare names
@@ -880,6 +880,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
       // Verbatim from Le Chat's base MCP `initialize` capture:
       //   clientInfo: { name: "mcp", version: "0.1.0" }
@@ -899,7 +900,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         message: { text: {}, image: {} },
       };
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "fullscreen",
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 1130.5 },
@@ -910,7 +911,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         deviceCapabilities: { touch: false, hover: true },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
         styles: {
-          variables: getMistralStyleVariables("dark"),
+          variables: getMistralStyleVariables(theme),
         },
       };
       base.mcpProfile = {
