@@ -208,6 +208,17 @@ export async function runHarnessTurn(
       });
 
       // 2. Build the .mcp.json from the selected servers.
+      //
+      // Progressive tool discovery (progressivePlan / discoveryState) is
+      // intentionally NOT applied here. It is an EMULATED-engine mechanism:
+      // runChatEngineLoop injects MCPJam's meta-tools (search_mcp_tools, …) and
+      // narrows the advertised tool catalog per step to mimic how a host lazily
+      // reveals tools. In harness mode the REAL Claude Code runs its own native
+      // tool discovery from the .mcp.json (the CLI's real progressiveToolDiscovery
+      // behavior), so we attach the full selected-server set and let the runtime
+      // own discovery. Re-applying the emulation would double it, defeat the
+      // "observe the real runtime" purpose, and isn't expressible anyway —
+      // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
       const mcpJson = buildMcpJsonFromManager(
         mcpClientManager,
         selectedServers ?? [],
