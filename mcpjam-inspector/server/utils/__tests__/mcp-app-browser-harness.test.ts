@@ -5,6 +5,7 @@ import {
   ChromiumNotInstalledError,
   cspSourceMatchesUrl,
   injectCspMeta,
+  isBlockedEgressHost,
   isChromiumInstalled,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
@@ -545,6 +546,57 @@ describe("cspSourceMatchesUrl — CSP host-source matching", () => {
       false
     );
     expect(cspSourceMatchesUrl("", u("https://esm.sh/x"))).toBe(false);
+  });
+});
+
+describe("isBlockedEgressHost — SSRF guard", () => {
+  it("ALWAYS blocks cloud metadata + link-local, in both modes", () => {
+    for (const blockPrivate of [false, true]) {
+      // The crown-jewel target: cloud instance metadata.
+      expect(isBlockedEgressHost("169.254.169.254", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("169.254.0.1", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("metadata.google.internal", blockPrivate)).toBe(
+        true
+      );
+      // IPv6 link-local + IPv4-mapped link-local + unspecified.
+      expect(isBlockedEgressHost("[fe80::1]", blockPrivate)).toBe(true);
+      expect(
+        isBlockedEgressHost("[::ffff:169.254.169.254]", blockPrivate)
+      ).toBe(true);
+      expect(isBlockedEgressHost("0.0.0.0", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("[::]", blockPrivate)).toBe(true);
+    }
+  });
+
+  it("blocks loopback/private/CGNAT/ULA only in hosted mode", () => {
+    const internal = [
+      "127.0.0.1",
+      "localhost",
+      "10.1.2.3",
+      "192.168.1.10",
+      "172.16.0.1",
+      "172.31.255.255",
+      "100.64.0.1", // CGNAT
+      "[::1]", // IPv6 loopback
+      "[fd00::1]", // IPv6 ULA
+    ];
+    for (const host of internal) {
+      expect(isBlockedEgressHost(host, true)).toBe(true); // hosted: blocked
+      expect(isBlockedEgressHost(host, false)).toBe(false); // local: allowed
+    }
+    // A public range neighbour of the private blocks stays allowed in hosted.
+    expect(isBlockedEgressHost("172.32.0.1", true)).toBe(false);
+    expect(isBlockedEgressHost("11.0.0.1", true)).toBe(false);
+  });
+
+  it("never blocks ordinary public hosts", () => {
+    for (const blockPrivate of [false, true]) {
+      expect(isBlockedEgressHost("esm.sh", blockPrivate)).toBe(false);
+      expect(isBlockedEgressHost("cdn.excalidraw.com", blockPrivate)).toBe(
+        false
+      );
+      expect(isBlockedEgressHost("8.8.8.8", blockPrivate)).toBe(false);
+    }
   });
 });
 

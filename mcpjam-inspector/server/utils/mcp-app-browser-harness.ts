@@ -33,6 +33,7 @@ import {
   ensureLocalChromiumInstalled,
   isChromiumInstalled,
 } from "./browser-rendering-setup";
+import { HOSTED_MODE } from "../config";
 
 export { isChromiumInstalled };
 
@@ -198,6 +199,13 @@ export interface McpAppBrowserHarnessOptions {
   budgets?: Partial<HarnessBudgets>;
   /** Extra http(s) origins to allow through the default-deny network route. */
   allowOrigins?: string[];
+  /**
+   * Block egress to loopback/RFC-1918/CGNAT/ULA ranges (the SSRF guard's
+   * private-network tier). Link-local + cloud-metadata are blocked regardless.
+   * Defaults to {@link HOSTED_MODE}: on for our servers, off for local dev so a
+   * widget can still reach a localhost MCP server.
+   */
+  blockPrivateNetworks?: boolean;
 }
 
 /**
@@ -261,6 +269,81 @@ export function cspSourceMatchesUrl(source: string, url: URL): boolean {
   if (pattern === "*") return true;
   if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1));
   return host === pattern;
+}
+
+/** Parse a dotted-quad IPv4 literal into octets, or null if not well-formed. */
+function parseIpv4Octets(
+  host: string
+): [number, number, number, number] | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return null;
+  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  if (o.some((n) => n > 255)) return null;
+  return [o[0], o[1], o[2], o[3]];
+}
+
+/**
+ * SSRF guard for the egress route. A widget's declared CSP origins (and the
+ * loopback shortcut) must never let it reach infrastructure only the harness
+ * HOST can see — most dangerously the cloud metadata endpoint
+ * (169.254.169.254), whose IAM credentials would be a full account compromise.
+ * In production the same widget CSP runs in the END USER's browser, where these
+ * addresses are harmless; in the eval harness it runs on our servers, so this
+ * gate overrides the allowlist regardless of what the widget declared.
+ *
+ *   - ALWAYS blocked: cloud-metadata names, IPv4/IPv6 link-local (169.254/16,
+ *     fe80::/10), and the unspecified address (0.0.0.0/8, ::) — never a
+ *     legitimate widget target in any deployment.
+ *   - Blocked only when `blockPrivate` (hosted mode): loopback, RFC-1918
+ *     private, CGNAT (100.64/10), and IPv6 ULA (fc00::/7). Left reachable for
+ *     local dev, where a widget legitimately talks to a localhost MCP server.
+ *
+ * Matches on the URL hostname (literal IPs range-checked); it does NOT resolve
+ * DNS, so a name that resolves to an internal IP (DNS rebinding) is out of
+ * scope here and must be covered by infra-level egress policy.
+ */
+export function isBlockedEgressHost(
+  hostname: string,
+  blockPrivate: boolean
+): boolean {
+  let host = hostname.trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (!host) return false;
+
+  // Cloud metadata DNS aliases (they resolve to link-local, but block the
+  // names too in case resolution is bypassed).
+  if (host === "metadata.google.internal" || host === "metadata.goog") {
+    return true;
+  }
+  if (host === "localhost" || host.endsWith(".localhost")) return blockPrivate;
+
+  const v4 = parseIpv4Octets(host);
+  if (v4) {
+    const [a, b] = v4;
+    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+    if (a === 0) return true; // "this network" / unspecified
+    if (!blockPrivate) return false;
+    if (a === 127) return true; // loopback 127.0.0.0/8
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+    return false;
+  }
+
+  if (host.includes(":")) {
+    // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
+    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
+    if (mapped) return isBlockedEgressHost(mapped[1], blockPrivate);
+    if (host === "::") return true; // unspecified
+    if (/^fe[89ab]/.test(host)) return true; // link-local fe80::/10
+    if (!blockPrivate) return false;
+    if (host === "::1") return true; // loopback
+    if (/^f[cd]/.test(host)) return true; // ULA fc00::/7
+    return false;
+  }
+
+  return false;
 }
 
 /**
@@ -359,11 +442,14 @@ export class McpAppBrowserHarness {
   /** In-flight app->host RPC count, so an action waits for slow tool calls. */
   private pendingRpcCount = 0;
   private screenshotCount = 0;
+  /** SSRF guard's private-network tier (see {@link isBlockedEgressHost}). */
+  private readonly blockPrivateNetworks: boolean;
 
   constructor(opts: McpAppBrowserHarnessOptions) {
     this.opts = opts;
     this.budgets = { ...DEFAULT_HARNESS_BUDGETS, ...(opts.budgets ?? {}) };
     this.viewport = opts.viewport ?? { ...DEFAULT_VIEWPORT };
+    this.blockPrivateNetworks = opts.blockPrivateNetworks ?? HOSTED_MODE;
   }
 
   hasRenderedWidget(): boolean {
@@ -472,6 +558,14 @@ export class McpAppBrowserHarness {
       try {
         const parsed = new URL(url);
         const host = parsed.hostname;
+        // SSRF guard — OVERRIDES the allowlist below. A widget-declared origin
+        // (or the loopback shortcut) must never reach host-only infrastructure:
+        // cloud metadata + link-local always, loopback/private ranges in hosted
+        // mode. Recorded as blocked so the observation still reflects it.
+        if (isBlockedEgressHost(host, this.blockPrivateNetworks)) {
+          this.blockedRequests.push(url);
+          return route.abort();
+        }
         const isLoopback =
           host === "127.0.0.1" || host === "localhost" || host === "[::1]";
         if (
