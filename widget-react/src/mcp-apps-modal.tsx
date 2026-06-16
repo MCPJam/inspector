@@ -1,14 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
-import {
-  SandboxedIframe,
-  SandboxedIframeHandle,
-} from "@/components/ui/sandboxed-iframe";
+import { SandboxedIframe, SandboxedIframeHandle } from "./sandboxed-iframe";
 import {
   AppBridge,
   PostMessageTransport,
@@ -18,12 +9,14 @@ import {
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { LoggingTransport } from "./mcp-apps-logging-transport";
-import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
-// `extractMethod` (pure JSON-RPC parser) and the `CspMode` type come from the
-// `WidgetHost` contract module, not the inspector stores directly — keeping the
-// modal free of `@/stores`/`@/contexts` app-state coupling (Tier-B).
-import { extractMethod, type CspMode } from "./widget-host";
+// Pure JSON-RPC parser + logging transport are shared, framework-free runtime
+// helpers in the SDK.
+import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
+// The `CspMode` type comes from the package's `WidgetHost` contract.
+import { type CspMode } from "./widget-host";
+// The package owns lifecycle + bridge; the inspector injects modal CHROME
+// (its design-system <Dialog>) + the widget-content fetch via the WidgetHost.
+import { useWidgetHost } from "./widget-host-context";
 import { useAppToolsRegistry } from "./app-tools-registry";
 
 export interface McpAppsModalProps {
@@ -148,6 +141,8 @@ export function McpAppsModal({
   addUiLog,
   onCspViolation,
 }: McpAppsModalProps) {
+  const host = useWidgetHost();
+  const Modal = host.components?.Modal;
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
@@ -186,7 +181,7 @@ export function McpAppsModal({
 
     const fetchModalHtml = async () => {
       try {
-        const { html } = await fetchMcpAppsWidgetContent({
+        const { html } = await host.services.fetchWidgetContent({
           serverId,
           forceWebEndpoint: webManagedServers,
           resourceUri,
@@ -424,37 +419,38 @@ export function McpAppsModal({
     }
   };
 
+  // Modal chrome is host-injected (the inspector's design-system <Dialog>). A
+  // host that doesn't supply `components.Modal` opts out of the modal surface.
+  if (!Modal) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        <div className="flex-1 w-full h-full min-h-0 overflow-auto">
-          {modalHtml && (
-            <SandboxedIframe
-              ref={modalSandboxRef}
-              html={modalHtml}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-              csp={widgetCsp}
-              permissions={widgetPermissions}
-              permissive={widgetPermissive}
-              sandboxAttrs={widgetSandboxAttrs}
-              allowFeatures={widgetAllowFeatures}
-              cspDirectives={widgetCspDirectives}
-              colorScheme={modalColorScheme}
-              onMessage={handleModalMessage}
-              title={`MCP App Modal: ${title}`}
-              className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
-              style={{
-                height: "100%",
-                minHeight: "400px",
-                backgroundColor: "transparent",
-              }}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <Modal open={open} onClose={() => onOpenChange(false)} title={title}>
+      <div className="flex-1 w-full h-full min-h-0 overflow-auto">
+        {modalHtml && (
+          <SandboxedIframe
+            ref={modalSandboxRef}
+            html={modalHtml}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            csp={widgetCsp}
+            permissions={widgetPermissions}
+            permissive={widgetPermissive}
+            sandboxAttrs={widgetSandboxAttrs}
+            allowFeatures={widgetAllowFeatures}
+            cspDirectives={widgetCspDirectives}
+            colorScheme={modalColorScheme}
+            onMessage={handleModalMessage}
+            title={`MCP App Modal: ${title}`}
+            hostedMode={host.surface.hostedMode}
+            sandboxOrigin={host.surface.sandboxOrigin}
+            className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
+            style={{
+              height: "100%",
+              minHeight: "400px",
+              backgroundColor: "transparent",
+            }}
+          />
+        )}
+      </div>
+    </Modal>
   );
 }

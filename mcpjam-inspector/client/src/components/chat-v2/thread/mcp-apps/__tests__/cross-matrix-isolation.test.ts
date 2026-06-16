@@ -100,9 +100,15 @@ describe("cross-matrix isolation", () => {
     // HostCapabilities passed down from the inline renderer (#2230).
     // The modal MUST NOT read OpenAI shim matrix refs — its bridge
     // is SEP-1865 spec, not vendor shim.
-    const body = await readSource("../mcp-apps-modal.tsx");
+    //
+    // The modal relocated to @mcpjam/widget-react in Phase 3d-ii-c (the
+    // inspector path is gone). Scan the REAL source in the package so this
+    // guard keeps defending the actual code.
+    const body = await readSource(
+      "../../../../../../../../widget-react/src/mcp-apps-modal.tsx",
+    );
     assertNoRefs(body, OPENAI_SHIM_RUNTIME_REFS, {
-      module: "mcp-apps-modal.tsx",
+      module: "widget-react/src/mcp-apps-modal.tsx",
       surface: "MCP Apps spec bridge (app.*) — modal AppBridge",
     });
   });

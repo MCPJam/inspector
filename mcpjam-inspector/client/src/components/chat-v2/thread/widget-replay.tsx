@@ -1,5 +1,6 @@
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
+import { InspectorWidgetHostProvider } from "./mcp-apps/use-widget-host";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 import {
@@ -162,8 +163,13 @@ export function WidgetReplay({
   const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
     readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
+  // The relocated renderer reads its host via the package `useWidgetHost()`
+  // context. Provide it here — this is the inline mount boundary for every
+  // surface that renders <WidgetReplay> (chat thread, tools panel, transcript)
+  // and only runs the host-composing hook once a widget actually mounts.
   return (
-    <MCPAppsRenderer
+    <InspectorWidgetHostProvider>
+      <MCPAppsRenderer
       chatSessionId={chatSessionId}
       serverId={serverId ?? "offline-view"}
       serverName={serverId ?? "offline-view"}
@@ -205,6 +211,7 @@ export function WidgetReplay({
       }
       initialWidgetState={renderOverride?.initialWidgetState}
       minimalMode={minimalMode}
-    />
+      />
+    </InspectorWidgetHostProvider>
   );
 }
