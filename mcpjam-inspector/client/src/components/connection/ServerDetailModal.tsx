@@ -815,7 +815,13 @@ export function ServerDetailModal({
                 className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
               >
                 <div className="pl-1 pr-6">
-                  <HostCompatContent server={server} toolsData={toolsData} />
+                  <HostCompatContent
+                    server={server}
+                    toolsData={toolsData}
+                    projectId={projectId}
+                    serverId={serverId}
+                    onClose={onClose}
+                  />
                 </div>
               </TabsContent>
 
