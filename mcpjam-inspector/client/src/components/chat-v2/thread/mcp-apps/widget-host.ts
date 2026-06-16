@@ -9,25 +9,24 @@
 // as of Phase 1b, imports zero `@/stores`/`@/contexts`/`@/lib/client-*` modules
 // (enforced by check-renderer-tier-b-imports.mjs).
 //
-// Scope note: this boundary makes the RENDERER app-state-import-clean. It does
-// NOT yet make the whole widget runtime package-clean — e.g. the
-// `MCPAppsRenderer` wrapper still reads `usePersistentWidgetSurfaceHost`
-// directly, and sibling files (modal/chrome) still touch inspector state. Those
-// relocate in Phases 2-3.
+// Ownership (Phase 3d-i): the `surface`, `debug`, and `components` slices — plus
+// the primitives (`CspMode`, `DisplayMode`, `UiProtocol`, `OpenAiAppsCapabilities`)
+// and the debug data types — now live in `@mcpjam/widget-react`. This module
+// re-exports them so existing `./widget-host` import sites are unchanged, and
+// keeps the still-local slices (`environment`, `resolvers`, `services`) that fold
+// into the package in 3d-i-b. Drift-safety for the relocated structural types is
+// enforced by `use-widget-host.ts` conforming to the package contract.
 //
-// The contract is anchored to the real inspector signatures via
-// `typeof import(...)` / named result types, so it fails typecheck loudly if an
+// The still-local slices stay anchored to the real inspector signatures via
+// `typeof import(...)` / named result types, so they fail typecheck loudly if an
 // underlying shape drifts.
 
-import type { ComponentType, ReactNode } from "react";
 import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
-  OpenAiAppsCapabilities,
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
 import type {
-  CspMode,
   DeviceCapabilities,
   DeviceType,
   PlaygroundGlobals,
@@ -37,18 +36,20 @@ import type { PreferencesState } from "@/stores/preferences/preferences-store";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import type {
-  CspViolation,
-  WidgetDebugInfo,
-  WidgetGlobals,
-  WidgetLifecycleEvent,
-  WidgetSandboxApplied,
-  WidgetSandboxInfo,
-} from "@/stores/widget-debug-store";
-import type { UiLogEvent } from "@/stores/traffic-log-store";
-import type {
   FetchMcpAppsWidgetContentRequest,
   FetchMcpAppsWidgetContentResponse,
 } from "./fetch-widget-content";
+// Data / chrome / instrumentation contract slices now live in
+// @mcpjam/widget-react (Phase 3d-i-a). Imported for the slices that still
+// assemble locally (`WidgetHost`, `WidgetHostEnvironmentInputs`); re-exported
+// below so existing `./widget-host` consumers (the cluster + adapter) keep their
+// import sites unchanged.
+import type {
+  DisplayMode,
+  WidgetSurfaceInfo,
+  WidgetDebugSink,
+  WidgetHostComponents,
+} from "@mcpjam/widget-react";
 
 // --- Result shapes pinned to their current resolvers (source of truth) -------
 
@@ -187,19 +188,38 @@ export interface WidgetHostResolvers {
   stableStringifyJson: typeof import("@/lib/client-config").stableStringifyJson;
 }
 
-// --- Type re-exports for the renderer ----------------------------------------
+// --- Type re-exports for consumers -------------------------------------------
 //
-// The Tier-B import guard forbids the renderer from importing `@/stores/*` and
-// `@/lib/client-styles` even for `import type`. Re-export the type-only symbols
-// the renderer still needs here so it can import them from the host boundary.
-
+// The Tier-B guard forbids the cluster from importing `@/stores/*` and
+// `@/lib/client-styles` even for `import type`. `ResolvedMcpAppsCapabilities`
+// stays inspector-local (profile system) and is re-exported here; the
+// data/chrome/instrumentation slices are owned by @mcpjam/widget-react
+// (Phase 3d-i-a) and re-exported so `./widget-host` consumers are unaffected.
+export type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
+// `DisplayMode` / `WidgetSurfaceInfo` / `WidgetDebugSink` / `WidgetHostComponents`
+// are also imported above (used locally by `WidgetHost` / `…EnvironmentInputs`);
+// re-export the local bindings.
 export type {
+  DisplayMode,
+  WidgetSurfaceInfo,
+  WidgetDebugSink,
+  WidgetHostComponents,
+};
+export type {
+  CspMode,
+  UiProtocol,
   OpenAiAppsCapabilities,
-  ResolvedMcpAppsCapabilities,
-} from "@/lib/client-styles";
-export type { CspMode } from "@/stores/ui-playground-store";
-export type { WidgetLifecycleEvent } from "@/stores/widget-debug-store";
-export type { UiProtocol } from "@/stores/traffic-log-store";
+  WidgetSurfaceKind,
+  WidgetDebugInfo,
+  WidgetGlobals,
+  WidgetSandboxInfo,
+  WidgetSandboxApplied,
+  WidgetLifecycleEvent,
+  WidgetMount,
+  CspViolation,
+  UiLogEvent,
+  WidgetModalProps,
+} from "@mcpjam/widget-react";
 
 // `extractMethod` is a pure JSON-RPC message parser (no store state, no React)
 // the renderer uses for traffic-log wiring. Re-exported through the boundary —
@@ -217,14 +237,6 @@ export { extractMethod } from "@/stores/traffic-log-store";
 // boundary instead of `@/lib/client-config` (Tier-B guard). Same underlying fn
 // as `resolvers.stableStringifyJson`, so the two paths can't diverge.
 export { stableStringifyJson } from "@/lib/client-config";
-
-/**
- * Widget display-mode union. Mirrors the inspector playground store's
- * `DisplayMode` (and the SEP `HostDisplayMode`); re-declared here (rather than
- * re-exported from `@/stores`) so the renderer can import it from the host
- * boundary and satisfy the Tier-B guard.
- */
-export type DisplayMode = "inline" | "pip" | "fullscreen";
 
 // --- Services ----------------------------------------------------------------
 
@@ -267,118 +279,6 @@ export interface WidgetHostServices {
   >;
   // Phase 1: OpenAI Apps file bridges (uploadFile / getFileDownloadUrl) bind to
   // widget-file-messages here once their host-facing signatures are firmed up.
-}
-
-// --- Surface -----------------------------------------------------------------
-
-export type WidgetSurfaceKind =
-  | "chat"
-  | "playground"
-  | "chatbox"
-  | "standalone";
-
-export interface WidgetSurfaceInfo {
-  /**
-   * useWidgetSurface + useIsChatboxSurface collapsed to one descriptor.
-   * Phase 1 must confirm chatbox / playground / chat are mutually exclusive
-   * (today they are two separate context signals); if they can overlap, `kind`
-   * must keep both bits rather than collapse to one enum.
-   */
-  kind: WidgetSurfaceKind;
-  /** usePersistentWidgetSurfaceHost — persistent resource-scoped surfaces. */
-  persistentSurfaceHost: boolean;
-  /** useWebManagedServers — route widget-content through /api/web. */
-  webManagedServers: boolean;
-  /** SANDBOX_ORIGIN (VITE_MCPJAM_SANDBOX_ORIGIN); "" when unset. */
-  sandboxOrigin: string;
-  /**
-   * Playground CSP-mode selection (useUIPlaygroundStore.mcpAppsCspMode) — an
-   * INPUT, not the effective mode. The renderer derives the effective sandbox
-   * CSP mode from `kind` + this + the per-widget `minimalMode` prop, mirroring
-   * mcp-apps-renderer.tsx:741-746:
-   *
-   *   kind === "chatbox" || minimalMode ? "permissive"
-   *     : kind === "playground"         ? playgroundCspMode
-   *     :                                 "widget-declared"
-   *
-   * Kept as an input (not pre-resolved in `resolveEnvironment`) because
-   * `minimalMode` is per-instance. Source it from the WidgetSurfaceContext —
-   * NOT `isPlaygroundActive` — to preserve the first-render iframe-rebuild fix
-   * documented at mcp-apps-renderer.tsx:729-739.
-   */
-  playgroundCspMode: CspMode;
-}
-
-// --- Instrumentation (optional) ----------------------------------------------
-
-/**
- * Diagnostics sink. Intentionally 1:1 with `useWidgetDebugStore` +
- * `useTrafficLogStore.addLog` (source of truth) so the Phase 1 migration is a
- * pure refactor — no consolidation. The inspector forwards each call to its
- * zustand stores; a non-inspector host can omit `debug` entirely and lose only
- * the Sandbox/Network debug panels. (Folding these into a single event stream
- * is a deliberately separate, later change.)
- */
-export interface WidgetDebugSink {
-  recordMount: (toolCallId: string, reason: string) => void;
-  setWidgetDebugInfo: (
-    toolCallId: string,
-    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
-  ) => void;
-  setWidgetState: (toolCallId: string, state: unknown) => void;
-  setWidgetGlobals: (
-    toolCallId: string,
-    globals: Partial<WidgetGlobals>,
-  ) => void;
-  setWidgetCsp: (
-    toolCallId: string,
-    csp: Omit<WidgetSandboxInfo, "violations">,
-  ) => void;
-  addCspViolation: (toolCallId: string, violation: CspViolation) => void;
-  clearCspViolations: (toolCallId: string) => void;
-  setWidgetModelContext: (
-    toolCallId: string,
-    context: {
-      content?: unknown[];
-      structuredContent?: Record<string, unknown>;
-    } | null,
-  ) => void;
-  setWidgetHtml: (
-    toolCallId: string,
-    html: string,
-    injectedOpenAiCompat?: boolean,
-    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
-  ) => void;
-  setSandboxApplied: (
-    toolCallId: string,
-    applied: WidgetSandboxApplied,
-    hostProfileId?: string,
-    hostInfo?: { name: string; version: string } | null,
-  ) => void;
-  appendLifecycle: (
-    toolCallId: string,
-    event: WidgetLifecycleEvent,
-  ) => void;
-  /** useTrafficLogStore.addLog */
-  addTrafficLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
-}
-
-// --- Chrome injection (optional) ---------------------------------------------
-
-/**
- * Provisional — props firm up when mcp-apps-modal is extracted (Phase 3). The
- * design-system <Dialog> chrome becomes an injected component so the renderer
- * stays free of @mcpjam/design-system.
- */
-export interface WidgetModalProps {
-  open: boolean;
-  onClose: () => void;
-  title?: string;
-  children: ReactNode;
-}
-
-export interface WidgetHostComponents {
-  Modal?: ComponentType<WidgetModalProps>;
 }
 
 // --- The seam ----------------------------------------------------------------

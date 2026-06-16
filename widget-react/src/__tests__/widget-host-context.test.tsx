@@ -12,7 +12,13 @@ function SurfaceProbe() {
 }
 
 const host: WidgetHost = {
-  surface: { kind: "playground", sandboxOrigin: "", webManagedServers: false },
+  surface: {
+    kind: "playground",
+    persistentSurfaceHost: false,
+    webManagedServers: false,
+    sandboxOrigin: "",
+    playgroundCspMode: "widget-declared",
+  },
 };
 
 describe("WidgetHostProvider / useWidgetHost", () => {

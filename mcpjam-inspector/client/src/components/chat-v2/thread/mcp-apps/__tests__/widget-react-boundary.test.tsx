@@ -22,7 +22,13 @@ describe("@mcpjam/widget-react package boundary (inspector consumer)", () => {
     // provider in 3d. Its surface is a structural subset of the adapter's
     // WidgetSurfaceInfo, so the real adapter will satisfy this contract too.
     const host: WidgetHost = {
-      surface: { kind: "chat", sandboxOrigin: "", webManagedServers: false },
+      surface: {
+        kind: "chat",
+        persistentSurfaceHost: false,
+        webManagedServers: false,
+        sandboxOrigin: "",
+        playgroundCspMode: "widget-declared",
+      },
     };
     render(
       <WidgetHostProvider value={host}>
