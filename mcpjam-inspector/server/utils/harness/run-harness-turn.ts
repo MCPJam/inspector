@@ -64,6 +64,18 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 function resolveHarnessModelAuth():
   | { gateway: { apiKey: string; baseUrl?: string } }
   | { anthropic: { apiKey?: string; authToken?: string; baseUrl?: string } } {
+  // Fail closed: this hands a deploy-level model key to the in-sandbox Claude
+  // Code CLI (and the generated .mcp.json may carry per-server auth headers)
+  // inside a reused executable computer, which crosses the server-side trust
+  // boundary. Require an explicit operator opt-in until the per-turn
+  // Convex-minted token replaces it.
+  if (process.env.MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL !== "true") {
+    throw new Error(
+      "harness env credential path is disabled — set " +
+        "MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL=true to opt in (dev/owner only; " +
+        "production uses a per-turn scoped token minted by Convex)",
+    );
+  }
   const gatewayKey = process.env.AI_GATEWAY_API_KEY?.trim();
   if (gatewayKey) {
     return {
@@ -139,6 +151,9 @@ export async function runHarnessTurn(
     onToolCall,
     onToolResult,
     onEngineError,
+    onLiveTextDelta,
+    requireToolApproval,
+    approvalMode,
   } = options;
 
   // The engine mutates a single messageHistory ref through the turn (parity
@@ -188,6 +203,15 @@ export async function runHarnessTurn(
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
+      // Map the host's approval policy onto the harness permission mode.
+      // Interactive approval bridging is deferred, so fail closed: when the
+      // host requires approval (or the synthetic "auto-deny" path), only
+      // auto-approve reads instead of everything.
+      const permissionMode: "allow-reads" | "allow-edits" | "allow-all" =
+        requireToolApproval || approvalMode === "auto-deny"
+          ? "allow-reads"
+          : "allow-all";
+
       const harness = createClaudeCode({ model: modelId, auth });
       const agent = new HarnessAgent({
         // Dual-`ai` boundary cast: createClaudeCode returns a HarnessV1 from its
@@ -197,7 +221,7 @@ export async function runHarnessTurn(
         harness: harness as unknown as HarnessAgentAdapter,
         sandbox,
         ...(systemPrompt ? { instructions: systemPrompt } : {}),
-        permissionMode: "allow-all",
+        permissionMode,
         onSandboxSession: async ({ session, sessionWorkDir }) => {
           // Write the host's MCP servers into the session workdir before
           // Claude Code starts, so it connects to them on launch.
@@ -220,6 +244,16 @@ export async function runHarnessTurn(
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
         let assistantText = "";
+        const turnToolCalls: Array<{
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        }> = [];
+        const turnToolResults: Array<{
+          toolCallId: string;
+          toolName: string | undefined;
+          output: unknown;
+        }> = [];
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
@@ -241,6 +275,7 @@ export async function runHarnessTurn(
             }
             assistantText += delta;
             writer.write({ type: "text-delta", id: textId, delta });
+            onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? crypto.randomUUID(),
@@ -258,7 +293,7 @@ export async function runHarnessTurn(
               toolName,
               input,
             });
-            onToolCall?.({
+            await onToolCall?.({
               toolCallId,
               toolName,
               input,
@@ -266,6 +301,7 @@ export async function runHarnessTurn(
               promptIndex: 0,
               serverId: undefined,
             });
+            turnToolCalls.push({ toolCallId, toolName, input });
           } else if (
             type === "tool-result" ||
             type === "tool-output-available"
@@ -290,6 +326,11 @@ export async function runHarnessTurn(
               stepIndex: 0,
               promptIndex: 0,
               serverId: undefined,
+            });
+            turnToolResults.push({
+              toolCallId,
+              toolName: (part as { toolName?: string }).toolName,
+              output,
             });
           } else if (type === "finish") {
             const u = (part as { totalUsage?: unknown; usage?: unknown })
@@ -319,11 +360,41 @@ export async function runHarnessTurn(
         // Settle usage/finish on res.
         await res.text;
 
-        // First-cut transcript: append the assistant's final text. Full
-        // tool-call/result message-part reconstruction is the remaining piece,
-        // pending live-box verification of the harness part shapes.
+        // Reconstruct the turn transcript so runAssistantTurn can derive
+        // toolCalls/toolResults and onConversationComplete persists a complete
+        // history — not just assistant prose. Shapes mirror the emulated
+        // engine; built from the same loosely-read parts, so cast at the
+        // boundary.
+        const assistantContent: Array<Record<string, unknown>> = [];
         if (assistantText) {
-          messageHistory.push({ role: "assistant", content: assistantText });
+          assistantContent.push({ type: "text", text: assistantText });
+        }
+        for (const tc of turnToolCalls) {
+          assistantContent.push({
+            type: "tool-call",
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.input,
+          });
+        }
+        if (assistantContent.length > 0) {
+          messageHistory.push({
+            role: "assistant",
+            content: assistantContent,
+          } as unknown as ModelMessage);
+        }
+        for (const tr of turnToolResults) {
+          messageHistory.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: tr.toolCallId,
+                toolName: tr.toolName ?? "tool",
+                output: { type: "json", value: tr.output },
+              },
+            ],
+          } as unknown as ModelMessage);
         }
         writer.write({
           type: "finish",
