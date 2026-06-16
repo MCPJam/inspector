@@ -197,6 +197,16 @@ export function MonitoringTab({
             </AreaChart>
           </ChartContainer>
         </section>
+      ) : latencyTrend.length === 1 ? (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Render latency
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            One run recorded — the latency trend appears once there are at least
+            two.
+          </p>
+        </section>
       ) : null}
 
       {/* ── last failure ────────────────────────────────────────────── */}
