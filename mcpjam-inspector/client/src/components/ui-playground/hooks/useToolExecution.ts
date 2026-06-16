@@ -19,6 +19,7 @@ import {
   recordAppToolInvocation,
   useAppToolsRegistry,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 // Matches `app_<8 hex chars>` aliases minted by the app-tools registry.
 // Kept local to avoid widening the registry's public surface; the registry
@@ -489,16 +490,19 @@ async function executeAppTool({
     // intentionally strips before handing back to the model.
     storeCompletedToolResult(entry.rawName, params, raw);
 
-    recordAppToolInvocation({
-      alias,
-      rawName: entry.rawName,
-      appName: entry.instance.appName,
-      serverId: entry.instance.serverId,
-      parentToolCallId: entry.instance.parentToolCallId,
-      bridgeId: entry.instance.bridgeId,
-      input: params,
-      raw,
-    });
+    recordAppToolInvocation(
+      {
+        alias,
+        rawName: entry.rawName,
+        appName: entry.instance.appName,
+        serverId: entry.instance.serverId,
+        parentToolCallId: entry.instance.parentToolCallId,
+        bridgeId: entry.instance.bridgeId,
+        input: params,
+        raw,
+      },
+      useTrafficLogStore.getState().addLog,
+    );
 
     posthog.capture("app_builder_tool_executed", {
       location: "app_builder_tab",

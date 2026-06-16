@@ -87,7 +87,10 @@ import {
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
+import {
+  ingestHostedRpcLogs,
+  useTrafficLogStore,
+} from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
@@ -1769,16 +1772,19 @@ export function useChatSession(
           call.then(resolve, reject);
         });
         const sanitized = scrubAppToolResultForModel(raw);
-        recordAppToolInvocation({
-          alias: tc.toolName,
-          rawName: entry.rawName,
-          appName: entry.instance.appName,
-          serverId: entry.instance.serverId,
-          parentToolCallId: entry.instance.parentToolCallId,
-          bridgeId: entry.instance.bridgeId,
-          input: tc.input,
-          raw,
-        });
+        recordAppToolInvocation(
+          {
+            alias: tc.toolName,
+            rawName: entry.rawName,
+            appName: entry.instance.appName,
+            serverId: entry.instance.serverId,
+            parentToolCallId: entry.instance.parentToolCallId,
+            bridgeId: entry.instance.bridgeId,
+            input: tc.input,
+            raw,
+          },
+          useTrafficLogStore.getState().addLog,
+        );
         addToolOutput({
           tool: tc.toolName,
           toolCallId: tc.toolCallId,
