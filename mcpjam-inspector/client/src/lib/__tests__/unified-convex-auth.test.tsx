@@ -69,4 +69,29 @@ describe("useUnifiedConvexAuth", () => {
       id: "__guest__",
     });
   });
+
+  it("marks the guest activated only when Convex pulls the guest token, not on resolve", async () => {
+    const session = {
+      guestId: "guest-1",
+      token: "guest-token",
+      expiresAt: Date.now() + 60_000,
+    };
+    mockState.getOrCreateGuestSession.mockResolvedValue(session);
+    mockState.getCachedGuestSession.mockReturnValue(session);
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Resolving the session must NOT activate — otherwise an authed user who
+    // merely opened the app would be promotable (the incidental-cookie guard).
+    expect(mockState.markGuestActivated).not.toHaveBeenCalled();
+
+    // Convex authenticating as the guest is the real activation signal.
+    await act(async () => {
+      await result.current.getAccessToken();
+    });
+    expect(mockState.markGuestActivated).toHaveBeenCalledWith("guest-1");
+  });
 });

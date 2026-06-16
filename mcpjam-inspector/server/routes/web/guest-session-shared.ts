@@ -194,10 +194,9 @@ export async function mintGuestSessionForDocument(
     return empty;
   }
 
-  const clientIp = getClientIp(c);
   let ipHash: string | null = null;
   try {
-    ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
+    ipHash = ip ? await hashGuestSpendIp(ip) : null;
   } catch {
     ipHash = null;
   }

@@ -125,10 +125,17 @@ function seedFromBootstrap(): void {
     window.__MCP_GUEST_BOOTSTRAP__ = undefined;
   }
   if (!blob) return;
+  // Require a non-empty guestId: a seeded session with an empty guestId would
+  // read as "resolved" (token present) yet leave the promotion path unable to
+  // identify the guest — activation and incidental-revoke would both no-op,
+  // stranding the document-minted cookie. If the server omitted guestId, skip
+  // the seed and fall back to the client lookup path (which fills guestId).
   if (
     typeof blob.token !== "string" ||
     blob.token.length === 0 ||
-    typeof blob.expiresAt !== "number"
+    typeof blob.expiresAt !== "number" ||
+    typeof blob.guestId !== "string" ||
+    blob.guestId.length === 0
   ) {
     return;
   }
@@ -138,7 +145,7 @@ function seedFromBootstrap(): void {
     return;
   }
   cachedSession = {
-    guestId: typeof blob.guestId === "string" ? blob.guestId : "",
+    guestId: blob.guestId,
     token: blob.token,
     expiresAt: blob.expiresAt,
   };

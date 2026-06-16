@@ -58,21 +58,7 @@ describe("resolveHostedShellGateState", () => {
     ).toBe("ready");
   });
 
-  it("returns ready when auth is ready (no longer blocks on project data)", () => {
-    expect(
-      resolveHostedShellGateState({
-        hostedMode: true,
-        nonProdLockdown: false,
-        isConvexAuthLoading: false,
-        isConvexAuthenticated: true,
-        isWorkOsLoading: false,
-        hasWorkOsUser: true,
-        workOsUserEmail: "employee@mcpjam.com",
-      }),
-    ).toBe("ready");
-  });
-
-  it("returns ready when hosted auth and project are fully ready", () => {
+  it("returns ready when hosted auth is settled (no longer blocks on project data)", () => {
     expect(
       resolveHostedShellGateState({
         hostedMode: true,
