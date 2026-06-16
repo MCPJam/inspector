@@ -3,8 +3,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowUpRight,
-  CheckCircle2,
-  HelpCircle,
+  ChevronDown,
   Info,
   Loader2,
   Wrench,
@@ -13,6 +12,11 @@ import { useNavigate } from "react-router";
 import { usePostHog } from "posthog-js/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
@@ -45,39 +49,38 @@ const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
 const isHostTemplateId = (id: string): id is HostTemplateId =>
   COMPAT_TEMPLATE_LABEL.has(id);
 
-const VERDICT_BADGE: Record<
+/** Lightweight verdict styling: a colored dot + colored label, no pill —
+ * keeps each host row to a single quiet line. */
+const VERDICT_META: Record<
   CompatVerdict,
-  { label: string; className: string; Icon: typeof CheckCircle2 }
+  { label: string; dot: string; text: string }
 > = {
   works: {
     label: "Works",
-    className:
-      "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    Icon: CheckCircle2,
+    dot: "bg-emerald-500",
+    text: "text-emerald-600 dark:text-emerald-400",
   },
   degraded: {
     label: "Degraded",
-    className:
-      "border-amber-300/60 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    Icon: AlertTriangle,
+    dot: "bg-amber-500",
+    text: "text-amber-600 dark:text-amber-400",
   },
   blocked: {
     label: "Blocked",
-    className:
-      "border-red-300/60 bg-red-500/10 text-red-700 dark:text-red-300",
-    Icon: AlertCircle,
+    dot: "bg-red-500",
+    text: "text-red-600 dark:text-red-400",
   },
   unknown: {
     label: "Unknown",
-    className: "border-border bg-muted/40 text-muted-foreground",
-    Icon: HelpCircle,
+    dot: "bg-muted-foreground/40",
+    text: "text-muted-foreground",
   },
 };
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
-  "vendor-doc": "from vendor docs",
-  probe: "probe-captured",
-  assumed: "best-effort preset",
+  "vendor-doc": "Verified from vendor docs",
+  probe: "Probe-captured from a real host",
+  assumed: "Best-effort preset — unverified",
 };
 
 const FINDING_ICON: Record<
@@ -129,6 +132,11 @@ export function HostCompatContent({
   const [creatingTemplateId, setCreatingTemplateId] = useState<string | null>(
     null,
   );
+  // Findings are collapsed by default — the row shows a terse summary; the
+  // full list expands on demand so the tab reads as a scannable list.
+  const [expandedHostId, setExpandedHostId] = useState<string | null>(null);
+  const toggleExpanded = (hostId: string) =>
+    setExpandedHostId((current) => (current === hostId ? null : hostId));
 
   // Top of the host-creation funnel: one "tab viewed" per server so the
   // compat → create conversion is measurable. Re-arms on server switch.
@@ -201,50 +209,103 @@ export function HostCompatContent({
   };
 
   return (
-    <div className="space-y-3 pb-4">
-      <p className="text-xs text-muted-foreground">
-        Prototype · static checks computed from connect-time data. Host
-        capability profiles are best-effort — each verdict shows where its
-        facts come from.
+    <div className="pb-4">
+      <p className="pb-1 text-[11px] text-muted-foreground">
+        Static checks from connect-time data · best-effort host profiles
+        {requirements.unknownDimensions.length > 0
+          ? ` · incomplete (${requirements.unknownDimensions.join(", ")})`
+          : ""}
       </p>
 
-      {requirements.unknownDimensions.length > 0 && (
-        <div className="rounded-md border border-border/60 bg-muted/30 p-2 text-xs text-muted-foreground">
-          Incomplete picture: missing {requirements.unknownDimensions.join("; ")}
-          .
-        </div>
-      )}
-
-      <div className="space-y-2">
+      <div className="divide-y divide-border/50">
         {reports.map((report) => {
-          const badge = VERDICT_BADGE[report.verdict];
+          const verdict = VERDICT_META[report.verdict];
+          const hasFindings = report.findings.length > 0;
+          const isOpen = expandedHostId === report.hostId;
+          const summary = hasFindings
+            ? `${report.findings[0].title}${
+                report.findings.length > 1
+                  ? ` +${report.findings.length - 1}`
+                  : ""
+              }`
+            : "";
           return (
-            <div
-              key={report.hostId}
-              className="rounded-lg border border-border/60 bg-card/40 p-3"
-            >
+            <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">
                 <img
                   src={report.logoSrc}
                   alt=""
-                  className="h-4 w-4 rounded-[3px] object-contain"
+                  className="h-4 w-4 flex-shrink-0 rounded-[3px] object-contain"
                 />
                 <span className="text-sm font-medium text-foreground">
                   {report.hostLabel}
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${badge.className}`}
-                >
-                  <badge.Icon className="h-3 w-3" />
-                  {badge.label}
-                </span>
-                <span className="ml-auto text-[11px] text-muted-foreground">
-                  {PROVENANCE_LABEL[report.provenance]}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={`inline-flex flex-shrink-0 items-center gap-1.5 text-xs ${verdict.text}`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${verdict.dot}`}
+                      />
+                      {verdict.label}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" variant="muted">
+                    {PROVENANCE_LABEL[report.provenance]}
+                  </TooltipContent>
+                </Tooltip>
+
+                {hasFindings && !isOpen && (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(report.hostId)}
+                    className="hidden min-w-0 flex-1 truncate text-left text-xs text-muted-foreground hover:text-foreground sm:block"
+                  >
+                    {summary}
+                  </button>
+                )}
+
+                <div className="ml-auto flex flex-shrink-0 items-center gap-0.5">
+                  {canCreateHosts && isHostTemplateId(report.hostId) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      disabled={creatingTemplateId !== null}
+                      onClick={() => handleTestInHost(report)}
+                    >
+                      {creatingTemplateId === report.hostId ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        <>
+                          Test
+                          <ArrowUpRight className="h-3 w-3" />
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {hasFindings && (
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(report.hostId)}
+                      aria-expanded={isOpen}
+                      aria-label={isOpen ? "Hide details" : "Show details"}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {report.findings.length > 0 ? (
-                <ul className="mt-2 space-y-2">
+              {hasFindings && isOpen && (
+                <ul className="mt-2 space-y-1.5 pl-6">
                   {report.findings.map((finding, index) => {
                     const icon = FINDING_ICON[finding.severity];
                     return (
@@ -271,38 +332,6 @@ export function HostCompatContent({
                     );
                   })}
                 </ul>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {report.verdict === "works"
-                    ? "Everything this server uses is supported."
-                    : report.verdict === "unknown"
-                      ? "No blockers found, but some dimensions couldn't be checked yet — connect and load tools for a complete report."
-                      : "No issues found in the data captured so far."}
-                </p>
-              )}
-
-              {canCreateHosts && isHostTemplateId(report.hostId) && (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 gap-1 text-xs"
-                    disabled={creatingTemplateId !== null}
-                    onClick={() => handleTestInHost(report)}
-                  >
-                    {creatingTemplateId === report.hostId ? (
-                      <>
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Opening…
-                      </>
-                    ) : (
-                      <>
-                        Test in {report.hostLabel}
-                        <ArrowUpRight className="h-3 w-3" />
-                      </>
-                    )}
-                  </Button>
-                </div>
               )}
             </div>
           );
