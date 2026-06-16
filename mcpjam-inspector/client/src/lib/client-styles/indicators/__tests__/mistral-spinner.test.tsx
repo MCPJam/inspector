@@ -12,11 +12,18 @@ describe("MistralSpinnerIndicator", () => {
     expect(
       screen.getByRole("progressbar", { name: "Loading" })
     ).toBeInTheDocument();
+    expect(screen.getByTestId("loading-indicator-mistral-spinner")).toHaveClass(
+      "absolute",
+      "inset-0",
+      "z-0",
+      "size-12"
+    );
     expect(
       screen.getByTestId("loading-indicator-mistral-mark")
     ).toBeInTheDocument();
     const mark = screen.getByTestId("loading-indicator-mistral-mark");
     expect(mark.tagName).toBe("DIV");
+    expect(mark).toHaveClass("relative", "z-10");
     expect(mark).toHaveStyle({ borderRadius: "25%" });
     expect(mark.querySelector('[data-slot="avatar"]')).toHaveClass(
       "h-7",

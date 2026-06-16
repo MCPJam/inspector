@@ -16,7 +16,7 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
       <span className="sr-only">Thinking</span>
       <svg
         viewBox="0 0 24 24"
-        className="absolute size-12"
+        className="pointer-events-none absolute inset-0 z-0 size-12"
         role="progressbar"
         aria-label="Loading"
         fill="none"
@@ -54,7 +54,7 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
         </g>
       </svg>
       <div
-        className="flex items-center justify-center overflow-hidden"
+        className="relative z-10 flex items-center justify-center overflow-hidden"
         aria-hidden="true"
         data-testid="loading-indicator-mistral-mark"
         style={{
