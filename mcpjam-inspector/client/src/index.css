@@ -89,6 +89,17 @@
     display: none;
   }
 
+  .bg-brand-500 {
+    background-color: var(
+      --bg-brand-500,
+      var(--bg-basic-orange-strong, #ff8a00)
+    );
+  }
+
+  .text-white-default {
+    color: var(--text-white-default, #ffffff);
+  }
+
   /* Trace timeline waterfall — category bar fills */
   .trace-waterfall-bar-prompt {
     background-color: var(--trace-waterfall-bar-prompt);

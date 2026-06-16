@@ -22,6 +22,10 @@ export const MISTRAL_STYLE_VARIABLES: Record<string, string> = {
   "--color-border-primary": "#ffffff19",
   "--color-border-secondary": "#ffffff26",
   "--color-border-tertiary": "#ffffff3f",
+  "--bg-badge-orange": "rgba(255, 138, 0, 0.28)",
+  "--bg-basic-orange-strong": "#ff8a00",
+  "--bg-brand-500": "#ff8a00",
+  "--text-white-default": "#fff",
 };
 
 export function getMistralStyleVariables(

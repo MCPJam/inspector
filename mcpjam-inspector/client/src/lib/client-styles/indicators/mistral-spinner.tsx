@@ -5,7 +5,7 @@ const SPINNER_OFFSET = 42.411500823462205;
 
 export function MistralSpinnerIndicator({ className }: { className?: string }) {
   return (
-    <span
+    <div
       className={cn(
         "relative inline-flex min-h-12 min-w-12 items-center justify-center leading-none",
         className
@@ -53,16 +53,13 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
           />
         </g>
       </svg>
-      <span
-        className="relative z-10 flex items-center justify-center"
+      <div
+        className="relative z-10 flex items-center justify-center bg-brand-500"
         aria-hidden="true"
         data-testid="loading-indicator-mistral-mark"
         style={{
           width: 28,
           height: 28,
-          backgroundColor:
-            "var(--bg-brand-500, var(--bg-basic-orange-strong, #ff8a00))",
-          color: "var(--text-white-default, #ffffff)",
         }}
       >
         <svg
@@ -70,11 +67,12 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
           viewBox="0 0 24 24"
           width="21"
           height="21"
+          className="text-white-default"
           fill="currentColor"
         >
           <path d="M13.3715 16.358H16.1144V13.6486H13.3712L13.3715 16.358H10.6283V13.6486H7.88568V16.358H10.6283V19.0676H2.3999V16.358H5.14279V5.52002H7.88568V8.22963H10.6286V10.939H13.3715V8.22963H16.1144V5.52002H18.8572V16.358H21.5999V19.0676H13.3715V16.358Z" />
         </svg>
-      </span>
-    </span>
+      </div>
+    </div>
   );
 }

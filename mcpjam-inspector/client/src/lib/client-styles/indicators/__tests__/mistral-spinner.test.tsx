@@ -15,6 +15,12 @@ describe("MistralSpinnerIndicator", () => {
     expect(
       screen.getByTestId("loading-indicator-mistral-mark")
     ).toBeInTheDocument();
+    const mark = screen.getByTestId("loading-indicator-mistral-mark");
+    expect(mark.tagName).toBe("DIV");
+    expect(mark).toHaveClass("bg-brand-500");
+    expect(
+      screen.getByTestId("loading-indicator-mistral-mark").querySelector("svg")
+    ).toHaveClass("text-white-default");
 
     const spinningGroup = container.querySelector("g");
     expect(spinningGroup).toHaveClass("animate-spin");
