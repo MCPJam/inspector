@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
+import { shouldQueryProjectId } from "./useProjects";
 
 export interface HostListItem {
   hostId: string;
@@ -27,9 +28,14 @@ export function useHostList({
   hosts: HostListItem[];
   isLoading: boolean;
 } {
+  // Skip until `projectId` is a real Convex id. A transient LOCAL project id
+  // (UUID, or a `local_`/`project_` placeholder) flows in while the shared
+  // Convex id is still resolving — passing it to a `v.id("projects")` query
+  // throws an ArgumentValidationError. `shouldQueryProjectId` is the same guard
+  // every other project-scoped Convex query uses.
   const result = useQuery(
     "hosts:listHosts" as any,
-    isAuthenticated && projectId
+    isAuthenticated && shouldQueryProjectId(projectId)
       ? ({ projectId } as any)
       : "skip",
   ) as HostListItem[] | null | undefined;
