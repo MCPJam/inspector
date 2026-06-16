@@ -845,7 +845,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       Prompt test
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => onCreateWidgetProbe()}>
-                      Widget probe
+                      Render check
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

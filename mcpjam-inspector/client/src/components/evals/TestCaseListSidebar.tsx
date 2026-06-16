@@ -212,7 +212,7 @@ export function TestCaseListSidebar({
                   : !selectedTestCase
                     ? "Select a case first"
                     : selectedCaseIsProbe
-                      ? "Widget probes run with the full suite or on its schedule"
+                      ? "Render checks run with the full suite or on its schedule"
                       : !selectedTestCase.models?.length
                         ? "Add a model first"
                         : !hasConfiguredSuiteServers
