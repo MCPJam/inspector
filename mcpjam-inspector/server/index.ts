@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -24,7 +25,16 @@ import {
   getSessionToken,
 } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import { isAllowedHost } from "./utils/localhost-check";
+import {
+  mayServeSessionToken,
+  mayServeGuestBootstrap,
+} from "./utils/localhost-check";
+import { getActiveTunnelDomains } from "./services/tunnel-registry";
+import {
+  appendGuestSessionSetCookie,
+  buildGuestBootstrapScript,
+  mintGuestSessionForDocument,
+} from "./routes/web/guest-session-shared";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -33,10 +43,13 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
+import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
+import { registerSelfFetch } from "./utils/self-app";
 
 const sysLogger = getSystemLogger("process");
 
@@ -62,7 +75,7 @@ process.on("unhandledRejection", (reason, _promise) => {
     {
       error: reason instanceof Error ? reason : undefined,
       sentry: true,
-    },
+    }
   );
 });
 
@@ -83,7 +96,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│",
+        "│"
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -101,9 +114,15 @@ import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
+import cliAuthRoutes from "./routes/cli-auth/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
+import {
+  isScheduledEvalsWorkerEnabled,
+  startScheduledEvalsWorker,
+  type ScheduledEvalsWorkerHandle,
+} from "./services/scheduled-evals-worker";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -142,7 +161,7 @@ function getMCPConfigFromEnv() {
               headers: serverConfig.headers, // Custom headers for HTTP
               useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
-          },
+          }
         );
 
         // Check for auto-connect server filter
@@ -213,6 +232,7 @@ generateSessionToken();
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
+startLocalBrowserRenderingSetupInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -223,13 +243,17 @@ const app = new Hono().onError((err, c) => {
 
   return c.json({ error: "Internal server error" }, 500);
 });
+// WebSocket support (computer terminal bridge). The upgrade handler is
+// registered on this app below; `injectWebSocket` is called on the node
+// server after `serve()` at the bottom of this file.
+const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
       code: "FEATURE_NOT_SUPPORTED",
       message: `${path} is disabled in hosted mode`,
     },
-    410,
+    410
   );
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
@@ -245,7 +269,7 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
-  },
+  }
 );
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -265,7 +289,7 @@ app.use("*", originValidationMiddleware);
 // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
 if (HOSTED_MODE) {
   app.use("/api/session-token", (c) =>
-    strictModeResponse(c, "/api/session-token"),
+    strictModeResponse(c, "/api/session-token")
   );
   app.use("/api/mcp", (c, next) => {
     if (c.req.path === "/api/mcp/health") return next();
@@ -299,7 +323,7 @@ if (enableHttpLogs) {
     "*",
     logger((message) => {
       appLogger.info(scrubTokenFromUrl(message));
-    }),
+    })
   );
 }
 app.use(
@@ -307,7 +331,7 @@ app.use(
   cors({
     origin: CORS_ORIGINS,
     credentials: true,
-  }),
+  })
 );
 
 app.use(
@@ -320,9 +344,9 @@ app.use(
           code: "VALIDATION_ERROR",
           message: "Request body exceeds 1MB limit",
         },
-        400,
+        400
       ),
-  }),
+  })
 );
 
 // Typed event logging context (matches app.ts)
@@ -339,17 +363,24 @@ if (!HOSTED_MODE) {
       service: "MCP API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
   app.get("/api/apps/health", (c) =>
     c.json({
       service: "Apps API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
 }
 app.route("/api/web", webRoutes);
+// Computer terminal WebSocket (Project Computers). Registered directly on
+// the root app because the upgrade handler comes from `createNodeWebSocket`;
+// auth is the Convex-minted terminal token (see routes/web/computer-terminal).
+app.get(
+  "/api/web/computers/terminal",
+  createComputerTerminalWsHandler(upgradeWebSocket)
+);
 
 // Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
 // core helpers and emit the canonical v1 envelope. Mirror of the mount in
@@ -364,11 +395,23 @@ app.use(
           code: "VALIDATION_ERROR",
           message: "Request body exceeds 1MB limit",
         },
-        400,
+        400
       ),
-  }),
+  })
 );
 app.route("/api/v1", v1Routes);
+
+// In-process self-dispatch for the workspace built-in tools' platform
+// client (see utils/self-app.ts). Mirror of the registration in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+registerSelfFetch((request) => app.fetch(request));
+
+// CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+// auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
+// disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
+// set. Mirror of the mount in server/app.ts::createHonoApp — both
+// production entries must wire this up.
+app.route("/api/cli/auth", cliAuthRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -402,14 +445,27 @@ app.get("/api/session-token", (c) => {
   }
 
   const host = c.req.header("Host");
+  const forwardedHost = c.req.header("X-Forwarded-Host");
 
-  if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+  // SECURITY INVARIANT: tunnel hosts never receive the session token, even
+  // if a tunnel domain is ever allowlisted — see mayServeSessionToken.
+  if (
+    !mayServeSessionToken({
+      host,
+      forwardedHost,
+      allowedHosts: ALLOWED_HOSTS,
+      hostedMode: HOSTED_MODE,
+      activeTunnelDomains: getActiveTunnelDomains(),
+    })
+  ) {
     appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${host}`,
+      `[Security] Token request denied - non-allowed Host: ${
+        forwardedHost || host
+      }`
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
-      403,
+      403
     );
   }
 
@@ -458,17 +514,28 @@ if (process.env.NODE_ENV === "production") {
       let htmlContent = readFileSync(indexPath, "utf-8");
 
       // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
-      // This prevents token leakage when bound to 0.0.0.0
+      // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
+      // NEVER receive the token, even if a tunnel domain is ever
+      // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
+      const forwardedHost = c.req.header("X-Forwarded-Host");
 
-      if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+      if (
+        mayServeSessionToken({
+          host,
+          forwardedHost,
+          allowedHosts: ALLOWED_HOSTS,
+          hostedMode: HOSTED_MODE,
+          activeTunnelDomains: getActiveTunnelDomains(),
+        })
+      ) {
         const token = getSessionToken();
         const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
         htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
+          `[Security] Token not injected - non-allowed Host: ${host}`
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
@@ -478,7 +545,7 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`,
+          `${runtimeConfigScript}</head>`
         );
       }
 
@@ -486,10 +553,56 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig,
+          mcpConfig
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
+
+      // Guest bootstrap blob: mint a guest bearer server-side and inject it so
+      // a cold guest boots with a token already in hand (no render-blocking
+      // POST /api/web/guest-session). Gated on production + hosted + not
+      // locked-down + a host allowlist that includes the hosted app host(s)
+      // (mayServeGuestBootstrap), mirroring the session-token discipline.
+      //
+      // Wrapped in its OWN try/catch so a mint failure never 500s the
+      // document — we just serve without the blob and let the client fall
+      // back to its POST path.
+      if (
+        process.env.NODE_ENV === "production" &&
+        HOSTED_MODE &&
+        process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
+        mayServeGuestBootstrap({
+          host,
+          forwardedHost,
+          allowedHosts: ALLOWED_HOSTS,
+          hostedMode: HOSTED_MODE,
+          activeTunnelDomains: getActiveTunnelDomains(),
+        })
+      ) {
+        try {
+          const { session, setCookies } =
+            await mintGuestSessionForDocument(c);
+          if (session && session.expiresAt > Date.now()) {
+            const bootstrapScript = buildGuestBootstrapScript(session);
+            htmlContent = htmlContent.replace(
+              "</head>",
+              `${bootstrapScript}</head>`
+            );
+            for (const cookie of setCookies) {
+              appendGuestSessionSetCookie(c, cookie);
+            }
+          }
+        } catch (error) {
+          appLogger.warn(
+            "[guest-bootstrap] document mint failed; serving without blob",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
+
+      // The document may embed a per-guest bearer; never let a shared/browser
+      // cache replay one guest's blob to another.
+      c.header("Cache-Control", "no-store");
 
       return c.html(htmlContent);
     } catch (error) {
@@ -532,10 +645,19 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+// Attach the WebSocket upgrade listener (computer terminal bridge).
+injectWebSocket(server);
+
+// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
+// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
+let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
+if (isScheduledEvalsWorkerEnabled()) {
+  scheduledEvalsWorker = startScheduledEvalsWorker();
+}
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
-  10,
+  10
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
@@ -545,7 +667,7 @@ const logFlushExitMs = 1000;
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    logFlushExitMs
   );
   exitFallbackTimer.unref();
 
@@ -562,6 +684,7 @@ async function shutdown() {
   }
 
   shuttingDown = true;
+  await scheduledEvalsWorker?.stop();
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;
@@ -570,7 +693,7 @@ async function shutdown() {
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
-      new Error("Shutdown timed out; forcing process exit."),
+      new Error("Shutdown timed out; forcing process exit.")
     );
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);

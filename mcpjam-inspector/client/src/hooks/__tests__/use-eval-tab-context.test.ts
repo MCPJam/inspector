@@ -5,7 +5,7 @@ import { useEvalTabContext } from "../use-eval-tab-context";
 const mocks = vi.hoisted(() => ({
   useSharedAppState: vi.fn(),
   useProjectMembers: vi.fn(),
-  useAvailableEvalModels: vi.fn(),
+  useAvailableModels: vi.fn(),
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -16,8 +16,8 @@ vi.mock("@/hooks/useProjects", () => ({
   useProjectMembers: mocks.useProjectMembers,
 }));
 
-vi.mock("@/hooks/use-available-eval-models", () => ({
-  useAvailableEvalModels: mocks.useAvailableEvalModels,
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: mocks.useAvailableModels,
 }));
 
 describe("useEvalTabContext", () => {
@@ -29,7 +29,7 @@ describe("useEvalTabContext", () => {
         disconnected: { connectionStatus: "disconnected" },
       },
     });
-    mocks.useAvailableEvalModels.mockReturnValue({ availableModels: [] });
+    mocks.useAvailableModels.mockReturnValue({ availableModels: [] });
   });
 
   it("always surfaces suite deletion while keeping run deletion on member-management rights", () => {

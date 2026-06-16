@@ -16,4 +16,14 @@ export type HostedRuntimeContext = {
    * flows can retry without a page reload.
    */
   requestRefreshAccessVersion?: () => void;
+  /**
+   * True for published-chatbox runtime sessions (bootstrapped via
+   * /api/web/chatboxes/redeem). Their server set is Convex-resolved by
+   * id, so the turn must flow through /api/web/chat-v2 (with authFetch)
+   * on every platform — the local /api/mcp engine has no way to connect
+   * attachment servers and would silently run the chat without tools.
+   * Playground builder previews stay platform-routed: in local mode they
+   * reuse the builder's locally-connected servers.
+   */
+  requiresWebChatApi?: boolean;
 };

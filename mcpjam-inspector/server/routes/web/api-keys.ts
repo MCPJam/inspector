@@ -35,9 +35,11 @@ import {
  * - A user can only mint a key as powerful as their own session: the
  *   create call routes through `/user_management/users/{userId}` and
  *   `userId` is taken from the session JWT.
- * - DELETE re-fetches the key and verifies `owner.id === sessionUserId`
+ * - DELETE verifies the key id appears in the session user's own key list
  *   before issuing the WorkOS delete, so passing another user's key id
- *   fails before WorkOS sees the request.
+ *   fails before WorkOS sees the request. (WorkOS exposes no single-key
+ *   GET for user keys — both `/api_keys/{id}` and the user-scoped variant
+ *   404 even for existing ids — so list membership is the ownership check.)
  * - `sk_…` keys cannot manage other `sk_…` keys (privilege isolation).
  */
 
@@ -155,6 +157,16 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
       : typeof body?.error_description === "string"
         ? body.error_description
         : fallback;
+  // WorkOS 422s carry the actual cause in `errors` (e.g.
+  // `[{field: "organization_id", code: "organization_id should not be empty"}]`)
+  // while `message` is just "Validation failed" — keep the field errors or the
+  // failure is undiagnosable from our logs.
+  const fieldErrors = Array.isArray(body?.errors) ? body.errors : undefined;
+  logger.error("WorkOS API call failed", {
+    workos_status: status,
+    message: safeMessage,
+    ...(fieldErrors ? { workos_errors: fieldErrors } : {}),
+  });
   if (status === 401) {
     throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, safeMessage);
   }
@@ -164,7 +176,91 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
   if (status === 429) {
     throw new WebRouteError(429, ErrorCode.RATE_LIMITED, safeMessage);
   }
-  throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, safeMessage);
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    safeMessage,
+    fieldErrors ? { workosErrors: fieldErrors } : undefined,
+  );
+}
+
+/**
+ * WorkOS REQUIRES `organization_id` when minting a user API key (422
+ * "Validation failed" without it). Org-scoped sessions carry the org in the
+ * JWT's `org_id` claim; sessions signed in outside an organization context
+ * don't, so fall back to the user's active WorkOS memberships. Which WorkOS
+ * org hosts the key doesn't affect authorization — that's enforced by the
+ * MCPJam org binding — so the first active membership is fine.
+ */
+async function resolveWorkosOrgId(session: SessionContext): Promise<string> {
+  if (session.organizationId) {
+    return session.organizationId;
+  }
+  const { status, body } = await callWorkOS(
+    "GET",
+    `/user_management/organization_memberships?user_id=${encodeURIComponent(
+      session.userId,
+    )}&statuses=active`,
+  );
+  if (status < 200 || status >= 300) {
+    mapWorkOSError(status, body, "Failed to resolve your organization");
+  }
+  const first = Array.isArray(body?.data) ? body.data[0] : undefined;
+  const orgId =
+    typeof first?.organization_id === "string" ? first.organization_id : null;
+  if (!orgId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Your account does not belong to a WorkOS organization, which is required to create API keys",
+    );
+  }
+  return orgId;
+}
+
+/**
+ * Whether `keyId` belongs to `userId`, checked by walking the user-scoped
+ * key list (see DELETE: WorkOS has no single-key GET for user keys).
+ */
+async function userOwnsApiKey(userId: string, keyId: string): Promise<boolean> {
+  let after: string | null = null;
+  // Page cap is a runaway guard only — real users have a handful of keys.
+  // Exhausting it with pages still remaining means ownership is UNKNOWN,
+  // which must surface as an error: returning false here would read as a
+  // 404 and make keys beyond the cap silently unrevokeable.
+  for (let page = 0; page < 10; page++) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (after) {
+      params.set("after", after);
+    }
+    const { status, body } = await callWorkOS(
+      "GET",
+      `/user_management/users/${encodeURIComponent(userId)}/api_keys?${params.toString()}`,
+    );
+    if (status < 200 || status >= 300) {
+      mapWorkOSError(status, body, "Failed to load API keys");
+    }
+    const items: any[] = Array.isArray(body?.data) ? body.data : [];
+    if (items.some((key) => key?.id === keyId)) {
+      return true;
+    }
+    after =
+      typeof body?.list_metadata?.after === "string"
+        ? body.list_metadata.after
+        : null;
+    if (!after) {
+      return false;
+    }
+  }
+  logger.error("API key ownership check exhausted page cap", {
+    workos_user_id: userId,
+    workos_key_id: keyId,
+  });
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    "Could not verify API key ownership",
+  );
 }
 
 const createSchema = z.object({
@@ -193,10 +289,10 @@ apiKeys.post("/", async (c) =>
       );
     }
 
-    const payload: Record<string, unknown> = { name };
-    if (session.organizationId) {
-      payload.organization_id = session.organizationId;
-    }
+    const payload: Record<string, unknown> = {
+      name,
+      organization_id: await resolveWorkosOrgId(session),
+    };
 
     const { status, body } = await callWorkOS(
       "POST",
@@ -336,26 +432,13 @@ apiKeys.delete("/:id", async (c) =>
     }
     const session = await resolveSessionContext(c);
 
-    // Cross-user defense in depth: fetch the key first and confirm the
-    // owner matches the session user before deleting. WorkOS does not
-    // enforce per-user ownership for the org-level admin key.
-    const lookup = await callWorkOS(
-      "GET",
-      `/api_keys/${encodeURIComponent(id)}`,
-    );
-    if (lookup.status === 404) {
+    // Cross-user defense in depth: WorkOS does not enforce per-user
+    // ownership for the org-level admin key, and it exposes no single-key
+    // GET for user keys (404s even for existing ids). The key must appear
+    // in the session user's OWN key list — enumeration under the user is
+    // the ownership proof. An unknown or foreign id reads as not-found.
+    if (!(await userOwnsApiKey(session.userId, id))) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
-    }
-    if (lookup.status < 200 || lookup.status >= 300) {
-      mapWorkOSError(lookup.status, lookup.body, "Failed to load API key");
-    }
-    const ownerId = lookup.body?.owner?.id;
-    if (typeof ownerId !== "string" || ownerId !== session.userId) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        "API key not found",
-      );
     }
 
     const { status, body } = await callWorkOS(

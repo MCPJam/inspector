@@ -1,4 +1,5 @@
 import { ModelDefinition } from "@/shared/types";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -20,6 +21,12 @@ import {
 export interface BaseUrls {
   ollama?: string;
   azure?: string;
+  /**
+   * Amazon Bedrock regional runtime endpoint, e.g.
+   * https://bedrock-runtime.us-east-1.amazonaws.com.
+   * When omitted, the provider derives it from the AWS_REGION env var.
+   */
+  bedrock?: string;
 }
 
 export interface CustomProviderConfig {
@@ -69,6 +76,13 @@ export const createLlmModel = (
       })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
+    case "bedrock":
+      // Bearer-token (API key) auth. The endpoint comes from baseUrls.bedrock
+      // when set; otherwise the provider derives it from AWS_REGION.
+      return createAmazonBedrock({
+        apiKey,
+        ...(baseUrls?.bedrock && { baseURL: baseUrls.bedrock }),
+      })(modelDefinition.id);
     case "azure": {
       const azureBaseUrl = baseUrls?.azure ?? "";
       // Extract resourceName from the Azure base URL so the SDK doesn't fall

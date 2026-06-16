@@ -31,10 +31,7 @@ import {
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
-import {
-  useAppReady,
-  useAppReadyMessage,
-} from "@/hooks/use-app-ready";
+import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import {
@@ -89,7 +86,9 @@ import {
 import {
   useProjectServers as useRemoteProjectServers,
   useProjectMembers,
+  useServerMutations,
   shouldQueryProjectId,
+  type RemoteServer,
 } from "@/hooks/useProjects";
 import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
@@ -260,10 +259,7 @@ function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
   }
 
   try {
-    sessionStorage.setItem(
-      LOGGER_FOCUS_STORAGE_KEY,
-      JSON.stringify(input)
-    );
+    sessionStorage.setItem(LOGGER_FOCUS_STORAGE_KEY, JSON.stringify(input));
   } catch {
     // ignore
   }
@@ -428,6 +424,9 @@ function SortableServerCard({
   hostedServerId,
   onOpenDetailModal,
   projectId,
+  moveTargets,
+  onMoveToProject,
+  isMovingToProject,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -448,6 +447,12 @@ function SortableServerCard({
     defaultTab: ServerDetailTab
   ) => void;
   projectId: string;
+  moveTargets?: Array<{ id: string; name: string; icon?: string }>;
+  onMoveToProject?: (
+    serverName: string,
+    targetProjectId: string
+  ) => void | Promise<void>;
+  isMovingToProject?: boolean;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -479,6 +484,9 @@ function SortableServerCard({
       hostedServerId={hostedServerId}
       onOpenDetailModal={onOpenDetailModal}
       projectId={projectId}
+      moveTargets={moveTargets}
+      onMoveToProject={onMoveToProject}
+      isMovingToProject={isMovingToProject}
     />
   );
 
@@ -536,10 +544,7 @@ interface ServersTabProps {
   isLoadingProjects?: boolean;
   isAuthHydrating?: boolean;
   areServersHydrated?: boolean;
-  onProjectShared?: (
-    sharedProjectId: string,
-    sourceProjectId?: string
-  ) => void;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   onLeaveProject?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
@@ -584,7 +589,7 @@ export function ServersTab({
   const sharedProjectIdForHostScope =
     projects[activeProjectId]?.sharedProjectId ?? null;
   const [previewedHostId] = usePreviewedHostId(
-    sharedProjectIdForHostScope ?? activeProjectId ?? null,
+    sharedProjectIdForHostScope ?? activeProjectId ?? null
   );
   const { host: previewedHost } = useHost({
     isAuthenticated,
@@ -594,6 +599,77 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope,
     isAuthenticated,
   });
+
+  // --- Move a server to another project (kebab menu) ---
+  // Server-side move keeps encrypted secret material private and avoids
+  // reporting success before the source server is deleted.
+  const { moveServerToProject } = useServerMutations();
+  const [movingServerName, setMovingServerName] = useState<string | null>(null);
+
+  const remoteServersByName = useMemo(() => {
+    const map: Record<string, RemoteServer> = {};
+    for (const s of viewProjectServersList ?? []) map[s.name] = s;
+    return map;
+  }, [viewProjectServersList]);
+
+  const moveTargets = useMemo(
+    () =>
+      Object.values(projects)
+        .filter((p) => p.id !== activeProjectId && !!p.sharedProjectId)
+        .filter((p) =>
+          organizationId
+            ? p.organizationId === organizationId
+            : !p.organizationId
+        )
+        .sort((a, b) => {
+          if (a.isDefault) return -1;
+          if (b.isDefault) return 1;
+          return a.name.localeCompare(b.name);
+        })
+        .map((p) => ({ id: p.id, name: p.name, icon: p.icon })),
+    [projects, activeProjectId, organizationId]
+  );
+
+  const handleMoveServerToProject = useCallback(
+    async (serverName: string, targetProjectId: string) => {
+      const remote = remoteServersByName[serverName];
+      const target = projects[targetProjectId];
+      const targetSharedId = target?.sharedProjectId;
+      if (!remote) {
+        toast.error(`Couldn't find "${serverName}" to move.`);
+        return;
+      }
+      if (!targetSharedId) {
+        toast.error(`"${target?.name ?? "That project"}" isn't synced yet.`);
+        return;
+      }
+      setMovingServerName(serverName);
+      try {
+        await moveServerToProject({
+          serverId: remote._id,
+          targetProjectId: targetSharedId,
+        });
+        await Promise.resolve(onDisconnect(serverName));
+        await Promise.resolve(onRemove(serverName));
+        toast.success(`Moved "${serverName}" to ${target.name}`);
+      } catch (error) {
+        // Keep the raw error in the console for us; users get a friendly toast.
+        console.error(
+          `Failed to move server "${serverName}" to "${target.name}":`,
+          error
+        );
+        const message = error instanceof Error ? error.message : String(error);
+        toast.error(
+          /already exists|already has/i.test(message)
+            ? `"${target.name}" already has a server named "${serverName}". Rename or remove it there first.`
+            : `Couldn't move "${serverName}" to "${target.name}". Please try again.`
+        );
+      } finally {
+        setMovingServerName(null);
+      }
+    },
+    [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
+  );
 
   // Project-wide auto-connect toggle. Single switch in the header that
   // either enrolls every catalog server in project.serverIds (ON) or
@@ -621,10 +697,10 @@ export function ServersTab({
     "projectServerConfig:getConfig" as any,
     sharedProjectIdForHostScope && isAuthenticated
       ? ({ projectId: sharedProjectIdForHostScope } as any)
-      : "skip",
+      : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
-    "projectServerConfig:setConfig" as any,
+    "projectServerConfig:setConfig" as any
   ) as unknown as (args: {
     projectId: string;
     input: ProjectServerConfigInput;
@@ -632,7 +708,7 @@ export function ServersTab({
   const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
   const catalogServerIds = useMemo(
     () => (viewProjectServersList ?? []).map((s) => s._id),
-    [viewProjectServersList],
+    [viewProjectServersList]
   );
   const autoConnectAll = useMemo(() => {
     if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
@@ -656,8 +732,8 @@ export function ServersTab({
           const catalogIdSet = new Set(catalogServerIds);
           const preservedOverrides = Object.fromEntries(
             Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
-              ([id]) => catalogIdSet.has(id),
-            ),
+              ([id]) => catalogIdSet.has(id)
+            )
           );
           await setProjectServerConfigMutation({
             projectId: sharedProjectIdForHostScope,
@@ -688,7 +764,7 @@ export function ServersTab({
       catalogServerIds,
       projectServerConfigDto,
       setProjectServerConfigMutation,
-    ],
+    ]
   );
 
   const renderAutoConnectToggle = () => {
@@ -703,7 +779,7 @@ export function ServersTab({
       <label
         className={cn(
           "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer",
+          disabled ? "cursor-not-allowed" : "cursor-pointer"
         )}
         title={
           canManageProjectServers
@@ -726,7 +802,7 @@ export function ServersTab({
     const requiredIds = previewedHost?.config?.serverIds ?? [];
     if (requiredIds.length === 0 || !viewProjectServersList) return [];
     const byId = new Map(
-      viewProjectServersList.map((s) => [s._id, s.name] as const),
+      viewProjectServersList.map((s) => [s._id, s.name] as const)
     );
     return requiredIds
       .map((id) => byId.get(id))
@@ -783,9 +859,7 @@ export function ServersTab({
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
   const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
     string[] | undefined
-  >(
-    persistedLoggerFocus ? [persistedLoggerFocus.serverName] : undefined
-  );
+  >(persistedLoggerFocus ? [persistedLoggerFocus.serverName] : undefined);
   const [focusedLoggerSinceTimestamp, setFocusedLoggerSinceTimestamp] =
     useState<number | undefined>(persistedLoggerFocus?.sinceTimestamp);
   const [detailModalState, setDetailModalState] = useState<{
@@ -803,10 +877,7 @@ export function ServersTab({
   });
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
-  const allNames = useMemo(
-    () => Object.keys(projectServers),
-    [projectServers]
-  );
+  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
 
   const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
     const saved = loadServerOrder(activeProjectId);
@@ -1063,11 +1134,12 @@ export function ServersTab({
   const activeProject = projects[activeProjectId];
   const sharedProjectId = activeProject?.sharedProjectId;
   const hostedProjectId = sharedProjectId ?? activeProjectId;
-  const { serversRecord: sharedProjectServersRecord } =
-    useRemoteProjectServers({
+  const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
+    {
       projectId: sharedProjectId ?? null,
       isAuthenticated,
-    });
+    }
+  );
   const detailModalHostedServerId = detailModalServer
     ? sharedProjectServersRecord[detailModalServer.name]?._id
     : undefined;
@@ -1169,7 +1241,9 @@ export function ServersTab({
 
   const handleJsonImport = (servers: ServerFormData[]) => {
     if (isAppBootstrapping) {
-      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      toast.error(
+        appReadyMessage ?? "App is still loading. Try again in a moment."
+      );
       return;
     }
     servers.forEach((server) => {
@@ -1181,7 +1255,9 @@ export function ServersTab({
   const handleConnectServer = useCallback(
     (formData: ServerFormData) => {
       if (isAppBootstrapping) {
-        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        toast.error(
+          appReadyMessage ?? "App is still loading. Try again in a moment."
+        );
         return;
       }
       focusLoggerOnServer(formData.name);
@@ -1196,10 +1272,12 @@ export function ServersTab({
       options?: {
         forceOAuthFlow?: boolean;
         allowInteractiveOAuthFlow?: boolean;
-      },
+      }
     ) => {
       if (isAppBootstrapping) {
-        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        toast.error(
+          appReadyMessage ?? "App is still loading. Try again in a moment."
+        );
         return;
       }
       focusLoggerOnServer(serverName);
@@ -1221,7 +1299,9 @@ export function ServersTab({
 
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
     if (isAppBootstrapping) {
-      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      toast.error(
+        appReadyMessage ?? "App is still loading. Try again in a moment."
+      );
       return;
     }
     const serverName = getRegistryServerName(server);
@@ -1537,7 +1617,9 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
-              {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
+              {showServerActionsInHostsHeader
+                ? null
+                : renderAutoConnectToggle()}
               {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
                 <Button
                   variant="outline"
@@ -1550,7 +1632,9 @@ export function ServersTab({
                   <ArrowRight className="h-3.5 w-3.5 ml-1" />
                 </Button>
               ) : null}
-              {!showServerActionsInHostsHeader ? renderServerActionsMenu() : null}
+              {!showServerActionsInHostsHeader
+                ? renderServerActionsMenu()
+                : null}
             </div>
           </div>
 
@@ -1592,6 +1676,9 @@ export function ServersTab({
                       hostedServerId={sharedProjectServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
                       projectId={activeProjectId}
+                      moveTargets={moveTargets}
+                      onMoveToProject={handleMoveServerToProject}
+                      isMovingToProject={movingServerName === name}
                     />
                   );
                 })}
@@ -1614,9 +1701,7 @@ export function ServersTab({
                       clearPendingQuickConnectIfMatches(serverName);
                       onRemove(serverName);
                     }}
-                    hostedServerId={
-                      sharedProjectServersRecord[activeId!]?._id
-                    }
+                    hostedServerId={sharedProjectServersRecord[activeId!]?._id}
                     projectId={activeProjectId}
                   />
                 </div>
@@ -1756,19 +1841,15 @@ export function ServersTab({
       {isAuthHydrating ||
       isBillingContextPending ||
       isLoadingProjects ||
-      !areServersHydrated ? (
-        renderLoadingContent()
-      ) : !selectedProject ? (
-        shouldQueryProjectId(activeProjectId) ? (
-          renderLoadingContent()
-        ) : (
-          renderNoProjectContent()
-        )
-      ) : hasAnyServers ? (
-        renderConnectedContent()
-      ) : (
-        renderEmptyContent()
-      )}
+      !areServersHydrated
+        ? renderLoadingContent()
+        : !selectedProject
+        ? shouldQueryProjectId(activeProjectId)
+          ? renderLoadingContent()
+          : renderNoProjectContent()
+        : hasAnyServers
+        ? renderConnectedContent()
+        : renderEmptyContent()}
 
       {/* Add Server Modal */}
       <AddServerModal
@@ -1825,7 +1906,7 @@ export function ServersTab({
               {renderAutoConnectToggle()}
               {renderServerActionsMenu()}
             </>,
-            hostsConnectAddServerSlot,
+            hostsConnectAddServerSlot
           )
         : null}
     </div>

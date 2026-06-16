@@ -84,11 +84,17 @@ export function createXAADebugRequestExecutor(): XAARequestExecutor {
 }
 
 export function createInspectorXAAStateMachine(
-  config: Omit<BaseXAAStateMachineConfig, "issuerBaseUrl" | "requestExecutor">,
+  config: Omit<BaseXAAStateMachineConfig, "issuerBaseUrl" | "requestExecutor"> & {
+    // Ground-truth issuer resolved from the server's OpenID config. Falls back
+    // to the browser-origin guess, which is wrong when the browser reaches the
+    // API through the Vite dev proxy (browser :5173, backend :6274).
+    issuerBaseUrl?: string;
+  },
 ): XAAStateMachine {
+  const { issuerBaseUrl, ...rest } = config;
   return createXAAStateMachine({
-    ...config,
-    issuerBaseUrl: `${window.location.origin}${XAA_API_BASE}`,
+    ...rest,
+    issuerBaseUrl: issuerBaseUrl ?? `${window.location.origin}${XAA_API_BASE}`,
     requestExecutor: createXAADebugRequestExecutor(),
   });
 }

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "1.15.0",
+  "version": "1.17.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -56,6 +56,16 @@
       "types": "./dist/host-config/internal.d.ts",
       "import": "./dist/host-config/internal.js",
       "default": "./dist/host-config/internal.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "import": "./dist/platform/index.js",
+      "default": "./dist/platform/index.js"
+    },
+    "./widget-runtime": {
+      "types": "./dist/widget-runtime/index.d.ts",
+      "import": "./dist/widget-runtime/index.js",
+      "default": "./dist/widget-runtime/index.js"
     }
   },
   "files": [
@@ -71,7 +81,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); const m = await import('@mcpjam/sdk/host-config/internal'); for (const n of ['canonicalizeHostConfigV2','computeHostConfigHashV2','isAppOnlyTool','filterAppOnlyTools','applyVisibilityPolicyAndCountSignals','extractHostExecutionPolicy','buildHostIterationMetadata','resolveOpenAiCompatForHostConfig','readOpenAiCompatOverride','compatPresetForHostStyle','normalizeSdkEvalHostConfigForWire']) { if (typeof m[n] !== 'function') { throw new Error('missing export: ' + n); } }\"",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); const w = await import('@mcpjam/sdk/widget-runtime'); for (const n of ['getToolVisibility','isVisibleToModelOnly','isVisibleToAppOnly','LoggingTransport','buildOuterAllowAttribute','buildOuterSandboxAttribute','resolveIframeSandboxPolicy','createHostAppBridge','registerHostBridgeHandlers']) { if (typeof w[n] !== 'function') { throw new Error('missing widget-runtime export: ' + n); } } if (w['DEFAULT_IFRAME_SANDBOX'] === undefined) { throw new Error('missing widget-runtime export: DEFAULT_IFRAME_SANDBOX'); } const p = await import('@mcpjam/sdk/platform'); for (const n of ['PlatformApiClient','PlatformApiError','buildShowServersPayload','resolveProject','listProjectsOperation','listProjectServersOperation','showServersOperation','createTunnelOperation','closeTunnelOperation']) { if (p[n] === undefined) { throw new Error('missing platform export: ' + n); } } const m = await import('@mcpjam/sdk/host-config/internal'); for (const n of ['canonicalizeHostConfigV2','computeHostConfigHashV2','isAppOnlyTool','filterAppOnlyTools','applyVisibilityPolicyAndCountSignals','extractHostExecutionPolicy','buildHostIterationMetadata','resolveOpenAiCompatForHostConfig','readOpenAiCompatOverride','compatPresetForHostStyle','normalizeSdkEvalHostConfigForWire']) { if (typeof m[n] !== 'function') { throw new Error('missing export: ' + n); } }\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
@@ -91,11 +101,11 @@
   "author": "MCPJam",
   "license": "MIT",
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@eslint/js": "^9.39.2",
     "@modelcontextprotocol/node": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "@modelcontextprotocol/server-everything": "^2026.1.26",
-    "@eslint/js": "^9.39.2",
     "@sentry/cli": "^2.58.4",
     "@sentry/node": "^8.55.0",
     "@types/jest": "^29.5.12",
@@ -115,6 +125,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^3.0.101",
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/azure": "^2.0.79",
     "@ai-sdk/deepseek": "^1.0.5",
@@ -124,6 +135,7 @@
     "@ai-sdk/xai": "^2.0.29",
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@openrouter/ai-sdk-provider": "^2.2.0",
     "ai": "^6.0.141",
     "ollama-ai-provider-v2": "^1.5.2",

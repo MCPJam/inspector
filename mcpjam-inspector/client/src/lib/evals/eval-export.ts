@@ -77,7 +77,7 @@ export type SdkTestFileInput = {
 };
 
 export function normalizeEvalCaseForExport(
-  testCase: EvalCase,
+  testCase: EvalCase
 ): EvalExportCaseInput {
   return {
     id: testCase._id,
@@ -93,14 +93,14 @@ export function normalizeEvalCaseForExport(
       stripPromptTurnsFromAdvancedConfig(testCase.advancedConfig) ?? undefined,
     modelHints:
       testCase.models?.map(
-        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`,
+        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
       ) ?? [],
   };
 }
 
 export function normalizeSuiteConfigTestForExport(
   test: EvalSuiteConfigTest,
-  index: number,
+  index: number
 ): EvalExportCaseInput {
   return {
     id: test.testCaseId ?? `config-test-${index + 1}`,
@@ -122,7 +122,7 @@ export function normalizeSuiteConfigTestForExport(
 }
 
 export function normalizeDraftEvalCaseForExport(
-  draft: EvalExportDraftInput,
+  draft: EvalExportDraftInput
 ): EvalExportCaseInput {
   return {
     id: draft.testCaseId ?? undefined,
@@ -141,11 +141,11 @@ export function normalizeDraftEvalCaseForExport(
 
 export function pickSuiteExportCases(
   persistedCases: EvalCase[],
-  suiteRuns: EvalSuiteRun[],
+  suiteRuns: EvalSuiteRun[]
 ): EvalExportCaseInput[] {
   if (persistedCases.length > 0) {
     return persistedCases.map((testCase) =>
-      normalizeEvalCaseForExport(testCase),
+      normalizeEvalCaseForExport(testCase)
     );
   }
 
@@ -162,7 +162,7 @@ export function pickSuiteExportCases(
   }
 
   return latestRunWithTests.configSnapshot.tests.map((test, index) =>
-    normalizeSuiteConfigTestForExport(test, index),
+    normalizeSuiteConfigTestForExport(test, index)
   );
 }
 
@@ -173,26 +173,31 @@ export function buildSdkInstallSnippet(): string {
 export function buildSdkEnvSnippet(
   serverIds: string[],
   serverEntries: Record<string, ServerWithName | undefined>,
+  projectId?: string | null
 ): SdkEnvSnippetResult {
   const serverConnections = buildServerConnections(serverIds, serverEntries);
   const httpConnections = serverConnections.filter(
     (
-      connection,
+      connection
     ): connection is Extract<ExportServerConnection, { kind: "http" }> =>
-      connection.kind === "http",
+      connection.kind === "http"
   );
   const stdioConnections = serverConnections.filter(
     (
-      connection,
+      connection
     ): connection is Extract<ExportServerConnection, { kind: "stdio" }> =>
-      connection.kind === "stdio",
+      connection.kind === "stdio"
   );
 
   const lines = [
-    "export MCPJAM_API_KEY=<project-api-key>",
     "export EVAL_MODEL=<provider/model-id>",
     "# Use the API key variable your provider expects; rename in the test file if needed.",
     "export LLM_API_KEY=<your-llm-api-key>",
+    "# Optional: an MCPJam API key (sk_…, Settings → API keys) auto-saves results to your Evals dashboard.",
+    "export MCPJAM_API_KEY=<your sk_… key>",
+    // Pin uploads to the project this export came from; without it they
+    // land in the org's Default project.
+    ...(projectId ? [`export MCPJAM_PROJECT_ID=${projectId}`] : []),
   ];
 
   if (httpConnections.length > 0) {
@@ -201,7 +206,7 @@ export function buildSdkEnvSnippet(
       lines.push(
         connection.placeholder
           ? `export ${connection.envVarName}=<replace-with-server-url>`
-          : `export ${connection.envVarName}=${connection.url}`,
+          : `export ${connection.envVarName}=${connection.url}`
       );
     }
   }
@@ -209,15 +214,20 @@ export function buildSdkEnvSnippet(
   if (stdioConnections.length > 0) {
     lines.push(
       "",
-      "# STDIO MCP servers are configured inline in the generated test file",
+      "# STDIO MCP servers are configured inline in the generated test file"
     );
     for (const connection of stdioConnections) {
       lines.push(
-        `# ${connection.serverId}: ${formatCommandDisplay(connection.command, connection.args)}`,
+        `# ${connection.serverId}: ${formatCommandDisplay(
+          connection.command,
+          connection.args
+        )}`
       );
       if (connection.envKeys.length > 0) {
         lines.push(
-          `# ${connection.serverId} also expects local env vars: ${connection.envKeys.join(", ")}`,
+          `# ${
+            connection.serverId
+          } also expects local env vars: ${connection.envKeys.join(", ")}`
         );
       }
     }
@@ -226,7 +236,7 @@ export function buildSdkEnvSnippet(
   return {
     snippet: lines.join("\n"),
     usedPlaceholderFallback: serverConnections.some(
-      (connection) => connection.placeholder,
+      (connection) => connection.placeholder
     ),
     missingServerIds: serverConnections
       .filter((connection) => connection.placeholder)
@@ -273,7 +283,7 @@ export function buildSdkTestFile({
   if (usedPlaceholderFallback) {
     lines.push(
       "// Some server connection details were unavailable locally.",
-      "// Replace any placeholder values before running this file.",
+      "// Replace any placeholder values before running this file."
     );
   }
 
@@ -308,14 +318,14 @@ export function buildSdkTestFile({
     "",
     "  afterAll(async () => {",
     "    await manager.disconnectAllServers();",
-    "  }, 120_000);",
+    "  }, 120_000);"
   );
 
   if (cases.length === 0) {
     lines.push(
       "",
       "  // No saved cases were available for this suite yet.",
-      "  // Add or run cases in MCPJam, then export again.",
+      "  // Add or run cases in MCPJam, then export again."
     );
   } else {
     for (const [index, testCase] of cases.entries()) {
@@ -329,7 +339,7 @@ export function buildSdkTestFile({
 
 export function buildSuiteExportFileName(
   suiteName: string,
-  scope: "suite" | "test-case",
+  scope: "suite" | "test-case"
 ): string {
   const safeName = sanitizeFilename(suiteName || "mcpjam-export");
   return scope === "suite" ? `${safeName}.eval.test.ts` : `${safeName}.test.ts`;
@@ -342,7 +352,7 @@ export function buildAgentPromptExportFileName(suiteName: string): string {
 
 export function buildServerConnections(
   serverIds: string[],
-  serverEntries: Record<string, ServerWithName | undefined>,
+  serverEntries: Record<string, ServerWithName | undefined>
 ): ExportServerConnection[] {
   return serverIds.map((serverId) => {
     const serverEntry = serverEntries[serverId];
@@ -397,14 +407,14 @@ export function buildServerConnections(
 
 function buildCaseTestBlock(
   testCase: EvalExportCaseInput,
-  index: number,
+  index: number
 ): string {
   const caseTitle = testCase.title || `Exported case ${index + 1}`;
   const promptTurns = testCase.promptTurns;
   const firstTurn = promptTurns[0];
 
   const allExpectedToolCalls = promptTurns.flatMap(
-    (turn) => turn.expectedToolCalls ?? [],
+    (turn) => turn.expectedToolCalls ?? []
   );
 
   const lines: string[] = [
@@ -418,12 +428,15 @@ function buildCaseTestBlock(
   // Build EvalTest config
   lines.push(
     "      const evalTest = new EvalTest({",
-    `        name: ${JSON.stringify(caseTitle)},`,
+    `        name: ${JSON.stringify(caseTitle)},`
   );
 
   if (allExpectedToolCalls.length > 0) {
     lines.push(
-      `        expectedToolCalls: ${indentBlock(JSON.stringify(allExpectedToolCalls, null, 2), 8).trimStart()},`,
+      `        expectedToolCalls: ${indentBlock(
+        JSON.stringify(allExpectedToolCalls, null, 2),
+        8
+      ).trimStart()},`
     );
   }
 
@@ -431,10 +444,15 @@ function buildCaseTestBlock(
   if (promptTurns.length === 1 && firstTurn) {
     lines.push(
       "        test: async (agent) => {",
-      `          const result = await agent.prompt(${JSON.stringify(firstTurn.prompt)});`,
+      `          const result = await agent.prompt(${JSON.stringify(
+        firstTurn.prompt
+      )});`
     );
     lines.push(
-      `          return ${buildSingleTurnReturnExpression(firstTurn, testCase.isNegativeTest)};`,
+      `          return ${buildSingleTurnReturnExpression(
+        firstTurn,
+        testCase.isNegativeTest
+      )};`
     );
     lines.push("        },");
   } else {
@@ -450,12 +468,12 @@ function buildCaseTestBlock(
       "            });",
       "            results.push(result);",
       "          }",
-      "",
+      ""
     );
 
     if (testCase.isNegativeTest) {
       lines.push(
-        "          return results.every((result) => result.toolsCalled().length === 0);",
+        "          return results.every((result) => result.toolsCalled().length === 0);"
       );
     } else {
       lines.push(
@@ -467,7 +485,7 @@ function buildCaseTestBlock(
         "                ? matchToolCallWithPartialArgs(tc.toolName, tc.arguments, result.getToolCalls())",
         "                : result.hasToolCall(tc.toolName),",
         "            );",
-        "          });",
+        "          });"
       );
     }
 
@@ -479,9 +497,10 @@ function buildCaseTestBlock(
     "",
     `      await evalTest.run(agent, {`,
     `        iterations: ${testCase.runs || 1},`,
-    `        mcpjam: { suiteName: SUITE_NAME, serverNames: SERVER_IDS },`,
+    `        // Auto-saves to MCPJam when MCPJAM_API_KEY (sk_…) is set; local-only otherwise.`,
+    `        mcpjam: { suiteName: SUITE_NAME },`,
     `      });`,
-    "      expect(evalTest.accuracy()).toBe(1);",
+    "      expect(evalTest.accuracy()).toBe(1);"
   );
 
   lines.push("    },", "    90_000,", "  );");
@@ -495,7 +514,7 @@ function buildSingleTurnReturnExpression(
       arguments: Record<string, any>;
     }>;
   },
-  isNegativeTest: boolean,
+  isNegativeTest: boolean
 ): string {
   if (isNegativeTest) {
     return "result.toolsCalled().length === 0";
@@ -511,7 +530,9 @@ function buildSingleTurnReturnExpression(
     const hasArgs = Object.keys(tc.arguments ?? {}).length > 0;
     if (hasArgs) {
       checks.push(
-        `matchToolCallWithPartialArgs(${JSON.stringify(tc.toolName)}, ${JSON.stringify(tc.arguments)}, result.getToolCalls())`,
+        `matchToolCallWithPartialArgs(${JSON.stringify(
+          tc.toolName
+        )}, ${JSON.stringify(tc.arguments)}, result.getToolCalls())`
       );
     } else {
       checks.push(`result.hasToolCall(${JSON.stringify(tc.toolName)})`);
@@ -526,14 +547,14 @@ function buildSingleTurnReturnExpression(
 }
 
 function anyTestCaseUsesPartialArgMatching(
-  cases: EvalExportCaseInput[],
+  cases: EvalExportCaseInput[]
 ): boolean {
   return cases.some((c) =>
     c.promptTurns.some((turn) =>
       (turn.expectedToolCalls ?? []).some(
-        (tc) => Object.keys(tc.arguments ?? {}).length > 0,
-      ),
-    ),
+        (tc) => Object.keys(tc.arguments ?? {}).length > 0
+      )
+    )
   );
 }
 
@@ -547,14 +568,14 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
   }
   if (testCase.modelHints && testCase.modelHints.length > 0) {
     commentLines.push(
-      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`,
+      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`
     );
   }
 
   const advancedConfig = testCase.advancedConfig ?? undefined;
   if (advancedConfig && Object.keys(advancedConfig).length > 0) {
     commentLines.push(
-      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):",
+      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):"
     );
     commentLines.push(...JSON.stringify(advancedConfig, null, 2).split("\n"));
   }
@@ -570,7 +591,7 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
 }
 
 function renderServerConnectionEntries(
-  connections: ExportServerConnection[],
+  connections: ExportServerConnection[]
 ): string {
   const lines: string[] = [];
 
@@ -578,28 +599,36 @@ function renderServerConnectionEntries(
     if (connection.kind === "http") {
       if (connection.placeholder) {
         lines.push(
-          `// Replace the placeholder URL for ${JSON.stringify(connection.serverId)} with the real server URL if needed.`,
+          `// Replace the placeholder URL for ${JSON.stringify(
+            connection.serverId
+          )} with the real server URL if needed.`
         );
       }
       lines.push(
         "{",
         `  id: ${JSON.stringify(connection.serverId)},`,
         '  kind: "http",',
-        `  url: process.env.${connection.envVarName} ?? ${JSON.stringify(connection.url)},`,
-        "},",
+        `  url: process.env.${connection.envVarName} ?? ${JSON.stringify(
+          connection.url
+        )},`,
+        "},"
       );
       continue;
     }
 
     lines.push(
-      `// ${JSON.stringify(connection.serverId)} runs over stdio: ${formatCommandDisplay(
+      `// ${JSON.stringify(
+        connection.serverId
+      )} runs over stdio: ${formatCommandDisplay(
         connection.command,
-        connection.args,
-      )}`,
+        connection.args
+      )}`
     );
     if (connection.envKeys.length > 0) {
       lines.push(
-        `// Add any required local env vars before running: ${connection.envKeys.join(", ")}`,
+        `// Add any required local env vars before running: ${connection.envKeys.join(
+          ", "
+        )}`
       );
     }
     lines.push(
@@ -608,7 +637,7 @@ function renderServerConnectionEntries(
       '  kind: "stdio",',
       `  command: ${JSON.stringify(connection.command)},`,
       `  args: ${JSON.stringify(connection.args)},`,
-      "},",
+      "},"
     );
   }
 
@@ -616,7 +645,7 @@ function renderServerConnectionEntries(
 }
 
 function normalizeOptionalString(
-  value: string | undefined,
+  value: string | undefined
 ): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;

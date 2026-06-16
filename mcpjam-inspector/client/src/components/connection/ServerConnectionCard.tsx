@@ -13,6 +13,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
@@ -35,6 +38,7 @@ import {
   Trash2,
   AlertCircle,
   FileText,
+  FolderInput,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -54,10 +58,12 @@ import {
   TUNNEL_EXPLANATION_DISMISSED_KEY,
 } from "./TunnelExplanationModal";
 import {
-  cleanupOrphanedTunnels,
   closeServerTunnel,
   createServerTunnel,
   getServerTunnel,
+  getTunnelRequests,
+  rotateServerTunnel,
+  type TunnelRequestLogEntry,
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -97,17 +103,30 @@ interface ServerConnectionCardProps {
     options?: {
       forceOAuthFlow?: boolean;
       allowInteractiveOAuthFlow?: boolean;
-    },
+    }
   ) => Promise<void>;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
   onOpenDetailModal?: (
     server: ServerWithName,
-    defaultTab: ServerDetailTab,
+    defaultTab: ServerDetailTab
   ) => void;
   /** When set (e.g. active project on Servers tab), prefetches Explore AI test cases on MCP connect. */
   projectId?: string | null;
+  /**
+   * Projects this server can be moved into via the actions menu. Already
+   * excludes the current project. When omitted/empty the "Move to project"
+   * item is hidden.
+   */
+  moveTargets?: Array<{ id: string; name: string; icon?: string }>;
+  /** Moves this server into another project (create in target, remove here). */
+  onMoveToProject?: (
+    serverName: string,
+    targetProjectId: string
+  ) => void | Promise<void>;
+  /** True while a move for this server is in flight. */
+  isMovingToProject?: boolean;
 }
 
 export function ServerConnectionCard({
@@ -120,6 +139,9 @@ export function ServerConnectionCard({
   hostedServerId,
   onOpenDetailModal,
   projectId,
+  moveTargets,
+  onMoveToProject,
+  isMovingToProject = false,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
@@ -132,10 +154,15 @@ export function ServerConnectionCard({
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(
-    serverTunnelUrl ?? null,
+    serverTunnelUrl ?? null
   );
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
+  const [isRotatingTunnel, setIsRotatingTunnel] = useState(false);
+  const [showTunnelRequests, setShowTunnelRequests] = useState(false);
+  const [tunnelRequests, setTunnelRequests] = useState<TunnelRequestLogEntry[]>(
+    []
+  );
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
@@ -197,6 +224,91 @@ export function ServerConnectionCard({
       isCancelled = true;
     };
   }, [getAccessToken, server.name, serverTunnelUrl, showTunnelActions]);
+
+  // Poll the recent-requests log while the observability panel is open.
+  useEffect(() => {
+    if (!showTunnelRequests || !tunnelUrl) {
+      return;
+    }
+    let isCancelled = false;
+
+    const fetchRequests = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const requests = await getTunnelRequests(server.name, accessToken);
+        if (!isCancelled) {
+          setTunnelRequests(requests);
+        }
+      } catch {
+        // Panel is best-effort; keep the last snapshot on errors.
+      }
+    };
+
+    fetchRequests();
+    const intervalId = setInterval(fetchRequests, 4000);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [getAccessToken, server.name, showTunnelRequests, tunnelUrl]);
+
+  // Revalidate the displayed URL while a tunnel is shown: the relay can end
+  // a tunnel server-side (grant superseded by another inspector, secret
+  // rotated elsewhere, expired token), after which the local server 404s for
+  // it — stop advertising a URL that no longer works. Skipped when the
+  // parent owns the URL via the serverTunnelUrl prop, and while a local
+  // create/rotate/close is in flight (mid-rotation the server briefly has
+  // no entry; polling then would clear a healthy tunnel).
+  useEffect(() => {
+    if (
+      !tunnelUrl ||
+      !showTunnelActions ||
+      serverTunnelUrl !== undefined ||
+      isCreatingTunnel ||
+      isClosingTunnel ||
+      isRotatingTunnel
+    ) {
+      return;
+    }
+    let isCancelled = false;
+
+    const revalidate = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const existingTunnel = await getServerTunnel(server.name, accessToken);
+        if (!isCancelled && existingTunnel === null) {
+          setTunnelUrl(null);
+          setShowTunnelRequests(false);
+          toast.warning(
+            `Tunnel for ${server.name} ended — create it again if you still need it`
+          );
+        }
+      } catch {
+        // Transient (network/auth) — keep the last known state; only an
+        // explicit "no tunnel" answer clears the URL.
+      }
+    };
+
+    // Run once up front: the tunnel can already be dead when the effect
+    // starts (a permanent relay close can race creation, and the create
+    // route answers with the grant URL by design) — don't advertise it for
+    // a full interval before the first check.
+    void revalidate();
+    const intervalId = setInterval(revalidate, 5000);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    getAccessToken,
+    isClosingTunnel,
+    isCreatingTunnel,
+    isRotatingTunnel,
+    server.name,
+    serverTunnelUrl,
+    showTunnelActions,
+    tunnelUrl,
+  ]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -296,12 +408,8 @@ export function ServerConnectionCard({
     setIsCreatingTunnel(true);
     try {
       const accessToken = await getAccessToken();
-      await cleanupOrphanedTunnels(accessToken);
-
       const result = await createServerTunnel(server.name, accessToken);
       setTunnelUrl(result.url);
-
-      await cleanupOrphanedTunnels(accessToken);
       toast.success("Tunnel is ready to use!");
       posthog.capture("tunnel_created", {
         location: "server_connection_card",
@@ -314,7 +422,7 @@ export function ServerConnectionCard({
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
       if (errorMessage.includes("No access token available")) {
-        toast.error("Sign in to create ngrok tunnels");
+        toast.error("Sign in to create tunnels");
       } else {
         toast.error(`Tunnel creation failed: ${errorMessage}`);
       }
@@ -323,12 +431,20 @@ export function ServerConnectionCard({
     }
   };
 
+  // Rotate and close issue conflicting tunnel-lifecycle calls, so only one may
+  // be in flight at a time (the server serializes per-tunnel too; this keeps
+  // the UI from firing the conflicting request and showing a stale URL).
+  const isTunnelMutationInFlight = isClosingTunnel || isRotatingTunnel;
+
   const handleCloseTunnel = async () => {
+    if (isTunnelMutationInFlight) return;
     setIsClosingTunnel(true);
     try {
       const accessToken = await getAccessToken();
       await closeServerTunnel(server.name, accessToken);
       setTunnelUrl(null);
+      setShowTunnelRequests(false);
+      setTunnelRequests([]);
       toast.success("Tunnel closed successfully");
       posthog.capture("tunnel_closed", {
         location: "server_connection_card",
@@ -342,6 +458,39 @@ export function ServerConnectionCard({
       toast.error(`Failed to close tunnel: ${errorMessage}`);
     } finally {
       setIsClosingTunnel(false);
+    }
+  };
+
+  const handleRotateTunnel = async () => {
+    if (isTunnelMutationInFlight) return;
+    setIsRotatingTunnel(true);
+    try {
+      const accessToken = await getAccessToken();
+      const result = await rotateServerTunnel(server.name, accessToken);
+      setTunnelUrl(result.url);
+      toast.success("Tunnel secret rotated — the old URL no longer works");
+      posthog.capture("tunnel_rotated", {
+        location: "server_connection_card",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: server.name,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to rotate tunnel";
+      toast.error(`Failed to rotate tunnel: ${errorMessage}`);
+      // A failed rotation may have already torn down the listener (the old
+      // secret dies at close). Re-sync with the server's live state so the
+      // card never offers a copyable URL that no longer works.
+      try {
+        const accessToken = await getAccessToken();
+        const liveTunnel = await getServerTunnel(server.name, accessToken);
+        setTunnelUrl(liveTunnel?.url ?? null);
+      } catch {
+        setTunnelUrl(null);
+      }
+    } finally {
+      setIsRotatingTunnel(false);
     }
   };
 
@@ -361,7 +510,7 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     },
-    [onOpenDetailModal, posthog, server],
+    [onOpenDetailModal, posthog, server]
   );
 
   const handleCardContextMenu = useCallback(
@@ -374,7 +523,7 @@ export function ServerConnectionCard({
       event.stopPropagation();
       setIsActionsMenuOpen(true);
     },
-    [],
+    []
   );
 
   const handleCardClick = useCallback(
@@ -402,7 +551,7 @@ export function ServerConnectionCard({
       server.name,
       posthog,
       openDetailModal,
-    ],
+    ]
   );
 
   return (
@@ -509,7 +658,7 @@ export function ServerConnectionCard({
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode",
+                        "HTTP servers are not supported in hosted mode"
                       );
                       return;
                     }
@@ -541,7 +690,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode",
+                            "HTTP servers are not supported in hosted mode"
                           );
                           return;
                         }
@@ -556,7 +705,7 @@ export function ServerConnectionCard({
                         void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
-                            : undefined,
+                            : undefined
                         );
                       }}
                       disabled={isReconnectMenuDisabled}
@@ -623,6 +772,50 @@ export function ServerConnectionCard({
                         ? "Copying..."
                         : "Copy markdown for evals"}
                     </DropdownMenuItem>
+                    {onMoveToProject &&
+                    moveTargets &&
+                    moveTargets.length > 0 ? (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger
+                          disabled={isMovingToProject}
+                          className="gap-2 text-xs cursor-pointer [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground"
+                        >
+                          {isMovingToProject ? (
+                            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                          ) : (
+                            <FolderInput className="h-3 w-3 mr-2" />
+                          )}
+                          {isMovingToProject ? "Moving..." : "Move to project"}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent
+                          sideOffset={4}
+                          className="max-h-64 w-52 overflow-y-auto"
+                        >
+                          {moveTargets.map((target) => (
+                            <DropdownMenuItem
+                              key={target.id}
+                              className="text-xs cursor-pointer"
+                              onClick={() => {
+                                posthog.capture(
+                                  "move_server_to_project_clicked",
+                                  {
+                                    location: "server_connection_card",
+                                    platform: detectPlatform(),
+                                    environment: detectEnvironment(),
+                                  }
+                                );
+                                void onMoveToProject(server.name, target.id);
+                              }}
+                            >
+                              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[9px] font-semibold text-primary">
+                                {target.name.charAt(0).toUpperCase()}
+                              </span>
+                              <span className="truncate">{target.name}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    ) : null}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -687,7 +880,11 @@ export function ServerConnectionCard({
                       <button
                         data-server-card-context-menu-exempt
                         onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                        // Rotation revokes the displayed URL at the edge
+                        // before the new one arrives (close kills it too), so
+                        // mid-mutation the URL must not be copyable.
+                        disabled={isTunnelMutationInFlight}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                       >
                         {copiedField === "tunnel" ? (
                           <>
@@ -697,15 +894,40 @@ export function ServerConnectionCard({
                         ) : (
                           <>
                             <Cable className="h-3 w-3" />
-                            <span>Copy ngrok URL</span>
+                            <span>Copy tunnel URL</span>
                           </>
                         )}
                       </button>
                       <span className="h-4 w-px bg-border/80" />
                       <button
                         data-server-card-context-menu-exempt
+                        onClick={() => setShowTunnelRequests((open) => !open)}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer"
+                        aria-label="Recent tunnel requests"
+                        title="Recent tunnel requests"
+                      >
+                        <FileText className="h-3 w-3" />
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        data-server-card-context-menu-exempt
+                        onClick={handleRotateTunnel}
+                        disabled={isTunnelMutationInFlight}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                        aria-label="Rotate tunnel secret (revokes the current URL)"
+                        title="Rotate tunnel secret (revokes the current URL)"
+                      >
+                        {isRotatingTunnel ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        data-server-card-context-menu-exempt
                         onClick={handleCloseTunnel}
-                        disabled={isClosingTunnel}
+                        disabled={isTunnelMutationInFlight}
                         className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                         aria-label="Close tunnel"
                         title="Close tunnel"
@@ -731,7 +953,7 @@ export function ServerConnectionCard({
                       )}
                       <span>
                         {canManageTunnels
-                          ? "Create ngrok tunnel"
+                          ? "Create tunnel"
                           : "Sign in for tunnel"}
                       </span>
                     </button>
@@ -751,11 +973,42 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {hasError && (
+          {showTunnelActions && hasTunnel && showTunnelRequests && (
             <div
-              className="mt-3"
+              className="mt-2 rounded-md border border-border/70 bg-muted/20 p-2"
               onClick={(e) => e.stopPropagation()}
+              data-server-card-context-menu-exempt
             >
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground">
+                Recent tunnel requests
+              </div>
+              {tunnelRequests.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground">
+                  No requests through the tunnel yet.
+                </div>
+              ) : (
+                <div className="max-h-40 overflow-y-auto">
+                  {tunnelRequests.slice(0, 20).map((entry, index) => (
+                    <div
+                      key={`${entry.ts}-${index}`}
+                      className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                    >
+                      <span className="shrink-0 tabular-nums">
+                        {new Date(entry.ts).toLocaleTimeString()}
+                      </span>
+                      <span className="shrink-0 font-medium text-foreground">
+                        {entry.method}
+                      </span>
+                      <span className="truncate">{entry.path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {hasError && (
+            <div className="mt-3" onClick={(e) => e.stopPropagation()}>
               {oauthFailureStep ? (
                 <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
                   OAuth failed during {oauthFailureStep.title}

@@ -1,8 +1,37 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
+
+const captureMock = vi.fn();
+vi.mock("posthog-js", () => ({
+  default: {
+    capture: (...args: unknown[]) => captureMock(...args),
+  },
+}));
+
+vi.mock("@/lib/PosthogUtils", () => ({
+  detectEnvironment: vi.fn().mockReturnValue("test"),
+  detectPlatform: vi.fn().mockReturnValue("web"),
+}));
+
+vi.mock("../xaa/XAAIdpCard", () => ({
+  XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
+}));
+
+let resourceApps: unknown[] = [];
+vi.mock("@/hooks/useXaaResourceApps", () => ({
+  useXaaResourceApps: () => ({
+    resourceApps,
+    isLoading: false,
+    isAuthenticated: true,
+    error: null,
+    upsert: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
 
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
@@ -31,16 +60,28 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
 }));
 
 vi.mock("../xaa/XAAConfigModal", () => ({
-  XAAConfigModal: () => null,
+  XAAConfigModal: ({ onClear }: { onClear: () => void }) => (
+    <button type="button" data-testid="xaa-clear-config" onClick={onClear}>
+      clear
+    </button>
+  ),
 }));
 
-vi.mock("../xaa/XAABootstrapDialog", () => ({
-  XAABootstrapDialog: () => null,
+vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
+  XAAResourceAppsSection: () => <div data-testid="xaa-resource-apps-section" />,
 }));
 
+vi.mock("../xaa/NegativeTestScorecard", () => ({
+  NegativeTestScorecard: () => (
+    <div data-testid="xaa-negative-test-scorecard" />
+  ),
+}));
+
+const runAllMock = vi.fn(async () => undefined);
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: () => ({
     proceedToNextStep: vi.fn(),
+    runAll: runAllMock,
   }),
 }));
 
@@ -56,8 +97,10 @@ vi.mock("@/lib/xaa/profile", () => {
   };
 
   return {
+    EMPTY_XAA_DEBUG_PROFILE: emptyProfile,
     loadStoredXAADebugProfile: () => emptyProfile,
     saveStoredXAADebugProfile: vi.fn(),
+    clearStoredXAADebugProfile: vi.fn(),
     deriveXAADebugProfileFromServer: (
       server: ServerWithName | undefined,
       fallback = emptyProfile,
@@ -72,6 +115,12 @@ vi.mock("@/lib/xaa/profile", () => {
 });
 
 describe("XAAFlowTab", () => {
+  beforeEach(() => {
+    captureMock.mockClear();
+    runAllMock.mockClear();
+    resourceApps = [];
+  });
+
   const createServer = (
     overrides: Partial<ServerWithName> = {},
   ): ServerWithName =>
@@ -109,6 +158,85 @@ describe("XAAFlowTab", () => {
       />,
     );
 
+    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
+      "No target configured",
+    );
+  });
+
+  it("fires xaa_tab_viewed once per mount", () => {
+    captureMock.mockClear();
+
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
+
+    const viewedCalls = captureMock.mock.calls.filter(
+      ([event]) => event === "xaa_tab_viewed",
+    );
+    expect(viewedCalls).toHaveLength(1);
+    expect(viewedCalls[0][1]).toMatchObject({ location: "xaa_flow_tab" });
+  });
+
+  it("disables Run all without a target", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
+
+    expect(screen.getByRole("button", { name: /run all/i })).toBeDisabled();
+  });
+
+  it("Run all drives the machine and fires start + terminal telemetry", async () => {
+    const user = userEvent.setup();
+    const serverConfigs = {
+      "http-server": createServer({
+        name: "http-server",
+        config: { url: "https://mcp.example.com" },
+      }),
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="http-server"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
+    expect(captureMock).toHaveBeenCalledWith(
+      "xaa_flow_started",
+      expect.objectContaining({ mode: "local-profile" }),
+    );
+    // The mocked machine never reaches `complete`, so the terminal event
+    // reports the failure with the stalled step as its category.
+    expect(captureMock).toHaveBeenCalledWith(
+      "xaa_flow_completed",
+      expect.objectContaining({ success: false, error_category: "idle" }),
+    );
+  });
+
+  it("clearing the config returns to the initial no-target screen", async () => {
+    const user = userEvent.setup();
+    const serverConfigs = {
+      "http-server": createServer({
+        name: "http-server",
+        config: { url: "https://mcp.example.com" },
+      }),
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="http-server"
+      />,
+    );
+
+    // The connected HTTP server auto-fills the target.
+    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
+      "https://mcp.example.com",
+    );
+
+    await user.click(screen.getByTestId("xaa-clear-config"));
+
+    // Cleared → back to "no target", and it stays there (auto-derive is
+    // suppressed) rather than re-filling from the connected server.
     expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
       "No target configured",
     );

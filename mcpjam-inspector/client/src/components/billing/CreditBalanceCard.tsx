@@ -23,8 +23,6 @@ import {
   formatCreditResetText,
   formatMonthlyResetText,
 } from "@/lib/credit-usage";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
-import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
@@ -60,16 +58,12 @@ export function CreditBalanceCard({
   canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const creditTopupsUiEnabled = useCreditTopupsUiEnabled();
-  const teamCreditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
-    enabled: creditTopupsUiEnabled,
   });
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({
       organizationId,
-      enabled: creditTopupsUiEnabled && Boolean(organizationId),
     });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
@@ -84,24 +78,22 @@ export function CreditBalanceCard({
   // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
   // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
-    if (!creditTopupsUiEnabled) return;
     if (consumeTopupFlag()) {
       setArrivedFromLimitModal(true);
     }
-  }, [creditTopupsUiEnabled]);
+  }, []);
 
   // Open the dialog only once we know the user can manage credits. A member
   // who can't top up keeps `arrivedFromLimitModal` true and instead sees the
   // "ask an admin" hint below — not a silent dead-end where the flag was
   // consumed but nothing happened.
   useEffect(() => {
-    if (!creditTopupsUiEnabled) return;
     if (arrivedFromLimitModal && canManageCredits) {
       setTopupSource("limit_modal");
       setIsTopupOpen(true);
       setArrivedFromLimitModal(false);
     }
-  }, [arrivedFromLimitModal, canManageCredits, creditTopupsUiEnabled]);
+  }, [arrivedFromLimitModal, canManageCredits]);
 
   const handleManualTopup = () => {
     setTopupSource("billing_page");
@@ -113,8 +105,7 @@ export function CreditBalanceCard({
   // Team-plan orgs bill against a monthly per-seat allowance instead of the
   // daily free bucket. Paid top-ups are shown separately and spent only after
   // the allowance runs out.
-  const showMonthly =
-    teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
+  const showMonthly = balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
@@ -126,8 +117,6 @@ export function CreditBalanceCard({
   const evalIterationLabel = getEvalIterationQuotaLabel(
     evalIterationQuota?.windowKind
   );
-
-  if (!creditTopupsUiEnabled) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">

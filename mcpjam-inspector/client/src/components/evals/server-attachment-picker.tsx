@@ -32,8 +32,22 @@ import type { EvalServerAttachment } from "./types";
 type ServerAttachmentPickerProps = {
   projectId: string;
   value: string | null;
-  onChange: (serverAttachmentId: string) => void;
+  /**
+   * The full attachment record is passed alongside the id so callers
+   * that persist by server set (e.g. chatboxes) don't have to re-read
+   * the live query — which lags behind for just-created rows.
+   */
+  onChange: (
+    serverAttachmentId: string,
+    attachment: EvalServerAttachment,
+  ) => void;
   disabled?: boolean;
+  /** Trigger label when no attachment is selected. */
+  emptyTriggerLabel?: string;
+  /** Info-tooltip copy explaining what an attachment is in this context. */
+  infoText?: string;
+  /** Tooltip on the delete button when the attachment is the selected one. */
+  selectedDeleteHint?: string;
 };
 
 export function ServerAttachmentPicker({
@@ -41,6 +55,9 @@ export function ServerAttachmentPicker({
   value,
   onChange,
   disabled = false,
+  emptyTriggerLabel = "No server attachment · pick one",
+  infoText = "A server attachment is a named set of MCP servers that every client in the suite runs against. Reuse the same attachment across suites, or create one per scenario.",
+  selectedDeleteHint = "In use by this suite — pick another first",
 }: ServerAttachmentPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -107,7 +124,7 @@ export function ServerAttachmentPicker({
 
   const handleSelect = useCallback(
     (attachment: EvalServerAttachment) => {
-      onChange(attachment._id);
+      onChange(attachment._id, attachment);
       setOpen(false);
     },
     [onChange]
@@ -167,15 +184,16 @@ export function ServerAttachmentPicker({
         name,
         serverIds: pickedServerIds,
       })) as { _id: string };
-      setJustCreated({
+      const created: EvalServerAttachment = {
         _id: result._id,
         name,
         serverIds: pickedServerIds,
         resolvedServerNames: projectServers
           .filter((s) => pickedServerIds.includes(s._id))
           .map((s) => s.name),
-      });
-      onChange(result._id);
+      };
+      setJustCreated(created);
+      onChange(result._id, created);
       setOpen(false);
       setShowCreate(false);
       setCreateName("");
@@ -199,7 +217,7 @@ export function ServerAttachmentPicker({
 
   const triggerLabel = selectedAttachment
     ? selectedAttachment.name
-    : "No server attachment · pick one";
+    : emptyTriggerLabel;
   const triggerCount = selectedAttachment
     ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
     : null;
@@ -274,11 +292,7 @@ export function ServerAttachmentPicker({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-[240px]">
-                  <p className="text-xs leading-snug">
-                    A server attachment is a named set of MCP servers that
-                    every client in the suite runs against. Reuse the same
-                    attachment across suites, or create one per scenario.
-                  </p>
+                  <p className="text-xs leading-snug">{infoText}</p>
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -352,9 +366,7 @@ export function ServerAttachmentPicker({
                     </TooltipTrigger>
                     <TooltipContent side="right">
                       <p className="text-xs">
-                        {isSelected
-                          ? "In use by this suite — pick another first"
-                          : "Delete attachment"}
+                        {isSelected ? selectedDeleteHint : "Delete attachment"}
                       </p>
                     </TooltipContent>
                   </Tooltip>

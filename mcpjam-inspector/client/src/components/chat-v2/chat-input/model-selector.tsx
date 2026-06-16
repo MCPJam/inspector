@@ -48,6 +48,18 @@ interface ModelSelectorProps {
   onSelectedModelsChange?: (models: ModelDefinition[]) => void;
   onMultiModelEnabledChange?: (enabled: boolean) => void;
   maxSelectedModels?: number;
+  /**
+   * Popover alignment relative to the trigger. The chat-input default is
+   * "start"; embeds near the right screen edge (e.g. the host-config Agent
+   * tab) pass "end" so the panel opens inward instead of clipping.
+   */
+  align?: "start" | "center" | "end";
+  /**
+   * `location` for the picker's PostHog events. Non-chat embeds (e.g. the
+   * client builder's Agent tab) pass their own so chat-input metrics stay
+   * clean.
+   */
+  analyticsLocation?: string;
 }
 
 type GroupKey = string;
@@ -111,6 +123,8 @@ export function ModelSelector({
   onSelectedModelsChange,
   onMultiModelEnabledChange,
   maxSelectedModels = 3,
+  align = "start",
+  analyticsLocation = "chat_input",
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -191,7 +205,7 @@ export function ModelSelector({
     if (nextOpen && !isOpen) {
       posthog.capture(
         "chat_model_selector_clicked",
-        standardEventProps("chat_input")
+        standardEventProps(analyticsLocation)
       );
     }
     setIsOpen(nextOpen);
@@ -497,7 +511,12 @@ export function ModelSelector({
           <TooltipContent side="top">{triggerLabel}</TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
+        <PopoverContent
+          align={align}
+          className="w-[280px] p-0"
+          sideOffset={8}
+          collisionPadding={8}
+        >
           <Command shouldFilter={true}>
             <CommandInput
               placeholder="Search models"

@@ -379,6 +379,51 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `tunnel`
+
+Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and chatboxes can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
+
+```bash
+# HTTP target
+mcpjam tunnel http://localhost:9090/mcp --id my-server --project acme
+
+# stdio target (command goes after --)
+mcpjam tunnel --id everything --project acme -- npx -y @modelcontextprotocol/server-everything
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--id <name>` | Yes | Server name to register in the project. An existing server with this name is pointed at the tunnel: its URL is overwritten, and stdio records are converted to HTTP. |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--api-key <key>` | No | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | No | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `-e, --env <env...>` | No | Stdio environment assignment in `KEY=VALUE` format (stdio targets only) |
+| `--cwd <path>` | No | Working directory for the stdio MCP server process (stdio targets only) |
+
+With `--format json`, a single machine-readable startup object (public URL, server ID, slug, project) is written to stdout; ongoing status goes to stderr in both formats.
+
+<Warning>
+  The public tunnel URL embeds a bearer secret and is stored on the project
+  server record so the platform can call it. Every re-run rotates the secret
+  and disconnects any previous tunnel session for the same server.
+</Warning>
+
+---
+
+## `mcp` command
+
+### `mcp`
+
+Run MCPJam as an MCP server over stdio so MCP clients (Claude Desktop, Claude Code, Cursor, ...) can connect to, exercise, and debug other MCP servers. See [MCPJam as an MCP server](/cli/mcp-server) for the exposed tools and client setup.
+
+```bash
+npx -y @mcpjam/cli@latest mcp
+```
+
+The command takes no flags of its own. The global `--timeout <ms>` flag sets the default per-request timeout against target servers, and `--quiet` suppresses the startup notice on stderr. Stdout carries only JSON-RPC; never pipe other output into it.
+
+---
+
 ## `telemetry` commands
 
 Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.

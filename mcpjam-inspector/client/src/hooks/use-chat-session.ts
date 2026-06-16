@@ -46,19 +46,19 @@ import {
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
-  buildAvailableModels,
-  buildAvailableModelsFromOrgConfig,
   getDefaultModel,
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
+  GUEST_LOCKED_MODEL_REASON,
+  composeAvailableModels,
+} from "@/components/chat-v2/shared/available-models";
+import {
+  isBedrockModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
-import {
-  detectOllamaModels,
-  detectOllamaToolCapableModels,
-} from "@/lib/ollama-utils";
+import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
@@ -87,7 +87,10 @@ import {
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
+import {
+  ingestHostedRpcLogs,
+  useTrafficLogStore,
+} from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
@@ -115,8 +118,6 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 
-const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
-
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
 // `useAppToolsRegistry`. Mirrors the regex in `app-tools-registry.ts`,
 // `shared/http-tool-calls.ts`, and the server-side validators — kept
@@ -127,40 +128,6 @@ function resolveSystemPrompt(value: string | null | undefined): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
     : DEFAULT_SYSTEM_PROMPT;
-}
-
-function applyGuestModelLocks(
-  models: ModelDefinition[],
-  isAuthenticated: boolean
-): ModelDefinition[] {
-  if (isAuthenticated) return models;
-
-  return models.map((model) => {
-    const modelId = String(model.id);
-    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
-      return model;
-    }
-
-    return {
-      ...model,
-      disabled: true,
-      disabledReason: GUEST_LOCKED_MODEL_REASON,
-    };
-  });
-}
-
-function appendDetectedLocalOllamaModels(
-  models: ModelDefinition[],
-  isOllamaRunning: boolean,
-  ollamaModels: ModelDefinition[]
-): ModelDefinition[] {
-  if (!isOllamaRunning || ollamaModels.length === 0) return models;
-  return models.concat(
-    ollamaModels.filter(
-      (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id))
-    )
-  );
 }
 
 function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
@@ -199,7 +166,8 @@ function isOrgManagedModel(
   }
 
   if (
-    provider.providerKey === "openrouter" &&
+    (provider.providerKey === "openrouter" ||
+      provider.providerKey === "bedrock") &&
     provider.selectedModels &&
     provider.selectedModels.length > 0
   ) {
@@ -416,11 +384,18 @@ export interface UseChatSessionReturn {
 }
 
 function inferModelProviderFromId(modelId: string): ModelProvider {
+  // Org Bedrock models persist bare inference-profile ids (no "bedrock/"
+  // prefix), so recognize the id shape before prefix matching.
+  if (isBedrockModelId(modelId)) {
+    return "bedrock";
+  }
+
   const providerPrefix = modelId.split("/")[0];
 
   switch (providerPrefix) {
     case "anthropic":
     case "azure":
+    case "bedrock":
     case "openai":
     case "ollama":
     case "deepseek":
@@ -1110,6 +1085,10 @@ export function useChatSession(
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  // Published-chatbox runtime sessions must use the org-aware web engine
+  // on every platform — their servers resolve by Convex id, which the
+  // local /api/mcp engine can't connect. See HostedRuntimeContext.
+  const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
@@ -1141,10 +1120,10 @@ export function useChatSession(
     getAzureBaseUrl,
   } = useAiProviderKeys();
   const { customProviders, getCustomProviderByName } = useCustomProviders();
+  const { isOllamaRunning, ollamaModels } =
+    useDetectedOllamaModels(getOllamaBaseUrl);
 
   // Local state
-  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
-  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
@@ -1309,43 +1288,32 @@ export function useChatSession(
     pendingHydration.resolve?.();
   }, []);
 
-  // Build available models
-  const availableModels = useMemo(() => {
-    if ((hostedOrgModelConfig?.providers.length ?? 0) > 0) {
-      const orgModels = buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
-      const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
-        orgModels,
+  // Build available models — the same composition every picker surface
+  // uses (see `composeAvailableModels`); only the org-config source is
+  // chat-specific (chatbox embeds resolve a host-provided project context).
+  const availableModels = useMemo(
+    () =>
+      composeAvailableModels({
+        orgConfig: hostedOrgModelConfig,
+        isAuthenticated,
         isOllamaRunning,
-        ollamaModels
-      );
-      return applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated);
-    }
-
-    const localModels = buildAvailableModels({
+        ollamaModels,
+        hasToken,
+        getOpenRouterSelectedModels,
+        getAzureBaseUrl,
+        customProviders,
+      }),
+    [
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
+      isAuthenticated,
       customProviders,
-    });
-    const visibleModels = applyGuestModelLocks(localModels, isAuthenticated);
-    if (HOSTED_MODE) {
-      return visibleModels.filter((model) =>
-        isMCPJamProvidedModel(String(model.id))
-      );
-    }
-    return visibleModels;
-  }, [
-    hasToken,
-    getOpenRouterSelectedModels,
-    isOllamaRunning,
-    ollamaModels,
-    getAzureBaseUrl,
-    isAuthenticated,
-    customProviders,
-    hostedOrgModelConfig,
-  ]);
+      hostedOrgModelConfig,
+    ]
+  );
 
   // Model selection with persistence
   const {
@@ -1420,18 +1388,22 @@ export function useChatSession(
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = HOSTED_MODE
+      // authFetch owns auth resolution (WorkOS bearer / guest bearer via
+      // the chatbox-installed apiContext) wherever the web engine is in
+      // play — hosted builds, and chatbox runtime sessions on any platform.
+      const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
+      const response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
-        if (HOSTED_MODE) {
+        if (useAuthedFetch) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
       return response;
     },
-    []
+    [hostedRequiresWebChatApi]
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -1462,7 +1434,8 @@ export function useChatSession(
   >(undefined);
 
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi = HOSTED_MODE || selectedModelUsesOrgRuntime;
+    const shouldUseOrgAwareChatApi =
+      HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1481,11 +1454,14 @@ export function useChatSession(
       string,
       string
     >;
-    const transportHeaders = HOSTED_MODE
-      ? undefined
-      : Object.keys(mergedHeaders).length > 0
-      ? mergedHeaders
-      : undefined;
+    // When authFetch carries the request (hosted builds, chatbox runtime
+    // sessions), it owns the Authorization header — don't double-attach.
+    const transportHeaders =
+      HOSTED_MODE || hostedRequiresWebChatApi
+        ? undefined
+        : Object.keys(mergedHeaders).length > 0
+        ? mergedHeaders
+        : undefined;
 
     const chatApi = shouldUseOrgAwareChatApi
       ? "/api/web/chat-v2"
@@ -1637,6 +1613,7 @@ export function useChatSession(
     customProviders,
     authHeaders,
     selectedModelUsesOrgRuntime,
+    hostedRequiresWebChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -1795,16 +1772,19 @@ export function useChatSession(
           call.then(resolve, reject);
         });
         const sanitized = scrubAppToolResultForModel(raw);
-        recordAppToolInvocation({
-          alias: tc.toolName,
-          rawName: entry.rawName,
-          appName: entry.instance.appName,
-          serverId: entry.instance.serverId,
-          parentToolCallId: entry.instance.parentToolCallId,
-          bridgeId: entry.instance.bridgeId,
-          input: tc.input,
-          raw,
-        });
+        recordAppToolInvocation(
+          {
+            alias: tc.toolName,
+            rawName: entry.rawName,
+            appName: entry.instance.appName,
+            serverId: entry.instance.serverId,
+            parentToolCallId: entry.instance.parentToolCallId,
+            bridgeId: entry.instance.bridgeId,
+            input: tc.input,
+            raw,
+          },
+          useTrafficLogStore.getState().addLog,
+        );
         addToolOutput({
           tool: tc.toolName,
           toolCallId: tc.toolCallId,
@@ -2047,7 +2027,9 @@ export function useChatSession(
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && isAuthenticated,
+    // Chatbox runtime sessions persist server-side on every platform, so
+    // their widget capture follows the session kind, not the build.
+    enabled: (HOSTED_MODE || hostedRequiresWebChatApi) && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
     hostedChatboxId,
@@ -2446,44 +2428,6 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
-  // Ollama model detection — local mode only. Hosted mode never surfaces
-  // Ollama: the browser may be able to reach localhost, but Convex (which
-  // owns the chat path in hosted mode) cannot.
-  useEffect(() => {
-    if (HOSTED_MODE) {
-      setIsOllamaRunning(false);
-      setOllamaModels([]);
-      return;
-    }
-
-    const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels(
-        getOllamaBaseUrl()
-      );
-      setIsOllamaRunning(isRunning);
-
-      const toolCapable = isRunning
-        ? await detectOllamaToolCapableModels(getOllamaBaseUrl())
-        : [];
-      const toolCapableSet = new Set(toolCapable);
-      const ollamaDefs: ModelDefinition[] = availableModels.map(
-        (modelName) => ({
-          id: modelName,
-          name: modelName,
-          provider: "ollama" as const,
-          disabled: !toolCapableSet.has(modelName),
-          disabledReason: toolCapableSet.has(modelName)
-            ? undefined
-            : "Model does not support tool calling",
-        })
-      );
-      setOllamaModels(ollamaDefs);
-    };
-    checkOllama();
-    const interval = setInterval(checkOllama, 30000);
-    return () => clearInterval(interval);
-  }, [getOllamaBaseUrl]);
-
   // Fetch tools metadata
   useEffect(() => {
     const fetchToolsMetadata = async () => {
@@ -2643,7 +2587,7 @@ export function useChatSession(
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const hostedContextNotReady =
-    (HOSTED_MODE || selectedModelUsesOrgRuntime) &&
+    (HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi) &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

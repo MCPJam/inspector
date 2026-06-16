@@ -4,8 +4,16 @@ import {
   renderMcpAppToolResult,
   isRenderableMcpAppTool,
 } from "../mcp-app-render-observation";
-import { McpAppBrowserHarness } from "../mcp-app-browser-harness";
+import {
+  McpAppBrowserHarness,
+  isChromiumInstalled,
+} from "../mcp-app-browser-harness";
 import type { MCPClientManager } from "@mcpjam/sdk";
+
+// The "real harness integration" suite below launches a real Chromium; run it
+// only where one is installed (CI + the hosted image). The mocked suites above
+// it need no browser and always run.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
 const MCP_APP_META = { ui: { resourceUri: "ui://widget/seats" } };
 
@@ -22,7 +30,7 @@ describe("isRenderableMcpAppTool", () => {
 
 describe("renderMcpAppToolResult — short-circuits", () => {
   const stubHarness = () =>
-    ({ renderWidget: vi.fn() }) as unknown as McpAppBrowserHarness;
+    ({ renderWidget: vi.fn() } as unknown as McpAppBrowserHarness);
 
   it("returns no_ui_resource without touching the harness", async () => {
     const harness = stubHarness();
@@ -35,7 +43,9 @@ describe("renderMcpAppToolResult — short-circuits", () => {
       harness,
     });
     expect(obs.status).toBe("no_ui_resource");
-    expect((harness.renderWidget as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(
+      harness.renderWidget as ReturnType<typeof vi.fn>
+    ).not.toHaveBeenCalled();
   });
 
   it("returns resource_read_failed when readResource throws", async () => {
@@ -68,7 +78,7 @@ describe("renderMcpAppToolResult — reads resource + delegates to harness", () 
         elapsedMs: 1,
         ts: Date.now(),
         _html: input.html,
-      }),
+      })
     );
     const harness = { renderWidget } as unknown as McpAppBrowserHarness;
     const mcpClientManager = {
@@ -93,7 +103,10 @@ describe("renderMcpAppToolResult — reads resource + delegates to harness", () 
       keepMounted: true,
     });
     expect(obs.status).toBe("rendered");
-    const arg = renderWidget.mock.calls[0][0] as { html: string; keepMounted?: boolean };
+    const arg = renderWidget.mock.calls[0][0] as {
+      html: string;
+      keepMounted?: boolean;
+    };
     expect(arg.html).toBe(html);
     expect(arg.keepMounted).toBe(true);
   });
@@ -117,6 +130,84 @@ describe("renderMcpAppToolResult — reads resource + delegates to harness", () 
     expect(arg.html).not.toBe(html);
     expect(arg.html.length).toBeGreaterThan(html.length);
     expect(arg.html).toContain("openai");
+  });
+
+  function setupWithMeta(meta: Record<string, unknown>) {
+    const renderWidget = vi.fn(async () => ({
+      toolCallId: "tc",
+      toolName: "t",
+      serverId: "s",
+      status: "rendered" as const,
+      elapsedMs: 1,
+      ts: Date.now(),
+    }));
+    const harness = { renderWidget } as unknown as McpAppBrowserHarness;
+    const mcpClientManager = {
+      readResource: vi.fn().mockResolvedValue({
+        contents: [{ text: "<html><body>w</body></html>", _meta: meta }],
+      }),
+    } as unknown as MCPClientManager;
+    return { harness, renderWidget, mcpClientManager };
+  }
+
+  it("normalizes SEP-1865 _meta.ui.csp into the harness cspMeta (Excalidraw shape)", async () => {
+    // Mirrors the live Excalidraw widget resource: camelCase domains under
+    // `_meta.ui.csp` — the declaration the network gate must honor for the
+    // widget's esm.sh bundle to load instead of blank-painting.
+    const { harness, renderWidget, mcpClientManager } = setupWithMeta({
+      ui: {
+        csp: {
+          resourceDomains: ["https://esm.sh"],
+          connectDomains: ["https://esm.sh"],
+        },
+        permissions: {},
+      },
+    });
+    await renderMcpAppToolResult({
+      toolCallId: "tc-csp",
+      toolName: "create_view",
+      serverId: "excalidraw",
+      toolMetadata: MCP_APP_META,
+      mcpClientManager,
+      harness,
+    });
+    const arg = renderWidget.mock.calls[0][0] as {
+      cspMeta?: { connect_domains?: string[]; resource_domains?: string[] };
+    };
+    expect(arg.cspMeta).toEqual({
+      connect_domains: ["https://esm.sh"],
+      resource_domains: ["https://esm.sh"],
+    });
+  });
+
+  it("normalizes legacy openai/widgetCSP and omits cspMeta when undeclared", async () => {
+    const legacy = setupWithMeta({
+      "openai/widgetCSP": { connect_domains: ["https://api.example.com"] },
+    });
+    await renderMcpAppToolResult({
+      toolCallId: "tc-legacy",
+      toolName: "t",
+      serverId: "s",
+      toolMetadata: MCP_APP_META,
+      mcpClientManager: legacy.mcpClientManager,
+      harness: legacy.harness,
+    });
+    expect(
+      (legacy.renderWidget.mock.calls[0][0] as { cspMeta?: unknown }).cspMeta
+    ).toEqual({ connect_domains: ["https://api.example.com"] });
+
+    const bare = setupWithMeta({ ui: { permissions: {} } });
+    await renderMcpAppToolResult({
+      toolCallId: "tc-bare",
+      toolName: "t",
+      serverId: "s",
+      toolMetadata: MCP_APP_META,
+      mcpClientManager: bare.mcpClientManager,
+      harness: bare.harness,
+    });
+    expect(
+      (bare.renderWidget.mock.calls[0][0] as { cspMeta?: unknown }).cspMeta
+    ).toBeUndefined();
   });
 });
 
@@ -152,7 +243,7 @@ async function bundleGuestHtml(): Promise<string> {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${r.outputFiles[0].text}</script></body></html>`;
 }
 
-describe("renderMcpAppToolResult — real harness integration", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("renderMcpAppToolResult — real harness integration", () => {
   it("reads the resource and renders the widget in headless Chromium", async () => {
     const html = await bundleGuestHtml();
     const harness = new McpAppBrowserHarness({
@@ -182,7 +273,9 @@ describe("renderMcpAppToolResult — real harness integration", () => {
     });
     expect(obs.status).toBe("rendered");
     expect(obs.bridgeInitialized).toBe(true);
-    expect(obs.screenshotBase64 && obs.screenshotBase64.length).toBeGreaterThan(0);
+    expect(obs.screenshotBase64 && obs.screenshotBase64.length).toBeGreaterThan(
+      0
+    );
     expect(harness.hasRenderedWidget()).toBe(true);
   }, 30_000);
 });

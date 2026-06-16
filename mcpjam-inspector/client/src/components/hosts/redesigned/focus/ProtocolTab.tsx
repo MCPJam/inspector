@@ -8,7 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
@@ -272,7 +271,6 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   // Stored stateful literals (legacy carry-over) collapse to "Latest"
   // since they route to the same code path; saving normalizes back to
   // undefined.
@@ -310,36 +308,34 @@ export function ProtocolTab({
 
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
-      {statelessMcpEnabled ? (
-        <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
-          <div className="flex items-center gap-3">
-            <span
-              className="text-[12px] font-medium"
-              title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
-            >
-              {fProtocolVersion.label}
-            </span>
-            <Select
-              value={selectedDropdownValue}
-              onValueChange={(next) => {
-                setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
-              }}
-              disabled={readOnly}
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="Latest" />
-              </SelectTrigger>
-              <SelectContent>
-                {HOST_PROTOCOL_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[12px] font-medium"
+            title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+          >
+            {fProtocolVersion.label}
+          </span>
+          <Select
+            value={selectedDropdownValue}
+            onValueChange={(next) => {
+              setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Latest" />
+            </SelectTrigger>
+            <SelectContent>
+              {HOST_PROTOCOL_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      ) : null}
+      </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
           rawContent={content}

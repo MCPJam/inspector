@@ -47,7 +47,7 @@ import type {
   ProjectServerOverrideEntry,
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 export type ServerDetailTab =
@@ -192,8 +192,6 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
-  const serverHistoryEnabled = useFeatureFlagEnabled("server-history-tab");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     projectId ? ({ projectId } as never) : "skip"
@@ -212,10 +210,9 @@ export function ServerDetailModal({
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
   // The History tab + drift chip surface persisted snapshot revisions, which
-  // only exist for project-scoped (hosted) servers. Gated behind the
-  // `server-history-tab` PostHog flag (@mcpjam.com only) and hidden in local
-  // mode. Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId && serverHistoryEnabled);
+  // only exist for project-scoped (hosted) servers — hidden in local mode.
+  // Both surfaces key off `showHistory`, so this is the single gate.
+  const showHistory = Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -505,9 +502,41 @@ export function ServerDetailModal({
       environment: detectEnvironment(),
     });
 
-    const finalFormData = formState.buildFormData();
     setIsSaving(true);
     try {
+      // Saving an auth or header change replaces the whole stored header
+      // set. When that set is hidden, fetch it first so e.g. rotating a
+      // bearer token doesn't wipe the other saved headers.
+      let revealedHeaders: Record<string, string> | undefined;
+      if (formState.needsStoredHeaderReveal) {
+        if (!projectId || !hostedServerId) {
+          toast.error(
+            "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
+          );
+          return;
+        }
+        try {
+          const secrets = await fetchServerSecrets({
+            projectId,
+            serverId: hostedServerId,
+          });
+          // A null headers payload means the stored set couldn't be read;
+          // merging against it would wipe the saved headers, so fail closed.
+          if (!secrets.headers) {
+            throw new Error("Stored headers missing from reveal response");
+          }
+          revealedHeaders = secrets.headers;
+        } catch {
+          toast.error(
+            "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
+          );
+          return;
+        }
+      }
+
+      const finalFormData = formState.buildFormData(
+        revealedHeaders ? { revealedHeaders } : undefined
+      );
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
@@ -628,7 +657,6 @@ export function ServerDetailModal({
               <EffectiveProtocolVersionChip
                 hostDefault={resolvedHostDefaultMcpProtocolVersion}
                 serverOverride={currentMcpProtocolVersionOverride}
-                flagEnabled={Boolean(statelessMcpEnabled)}
               />
               <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                 {isReconnecting ? (

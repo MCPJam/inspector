@@ -20,7 +20,7 @@ Before generating any code, collect the following from the user:
 | **Connection type** | `stdio` (local binary) or `http` (SSE/Streamable HTTP URL) | `http` |
 | **Test framework** | `jest`, `vitest`, or `none` (SDK-only) | _(detect from repo; fall back to `vitest`)_ |
 | **LLM provider** | See Supported Providers table below. Format: `provider/model` | _(must ask user)_ |
-| **Save results to MCPJam** | `none`, `auto` (saves when MCPJAM_API_KEY is set), or `reporter` (shared EvalRunReporter). To get your API key, go to **Settings > Workspace API Key** in the MCPJam Inspector. | _(must ask user)_ |
+| **Save results to MCPJam** | `none`, `auto` (saves when MCPJAM_API_KEY is set), or `reporter` (shared EvalRunReporter). Use an MCPJam API key (`sk_…`) from **Settings → API keys**; optionally set `MCPJAM_PROJECT_ID` to file results under a specific project (defaults to the org’s Default project). | _(must ask user)_ |
 | **Tool list** | Ask user to paste their tool names or an **Agent Brief** (see Section 8) | — |
 
 If the user provides an **Agent Brief** (markdown with `## Tools` table), parse it to auto-populate tool names, descriptions, parameters, and suggested eval scenarios. See Section 8.
@@ -133,7 +133,8 @@ MCP_SERVER_URL=https://your-server.example.com/sse
 # MCP_CLIENT_SECRET=...
 
 # Save eval results to MCPJam (optional)
-# MCPJAM_API_KEY=mcpjam_...
+# MCPJAM_API_KEY=sk_...
+# MCPJAM_PROJECT_ID=<project id>  # optional; defaults to your org’s Default project
 ```
 
 ### .gitignore additions

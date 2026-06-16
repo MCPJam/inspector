@@ -1,119 +1,153 @@
-import ngrok from "@ngrok/ngrok";
-import type { Listener } from "@ngrok/ngrok";
 import { logger } from "../utils/logger";
+import { RelayConnection, type RelayConnectionOptions } from "./relay-client";
+import {
+  registerTunnelDomain,
+  unregisterTunnelDomain,
+} from "./tunnel-registry";
 
 interface TunnelEntry {
-  listener: Listener;
+  connection: RelayConnection;
+  /** Public host ({slug}.tunnels.mcpjam.com) registered for isolation checks. */
+  host: string;
   baseUrl: string;
-  credentialId?: string;
-  domainId?: string;
-  domain?: string;
+  slug: string;
+  // Full bearer URL (contains the ?k= secret). Held in memory ONLY — the
+  // backend persists just the secret hash, so this entry is the single
+  // holder of the plaintext URL while the connection lives.
+  publicUrl: string;
+  secretVersion?: number;
 }
 
-interface CreateTunnelOptions {
-  localAddr?: string;
-  ngrokToken: string;
-  credentialId?: string;
-  domainId?: string;
-  domain?: string;
+export interface CreateTunnelOptions {
+  localAddr: string;
+  slug: string;
+  relayWsUrl: string;
+  connectToken: string;
+  publicUrl: string;
+  secretVersion?: number;
 }
 
 class TunnelManager {
   private tunnels: Map<string, TunnelEntry> = new Map();
-  private readonly sharedTunnelId = "shared";
 
+  /**
+   * Open the relay connection for a server and return the public base URL.
+   * Idempotent per server: an existing live tunnel is returned as-is.
+   */
   async createTunnel(
-    tunnelId: string,
-    options: CreateTunnelOptions,
+    serverId: string,
+    options: CreateTunnelOptions
   ): Promise<string> {
-    const existingTunnel = this.tunnels.get(tunnelId);
+    const existingTunnel = this.tunnels.get(serverId);
     if (existingTunnel) {
       return existingTunnel.baseUrl;
     }
 
-    const addr = options.localAddr || "http://localhost:6274";
+    const host = new URL(options.publicUrl).hostname;
+    let registered = false;
+    let earlyPermanentFailure: { reason: string; code: number } | null = null;
+    const connection = new RelayConnection({
+      serverId,
+      slug: options.slug,
+      relayWsUrl: options.relayWsUrl,
+      connectToken: options.connectToken,
+      localAddr: options.localAddr,
+      publicHost: host,
+      onPermanentFailure: (reason, code) => {
+        // The relay refused this grant for good (expired, replaced by
+        // another inspector, or revoked) — drop the entry so the UI offers
+        // a fresh create instead of advertising a dead URL.
+        if (!registered) {
+          earlyPermanentFailure = { reason, code };
+          return;
+        }
+        this.dropEntry(serverId, reason, code);
+      },
+    } satisfies RelayConnectionOptions);
 
     try {
-      const config: any = {
-        addr,
-        authtoken: options.ngrokToken,
-      };
-
-      if (options.domain) {
-        config.domain = options.domain;
-        // Add X-Forwarded-Host and X-Forwarded-Proto headers to preserve the original
-        // ngrok domain and protocol. This allows downstream servers to know the public URL.
-        config.request_header_add = [
-          `X-Forwarded-Host:${options.domain}`,
-          `X-Forwarded-Proto:https`,
-        ];
+      await connection.connect();
+      if (earlyPermanentFailure || connection.permanentFailure) {
+        throw new Error(
+          earlyPermanentFailure?.reason ??
+            connection.permanentFailure ??
+            "Tunnel relay closed permanently before registration"
+        );
       }
-
-      const listener = await ngrok.forward(config);
-      const baseUrl = listener.url()!;
-      this.tunnels.set(tunnelId, {
-        listener,
-        baseUrl,
-        credentialId: options.credentialId,
-        domainId: options.domainId,
-        domain: options.domain,
-      });
-
-      logger.info(`✓ Created tunnel (${tunnelId}): ${baseUrl} -> ${addr}`);
-      return baseUrl;
+      if (!connection.isConnected) {
+        throw new Error("Tunnel relay closed before registration");
+      }
     } catch (error: any) {
+      connection.close();
       logger.error(`✗ Failed to create tunnel:`, error);
       throw error;
     }
+
+    // A permanent close (4000/4001/4002) can land between the handshake
+    // resolving and the registration below; its onPermanentFailure→dropEntry
+    // would be a no-op (entry not in the map yet), and we'd register a dead
+    // connection. Bail if the relay already gave up — this synchronous check
+    // and the registration that follows can't be interleaved by a later
+    // 'close' event, so registering past it is safe (that drop finds the
+    // entry).
+    if (connection.permanentFailure) {
+      const reason = connection.permanentFailure;
+      connection.close();
+      logger.warn(`✗ Tunnel (${serverId}) died during handshake: ${reason}`);
+      throw new Error(reason);
+    }
+
+    const baseUrl = `https://${host}`;
+    this.tunnels.set(serverId, {
+      connection,
+      host,
+      baseUrl,
+      slug: options.slug,
+      publicUrl: options.publicUrl,
+      secretVersion: options.secretVersion,
+    });
+    registered = true;
+    registerTunnelDomain(host, serverId);
+
+    logger.info(
+      `✓ Created tunnel (${serverId}): ${baseUrl} -> ${options.localAddr}`
+    );
+    return baseUrl;
   }
 
-  async closeTunnel(tunnelId: string): Promise<void> {
-    const entry = this.tunnels.get(tunnelId);
+  /**
+   * Re-establish the connection with a fresh grant (rotation). The slug is
+   * normally stable so the base URL never changes — only the bearer secret
+   * in the URL does (a `full` rotation swaps the slug too). The backend has
+   * already revoked the old grant at the edge, so close-then-connect is
+   * pure reconnection, not revocation.
+   */
+  async rotateTunnel(
+    serverId: string,
+    options: CreateTunnelOptions
+  ): Promise<string> {
+    await this.closeTunnel(serverId);
+    return this.createTunnel(serverId, options);
+  }
+
+  async closeTunnel(serverId: string): Promise<void> {
+    const entry = this.tunnels.get(serverId);
     if (!entry) {
       return;
     }
 
-    await entry.listener.close();
-    this.tunnels.delete(tunnelId);
-    logger.info(`✓ Closed tunnel (${tunnelId})`);
-
-    try {
-      if (this.tunnels.size === 0) {
-        await ngrok.disconnect();
-      }
-    } catch (error) {
-      // Already disconnected or no active listeners
-    }
-  }
-
-  getCredentialId(tunnelId: string): string | null {
-    return this.tunnels.get(tunnelId)?.credentialId ?? null;
-  }
-
-  getDomainId(tunnelId: string): string | null {
-    return this.tunnels.get(tunnelId)?.domainId ?? null;
-  }
-
-  clearCredentials(tunnelId: string): void {
-    const entry = this.tunnels.get(tunnelId);
-    if (!entry) {
-      return;
-    }
-    entry.credentialId = undefined;
-    entry.domainId = undefined;
-    entry.domain = undefined;
-  }
-
-  getTunnelUrl(tunnelId: string = this.sharedTunnelId): string | null {
-    return this.tunnels.get(tunnelId)?.baseUrl ?? null;
+    entry.connection.close();
+    this.tunnels.delete(serverId);
+    unregisterTunnelDomain(entry.host);
+    logger.info(`✓ Closed tunnel (${serverId})`);
   }
 
   getServerTunnelUrl(serverId: string): string | null {
-    const perServerTunnelUrl = this.getTunnelUrl(serverId);
-    const encodedServerId = encodeURIComponent(serverId);
-    return perServerTunnelUrl
-      ? `${perServerTunnelUrl}/api/mcp/adapter-http/${encodedServerId}`
-      : null;
+    return this.tunnels.get(serverId)?.publicUrl ?? null;
+  }
+
+  getServerTunnelSlug(serverId: string): string | null {
+    return this.tunnels.get(serverId)?.slug ?? null;
   }
 
   hasTunnel(): boolean {
@@ -121,16 +155,18 @@ class TunnelManager {
   }
 
   async closeAll(): Promise<void> {
-    const tunnelIds = [...this.tunnels.keys()];
-    for (const tunnelId of tunnelIds) {
-      await this.closeTunnel(tunnelId);
+    const serverIds = [...this.tunnels.keys()];
+    for (const serverId of serverIds) {
+      await this.closeTunnel(serverId);
     }
+  }
 
-    try {
-      await ngrok.disconnect();
-    } catch (error) {
-      // Already disconnected
-    }
+  private dropEntry(serverId: string, reason: string, code: number): void {
+    const entry = this.tunnels.get(serverId);
+    if (!entry) return;
+    this.tunnels.delete(serverId);
+    unregisterTunnelDomain(entry.host);
+    logger.warn(`Tunnel (${serverId}) ended by relay [${code}]: ${reason}`);
   }
 }
 

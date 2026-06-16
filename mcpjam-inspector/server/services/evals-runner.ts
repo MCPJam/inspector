@@ -19,10 +19,7 @@ import {
   type HostExecutionPolicy,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import {
-  finalizePassedForEval,
-  type MCPClientManager,
-} from "@mcpjam/sdk";
+import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
 import {
   createLlmModel,
   type BaseUrls,
@@ -34,21 +31,9 @@ import {
 } from "../utils/direct-chat-turn";
 import { consumeFullStreamAsEvalEvents } from "./evals/stream-adapter";
 import { resolveExecutionContext } from "../utils/host-execution-context";
-import { safeResolveBuiltInTools } from "../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../utils/built-in-tools/registry.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
-import {
-  McpAppBrowserHarness,
-  DEFAULT_VIEWPORT,
-} from "../utils/mcp-app-browser-harness";
-import {
-  buildComputerUseTools,
-  resolveComputerUseToolVersion,
-} from "../utils/computer-use-tool";
-import {
-  renderMcpAppToolResult,
-  isRenderableMcpAppTool,
-} from "../utils/mcp-app-render-observation";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
@@ -67,32 +52,28 @@ import {
 import {
   buildIterationTranscript,
   evaluatePredicates,
+  summarizeRenderObservations,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import { runProbeTestCase } from "./evals/probe-iteration";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
   finalizeAiSdkTraceOnFailure,
   patchAiSdkRecordedSpansMessageRangesFromSteps,
   registerAiSdkPrepareStep,
-  wrapToolSetForEvalTrace,
 } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
-  RunnerBrowserInteractionStep,
-  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
-import {
-  appendDedupedModelMessages,
-  isEvalTraceBrowserStepNote,
-} from "@/shared/eval-trace";
+import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   deriveLegacyPromptFields,
   resolvePromptTurns,
@@ -105,24 +86,22 @@ import {
   prepareChatV2,
   type PrepareChatV2Result,
 } from "../utils/chat-v2-orchestration.js";
-import { runAssistantTurn } from "../utils/assistant-turn.js";
 import type {
-  MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
   MCPJamToolCallEvent,
   MCPJamToolResultEvent,
 } from "../utils/mcpjam-stream-handler.js";
+import { driveHostedEvalTurn } from "./evals/drive-hosted-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { finalizeEvalIteration } from "./evals/finalize-iteration.js";
 import {
-  createEvalBrowserContext,
-  type EvalBrowserContext,
-} from "./evals/browser-eval-context.js";
+  createBrowserSessionContext,
+  type BrowserSessionContext,
+} from "./browser-session-context.js";
 import type {
   EvalStreamEvent,
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
-
 
 export type EvalTestCase = {
   title: string;
@@ -169,6 +148,15 @@ export type EvalTestCase = {
    */
   hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
+  /**
+   * Case kind. Absent ⇒ prompt case. `widget_probe` carries `probeConfig`
+   * and skips the LLM path entirely (`runTestCase` forks before any model
+   * resolution); `model`/`provider` hold display-only sentinels on probe
+   * entries and are never resolved.
+   */
+  caseType?: import("@/shared/probe-config").TestCaseType;
+  /** Pinned tool call for `widget_probe` cases. */
+  probeConfig?: import("@/shared/probe-config").ProbeConfig;
 };
 
 export type RunEvalSuiteOptions = {
@@ -256,7 +244,7 @@ type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
-function resolveConfiguredServerIds(args: {
+export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   mcpClientManager: MCPClientManager;
 }): string[] {
@@ -272,7 +260,7 @@ function resolveConfiguredServerIds(args: {
 
   const availableServerIdsSet = new Set(availableServerIds);
   const availableServerIdByLowercase = new Map(
-    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
+    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId])
   );
   const projectServerIdByName = new Map<string, string>();
   const serverNameByProjectServerId = new Map<string, string>();
@@ -305,36 +293,37 @@ function resolveConfiguredServerIds(args: {
       continue;
     }
 
-    const normalizedServerId =
-      availableServerIdsSet.has(trimmedServerRef)
-        ? trimmedServerRef
-        : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
-          (() => {
-            const projectServerId = projectServerIdByName.get(
-              trimmedServerRef.toLowerCase(),
+    const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
+      ? trimmedServerRef
+      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+        (() => {
+          const projectServerId = projectServerIdByName.get(
+            trimmedServerRef.toLowerCase()
+          );
+          if (projectServerId) {
+            return (
+              (availableServerIdsSet.has(projectServerId)
+                ? projectServerId
+                : undefined) ??
+              availableServerIdByLowercase.get(projectServerId.toLowerCase())
             );
-            if (projectServerId) {
-              return (
-                (availableServerIdsSet.has(projectServerId)
-                  ? projectServerId
-                  : undefined) ??
-                availableServerIdByLowercase.get(projectServerId.toLowerCase())
-              );
-            }
+          }
 
-            const serverName = serverNameByProjectServerId.get(
-              trimmedServerRef.toLowerCase(),
+          const serverName = serverNameByProjectServerId.get(
+            trimmedServerRef.toLowerCase()
+          );
+          if (serverName) {
+            return (
+              (availableServerIdsSet.has(serverName)
+                ? serverName
+                : undefined) ??
+              availableServerIdByLowercase.get(serverName.toLowerCase())
             );
-            if (serverName) {
-              return (
-                (availableServerIdsSet.has(serverName) ? serverName : undefined) ??
-                availableServerIdByLowercase.get(serverName.toLowerCase())
-              );
-            }
+          }
 
-            return undefined;
-          })() ??
-          trimmedServerRef;
+          return undefined;
+        })() ??
+        trimmedServerRef;
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -367,7 +356,7 @@ function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
 }
 
 function buildPromptTraceSummaries(
-  evaluation: MultiTurnEvaluationResult,
+  evaluation: MultiTurnEvaluationResult
 ): PromptTraceSummary[] {
   return evaluation.promptSummaries.map((summary) => ({
     promptIndex: summary.promptIndex,
@@ -396,7 +385,7 @@ function buildPromptTraceSummaries(
         mismatchedArguments: Array.from(mismatchedArguments).filter(
           (key) =>
             JSON.stringify(mismatch.expectedArgs?.[key]) !==
-            JSON.stringify(mismatch.actualArgs?.[key]),
+            JSON.stringify(mismatch.actualArgs?.[key])
         ),
       };
     }),
@@ -435,7 +424,7 @@ function extractToolCallsFromConversation(params: {
               (toolCall) =>
                 toolCall.toolName === name &&
                 JSON.stringify(toolCall.arguments) ===
-                  JSON.stringify(argumentsValue),
+                  JSON.stringify(argumentsValue)
             );
             if (!alreadyAdded) {
               toolsCalled.push({
@@ -457,7 +446,7 @@ function extractToolCallsFromConversation(params: {
             (toolCall) =>
               toolCall.toolName === toolName &&
               JSON.stringify(toolCall.arguments) ===
-                JSON.stringify(argumentsValue),
+                JSON.stringify(argumentsValue)
           );
           if (!alreadyAdded) {
             toolsCalled.push({
@@ -479,7 +468,7 @@ function toolCallIdentity(toolCall: ToolCall): string {
 
 function mergeToolCalls(
   existingToolCalls: ToolCall[],
-  incomingToolCalls: ToolCall[],
+  incomingToolCalls: ToolCall[]
 ): ToolCall[] {
   const seen = new Set(existingToolCalls.map(toolCallIdentity));
   const merged = [...existingToolCalls];
@@ -513,14 +502,14 @@ function appendPartialToolCallsToPrompt(params: {
   }
 
   const existingToolCalls = Array.isArray(
-    params.toolsCalledByPrompt[params.promptIndex],
+    params.toolsCalledByPrompt[params.promptIndex]
   )
     ? params.toolsCalledByPrompt[params.promptIndex]!
     : [];
 
   params.toolsCalledByPrompt[params.promptIndex] = mergeToolCalls(
     existingToolCalls,
-    partialToolCalls,
+    partialToolCalls
   );
 }
 
@@ -530,7 +519,6 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
     arguments: toolCall.arguments,
   }));
 }
-
 
 function buildTraceSnapshotEvent(params: {
   turnIndex: number;
@@ -560,7 +548,7 @@ function buildTraceSnapshotEvent(params: {
     snapshotKind: params.snapshotKind,
     trace: sanitizeForConvexTransport(trace),
     actualToolCalls: sanitizeForConvexTransport(
-      toStreamToolCalls(params.actualToolCalls),
+      toStreamToolCalls(params.actualToolCalls)
     ),
     usage: {
       inputTokens: params.usage.inputTokens ?? 0,
@@ -589,7 +577,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  },
+  }
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -599,7 +587,7 @@ async function createIterationDirectly(
         testCaseSnapshot: sanitizeForConvexTransport(params.testCaseSnapshot),
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      },
+      }
     );
 
     return result?.iterationId as string | undefined;
@@ -608,7 +596,6 @@ async function createIterationDirectly(
     return undefined;
   }
 }
-
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -751,13 +738,13 @@ const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
 
 function lookupProviderApiKey(
   modelApiKeys: Record<string, string> | undefined,
-  provider: string,
+  provider: string
 ): string | undefined {
   return modelApiKeys?.[provider] ?? modelApiKeys?.[provider.toLowerCase()];
 }
 
 function hasBaseUrls(baseUrls: BaseUrls): boolean {
-  return Boolean(baseUrls.ollama || baseUrls.azure);
+  return Boolean(baseUrls.ollama || baseUrls.azure || baseUrls.bedrock);
 }
 
 function resolveEvalModelRuntime(args: {
@@ -781,7 +768,7 @@ function resolveEvalModelRuntime(args: {
   const provider = args.modelDefinition.provider;
   if (!apiKey && provider !== "ollama" && provider !== "custom") {
     throw new Error(
-      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`,
+      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`
     );
   }
 
@@ -797,14 +784,14 @@ function resolveEvalModelRuntime(args: {
 }
 
 function hasExplicitModelApiKeys(
-  modelApiKeys: Record<string, string> | undefined,
+  modelApiKeys: Record<string, string> | undefined
 ): boolean {
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
 function resolveOrgTargetForEval(
   test: EvalTestCase,
-  explicitTarget?: ResolveOrgModelConfigTarget,
+  explicitTarget?: ResolveOrgModelConfigTarget
 ): ResolveOrgModelConfigTarget | undefined {
   if (explicitTarget) return explicitTarget;
   const maybeProjectId = (test as { projectId?: unknown }).projectId;
@@ -854,7 +841,7 @@ async function resolveOrgByokEvalRuntime(args: {
     target,
     providerKey,
     String(args.modelDefinition.id),
-    { bearerToken: args.convexAuthToken },
+    { bearerToken: args.convexAuthToken }
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -897,7 +884,7 @@ const runIterationWithAiSdk = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -905,7 +892,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -923,7 +910,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -971,9 +958,7 @@ const runIterationWithAiSdk = async ({
   });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as
-      | Record<string, unknown>
-      | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -1016,8 +1001,8 @@ const runIterationWithAiSdk = async ({
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-      ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   // `conversationMessages` starts empty; the system message is pushed below
   // inside the try block, AFTER `prepareChatV2` (which can throw on Anthropic
@@ -1065,37 +1050,16 @@ const runIterationWithAiSdk = async ({
   let enhancedSystemPromptForPersist: string | undefined = undefined;
 
   // Browser-rendered MCP App eval (PR 5): render MCP App tool results in the
-  // headless-Chromium harness and (for Claude drivers) drive them with
-  // Computer Use. Harness construction is cheap; Chromium launches lazily on
-  // the first widget render, so prompt-only / no-widget iterations pay nothing.
-  const computerUseVersion = resolveComputerUseToolVersion(test.model);
-  // Ref-object (not a bare `let`): the only assignments happen inside the
-  // closures below, which TS control-flow analysis can't see — a bare `let`
-  // would stay narrowed to its `null` initializer in the outer `finally`.
-  const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
-    current: null,
-  };
-  const widgetRenderObservations: RunnerWidgetRenderObservation[] = [];
-  // PR 6b: Computer Use interaction steps, collected via the harness `onAction`
-  // callback wired into buildComputerUseTools below. This local AI-SDK path is
-  // the only place Computer Use runs, so it is the only place the array is
-  // non-empty (hosted + streaming paths land in PR 9/PR 10).
-  // `stepIndexByToolCallId` stamps a monotonic per-widget step ordinal.
-  const browserInteractionSteps: RunnerBrowserInteractionStep[] = [];
-  const stepIndexByToolCallId = new Map<string, number>();
-  const ensureWidgetHarness = (): McpAppBrowserHarness => {
-    if (!widgetHarnessRef.current) {
-      widgetHarnessRef.current = new McpAppBrowserHarness({
-        callTool: (sid, name, args) =>
-          mcpClientManager.executeTool(sid, name, args),
-        viewport: DEFAULT_VIEWPORT,
-      });
-    }
-    return widgetHarnessRef.current;
-  };
-  // Eager (cheap) construction when Computer Use is supported so the computer
-  // tools can reference the harness; Chromium still launches lazily.
-  if (computerUseVersion) ensureWidgetHarness();
+  // headless-Chromium harness and (for models with vision + tool calling) drive
+  // them with Computer Use. The shared context owns the harness, the Computer Use tools,
+  // the advertised-tool gate, and the artifact collectors; construction is
+  // cheap and Chromium launches lazily on the first widget render, so
+  // prompt-only / no-widget iterations pay nothing.
+  const browser = await createBrowserSessionContext({
+    model: test.model,
+    mcpClientManager,
+    injectOpenAiCompat,
+  });
 
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
@@ -1109,7 +1073,10 @@ const runIterationWithAiSdk = async ({
     // credits, and BYOK iterations carry no Convex auth — advertising a tool
     // whose execute can only fail is worse than omitting it. The null-ctx
     // helper call debug-logs when the suite hostConfig requested ids anyway.
-    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
+    resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
+      null
+    );
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -1137,66 +1104,11 @@ const runIterationWithAiSdk = async ({
     // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
     enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
-    // Computer Use tools (Claude drivers only). Included in the tool map so the
-    // AI SDK Anthropic provider auto-attaches the beta header; gated per step by
-    // `prepareAdvertisedTools` so they only appear once a widget has rendered.
-    const computerWidgetTools = computerUseVersion
-      ? buildComputerUseTools({
-          version: computerUseVersion,
-          harness: ensureWidgetHarness(),
-          // The harness keeps at most one widget mounted and drops it on
-          // dismiss / re-render / screenshot failure, so it is the single
-          // source of truth for the active widget — no separate id to track
-          // (and drift) across turns or after a finish_widget dismiss.
-          getActiveToolCallId: () =>
-            widgetHarnessRef.current?.getMountedWidgetId() ?? null,
-          viewport: DEFAULT_VIEWPORT,
-          // PR 6b: collect one browserInteractionStep per executeAction. The
-          // screenshot stays base64 here; finalizeEvalIteration uploads it once
-          // for both the W2 and W1 persistence paths.
-          onAction: (result, { toolCallId }) => {
-            const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
-            stepIndexByToolCallId.set(toolCallId, stepIndex);
-            // The harness types `note` as an open string; the backend union is
-            // closed and rejects the whole turn on an unknown literal. Narrow
-            // through the guard — keep the step, drop an unrecognized note.
-            let note: RunnerBrowserInteractionStep["note"];
-            if (result.note !== undefined) {
-              if (isEvalTraceBrowserStepNote(result.note)) {
-                note = result.note;
-              } else {
-                logger.warn("[evals] dropping unknown browser-step note", {
-                  note: result.note,
-                  toolCallId,
-                });
-              }
-            }
-            browserInteractionSteps.push({
-              toolCallId,
-              stepIndex,
-              promptIndex: activePromptIndex,
-              action: result.action.action,
-              coordinateX: result.action.coordinate?.[0],
-              coordinateY: result.action.coordinate?.[1],
-              text: result.action.text,
-              scrollDirection: result.action.scrollDirection,
-              scrollAmount: result.action.scrollAmount,
-              duration: result.action.duration,
-              screenshotBase64: result.screenshotBase64,
-              widgetToolCalls: result.widgetToolCalls,
-              elapsedMs: result.elapsedMs,
-              ...(note ? { note } : {}),
-              ts: Date.now(),
-            });
-          },
-        })
-      : {};
-
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
       modelRuntime.baseUrls,
-      modelRuntime.customProviders,
+      modelRuntime.customProviders
     );
 
     if (
@@ -1204,11 +1116,11 @@ const runIterationWithAiSdk = async ({
       typeof toolChoice === "object" &&
       !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
       // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on Claude drivers.
-      !Object.hasOwn(computerWidgetTools, toolChoice.toolName)
+      // forced tool choice naming one of them is valid on computer-capable drivers.
+      !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
-        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
+        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
       );
     }
 
@@ -1222,7 +1134,7 @@ const runIterationWithAiSdk = async ({
         promptTurns,
         toolsCalledByPrompt,
         test.isNegativeTest,
-        test.matchOptions,
+        test.matchOptions
       ),
       iterationId: undefined,
     });
@@ -1231,16 +1143,13 @@ const runIterationWithAiSdk = async ({
       if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
+      browser.setActivePromptIndex(promptIndex);
       // Browser-rendered MCP App eval (PR 5): start each prompt turn with a
       // clean widget surface. A widget kept mounted by a previous turn must not
       // bleed into this one — otherwise Computer Use could be advertised (and
       // `computer` actions routed) against the prior turn's widget before this
       // turn's own MCP App tool runs.
-      const carriedWidgetId =
-        widgetHarnessRef.current?.getMountedWidgetId() ?? null;
-      if (carriedWidgetId) {
-        await widgetHarnessRef.current!.dismissWidget(carriedWidgetId);
-      }
+      await browser.dismissCarriedWidget();
       // PR 4b invariant (carried from closed #2458, originally PR 3 round 2):
       // push the user prompt to `conversationMessages` BEFORE the driver
       // call so a failed turn still records the prompt in the persisted
@@ -1291,30 +1200,14 @@ const runIterationWithAiSdk = async ({
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
-        tools: { ...prepared.allTools, ...computerWidgetTools },
+        tools: { ...prepared.allTools, ...browser.computerWidgetTools },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
         // Browser-rendered MCP App eval (PR 5): gate Computer Use tools so the
         // model only sees `computer` / `finish_widget` once a widget has
         // actually rendered in the harness (PR 2's prepareAdvertisedTools hook).
-        ...(computerUseVersion
-          ? {
-              prepareAdvertisedTools: ({
-                defaultToolNames,
-              }: {
-                stepIndex: number;
-                defaultToolNames: string[];
-              }) =>
-                // Gate on the harness's live widget — the SAME source
-                // `getActiveToolCallId` reads — so the tools are only advertised
-                // when a Computer Use action can actually target a mount (avoids
-                // advertising while the active id would resolve to null).
-                widgetHarnessRef.current?.getMountedWidgetId()
-                  ? defaultToolNames
-                  : defaultToolNames.filter(
-                      (n) => n !== "computer" && n !== "finish_widget",
-                    ),
-            }
+        ...(browser.prepareAdvertisedTools
+          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
           : {}),
         ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
@@ -1344,61 +1237,15 @@ const runIterationWithAiSdk = async ({
             // every step response it has appended so far. The
             // post-prompt-input slice IS this turn's running response.
             activePartialResponseMessages = traceHistory.slice(
-              promptInputLength,
+              promptInputLength
             ) as ModelMessage[];
           },
           // Browser-rendered MCP App eval (PR 5): render each MCP App tool
           // result in the harness and record a WidgetRenderObservation. Awaited
           // (direct-chat-turn awaits this callback) so a rendered widget is
           // mounted before the next step's Computer Use gate runs.
-          onToolResultChunk: async ({
-            toolCallId,
-            toolName,
-            input,
-            output,
-            serverId,
-          }) => {
-            if (!serverId) return;
-            const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[
-              toolName
-            ];
-            if (!isRenderableMcpAppTool(meta)) return;
-            try {
-              const obs = await renderMcpAppToolResult({
-                toolCallId,
-                toolName,
-                serverId,
-                toolMetadata: meta,
-                // Feed the real tool-call args to the widget shim so the live
-                // render matches what post-turn snapshot capture injects.
-                toolInput: input,
-                output,
-                mcpClientManager,
-                injectOpenAiCompat,
-                harness: ensureWidgetHarness(),
-                keepMounted: computerUseVersion !== null,
-              });
-              // Stamp promptIndex at push-time — the harness type stays pure;
-              // the runner is the single source of truth for promptIndex.
-              widgetRenderObservations.push({
-                ...obs,
-                promptIndex: activePromptIndex,
-              });
-              // No separate active-widget bookkeeping: a `rendered` + kept widget
-              // stays in the harness mount (the single source of truth that the
-              // gate and getActiveToolCallId both read); every other outcome is
-              // already unmounted by renderWidget.
-              logger.debug("[evals] widget render observation", {
-                toolName,
-                status: obs.status,
-              });
-            } catch (err) {
-              logger.warn("[evals] widget render failed", {
-                toolName,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          },
+          onToolResultChunk: (chunk) =>
+            browser.handleDirectToolResultChunk(chunk),
         },
       });
       // `runDirectChatTurn` exposes its internal traceContext so eval
@@ -1416,7 +1263,7 @@ const runIterationWithAiSdk = async ({
       // the abort fired between consume and check.
       if (headless.aborted || localIsAborted()) {
         logger.debug(
-          "[evals] local-BYOK iteration aborted mid-turn; skipping record",
+          "[evals] local-BYOK iteration aborted mid-turn; skipping record"
         );
         return returnLocalCancelled();
       }
@@ -1431,7 +1278,7 @@ const runIterationWithAiSdk = async ({
           activeTraceCtx.recordedSpans,
           activePromptInputMessages.length,
           headless.steps,
-          promptIndex,
+          promptIndex
         );
       }
 
@@ -1465,7 +1312,7 @@ const runIterationWithAiSdk = async ({
         iterationError =
           "Stream returned no content (local-BYOK driver failed)";
         logger.error(
-          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+          "[evals] streamText returned no new messages this turn; treating as cycle failure"
         );
         recordedSpans.push(...activeTraceCtx.recordedSpans);
         toolsCalledByPrompt.push([]);
@@ -1485,19 +1332,19 @@ const runIterationWithAiSdk = async ({
         (span) =>
           span.status === "error" &&
           span.category !== "tool" &&
-          !(span as { toolCallId?: string }).toolCallId,
+          !(span as { toolCallId?: string }).toolCallId
       );
       if (stepErrorSpan) {
         iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
         logger.error(
-          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
         );
         recordedSpans.push(...activeTraceCtx.recordedSpans);
         toolsCalledByPrompt.push(
           extractToolCallsFromConversation({
             steps: headless.steps,
             messages: promptResponseMessages,
-          }),
+          })
         );
         // PR 4b review fix (Cursor "Step error drops assistant
         // transcript"): merge the partial response into
@@ -1537,7 +1384,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -1562,8 +1409,11 @@ const runIterationWithAiSdk = async ({
             usage: hasReportedUsage(accumulatedUsage)
               ? accumulatedUsage
               : undefined,
+            renderObservations: summarizeRenderObservations(
+              browser.widgetRenderObservations,
+            ),
           }),
-          test.successPredicates,
+          test.successPredicates
         )
       : [];
     const passed = finalizePassedForEval({
@@ -1588,7 +1438,8 @@ const runIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+    const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+      injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -1618,8 +1469,12 @@ const runIterationWithAiSdk = async ({
       // PR 6b: per-iteration browser artifacts, non-empty only on this local
       // AI-SDK Computer Use path. finalizeEvalIteration serializes them once
       // (screenshot upload + sanitize) for both the W2 and W1 persistence paths.
-      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
-      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
+      ...(browser.widgetRenderObservations.length
+        ? { widgetRenderObservations: browser.widgetRenderObservations }
+        : {}),
+      ...(browser.browserInteractionSteps.length
+        ? { browserInteractionSteps: browser.browserInteractionSteps }
+        : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       ...(iterationError ? { error: iterationError } : {}),
@@ -1634,7 +1489,7 @@ const runIterationWithAiSdk = async ({
               hostPolicy,
               toolSignals,
               evaluation.toolsCalled.length,
-              injectOpenAiCompat === true,
+              injectOpenAiCompat === true
             )
           : {}),
       },
@@ -1660,7 +1515,7 @@ const runIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
-          test.matchOptions,
+          test.matchOptions
         ),
         iterationId: undefined,
       };
@@ -1710,7 +1565,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
@@ -1720,7 +1575,8 @@ const runIterationWithAiSdk = async ({
     // the persisted and returned verdicts agree.
     evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+    const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+      injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -1747,8 +1603,12 @@ const runIterationWithAiSdk = async ({
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       // PR 6b: browser artifacts collected before the failure still persist.
-      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
-      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
+      ...(browser.widgetRenderObservations.length
+        ? { widgetRenderObservations: browser.widgetRenderObservations }
+        : {}),
+      ...(browser.browserInteractionSteps.length
+        ? { browserInteractionSteps: browser.browserInteractionSteps }
+        : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -1762,7 +1622,7 @@ const runIterationWithAiSdk = async ({
               hostPolicy,
               toolSignals,
               evaluation.toolsCalled.length,
-              injectOpenAiCompat === true,
+              injectOpenAiCompat === true
             )
           : {}),
       },
@@ -1781,13 +1641,7 @@ const runIterationWithAiSdk = async ({
     // Browser-rendered MCP App eval (PR 5): tear down the harness (and its
     // headless Chromium, if launched) regardless of success/failure. No-op
     // when the harness was never constructed or never launched.
-    await widgetHarnessRef.current?.dispose();
-    if (widgetRenderObservations.length > 0) {
-      logger.debug("[evals] widget render observations", {
-        count: widgetRenderObservations.length,
-        statuses: widgetRenderObservations.map((o) => o.status),
-      });
-    }
+    await browser.dispose();
   }
 };
 
@@ -1798,7 +1652,7 @@ const runIterationViaBackend = async (params: RunIterationBackendParams) => {
   // The wrapper owns disposal: try/finally guarantees a launched Chromium is
   // torn down on EVERY exit (cancellation early-returns, setup failures,
   // finalize throws), which per-exit dispose calls could miss.
-  const browser = createEvalBrowserContext({
+  const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
@@ -1845,7 +1699,7 @@ const runIterationViaBackendWithBrowser = async (
     suiteHostConfig,
     orgModelConfigTarget,
   }: RunIterationBackendParams,
-  browser: EvalBrowserContext,
+  browser: BrowserSessionContext
 ) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1854,7 +1708,7 @@ const runIterationViaBackendWithBrowser = async (
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -1862,7 +1716,7 @@ const runIterationViaBackendWithBrowser = async (
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -1880,7 +1734,7 @@ const runIterationViaBackendWithBrowser = async (
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -1915,9 +1769,7 @@ const runIterationViaBackendWithBrowser = async (
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as
-      | Record<string, unknown>
-      | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -1956,8 +1808,8 @@ const runIterationViaBackendWithBrowser = async (
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-      ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -1981,11 +1833,11 @@ const runIterationViaBackendWithBrowser = async (
   // (`resolveOrgTargetForEval`). Org-level targets carry no projectId —
   // the Exa route requires one — so those omit the tools.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
-  const builtInTools = safeResolveBuiltInTools(
-    resolvedExecution.builtInToolIds,
+  const builtInTools = resolveHostTools(
+    { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
-      : null,
+      : null
   );
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
@@ -2016,8 +1868,7 @@ const runIterationViaBackendWithBrowser = async (
     // persistence time — same shape as the local runners' Codex-P2 fix.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     await persistSetupFailedIteration({
       iterationId,
@@ -2035,7 +1886,7 @@ const runIterationViaBackendWithBrowser = async (
       promptTurns,
       [],
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     failedEvaluation.passed = false;
     return {
@@ -2100,7 +1951,7 @@ const runIterationViaBackendWithBrowser = async (
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     ),
     iterationId: undefined,
   });
@@ -2109,273 +1960,44 @@ const runIterationViaBackendWithBrowser = async (
     // Cancellation between turns: bail without recording.
     if (isAborted()) {
       logger.debug(
-        "[evals] backend iteration aborted between turns; skipping record",
+        "[evals] backend iteration aborted between turns; skipping record"
       );
       return returnCancelled();
     }
 
-    const promptTurn = promptTurns[promptIndex]!;
-
-    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
-    // this turn, and start the turn with a clean widget surface — a widget
-    // kept mounted by a previous prompt turn must not bleed into this one
-    // (otherwise Computer Use could be advertised against the prior turn's
-    // widget before this turn's own MCP App tool runs).
-    browser.setActivePromptIndex(promptIndex);
-    await browser.dismissCarriedWidget();
-
-    // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
-    // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
-    // into `capturedSpans` after the engine finishes.
-    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
-    // PR 14: the Computer Use tools ride the same wrap so `computer` /
-    // `finish_widget` executions land as tool spans in the trace UI like
-    // every other locally-executed tool.
-    const tracedTools = wrapToolSetForEvalTrace(
-      { ...prepared.allTools, ...browser.computerWidgetTools },
-      traceCtx,
+    // Shared hosted-turn body (engine call + browser pipeline + accumulator
+    // drains + three-shape failure detection) — see driveHostedEvalTurn.
+    // This batch runner layers no SSE sinks.
+    const outcome = await driveHostedEvalTurn({
       promptIndex,
-    );
-
-    // Cursor review round-2 fix: push the user prompt into
-    // `messageHistory` BEFORE the engine call so a failed turn still
-    // persists the user side of the transcript. The legacy backend
-    // loop pushed the user message at the top of its per-step while
-    // loop; that meant `finishIteration` saw the user prompt even
-    // when the iteration failed mid-step. Recording the input keeps
-    // the transcript honest about WHICH turn errored.
-    messageHistory.push({
-      role: "user",
-      content: promptTurn.prompt,
+      prompt: promptTurns[promptIndex]!.prompt,
+      browser,
+      prepared,
+      modelDefinition,
+      modelId,
+      selectedServers,
+      mcpClientManager,
+      evalAuthContext,
+      endpointPath,
+      extraBodyFields,
+      toolChoice,
+      abortSignal,
+      maxSteps: MAX_STEPS,
+      runStartedAt,
+      isAborted,
+      extractToolCalls: (messages) =>
+        extractToolCallsFromConversation({ messages }),
+      acc: {
+        messageHistory,
+        capturedSpans,
+        accumulatedUsage,
+        toolsCalledByPrompt,
+      },
     });
-    const messageCountBeforeTurn = messageHistory.length;
-    const inputMessages: ModelMessage[] = [...messageHistory];
-
-    // Cursor + Codex review fix: thread `toolChoice` AND
-    // `maxOutputTokens` through `extraBodyFields` since the engine's
-    // `RunAssistantTurnOptions` / `MCPJamHandlerOptions` don't expose
-    // them as first-class fields. The Convex `/stream` (and
-    // `/stream/org`) handlers already accept both in the request body
-    // — the engine spreads `extraBodyFields` into the body unchanged.
-    // `maxOutputTokens: 16384` matches the legacy per-step Convex body
-    // (Cursor round-2 finding "Dropped eval maxOutputTokens limit"):
-    // without it, hosted backend eval turns would inherit the
-    // `/stream` handler's default, which can truncate long multi-step
-    // tool loops differently than the historical eval cap.
-    const mergedExtraBodyFields: Record<string, unknown> = {
-      maxOutputTokens: 16384,
-      ...(extraBodyFields ?? {}),
-      ...(toolChoice ? { toolChoice } : {}),
-    };
-
-    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
-    try {
-      turnResult = await runAssistantTurn({
-        messages: inputMessages,
-        // Eval's `runTestCase` already resolved the canonical model id
-        // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads
-        // it in as `modelId` — for the JAM-paid path that's e.g.
-        // `anthropic/claude-haiku-4.5`. The engine reads
-        // `modelDefinition.id` for the wire payload, so override here so
-        // backend wallet/quota lookup keys match what live chat sends.
-        modelDefinition: { ...modelDefinition, id: modelId },
-        systemPrompt: prepared.enhancedSystemPrompt,
-        ...(prepared.resolvedTemperature != null
-          ? { temperature: prepared.resolvedTemperature }
-          : {}),
-        tools: tracedTools,
-        ...(selectedServers.length
-          ? { selectedServerIds: selectedServers }
-          : {}),
-        mcpClientManager,
-        authContext: evalAuthContext,
-        sourceType: "eval",
-        origin: "eval",
-        streamSink: "none",
-        persistMode: "caller",
-        approvalMode: "auto-deny",
-        endpointPath,
-        extraBodyFields: mergedExtraBodyFields,
-        ...(abortSignal ? { abortSignal } : {}),
-        maxSteps: MAX_STEPS,
-        progressivePlan: prepared.progressivePlan,
-        discoveryState: prepared.discoveryState,
-        // Browser-rendered MCP App eval (PR 14): cache tool-call inputs for
-        // the widget shim, render MCP App tool results in the harness (the
-        // engine awaits the hook, so a mounted widget is visible to the next
-        // step's gate), and hide `computer` / `finish_widget` until a widget
-        // has actually rendered.
-        onToolCall: (event) => browser.noteToolCallInput(event),
-        onToolResult: (event) => browser.handleEngineToolResult(event),
-        ...(browser.prepareAdvertisedTools
-          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
-          : {}),
-      });
-    } catch (error) {
-      // Cancellation: bail without recording. AbortError can surface
-      // either as a thrown exception (when fetch is aborted mid-flight)
-      // or as the engine's internal silent-cancellation path (handled
-      // by the `isAborted()` check after the success path below). Check
-      // `abortSignal.aborted` to catch BOTH paths consistently.
-      if (
-        isAborted() ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
-        logger.debug(
-          "[evals] backend iteration aborted due to cancellation",
-        );
-        return returnCancelled();
-      }
-
-      // Non-abort runtime error from the engine. Map to `iterationError`
-      // for the post-loop verdict gate; preserve a truncated message and,
-      // when available, a `responseBody` for `errorDetails`.
-      if (error instanceof Error) {
-        iterationError = error.message || error.toString();
-        const responseBody = (error as { responseBody?: unknown })
-          .responseBody;
-        if (responseBody && typeof responseBody === "string") {
-          iterationErrorDetails = responseBody;
-        }
-      } else if (typeof error === "string") {
-        iterationError = error;
-      } else {
-        iterationError = String(error);
-      }
-      if (iterationError && iterationError.length > 500) {
-        iterationError = iterationError.substring(0, 497) + "...";
-      }
-      logger.error("[evals] runAssistantTurn failed", error);
-      break;
-    }
-
-    // Cursor review fix: cancellation that fired DURING
-    // `runAssistantTurn` without surfacing as a throw. The engine
-    // catches AbortError, sets its internal `aborted` flag, omits the
-    // `turnTrace`, and returns normally. Without this check we'd fall
-    // through to the silent-cycle-failure branch below and record an
-    // aborted run as a verdict failure.
-    if (isAborted()) {
-      logger.debug(
-        "[evals] backend iteration aborted mid-turn; skipping record",
-      );
-      return returnCancelled();
-    }
-
-    // Drain per-turn outputs into the iteration-level accumulators
-    // BEFORE the failure checks below. Doing it first preserves
-    // whatever partial good state the engine produced (tool spans,
-    // partial transcript, usage), so the persisted iteration shows
-    // what completed before the failure point.
-    //
-    // Codex round-3 (P2 "Preserve backend tool step indices"):
-    // `wrapToolSetForEvalTrace` records tool spans in
-    // `traceCtx.recordedSpans` but never gets `prepareStep` updates
-    // from the engine (eval is no longer calling `generateText`
-    // directly), so those spans land with `stepIndex: -1`. The engine
-    // emits its OWN correctly-indexed LLM-step spans into
-    // `turnTrace.spans` (already `EvalTraceSpan[]` shape — see
-    // `PersistedTurnTrace` in chat-ingestion.ts). Merge both: the
-    // engine's LLM spans give per-step granularity; the wrap's tool
-    // spans give per-tool-call detail. Tool spans still have
-    // `stepIndex: -1` for now — fixing that requires correlating
-    // each tool span back to its parent LLM step via the engine's
-    // step events, which is a separate workstream.
-    capturedSpans.push(...traceCtx.recordedSpans);
-    if (turnResult.turnTrace?.spans?.length) {
-      capturedSpans.push(...turnResult.turnTrace.spans);
-    }
-    if (turnResult.usage) {
-      accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens || 0) +
-        (turnResult.usage.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        (accumulatedUsage.outputTokens || 0) +
-        (turnResult.usage.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens || 0) +
-        (turnResult.usage.totalTokens ?? 0);
-    }
-
-    // Extract per-turn tool calls from the new messages only (engine
-    // returns the FULL transcript; slice from `messageCountBeforeTurn`
-    // to get just this turn's appended assistant + tool messages so
-    // prior turns' calls aren't double-counted).
-    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-    const promptToolsCalled = extractToolCallsFromConversation({
-      messages: newMessages,
-    });
-    toolsCalledByPrompt.push(promptToolsCalled);
-
-    // Roll the engine's transcript forward as the next turn's starting
-    // point. Includes prior conversation + this turn's user prompt + this
-    // turn's assistant/tool messages.
-    messageHistory.length = 0;
-    messageHistory.push(...turnResult.messages);
-
-    // Failure detection (ordered most-specific → least-specific).
-    // Three engine failure shapes the runner must catch:
-    //
-    //  (a) Cursor round-3 ("Partial turn hides engine failures"):
-    //      Engine catch fired AFTER partial messages were appended
-    //      (some text deltas / partial tool call landed before the
-    //      error). The engine's `executeEngine` `try { ... }
-    //      catch (error) { logger.error; emit error chunk; ... }` at
-    //      mcpjam-stream-handler.ts:2227 leaves `runSucceeded:
-    //      false` → `turnTrace` is NOT captured even though
-    //      `messages.length > messageCountBeforeTurn`. The
-    //      message-count check and the error-span check both miss
-    //      this. `!turnTrace` is the reliable signal.
-    //
-    //  (b) Codex P1 round-1 + the original silent-cycle-failure:
-    //      Engine succeeded (turnTrace captured) but produced no new
-    //      content (step-level non-OK at
-    //      mcpjam-stream-handler.ts:1384 returns
-    //      `shouldContinue:false`, synthetic finish, runSucceeded
-    //      true). Detect via `messages.length <=
-    //      messageCountBeforeTurn`.
-    //
-    //  (c) Codex P1 round-2 ("Fail turns when later backend steps
-    //      error"): step 1 succeeded, step 2 errored. `turnTrace`
-    //      captured, `messages.length` grew, but `turnTrace.spans`
-    //      includes an `EvalTraceSpan` with `status:"error"`.
-    if (!turnResult.turnTrace) {
-      iterationError =
-        "Backend stream failed during iteration (engine caught an error mid-turn)";
-      logger.error(
-        `[evals] runAssistantTurn returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0})`,
-      );
-      break;
-    }
-    if (newMessages.length === 0) {
-      iterationError =
-        "Backend step returned no content (stream error or empty response)";
-      logger.error(
-        "[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure",
-      );
-      break;
-    }
-    // Codex P1 round-3 ("Don't treat tool-result error spans as
-    // backend failures"): `wrapBackendToolsForTrace` records ORDINARY
-    // local tool-result errors (MCP tool returned `isError: true`,
-    // tool execution threw, ...) as `status: "error"` with
-    // `category: "tool"`. The original match-any-error-span check
-    // would set `iterationError` and break before
-    // `finalizePassedForEval` could apply the configured
-    // `failOnToolError` policy — so otherwise-passing evals were
-    // force-failed when a tool returned a recoverable error and the
-    // model recovered. Filter to backend step / LLM failure spans
-    // only (categories `"step" | "llm" | "error"`); tool-category
-    // error spans flow through the existing tool-error gate (see
-    // `finalizePassedForEval` + `advancedConfig.failOnToolError`).
-    const stepErrorSpan = turnResult.turnTrace.spans.find(
-      (span) => span.status === "error" && span.category !== "tool",
-    );
-    if (stepErrorSpan) {
-      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
-      logger.error(
-        `[evals] runAssistantTurn turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
-      );
+    if (outcome.kind === "cancelled") return returnCancelled();
+    if (outcome.kind === "failed") {
+      iterationError = outcome.iterationError;
+      iterationErrorDetails = outcome.iterationErrorDetails;
       break;
     }
   }
@@ -2384,7 +2006,7 @@ const runIterationViaBackendWithBrowser = async (
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
-    test.matchOptions,
+    test.matchOptions
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2409,8 +2031,11 @@ const runIterationViaBackendWithBrowser = async (
           usage: hasReportedUsage(accumulatedUsage)
             ? accumulatedUsage
             : undefined,
+          renderObservations: summarizeRenderObservations(
+            browser.widgetRenderObservations,
+          ),
         }),
-        test.successPredicates,
+        test.successPredicates
       )
     : [];
   const passed = finalizePassedForEval({
@@ -2424,7 +2049,8 @@ const runIterationViaBackendWithBrowser = async (
   // returned evaluation so totals built from `evaluation.passed` agree with the
   // persisted iteration result.
   evaluation.passed = passed;
-  const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+  const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+    injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -2469,7 +2095,7 @@ const runIterationViaBackendWithBrowser = async (
             hostPolicy,
             toolSignals,
             evaluation.toolsCalled.length,
-            injectOpenAiCompat === true,
+            injectOpenAiCompat === true
           )
         : {}),
     },
@@ -2512,6 +2138,13 @@ const runTestCase = async (params: {
   toolSignals?: ToolExposureSignals;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
+  /**
+   * Run environment snapshot (servers + serverBindings). Only consulted by
+   * the widget-probe fork below to resolve the probe's pinned server
+   * reference to a manager key; the LLM path receives its servers
+   * pre-resolved via `selectedServers`.
+   */
+  environment?: RunEvalSuiteOptions["config"]["environment"];
 }) => {
   const {
     test,
@@ -2534,16 +2167,58 @@ const runTestCase = async (params: {
     hostPolicy,
     toolSignals,
     suiteHostConfig,
+    environment,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
+
+  // Widget probes skip the LLM entirely — fork before any model/BYOK
+  // resolution (probe entries carry display-only model sentinels that must
+  // never reach buildModelDefinition). The probe's server reference (stable
+  // id first, display name fallback) resolves through the same binding maps
+  // the LLM path uses for its environment.
+  if (test.caseType === "widget_probe" && test.probeConfig) {
+    // Run-scoped allow-list: only environment-selected servers are probe
+    // targets, even if the process happens to be connected to more.
+    const connected = new Set(selectedServers);
+    const candidates = [
+      test.probeConfig.serverId,
+      test.probeConfig.serverName,
+    ].filter((ref): ref is string => !!ref);
+    let resolvedServerKey: string | undefined;
+    for (const candidate of candidates) {
+      const [resolved] = resolveConfiguredServerIds({
+        environment: {
+          servers: [candidate],
+          serverBindings: environment?.serverBindings,
+        },
+        mcpClientManager,
+      });
+      if (resolved && connected.has(resolved)) {
+        resolvedServerKey = resolved;
+        break;
+      }
+    }
+    return runProbeTestCase({
+      test,
+      resolvedServerKey,
+      mcpClientManager,
+      recorder,
+      convexClient,
+      testCaseId,
+      runId,
+      abortSignal,
+      injectOpenAiCompat,
+    });
+  }
+
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const isJamModel = isMCPJamProvidedModel(
     resolvedModelId,
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const orgByokRuntime = isJamModel
     ? undefined
@@ -2593,10 +2268,7 @@ const runTestCase = async (params: {
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,
         };
-        const id = await createIterationDirectly(
-          convexClient,
-          iterationParams,
-        );
+        const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
         logger.warn(
@@ -2604,7 +2276,7 @@ const runTestCase = async (params: {
           {
             runIndex,
             error: error instanceof Error ? error.message : String(error),
-          },
+          }
         );
         precreatedIterationIds.push(undefined);
       }
@@ -2748,12 +2420,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : (providedRecorder ??
+      : providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        }));
+        });
 
   // When a host policy is present we need the full tool set (including
   // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -2761,11 +2433,13 @@ export const runEvalSuiteWithAiSdk = async ({
   //   2. Keep app-only tools when the host opted out of visibility filtering.
   // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
   // sees a partial set — drops are reported as 0 even when tools were hidden.
-  const tools = (hostExecutionPolicy
-    ? await mcpClientManager.getToolsForAiSdk(serverIds, {
-        includeAppOnly: true,
-      })
-    : await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+  const tools = (
+    hostExecutionPolicy
+      ? await mcpClientManager.getToolsForAiSdk(serverIds, {
+          includeAppOnly: true,
+        })
+      : await mcpClientManager.getToolsForAiSdk(serverIds)
+  ) as ToolSet;
 
   // Apply visibility filtering when a host policy is present. The filter
   // mutates `tools` in place (same as prepareChatV2) so downstream iteration
@@ -2774,7 +2448,7 @@ export const runEvalSuiteWithAiSdk = async ({
     ? applyVisibilityPolicyAndCountSignals(
         tools as Record<string, unknown>,
         mcpClientManager,
-        hostExecutionPolicy,
+        hostExecutionPolicy
       )
     : undefined;
 
@@ -2794,7 +2468,7 @@ export const runEvalSuiteWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         {
           runId,
-        },
+        }
       );
 
       if (currentRun?.status === "cancelled") {
@@ -2834,7 +2508,8 @@ export const runEvalSuiteWithAiSdk = async ({
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
-      }),
+        environment: config.environment,
+      })
     );
 
     // Create a cancellation checker that polls every 2s
@@ -2848,7 +2523,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
-            { runId },
+            { runId }
           );
           if (currentRun?.status === "cancelled") {
             // Abort all in-flight LLM requests
@@ -2888,7 +2563,7 @@ export const runEvalSuiteWithAiSdk = async ({
     } catch (error) {
       if (error instanceof Error && error.message === "RUN_CANCELLED") {
         logger.debug(
-          "[evals] Run was cancelled, all in-flight requests aborted",
+          "[evals] Run was cancelled, all in-flight requests aborted"
         );
 
         // Finalize the run as cancelled
@@ -3009,7 +2684,7 @@ const streamIterationWithAiSdk = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -3017,7 +2692,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -3034,7 +2709,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -3082,9 +2757,7 @@ const streamIterationWithAiSdk = async ({
   });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as
-      | Record<string, unknown>
-      | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -3127,8 +2800,8 @@ const streamIterationWithAiSdk = async ({
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-      ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   // `conversationMessages` starts empty; the system message is pushed below
   // inside the try block, AFTER `prepareChatV2`. See the suite-style runner
@@ -3184,33 +2857,24 @@ const streamIterationWithAiSdk = async ({
 
   // Browser-rendered MCP App eval (PR 9): mirror runIterationWithAiSdk on the
   // streamed path — render MCP App tool results in the headless-Chromium harness
-  // and (for Claude drivers) drive them with Computer Use. Declared BEFORE the
+  // and (for models with vision + tool calling) drive them with Computer
+  // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
-  const computerUseVersion = resolveComputerUseToolVersion(test.model);
-  const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
-    current: null,
-  };
-  const widgetRenderObservations: RunnerWidgetRenderObservation[] = [];
-  const browserInteractionSteps: RunnerBrowserInteractionStep[] = [];
-  const stepIndexByToolCallId = new Map<string, number>();
-  const ensureWidgetHarness = (): McpAppBrowserHarness => {
-    if (!widgetHarnessRef.current) {
-      widgetHarnessRef.current = new McpAppBrowserHarness({
-        callTool: (sid, name, args) =>
-          mcpClientManager.executeTool(sid, name, args),
-        viewport: DEFAULT_VIEWPORT,
-      });
-    }
-    return widgetHarnessRef.current;
-  };
-  if (computerUseVersion) ensureWidgetHarness();
+  const browser = await createBrowserSessionContext({
+    model: test.model,
+    mcpClientManager,
+    injectOpenAiCompat,
+  });
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
     // so prep failures become a recorded failed iteration. Like that runner,
     // `builtInTools` stays absent on the local BYOK path (no Convex auth to
     // bill web_search against) — the null-ctx call just debug-logs requests.
-    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
+    resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
+      null
+    );
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -3233,59 +2897,11 @@ const streamIterationWithAiSdk = async ({
     // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
     streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
-    // Computer Use tools (Claude drivers only). Gated per step by
-    // `prepareAdvertisedTools` below so they only appear once a widget renders.
-    const computerWidgetTools = computerUseVersion
-      ? buildComputerUseTools({
-          version: computerUseVersion,
-          harness: ensureWidgetHarness(),
-          getActiveToolCallId: () =>
-            widgetHarnessRef.current?.getMountedWidgetId() ?? null,
-          viewport: DEFAULT_VIEWPORT,
-          // PR 9: collect one browserInteractionStep per executeAction; the
-          // screenshot stays base64 here (finalizeEvalIteration uploads once).
-          onAction: (result, { toolCallId }) => {
-            const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
-            stepIndexByToolCallId.set(toolCallId, stepIndex);
-            // Narrow the harness's open-string note through the guard (the
-            // backend union is closed) — keep the step, drop an unknown note.
-            let note: RunnerBrowserInteractionStep["note"];
-            if (result.note !== undefined) {
-              if (isEvalTraceBrowserStepNote(result.note)) {
-                note = result.note;
-              } else {
-                logger.warn("[evals] dropping unknown browser-step note", {
-                  note: result.note,
-                  toolCallId,
-                });
-              }
-            }
-            browserInteractionSteps.push({
-              toolCallId,
-              stepIndex,
-              promptIndex: activePromptIndex,
-              action: result.action.action,
-              coordinateX: result.action.coordinate?.[0],
-              coordinateY: result.action.coordinate?.[1],
-              text: result.action.text,
-              scrollDirection: result.action.scrollDirection,
-              scrollAmount: result.action.scrollAmount,
-              duration: result.action.duration,
-              screenshotBase64: result.screenshotBase64,
-              widgetToolCalls: result.widgetToolCalls,
-              elapsedMs: result.elapsedMs,
-              ...(note ? { note } : {}),
-              ts: Date.now(),
-            });
-          },
-        })
-      : {};
-
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
       modelRuntime.baseUrls,
-      modelRuntime.customProviders,
+      modelRuntime.customProviders
     );
 
     if (
@@ -3293,11 +2909,11 @@ const streamIterationWithAiSdk = async ({
       typeof toolChoice === "object" &&
       !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
       // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on Claude drivers.
-      !Object.hasOwn(computerWidgetTools, toolChoice.toolName)
+      // forced tool choice naming one of them is valid on computer-capable drivers.
+      !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
-        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
+        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
       );
     }
 
@@ -3310,7 +2926,7 @@ const streamIterationWithAiSdk = async ({
         promptTurns,
         toolsCalledByPrompt,
         test.isNegativeTest,
-        test.matchOptions,
+        test.matchOptions
       ),
       iterationId: undefined,
     });
@@ -3319,14 +2935,11 @@ const streamIterationWithAiSdk = async ({
       if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
+      browser.setActivePromptIndex(promptIndex);
       // PR 9 (mirror PR 5): start each turn with a clean widget surface so a
       // widget kept mounted by a previous turn can't be advertised/targeted
       // before this turn's own MCP App tool runs.
-      const carriedWidgetId =
-        widgetHarnessRef.current?.getMountedWidgetId() ?? null;
-      if (carriedWidgetId) {
-        await widgetHarnessRef.current!.dismissWidget(carriedWidgetId);
-      }
+      await browser.dismissCarriedWidget();
       // PR 5a invariant (mirror PR 4b round 2): push the user prompt to
       // `conversationMessages` BEFORE the driver call so a failed turn
       // still records the prompt in the persisted transcript. Without
@@ -3378,26 +2991,14 @@ const streamIterationWithAiSdk = async ({
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
-        tools: { ...prepared.allTools, ...computerWidgetTools },
+        tools: { ...prepared.allTools, ...browser.computerWidgetTools },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
         // PR 9 (mirror PR 5): gate Computer Use tools so the model only sees
         // `computer` / `finish_widget` once a widget has actually rendered in
         // the harness (the same live-widget source `getActiveToolCallId` reads).
-        ...(computerUseVersion
-          ? {
-              prepareAdvertisedTools: ({
-                defaultToolNames,
-              }: {
-                stepIndex: number;
-                defaultToolNames: string[];
-              }) =>
-                widgetHarnessRef.current?.getMountedWidgetId()
-                  ? defaultToolNames
-                  : defaultToolNames.filter(
-                      (n) => n !== "computer" && n !== "finish_widget",
-                    ),
-            }
+        ...(browser.prepareAdvertisedTools
+          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
           : {}),
         ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
@@ -3426,7 +3027,7 @@ const streamIterationWithAiSdk = async ({
             // Slice from `promptInputLength` to get just this turn's
             // running response (PR 4d pattern).
             activePartialResponseMessages = traceHistory.slice(
-              promptInputLength,
+              promptInputLength
             ) as ModelMessage[];
             // Recompute accumulatedUsage from this turn's cumulative
             // usage so far + the snapshot taken at turn start. This
@@ -3462,54 +3063,15 @@ const streamIterationWithAiSdk = async ({
                   messages: snapshotMessages,
                 }),
                 usage: accumulatedUsage,
-              }),
+              })
             );
           },
           // PR 9 (mirror PR 5): render each MCP App tool result in the harness
           // and record an observation. `onToolResultChunk` fires on the stream
           // path too; awaited so a rendered widget is mounted before the next
           // step's Computer Use gate runs.
-          onToolResultChunk: async ({
-            toolCallId,
-            toolName,
-            input,
-            output,
-            serverId,
-          }) => {
-            if (!serverId) return;
-            const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[
-              toolName
-            ];
-            if (!isRenderableMcpAppTool(meta)) return;
-            try {
-              const obs = await renderMcpAppToolResult({
-                toolCallId,
-                toolName,
-                serverId,
-                toolMetadata: meta,
-                toolInput: input,
-                output,
-                mcpClientManager,
-                injectOpenAiCompat,
-                harness: ensureWidgetHarness(),
-                keepMounted: computerUseVersion !== null,
-              });
-              // Stamp promptIndex at push-time (runner is the source of truth).
-              widgetRenderObservations.push({
-                ...obs,
-                promptIndex: activePromptIndex,
-              });
-              logger.debug("[evals] widget render observation", {
-                toolName,
-                status: obs.status,
-              });
-            } catch (err) {
-              logger.warn("[evals] widget render failed", {
-                toolName,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          },
+          onToolResultChunk: (chunk) =>
+            browser.handleDirectToolResultChunk(chunk),
         },
       });
       // `runDirectChatTurn` exposes its internal traceContext so eval
@@ -3541,168 +3103,168 @@ const streamIterationWithAiSdk = async ({
         // resolves so cancelled runs drop without persisting.
         if (handle.isAborted() || localIsAborted()) {
           logger.debug(
-            "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record",
+            "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record"
           );
           return returnLocalCancelled();
         }
 
-      // Cursor PR 5a review round 2 fix (Medium "Streaming omits
-      // totalUsage before failures"): the per-step delta-update inside
-      // `onStepSnapshot` only captures usage for steps where the
-      // snapshot fired. If the stream resolves with zero completed
-      // steps — the same path the no-content failure branch handles —
-      // `accumulatedUsage` stays at the pre-turn baseline even when
-      // `handle.result.totalUsage` reports billed tokens. The
-      // non-stream runner (PR 4b) reads `headless.totalUsage` and
-      // merges before failure branches; PR 5a now does the same.
-      // Reconciles to the canonical post-stream total so failure
-      // branches + finishParams see the real billed value.
-      const finalTurnUsage = await handle.result.totalUsage;
-      accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens +
-        (finalTurnUsage?.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens +
-        (finalTurnUsage?.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens +
-        (finalTurnUsage?.totalTokens ?? 0);
+        // Cursor PR 5a review round 2 fix (Medium "Streaming omits
+        // totalUsage before failures"): the per-step delta-update inside
+        // `onStepSnapshot` only captures usage for steps where the
+        // snapshot fired. If the stream resolves with zero completed
+        // steps — the same path the no-content failure branch handles —
+        // `accumulatedUsage` stays at the pre-turn baseline even when
+        // `handle.result.totalUsage` reports billed tokens. The
+        // non-stream runner (PR 4b) reads `headless.totalUsage` and
+        // merges before failure branches; PR 5a now does the same.
+        // Reconciles to the canonical post-stream total so failure
+        // branches + finishParams see the real billed value.
+        const finalTurnUsage = await handle.result.totalUsage;
+        accumulatedUsage.inputTokens =
+          accumulatedUsageBeforeTurn.inputTokens +
+          (finalTurnUsage?.inputTokens ?? 0);
+        accumulatedUsage.outputTokens =
+          accumulatedUsageBeforeTurn.outputTokens +
+          (finalTurnUsage?.outputTokens ?? 0);
+        accumulatedUsage.totalTokens =
+          accumulatedUsageBeforeTurn.totalTokens +
+          (finalTurnUsage?.totalTokens ?? 0);
 
-      // After stream completes, resolve the helper's terminal promises.
-      const steps = await handle.result.steps;
-      const responseObj = await handle.result.response;
-      const finalMessagesRaw = responseObj?.messages as
-        | ModelMessage[]
-        | undefined;
-      const promptResponseMessages =
-        finalMessagesRaw && finalMessagesRaw.length > 0
-          ? finalMessagesRaw
-          : activePartialResponseMessages;
+        // After stream completes, resolve the helper's terminal promises.
+        const steps = await handle.result.steps;
+        const responseObj = await handle.result.response;
+        const finalMessagesRaw = responseObj?.messages as
+          | ModelMessage[]
+          | undefined;
+        const promptResponseMessages =
+          finalMessagesRaw && finalMessagesRaw.length > 0
+            ? finalMessagesRaw
+            : activePartialResponseMessages;
 
-      if (activeTraceCtx.recordedSpans.length > 0) {
-        patchAiSdkRecordedSpansMessageRangesFromSteps(
-          activeTraceCtx.recordedSpans,
-          activePromptInputMessages.length,
-          steps,
-          promptIndex,
-        );
-      }
-
-      // PR 5a failure-detection (mirror PR 4b / 4d three-signal shape):
-      //   (a) No new messages → driver returned nothing (network
-      //       failure, model returned empty, …).
-      //   (b) Non-tool error span captured during the run (LLM step
-      //       failure, scrub failure, …). Tool error spans
-      //       (category "tool") flow through the existing
-      //       `failOnToolError` gate below — DON'T treat them as cycle
-      //       failures here.
-      // `accumulatedUsage` is already up-to-date from the last
-      // `onStepSnapshot`, so failure branches inherit correct token
-      // totals (PR 4b "totalUsage before failure" invariant).
-      if (promptResponseMessages.length === 0) {
-        iterationError =
-          "Stream returned no content (local-BYOK driver failed)";
-        logger.error(
-          "[evals] streamText returned no new messages this turn; treating as cycle failure",
-        );
-        recordedSpans.push(...activeTraceCtx.recordedSpans);
-        toolsCalledByPrompt.push([]);
-        // Cursor PR 5a review fix (Medium "Soft failure skips streaming
-        // error events"): emit the failure trace_snapshot + error event
-        // before `break` so live SSE consumers see the failure signal
-        // immediately. Without these, a turn that already emitted
-        // `turn_start` ends silently from the consumer's POV.
-        emit(
-          buildTraceSnapshotEvent({
-            turnIndex: promptIndex,
-            ...(activeCompletedStepCount > 0
-              ? { stepIndex: activeCompletedStepCount - 1 }
-              : {}),
-            snapshotKind: "failure",
-            messages: withSystemPrefix(activePromptInputMessages),
-            spans: recordedSpans,
-            actualToolCalls: extractToolCallsFromConversation({
-              messages: activePromptInputMessages,
-            }),
-            usage: accumulatedUsage,
-          }),
-        );
-        emit({ type: "error", message: iterationError });
-        handle.cleanup();
-        break;
-      }
-      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
-        // Codex PR 5a review fix (also applies to PR 4b's non-stream
-        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
-        // records BOTH a `category:"tool"` span AND a child
-        // `category:"error"` span carrying `toolCallId`/`toolName`
-        // (see eval-trace-capture.ts:258-275). The simple
-        // `category !== "tool"` filter catches the child error span
-        // and treats failed tool calls as cycle failures even when
-        // `advancedConfig.failOnToolError === false`. Excluding any
-        // span associated with a tool (carries `toolCallId`) restores
-        // the intended deferral to the `failOnToolError` gate.
-        (span) =>
-          span.status === "error" &&
-          span.category !== "tool" &&
-          !(span as { toolCallId?: string }).toolCallId,
-      );
-      if (stepErrorSpan) {
-        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
-        logger.error(
-          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
-        );
-        recordedSpans.push(...activeTraceCtx.recordedSpans);
-        toolsCalledByPrompt.push(
-          extractToolCallsFromConversation({
+        if (activeTraceCtx.recordedSpans.length > 0) {
+          patchAiSdkRecordedSpansMessageRangesFromSteps(
+            activeTraceCtx.recordedSpans,
+            activePromptInputMessages.length,
             steps,
-            messages: promptResponseMessages,
-          }),
+            promptIndex
+          );
+        }
+
+        // PR 5a failure-detection (mirror PR 4b / 4d three-signal shape):
+        //   (a) No new messages → driver returned nothing (network
+        //       failure, model returned empty, …).
+        //   (b) Non-tool error span captured during the run (LLM step
+        //       failure, scrub failure, …). Tool error spans
+        //       (category "tool") flow through the existing
+        //       `failOnToolError` gate below — DON'T treat them as cycle
+        //       failures here.
+        // `accumulatedUsage` is already up-to-date from the last
+        // `onStepSnapshot`, so failure branches inherit correct token
+        // totals (PR 4b "totalUsage before failure" invariant).
+        if (promptResponseMessages.length === 0) {
+          iterationError =
+            "Stream returned no content (local-BYOK driver failed)";
+          logger.error(
+            "[evals] streamText returned no new messages this turn; treating as cycle failure"
+          );
+          recordedSpans.push(...activeTraceCtx.recordedSpans);
+          toolsCalledByPrompt.push([]);
+          // Cursor PR 5a review fix (Medium "Soft failure skips streaming
+          // error events"): emit the failure trace_snapshot + error event
+          // before `break` so live SSE consumers see the failure signal
+          // immediately. Without these, a turn that already emitted
+          // `turn_start` ends silently from the consumer's POV.
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              ...(activeCompletedStepCount > 0
+                ? { stepIndex: activeCompletedStepCount - 1 }
+                : {}),
+              snapshotKind: "failure",
+              messages: withSystemPrefix(activePromptInputMessages),
+              spans: recordedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: activePromptInputMessages,
+              }),
+              usage: accumulatedUsage,
+            })
+          );
+          emit({ type: "error", message: iterationError });
+          handle.cleanup();
+          break;
+        }
+        const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+          // Codex PR 5a review fix (also applies to PR 4b's non-stream
+          // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+          // records BOTH a `category:"tool"` span AND a child
+          // `category:"error"` span carrying `toolCallId`/`toolName`
+          // (see eval-trace-capture.ts:258-275). The simple
+          // `category !== "tool"` filter catches the child error span
+          // and treats failed tool calls as cycle failures even when
+          // `advancedConfig.failOnToolError === false`. Excluding any
+          // span associated with a tool (carries `toolCallId`) restores
+          // the intended deferral to the `failOnToolError` gate.
+          (span) =>
+            span.status === "error" &&
+            span.category !== "tool" &&
+            !(span as { toolCallId?: string }).toolCallId
         );
-        // PR 4b review fix (Cursor "Step error drops assistant
-        // transcript"): merge the partial response into
-        // `conversationMessages` so persisted iterations include
-        // whatever the model produced before the failure.
+        if (stepErrorSpan) {
+          iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+          logger.error(
+            `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
+          );
+          recordedSpans.push(...activeTraceCtx.recordedSpans);
+          toolsCalledByPrompt.push(
+            extractToolCallsFromConversation({
+              steps,
+              messages: promptResponseMessages,
+            })
+          );
+          // PR 4b review fix (Cursor "Step error drops assistant
+          // transcript"): merge the partial response into
+          // `conversationMessages` so persisted iterations include
+          // whatever the model produced before the failure.
+          conversationMessages = [
+            ...activePromptInputMessages,
+            ...promptResponseMessages,
+          ];
+          // Cursor PR 5a review fix (Medium "Soft failure skips
+          // streaming error events"): emit the failure trace_snapshot +
+          // error event before `break` (mirror the no-msg branch above).
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              ...(activeCompletedStepCount > 0
+                ? { stepIndex: activeCompletedStepCount - 1 }
+                : {}),
+              snapshotKind: "failure",
+              messages: withSystemPrefix(conversationMessages),
+              spans: recordedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: conversationMessages,
+              }),
+              usage: accumulatedUsage,
+            })
+          );
+          emit({ type: "error", message: iterationError });
+          handle.cleanup();
+          break;
+        }
+
+        const promptToolsCalled = extractToolCallsFromConversation({
+          steps,
+          messages: promptResponseMessages,
+        });
+        toolsCalledByPrompt.push(promptToolsCalled);
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+
         conversationMessages = [
           ...activePromptInputMessages,
           ...promptResponseMessages,
         ];
-        // Cursor PR 5a review fix (Medium "Soft failure skips
-        // streaming error events"): emit the failure trace_snapshot +
-        // error event before `break` (mirror the no-msg branch above).
-        emit(
-          buildTraceSnapshotEvent({
-            turnIndex: promptIndex,
-            ...(activeCompletedStepCount > 0
-              ? { stepIndex: activeCompletedStepCount - 1 }
-              : {}),
-            snapshotKind: "failure",
-            messages: withSystemPrefix(conversationMessages),
-            spans: recordedSpans,
-            actualToolCalls: extractToolCallsFromConversation({
-              messages: conversationMessages,
-            }),
-            usage: accumulatedUsage,
-          }),
-        );
-        emit({ type: "error", message: iterationError });
-        handle.cleanup();
-        break;
-      }
-
-      const promptToolsCalled = extractToolCallsFromConversation({
-        steps,
-        messages: promptResponseMessages,
-      });
-      toolsCalledByPrompt.push(promptToolsCalled);
-      recordedSpans.push(...activeTraceCtx.recordedSpans);
-
-      conversationMessages = [
-        ...activePromptInputMessages,
-        ...promptResponseMessages,
-      ];
-      // Note: `accumulatedUsage` was updated incrementally via
-      // `onStepSnapshot`; no post-loop merge needed.
+        // Note: `accumulatedUsage` was updated incrementally via
+        // `onStepSnapshot`; no post-loop merge needed.
 
         emit(
           buildTraceSnapshotEvent({
@@ -3714,7 +3276,7 @@ const streamIterationWithAiSdk = async ({
               messages: conversationMessages,
             }),
             usage: accumulatedUsage,
-          }),
+          })
         );
 
         activeTraceCtx = null;
@@ -3738,7 +3300,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -3763,8 +3325,11 @@ const streamIterationWithAiSdk = async ({
             usage: hasReportedUsage(accumulatedUsage)
               ? accumulatedUsage
               : undefined,
+            renderObservations: summarizeRenderObservations(
+              browser.widgetRenderObservations,
+            ),
           }),
-          test.successPredicates,
+          test.successPredicates
         )
       : [];
     const passed = finalizePassedForEval({
@@ -3788,7 +3353,8 @@ const streamIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+    const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+      injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -3811,8 +3377,12 @@ const streamIterationWithAiSdk = async ({
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts from the streamed Computer Use path.
-      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
-      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
+      ...(browser.widgetRenderObservations.length
+        ? { widgetRenderObservations: browser.widgetRenderObservations }
+        : {}),
+      ...(browser.browserInteractionSteps.length
+        ? { browserInteractionSteps: browser.browserInteractionSteps }
+        : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
@@ -3831,7 +3401,7 @@ const streamIterationWithAiSdk = async ({
               hostPolicy,
               toolSignals,
               evaluation.toolsCalled.length,
-              injectOpenAiCompat === true,
+              injectOpenAiCompat === true
             )
           : {}),
       },
@@ -3855,7 +3425,7 @@ const streamIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
-          test.matchOptions,
+          test.matchOptions
         ),
         iterationId: undefined,
       };
@@ -3905,7 +3475,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
@@ -3915,7 +3485,8 @@ const streamIterationWithAiSdk = async ({
     // the persisted and returned verdicts agree.
     evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+    const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+      injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -3939,7 +3510,7 @@ const streamIterationWithAiSdk = async ({
           totalTokens: accumulatedUsage.totalTokens,
         },
         prompts: promptTraceSummaries,
-      }),
+      })
     );
     emit({
       type: "error",
@@ -3967,8 +3538,12 @@ const streamIterationWithAiSdk = async ({
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts collected before the failure still persist.
-      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
-      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
+      ...(browser.widgetRenderObservations.length
+        ? { widgetRenderObservations: browser.widgetRenderObservations }
+        : {}),
+      ...(browser.browserInteractionSteps.length
+        ? { browserInteractionSteps: browser.browserInteractionSteps }
+        : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -3982,7 +3557,7 @@ const streamIterationWithAiSdk = async ({
               hostPolicy,
               toolSignals,
               evaluation.toolsCalled.length,
-              injectOpenAiCompat === true,
+              injectOpenAiCompat === true
             )
           : {}),
       },
@@ -4000,25 +3575,19 @@ const streamIterationWithAiSdk = async ({
   } finally {
     // PR 9: tear down the harness (and its headless Chromium, if launched) on
     // success, failure, OR mid-stream abort. No-op when never constructed.
-    await widgetHarnessRef.current?.dispose();
-    if (widgetRenderObservations.length > 0) {
-      logger.debug("[evals] widget render observations (stream)", {
-        count: widgetRenderObservations.length,
-        statuses: widgetRenderObservations.map((o) => o.status),
-      });
-    }
+    await browser.dispose();
   }
 };
 
 const streamIterationViaBackend = async (
   params: RunIterationBackendParams & {
     emit: StreamEmit;
-  },
+  }
 ): Promise<EvalIterationOutcome> => {
   // Browser-rendered MCP App eval (PR 14): hosted-path harness context for
   // the streaming runner — same wiring as `runIterationViaBackend`; the
   // wrapper's try/finally guarantees Chromium teardown on every exit.
-  const browser = createEvalBrowserContext({
+  const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
@@ -4067,7 +3636,7 @@ const streamIterationViaBackendWithBrowser = async (
   }: RunIterationBackendParams & {
     emit: StreamEmit;
   },
-  browser: EvalBrowserContext,
+  browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -4076,7 +3645,7 @@ const streamIterationViaBackendWithBrowser = async (
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -4084,7 +3653,7 @@ const streamIterationViaBackendWithBrowser = async (
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -4101,7 +3670,7 @@ const streamIterationViaBackendWithBrowser = async (
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           iterationId: undefined,
         };
@@ -4136,9 +3705,7 @@ const streamIterationViaBackendWithBrowser = async (
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as
-      | Record<string, unknown>
-      | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -4177,8 +3744,8 @@ const streamIterationViaBackendWithBrowser = async (
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-      ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -4224,11 +3791,11 @@ const streamIterationViaBackendWithBrowser = async (
   // `builtInToolIds` resolve via the shared registry, billed against the
   // project target the org-BYOK/jam billing paths derive.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
-  const builtInTools = safeResolveBuiltInTools(
-    resolvedExecution.builtInToolIds,
+  const builtInTools = resolveHostTools(
+    { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
-      : null,
+      : null
   );
   let prepared: PrepareChatV2Result;
   try {
@@ -4249,8 +3816,7 @@ const streamIterationViaBackendWithBrowser = async (
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     await persistSetupFailedIteration({
       iterationId,
@@ -4277,7 +3843,7 @@ const streamIterationViaBackendWithBrowser = async (
       promptTurns,
       [],
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     failedEvaluation.passed = false;
     return {
@@ -4315,7 +3881,7 @@ const streamIterationViaBackendWithBrowser = async (
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     ),
     iterationId: undefined,
   });
@@ -4334,628 +3900,278 @@ const streamIterationViaBackendWithBrowser = async (
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
     if (isAborted()) {
       logger.debug(
-        "[evals] backend streaming iteration aborted between turns; skipping record",
+        "[evals] backend streaming iteration aborted between turns; skipping record"
       );
       return returnCancelled();
     }
 
     const promptTurn = promptTurns[promptIndex]!;
-    const promptToolsCalled: ToolCall[] = [];
-    toolsCalledByPrompt.push(promptToolsCalled);
-    messageHistory.push({
-      role: "user",
-      content: promptTurn.prompt,
-    });
 
-    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
-    // this turn, and start the turn with a clean widget surface (a widget
-    // kept mounted by a previous prompt turn must not bleed into this one).
-    browser.setActivePromptIndex(promptIndex);
-    await browser.dismissCarriedWidget();
-
-    emit({
-      type: "turn_start",
-      turnIndex: promptIndex,
-      prompt: promptTurn.prompt,
-    });
-
-    // Per-turn span-capture context. `wrapToolSetForEvalTrace`
-    // instruments each tool's `execute` to push to
-    // `traceCtx.recordedSpans`; we drain into `capturedSpans` after the
-    // engine finishes (same shape as the non-stream backend runner).
-    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
-    // PR 14: Computer Use tools ride the same wrap (see the non-stream
-    // backend runner).
-    const tracedTools = wrapToolSetForEvalTrace(
-      { ...prepared.allTools, ...browser.computerWidgetTools },
-      traceCtx,
+    // Shared hosted-turn body (engine call + browser pipeline + accumulator
+    // drains + three-shape failure detection) — see driveHostedEvalTurn.
+    // This SSE runner layers its emitters through `buildSinks`; the factory
+    // runs once per turn so the per-turn accumulators (partial-response
+    // builders, step counters, usage deltas) reset naturally.
+    const outcome = await driveHostedEvalTurn({
       promptIndex,
-    );
+      prompt: promptTurn.prompt,
+      browser,
+      prepared,
+      modelDefinition,
+      modelId,
+      selectedServers,
+      mcpClientManager,
+      evalAuthContext,
+      endpointPath,
+      extraBodyFields,
+      toolChoice,
+      abortSignal,
+      maxSteps: MAX_STEPS,
+      runStartedAt,
+      isAborted,
+      logSuffix: " (stream)",
+      extractToolCalls: (messages) =>
+        extractToolCallsFromConversation({ messages }),
+      acc: {
+        messageHistory,
+        capturedSpans,
+        accumulatedUsage,
+        toolsCalledByPrompt,
+      },
+      buildSinks: ({ baselineUsage, traceCtx, promptToolsCalled }) => {
+        // Track engine-emitted step events so the post-turn `turn_finish`
+        // trace_snapshot has a stable last-step index, and so failure
+        // branches can carry stepIndex when available.
+        let activeCompletedStepCount = 0;
+        let lastSettledStepIndex: number | undefined;
+        // Engine reports turn-cumulative usage on each `onStepFinish`. The
+        // legacy inline loop emitted PER-STEP token counts on `step_finish`
+        // SSE, so we track the previous step's cumulative and emit the delta.
+        // (Cursor PR 5b review fix: "Step finish reports cumulative usage".)
+        let prevStepCumulativeInput = 0;
+        let prevStepCumulativeOutput = 0;
 
-    const messageCountBeforeTurn = messageHistory.length;
-    const inputMessages: ModelMessage[] = [...messageHistory];
-    const accumulatedUsageBeforeTurn = {
-      inputTokens: accumulatedUsage.inputTokens ?? 0,
-      outputTokens: accumulatedUsage.outputTokens ?? 0,
-      totalTokens: accumulatedUsage.totalTokens ?? 0,
-    };
-    // Track engine-emitted step events so the post-turn `turn_finish`
-    // trace_snapshot has a stable last-step index, and so failure
-    // branches can carry stepIndex when available.
-    let activeCompletedStepCount = 0;
-    let lastSettledStepIndex: number | undefined;
-    // Engine reports turn-cumulative usage on each `onStepFinish`. The
-    // legacy inline loop emitted PER-STEP token counts on
-    // `step_finish` SSE, so we track the previous step's cumulative
-    // and emit the delta. (Cursor PR 5b review fix: "Step finish
-    // reports cumulative usage" — multi-step hosted eval turns
-    // otherwise show inflated per-step counts vs the local-BYOK
-    // stream path / consumeFullStreamAsEvalEvents.)
-    let prevStepCumulativeInput = 0;
-    let prevStepCumulativeOutput = 0;
+        // In-flight partial-response accumulator. Mid-turn `step_finish`
+        // trace_snapshot needs to carry the assistant/tool content that
+        // already streamed within the turn — the engine doesn't roll its own
+        // `messageHistory` ref forward until the turn settles, so
+        // `messageHistory` here is stale (prior turns + this turn's user
+        // prompt). Mirror PR 5a's `activePartialResponseMessages` shape.
+        // (Cursor PR 5b review fix: "Step snapshots omit in-turn messages".)
+        let partialAssistantText = "";
+        const partialAssistantToolCalls: Array<{
+          type: "tool-call";
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        }> = [];
+        const partialToolResultMessages: ModelMessage[] = [];
+        const buildPartialResponseMessages = (): ModelMessage[] => {
+          const content: unknown[] = [];
+          if (partialAssistantText) {
+            content.push({ type: "text", text: partialAssistantText });
+          }
+          content.push(...partialAssistantToolCalls);
+          const out: ModelMessage[] = [];
+          if (content.length > 0) {
+            out.push({ role: "assistant", content } as ModelMessage);
+          }
+          out.push(...partialToolResultMessages);
+          return out;
+        };
 
-    // In-flight partial-response accumulator. Mid-turn `step_finish`
-    // trace_snapshot needs to carry the assistant/tool content that
-    // already streamed within the turn — the engine doesn't roll its
-    // own `messageHistory` ref forward into `runAssistantTurn`'s
-    // return value until the turn settles, so `messageHistory` here
-    // is stale (only contains prior turns' history + this turn's user
-    // prompt). Mirror PR 5a's `activePartialResponseMessages` shape:
-    // synthesize one rolling assistant message from text deltas + tool
-    // calls, and append synthetic tool-result messages from tool
-    // results. (Cursor PR 5b review fix: "Step snapshots omit in-turn
-    // messages" — without this, live UI consumers watching SSE see
-    // empty assistant transcripts mid-turn even though tool_call /
-    // text_delta SSE already fired.)
-    let partialAssistantText = "";
-    const partialAssistantToolCalls: Array<{
-      type: "tool-call";
-      toolCallId: string;
-      toolName: string;
-      input: unknown;
-    }> = [];
-    const partialToolResultMessages: ModelMessage[] = [];
-    const buildPartialResponseMessages = (): ModelMessage[] => {
-      const content: unknown[] = [];
-      if (partialAssistantText) {
-        content.push({ type: "text", text: partialAssistantText });
-      }
-      content.push(...partialAssistantToolCalls);
-      const out: ModelMessage[] = [];
-      if (content.length > 0) {
-        out.push({ role: "assistant", content } as ModelMessage);
-      }
-      out.push(...partialToolResultMessages);
-      return out;
-    };
-
-    // PR 5b-followup-2: capture the engine's structured-error event
-    // when the Convex `/stream` response is non-OK (429 daily-cap,
-    // hosted-model errors, ...) or when an in-stream catch fires. The
-    // engine writes a generic `error` UI chunk to the no-op writer
-    // (because `streamSink: "none"`); the callback gives us the
-    // parsed `{ code?, message, details? }` shape so failure-detection
-    // branches below can surface the actual reason on the eval SSE
-    // error event instead of dropping the detail with the generic
-    // "Backend stream failed during iteration" fallback.
-    let lastEngineError: MCPJamEngineErrorEvent | undefined;
-
-    // Engine callbacks → SSE events. These mirror the events the old
-    // inline backend stream loop emitted from its chunk-processing
-    // switch:
-    //  - `onLiveTextDelta` → `text_delta` SSE + rolling assistant text
-    //  - `onToolCall`      → `tool_call` SSE + push to partial assistant
-    //  - `onToolResult`    → `tool_result` SSE + append synthetic tool msg
-    //  - `onStepFinish`    → `step_finish` SSE (with per-step usage
-    //                        DELTA, not cumulative) + step_finish trace
-    //                        snapshot. Gated on `settledWithError ===
-    //                        false` per Marcelo's PR 5b-pre review
-    //                        caveat. After firing, the partial-response
-    //                        accumulators reset so the next step starts
-    //                        fresh.
-    //  - `onEngineError`   → captures the structured guardrail error
-    //                        body for use in the failure-detection
-    //                        fallback (PR 5b-followup-2).
-    //
-    // `promptToolsCalled` mirrors the legacy local accumulator; the
-    // engine's `messageHistory` is the source of truth post-turn, so
-    // we also rebuild from there for the eval grader (see
-    // `extractToolCallsFromConversation` below). Pushing into
-    // `promptToolsCalled` here keeps the SSE consumer's running view
-    // aligned with the trace snapshot's `actualToolCalls`.
-    const onLiveTextDelta = (delta: string) => {
-      if (typeof delta !== "string" || delta.length === 0) return;
-      partialAssistantText += delta;
-      emit({ type: "text_delta", content: delta });
-    };
-    const onToolCall = (event: MCPJamToolCallEvent) => {
-      if (!event.toolName) return;
-      // PR 14: cache the input so the widget render hook can feed the
-      // OpenAI-compat shim the real tool-call args.
-      browser.noteToolCallInput(event);
-      const args = (event.input ?? {}) as Record<string, unknown>;
-      promptToolsCalled.push({
-        toolName: event.toolName,
-        arguments: args as Record<string, any>,
-      });
-      partialAssistantToolCalls.push({
-        type: "tool-call",
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        input: args,
-      });
-      emit({
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        args,
-      });
-    };
-    const onToolResult = async (event: MCPJamToolResultEvent) => {
-      partialToolResultMessages.push({
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: event.toolCallId,
-            ...(event.toolName ? { toolName: event.toolName } : {}),
-            output: event.output,
-            ...(event.isError ? { isError: true } : {}),
+        // Engine callbacks → SSE events, mirroring the legacy inline loop:
+        //  - `onLiveTextDelta` → `text_delta` SSE + rolling assistant text
+        //  - `onToolCall`      → `tool_call` SSE + push to partial assistant
+        //                        (the input cache write happens in the shared
+        //                        helper before this sink fires)
+        //  - `onToolResult`    → `tool_result` SSE + synthetic tool msg (the
+        //                        harness render happens in the shared helper
+        //                        AFTER this sink — live consumers shouldn't
+        //                        wait on Chromium)
+        //  - `onStepFinish`    → `step_finish` SSE (per-step usage DELTA) +
+        //                        step_finish trace snapshot, gated on
+        //                        `settledWithError === false`
+        //  - `onTurnFailure`   → failure trace_snapshot + `error` SSE
+        //  - `onTurnSuccess`   → turn_finish trace_snapshot + `turn_finish`
+        return {
+          onTurnStart: () =>
+            emit({
+              type: "turn_start",
+              turnIndex: promptIndex,
+              prompt: promptTurn.prompt,
+            }),
+          onLiveTextDelta: (delta: string) => {
+            if (typeof delta !== "string" || delta.length === 0) return;
+            partialAssistantText += delta;
+            emit({ type: "text_delta", content: delta });
           },
-        ],
-      } as ModelMessage);
-      emit({
-        type: "tool_result",
-        toolCallId: event.toolCallId,
-        result: event.output,
-        isError: event.isError,
-      });
-      // PR 14: render MCP App tool results in the harness AFTER the SSE
-      // emit (live consumers shouldn't wait on Chromium). The engine awaits
-      // this callback, so the widget is mounted before the next step's
-      // advertised-tool gate runs.
-      await browser.handleEngineToolResult(event);
-    };
-    const onStepFinish = (event: MCPJamStepFinishEvent) => {
-      // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
-      // settled-OK steps; failed backend steps surface through the
-      // post-turn failure detection (no `turnTrace`, error span, etc).
-      if (event.settledWithError) return;
-      activeCompletedStepCount += 1;
-      lastSettledStepIndex = event.stepIndex;
-      // Per-step delta = cumulative-now − cumulative-at-prev-step.
-      // Engine reports turn-cumulative on `event.turnUsage`; emit just
-      // this step's contribution on the SSE `step_finish.usage` field
-      // so the wire shape matches the legacy inline loop (which
-      // forwarded each step's own `messageMetadata` totals).
-      const cumulativeInput = event.turnUsage?.inputTokens ?? 0;
-      const cumulativeOutput = event.turnUsage?.outputTokens ?? 0;
-      const cumulativeTotal = event.turnUsage?.totalTokens ?? 0;
-      const stepDeltaInput = Math.max(
-        0,
-        cumulativeInput - prevStepCumulativeInput,
-      );
-      const stepDeltaOutput = Math.max(
-        0,
-        cumulativeOutput - prevStepCumulativeOutput,
-      );
-      prevStepCumulativeInput = cumulativeInput;
-      prevStepCumulativeOutput = cumulativeOutput;
-      // Roll `accumulatedUsage` forward to the engine's reported
-      // turn-cumulative + the pre-turn baseline (multi-turn runs).
-      accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens + cumulativeInput;
-      accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens + cumulativeOutput;
-      accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens + cumulativeTotal;
-      emit({
-        type: "step_finish",
-        stepNumber: activeCompletedStepCount,
-        usage: {
-          inputTokens: stepDeltaInput,
-          outputTokens: stepDeltaOutput,
-        },
-      });
-      // Live trace snapshot for the step. Compose snapshot messages
-      // from the stale `messageHistory` (prior turns + this turn's
-      // user prompt) PLUS the in-flight partial response built from
-      // the chunk-event accumulators — without this, mid-turn step
-      // snapshots show only the user prompt even though `tool_call` /
-      // `text_delta` SSE already fired. Spans:
-      //  - `capturedSpans`        — prior turns' merged spans.
-      //  - `traceCtx.recordedSpans` — this turn's tool-instrumentation
-      //                              spans from `wrapToolSetForEvalTrace`.
-      //  - `event.turnSpans`      — PR 5b-followup-2: this turn's
-      //                              engine-recorded LLM-step + tool
-      //                              spans, snapshot at step settlement
-      //                              (closes Cursor PR 5b "Step
-      //                              snapshots omit LLM spans"). Without
-      //                              this the live trace UI lost
-      //                              per-step LLM timing for
-      //                              multi-step hosted streaming evals.
-      const snapshotMessages = [
-        ...messageHistory,
-        ...buildPartialResponseMessages(),
-      ];
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          stepIndex: event.stepIndex,
-          snapshotKind: "step_finish",
-          messages: withSystemPrefix(snapshotMessages),
-          spans: [
-            ...capturedSpans,
-            ...traceCtx.recordedSpans,
-            ...event.turnSpans,
-          ],
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: snapshotMessages,
-          }),
-          usage: accumulatedUsage,
-        }),
-      );
-      // NO per-step reset of partial-response accumulators. The
-      // earlier version of this PR cleared them here, which corrupted
-      // step N's snapshot by dropping step 1..N-1's assistant/tool
-      // content — `messageHistory` doesn't roll forward from
-      // `turnResult.messages` until AFTER `runAssistantTurn` returns,
-      // so during the turn the accumulators are the ONLY source of
-      // in-flight content for snapshot fidelity. The accumulators are
-      // per-turn `let`s scoped to this `for` body, so they reset
-      // naturally on the next prompt-turn iteration; no double-count
-      // risk because `messageHistory` is replaced with the engine's
-      // canonical post-turn transcript below before the next iteration.
-    };
-    // PR 5b-followup-2: capture the engine's structured-error event.
-    // The callback fires at the same site that emits the writer-side
-    // `error` UI chunk; capturing here lets the failure-detection
-    // branches below surface guardrail detail (429 daily-cap text,
-    // hosted-model setup errors, ...) on the eval SSE error event.
-    const onEngineError = (event: MCPJamEngineErrorEvent) => {
-      lastEngineError = event;
-    };
-
-    // `runAssistantTurn` call shape mirrors `runIterationViaBackend`
-    // (the non-stream backend runner) with SSE callback wires added.
-    // The contract bullets carried since PR 5a:
-    //  - Wire shape: `systemPrompt:` arg (engine sends `system:` field
-    //    to Convex `/stream`).
-    //  - Persistence prefix: `backendEnhancedSystemPromptForPersist`
-    //    prepended at finishParams (see post-loop section).
-    //  - SSE prefix: `withSystemPrefix` applied at every
-    //    `buildTraceSnapshotEvent` call site.
-    //  - Eval correctness invariants: progressive discovery, skill
-    //    tools, anthropic name validation flow from `prepareChatV2`.
-    //  - Resolver wire-up: `resolveExecutionContext` + suite
-    //    hostConfig already in place (PR 4d).
-    //  - UI event contract preserved: text_delta / tool_call /
-    //    tool_result / step_finish / turn_finish / trace_snapshot all
-    //    still emit in the same order as the legacy inline loop.
-    const mergedExtraBodyFields: Record<string, unknown> = {
-      maxOutputTokens: 16384,
-      ...(extraBodyFields ?? {}),
-      ...(toolChoice ? { toolChoice } : {}),
-    };
-
-    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
-    try {
-      turnResult = await runAssistantTurn({
-        messages: inputMessages,
-        modelDefinition: { ...modelDefinition, id: modelId },
-        systemPrompt: prepared.enhancedSystemPrompt,
-        ...(prepared.resolvedTemperature != null
-          ? { temperature: prepared.resolvedTemperature }
-          : {}),
-        tools: tracedTools,
-        ...(selectedServers.length
-          ? { selectedServerIds: selectedServers }
-          : {}),
-        mcpClientManager,
-        authContext: evalAuthContext,
-        sourceType: "eval",
-        origin: "eval",
-        streamSink: "none",
-        persistMode: "caller",
-        approvalMode: "auto-deny",
-        endpointPath,
-        extraBodyFields: mergedExtraBodyFields,
-        ...(abortSignal ? { abortSignal } : {}),
-        maxSteps: MAX_STEPS,
-        progressivePlan: prepared.progressivePlan,
-        discoveryState: prepared.discoveryState,
-        onLiveTextDelta,
-        onToolCall,
-        onToolResult,
-        onStepFinish,
-        onEngineError,
-        // Browser-rendered MCP App eval (PR 14): hide `computer` /
-        // `finish_widget` until a widget has actually rendered.
-        ...(browser.prepareAdvertisedTools
-          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
-          : {}),
-      });
-    } catch (error) {
-      // Cancellation: bail without recording. AbortError can surface
-      // either as a thrown exception or as the engine's internal
-      // silent-cancellation path; check `isAborted()` to catch both.
-      if (
-        isAborted() ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
-        logger.debug(
-          "[evals] backend streaming iteration aborted due to cancellation",
-        );
-        return returnCancelled();
-      }
-
-      if (error instanceof Error) {
-        iterationError = error.message || error.toString();
-        const responseBody = (error as { responseBody?: unknown })
-          .responseBody;
-        if (responseBody && typeof responseBody === "string") {
-          iterationErrorDetails = responseBody;
-        }
-      } else if (typeof error === "string") {
-        iterationError = error;
-      } else {
-        iterationError = String(error);
-      }
-      if (iterationError && iterationError.length > 500) {
-        iterationError = iterationError.substring(0, 497) + "...";
-      }
-      logger.error("[evals] runAssistantTurn (stream) failed", error);
-      // Mirror the in-stream failure signal the legacy inline loop
-      // emitted: failure trace_snapshot + error event before `break`
-      // so live SSE consumers don't see a silent end.
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        }),
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        details: iterationErrorDetails,
-      });
-      break;
-    }
-
-    // Cancellation that fired DURING `runAssistantTurn` without
-    // surfacing as a throw (engine catches AbortError, sets internal
-    // `aborted` flag, omits `turnTrace`, returns normally).
-    if (isAborted()) {
-      logger.debug(
-        "[evals] backend streaming iteration aborted mid-turn; skipping record",
-      );
-      return returnCancelled();
-    }
-
-    // Drain per-turn outputs into iteration-level accumulators BEFORE
-    // failure checks. Same shape as `runIterationViaBackend` (PR 3/4d).
-    //
-    // Tool spans from `wrapToolSetForEvalTrace` land in
-    // `traceCtx.recordedSpans` with `stepIndex: -1` (no `prepareStep`
-    // bridge to the engine yet); the engine's own LLM-step spans land
-    // on `turnResult.turnTrace.spans` with correct per-step indices.
-    // Merge both for the persisted run.
-    capturedSpans.push(...traceCtx.recordedSpans);
-    if (turnResult.turnTrace?.spans?.length) {
-      capturedSpans.push(...turnResult.turnTrace.spans);
-    }
-    // Reconcile accumulated usage to the engine's canonical post-turn
-    // total. The per-step `onStepFinish` callback already updates
-    // `accumulatedUsage` for each completed step, but if the engine
-    // resolved with zero settled-OK steps (no-content failure path),
-    // the baseline is the only source of truth — fold in `turnTrace.usage`
-    // to match the non-stream runner's "totalUsage merged BEFORE
-    // failure branches" invariant from PR 4b.
-    if (turnResult.usage) {
-      accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens +
-        (turnResult.usage.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens +
-        (turnResult.usage.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens +
-        (turnResult.usage.totalTokens ?? 0);
-    }
-
-    // Per-turn tool calls — rebuild from the new messages only so
-    // prior turns' calls aren't double-counted. The engine returns
-    // the full transcript; slice from `messageCountBeforeTurn`.
-    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-    // `promptToolsCalled` was already populated via the `onToolCall`
-    // callback during the run. Reconcile against the engine's
-    // transcript so the grader sees the canonical post-turn shape
-    // (handles cases where `onToolCall` arguments were `undefined`).
-    const canonicalPromptToolsCalled = extractToolCallsFromConversation({
-      messages: newMessages,
+          onToolCall: (event: MCPJamToolCallEvent) => {
+            if (!event.toolName) return;
+            const args = (event.input ?? {}) as Record<string, unknown>;
+            promptToolsCalled.push({
+              toolName: event.toolName,
+              arguments: args as Record<string, any>,
+            });
+            partialAssistantToolCalls.push({
+              type: "tool-call",
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              input: args,
+            });
+            emit({
+              type: "tool_call",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              args,
+            });
+          },
+          onToolResult: (event: MCPJamToolResultEvent) => {
+            partialToolResultMessages.push({
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: event.toolCallId,
+                  ...(event.toolName ? { toolName: event.toolName } : {}),
+                  output: event.output,
+                  ...(event.isError ? { isError: true } : {}),
+                },
+              ],
+            } as ModelMessage);
+            emit({
+              type: "tool_result",
+              toolCallId: event.toolCallId,
+              result: event.output,
+              isError: event.isError,
+            });
+          },
+          onStepFinish: (event: MCPJamStepFinishEvent) => {
+            // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
+            // settled-OK steps; failed backend steps surface through the
+            // post-turn failure detection.
+            if (event.settledWithError) return;
+            activeCompletedStepCount += 1;
+            lastSettledStepIndex = event.stepIndex;
+            // Per-step delta = cumulative-now − cumulative-at-prev-step.
+            const cumulativeInput = event.turnUsage?.inputTokens ?? 0;
+            const cumulativeOutput = event.turnUsage?.outputTokens ?? 0;
+            const cumulativeTotal = event.turnUsage?.totalTokens ?? 0;
+            const stepDeltaInput = Math.max(
+              0,
+              cumulativeInput - prevStepCumulativeInput
+            );
+            const stepDeltaOutput = Math.max(
+              0,
+              cumulativeOutput - prevStepCumulativeOutput
+            );
+            prevStepCumulativeInput = cumulativeInput;
+            prevStepCumulativeOutput = cumulativeOutput;
+            // Roll `accumulatedUsage` forward to the engine's reported
+            // turn-cumulative + the pre-turn baseline (multi-turn runs).
+            accumulatedUsage.inputTokens =
+              baselineUsage.inputTokens + cumulativeInput;
+            accumulatedUsage.outputTokens =
+              baselineUsage.outputTokens + cumulativeOutput;
+            accumulatedUsage.totalTokens =
+              baselineUsage.totalTokens + cumulativeTotal;
+            emit({
+              type: "step_finish",
+              stepNumber: activeCompletedStepCount,
+              usage: {
+                inputTokens: stepDeltaInput,
+                outputTokens: stepDeltaOutput,
+              },
+            });
+            // Live trace snapshot for the step: stale `messageHistory`
+            // (prior turns + this turn's user prompt) PLUS the in-flight
+            // partial response; spans = prior turns' merged spans + this
+            // turn's tool-instrumentation spans + the engine's per-step
+            // LLM spans (PR 5b-followup-2).
+            const snapshotMessages = [
+              ...messageHistory,
+              ...buildPartialResponseMessages(),
+            ];
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                stepIndex: event.stepIndex,
+                snapshotKind: "step_finish",
+                messages: withSystemPrefix(snapshotMessages),
+                spans: [
+                  ...capturedSpans,
+                  ...traceCtx.recordedSpans,
+                  ...event.turnSpans,
+                ],
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: snapshotMessages,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            // NO per-step reset of the partial-response accumulators: during
+            // the turn they are the ONLY source of in-flight content for
+            // snapshot fidelity; they reset naturally with the next turn's
+            // sink factory.
+          },
+          onTurnFailure: (failure) => {
+            // Mirror the in-stream failure signal the legacy inline loop
+            // emitted: failure trace_snapshot + error event before the break
+            // so live SSE consumers don't see a silent end.
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                ...(lastSettledStepIndex != null
+                  ? { stepIndex: lastSettledStepIndex }
+                  : {}),
+                snapshotKind: "failure",
+                messages: withSystemPrefix(messageHistory),
+                spans: capturedSpans,
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: messageHistory,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            emit({
+              type: "error",
+              message: failure.iterationError,
+              ...(failure.iterationErrorDetails
+                ? { details: failure.iterationErrorDetails }
+                : {}),
+            });
+          },
+          onTurnSuccess: () => {
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                snapshotKind: "turn_finish",
+                messages: withSystemPrefix(messageHistory),
+                spans: capturedSpans,
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: messageHistory,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            emit({ type: "turn_finish", turnIndex: promptIndex });
+          },
+        };
+      },
     });
-    promptToolsCalled.length = 0;
-    promptToolsCalled.push(...canonicalPromptToolsCalled);
-
-    // Roll the engine's transcript forward as the next turn's input.
-    messageHistory.length = 0;
-    messageHistory.push(...turnResult.messages);
-
-    // Failure detection — same three-signal shape as the non-stream
-    // backend runner (PR 3/4d):
-    //   (a) Engine catch fired mid-turn (`!turnTrace`) — engine
-    //       runSucceeded=false, partial messages may exist.
-    //   (b) Engine succeeded but produced no new content
-    //       (`newMessages.length === 0`).
-    //   (c) Engine succeeded and produced content, but a later step
-    //       errored (non-tool error span on `turnTrace.spans`).
-    if (!turnResult.turnTrace) {
-      // PR 5b-followup-2: prefer the engine's captured structured
-      // error when present. Closes Cursor PR 5b "Stream guardrail
-      // errors lose detail" — without this, 429 daily-cap users saw
-      // the generic fallback below instead of the actual reason
-      // ("Daily MCPJam model limit reached. Use BYOK or try again
-      // tomorrow."). When no engine error was captured (true engine
-      // catch shape vs. a missed `onEngineError` site), keep the
-      // generic fallback for diagnostic clarity.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError =
-          "Backend stream failed during iteration (engine caught an error mid-turn)";
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0}, engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        }),
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
+    if (outcome.kind === "cancelled") return returnCancelled();
+    if (outcome.kind === "failed") {
+      iterationError = outcome.iterationError;
+      iterationErrorDetails = outcome.iterationErrorDetails;
       break;
     }
-    if (newMessages.length === 0) {
-      // PR 5b-followup-2 review fix (Cursor High "Guardrail errors
-      // ignore captured engine"): non-OK Convex `/stream` responses
-      // make `processOneStep` return `{shouldContinue: false}` — the
-      // engine breaks the loop, fires a synthetic finish chunk, sets
-      // `runSucceeded = true`, and surfaces a populated `turnTrace`.
-      // 429-shaped guardrail turns also add no assistant messages, so
-      // this branch fires (NOT the `!turnTrace` branch above). The
-      // captured `lastEngineError` is the actual reason ("Daily
-      // MCPJam model limit reached…"); the generic "Backend step
-      // returned no content" message loses it. Prefer the engine
-      // event here too.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError =
-          "Backend step returned no content (stream error or empty response)";
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) produced no new messages this turn; treating as cycle failure (engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        }),
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
-      break;
-    }
-    // Cursor / Codex PR 5a review fix applied here too: filter to
-    // backend step / LLM failure spans only (exclude `category: "tool"`
-    // AND any span carrying a `toolCallId` — the child error span that
-    // `wrapToolSetForEvalTrace` emits alongside a failed tool span).
-    // Tool-category error spans flow through the `failOnToolError`
-    // gate below; treating them as cycle failures here would defeat
-    // that policy.
-    const stepErrorSpan = turnResult.turnTrace.spans.find(
-      (span) =>
-        span.status === "error" &&
-        span.category !== "tool" &&
-        !(span as { toolCallId?: string }).toolCallId,
-    );
-    if (stepErrorSpan) {
-      // PR 5b-followup-2 review fix: same shape as the no-content
-      // branch above — a captured engine error is more informative
-      // than the span-name fallback. The error-span case fires for
-      // later-step failures after partial success (engine logged an
-      // `error`-category span via `pushAiSdkTrailingErrorSpan` or
-      // similar); if `onEngineError` also fired, prefer it.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category} engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        }),
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
-      break;
-    }
-
-    emit(
-      buildTraceSnapshotEvent({
-        turnIndex: promptIndex,
-        snapshotKind: "turn_finish",
-        messages: withSystemPrefix(messageHistory),
-        spans: capturedSpans,
-        actualToolCalls: extractToolCallsFromConversation({
-          messages: messageHistory,
-        }),
-        usage: accumulatedUsage,
-      }),
-    );
-    emit({ type: "turn_finish", turnIndex: promptIndex });
   }
-
 
   const evaluation = evaluateMultiTurnResults(
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
-    test.matchOptions,
+    test.matchOptions
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -4980,8 +4196,11 @@ const streamIterationViaBackendWithBrowser = async (
           usage: hasReportedUsage(accumulatedUsage)
             ? accumulatedUsage
             : undefined,
+          renderObservations: summarizeRenderObservations(
+            browser.widgetRenderObservations,
+          ),
         }),
-        test.successPredicates,
+        test.successPredicates
       )
     : [];
   const passed = finalizePassedForEval({
@@ -4995,7 +4214,8 @@ const streamIterationViaBackendWithBrowser = async (
   // returned evaluation so totals built from `evaluation.passed` agree with the
   // persisted iteration result.
   evaluation.passed = passed;
-  const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
+  const widgetSnapshots = await captureMcpAppWidgetSnapshots({
+    injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -5039,7 +4259,7 @@ const streamIterationViaBackendWithBrowser = async (
             hostPolicy,
             toolSignals,
             evaluation.toolsCalled.length,
-            injectOpenAiCompat === true,
+            injectOpenAiCompat === true
           )
         : {}),
     },
@@ -5116,11 +4336,11 @@ export const streamTestCase = async (params: {
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const isJamModel = isMCPJamProvidedModel(
     resolvedModelId,
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const orgByokRuntime = isJamModel
     ? undefined
@@ -5173,10 +4393,7 @@ export const streamTestCase = async (params: {
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,
         };
-        const id = await createIterationDirectly(
-          convexClient,
-          iterationParams,
-        );
+        const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
         logger.warn(
@@ -5184,7 +4401,7 @@ export const streamTestCase = async (params: {
           {
             runIndex,
             error: error instanceof Error ? error.message : String(error),
-          },
+          }
         );
         precreatedIterationIds.push(undefined);
       }

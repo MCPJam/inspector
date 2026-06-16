@@ -143,8 +143,16 @@ function ThreadCard({
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-sm font-medium">
-          {thread.visitorDisplayName ?? "Anonymous"}
+        <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+          <span className="truncate">
+            {thread.visitorDisplayName ?? "Anonymous"}
+          </span>
+          {thread.synthetic === true ? (
+            <Sparkles
+              className="size-3 shrink-0 text-muted-foreground"
+              aria-label="Synthetic session"
+            />
+          ) : null}
         </p>
         <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
           <MessageSquare className="h-3 w-3" />
@@ -165,12 +173,6 @@ function ThreadCard({
           <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
             <AlertTriangle className="size-3" />
             Needs review
-          </span>
-        ) : null}
-        {thread.synthetic === true ? (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">
-            <Sparkles className="size-2.5" />
-            Synthetic
           </span>
         ) : null}
         {thread.themeClusterLabel ? (

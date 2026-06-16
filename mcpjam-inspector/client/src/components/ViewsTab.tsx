@@ -235,6 +235,11 @@ export function ViewsTab({
     const ctx = selectedView.defaultContext;
     if (ctx.deviceType) setDeviceType(ctx.deviceType);
     if (ctx.viewport) setCustomViewport(ctx.viewport);
+    // A context saved under the "fill" layout serializes with neither
+    // deviceType nor viewport (the persisted union only carries the
+    // fixed presets). Restore it explicitly so a preset left over from
+    // the previously selected view doesn't leak into this one.
+    if (!ctx.deviceType && !ctx.viewport) setDeviceType("fill");
     if (ctx.locale) updateGlobal("locale", ctx.locale);
     if (ctx.timeZone) updateGlobal("timeZone", ctx.timeZone);
     if (ctx.capabilities) setCapabilities(ctx.capabilities);

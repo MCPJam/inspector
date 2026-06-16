@@ -5,6 +5,7 @@ import { ChatboxChatPage } from "../ChatboxChatPage";
 import {
   CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   clearChatboxSession,
+  readChatboxSession,
   writePlaygroundSession,
   writeChatboxSession,
 } from "@/lib/chatbox-session";
@@ -25,6 +26,7 @@ const {
   mockUseApiContext,
   mockAuthFetch,
   mockPosthogCapture,
+  mockIsEmbeddedPreview,
 } = vi.hoisted(() => ({
   mockConvexAuthState: {
     isAuthenticated: true,
@@ -43,6 +45,7 @@ const {
   mockUseApiContext: vi.fn(),
   mockAuthFetch: vi.fn(),
   mockPosthogCapture: vi.fn(),
+  mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
 }));
 
 vi.mock("convex/react", () => ({
@@ -126,6 +129,17 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   initiateOAuth: mockInitiateOAuth,
 }));
 
+// jsdom can't put the page inside a real same-origin iframe, so stub the
+// embed detector; the hash-sync helpers keep their real implementations.
+vi.mock("@/lib/embedded-preview", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/embedded-preview")>();
+  return {
+    ...actual,
+    isEmbeddedPreview: () => mockIsEmbeddedPreview(),
+  };
+});
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -173,6 +187,8 @@ describe("ChatboxChatPage", () => {
     mockUseApiContext.mockReset();
     mockAuthFetch.mockReset();
     mockPosthogCapture.mockReset();
+    mockIsEmbeddedPreview.mockReset();
+    mockIsEmbeddedPreview.mockReturnValue(false);
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
@@ -340,6 +356,63 @@ describe("ChatboxChatPage", () => {
     expect(
       screen.queryByText(/resolveChatboxBootstrapForUser/)
     ).not.toBeInTheDocument();
+  });
+
+  it("persists the redeemed session to sessionStorage when standalone", async () => {
+    window.history.replaceState({}, "", "/chatbox/demo/chatbox-token");
+
+    render(<ChatboxChatPage pathToken="chatbox-token" />);
+
+    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readChatboxSession()?.chatboxId).toBe("sbx_1");
+    });
+  });
+
+  it("keeps the embedded Preview iframe out of the tab-shared session", async () => {
+    // The Preview pane iframe is same-origin, so it shares sessionStorage
+    // with the outer dashboard. The embed must boot purely from its URL
+    // token: never adopt the outer app's stored session, and never write
+    // its own (a stored session makes the outer App render the chatbox
+    // runtime instead of the dashboard on the next reload).
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    const outerSession = {
+      chatboxId: "sbx_outer",
+      accessVersion: 7,
+      payload: {
+        projectId: "ws_outer",
+        chatboxId: "sbx_outer",
+        name: "Outer Dashboard Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "chatgpt" as const,
+        mode: "invited_only" as const,
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    };
+    writeChatboxSession(outerSession);
+    window.history.replaceState({}, "", "/chatbox/demo/chatbox-token");
+
+    render(<ChatboxChatPage pathToken="chatbox-token" />);
+
+    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    // Booted by redeeming the URL token, not by adopting the stored session.
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chatboxes/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ chatboxToken: "chatbox-token" }),
+      })
+    );
+    // The outer app's session survives the embed untouched.
+    expect(readChatboxSession()).toMatchObject({
+      chatboxId: "sbx_outer",
+      accessVersion: 7,
+    });
   });
 
   it("waits for active WorkOS and Convex loading to settle before bootstrapping the link", async () => {

@@ -85,6 +85,25 @@ export interface Project {
   visibility?: ProjectVisibility;
 }
 
+/**
+ * Resolve a project from either id space. `AppState.projects` is keyed by
+ * local project ids, but several surfaces carry the Convex/shared project
+ * id instead (App.tsx's `convexProjectId` props, eval run rows'
+ * `projectId`). Key lookup wins; otherwise fall back to a
+ * `sharedProjectId` match.
+ */
+export function findProjectByAnyId(
+  projects: Record<string, Project> | undefined,
+  id: string | null | undefined,
+): Project | undefined {
+  if (!id) return undefined;
+  const byKey = projects?.[id];
+  if (byKey) return byKey;
+  return Object.values(projects ?? {}).find(
+    (project) => project.sharedProjectId === id,
+  );
+}
+
 export interface AppState {
   projects: Record<string, Project>;
   activeProjectId: string;

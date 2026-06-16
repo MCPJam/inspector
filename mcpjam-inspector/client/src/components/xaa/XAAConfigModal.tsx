@@ -23,6 +23,8 @@ interface XAAConfigModalProps {
   onOpenChange: (open: boolean) => void;
   value: XAADebugProfile;
   onSave: (profile: XAADebugProfile) => void;
+  /** Delete the saved profile and reset the debugger to a clean slate. */
+  onClear: () => void;
 }
 
 export function XAAConfigModal({
@@ -30,6 +32,7 @@ export function XAAConfigModal({
   onOpenChange,
   value,
   onSave,
+  onClear,
 }: XAAConfigModalProps) {
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +55,7 @@ export function XAAConfigModal({
     const trimmedServerUrl = draft.serverUrl.trim();
     const trimmedIssuer = draft.authzServerIssuer.trim();
     const trimmedClientId = draft.clientId.trim();
+    const trimmedClientSecret = draft.clientSecret.trim();
     const trimmedScope = draft.scope.trim();
     const trimmedUserId = draft.userId.trim();
     const trimmedEmail = draft.email.trim();
@@ -81,6 +85,7 @@ export function XAAConfigModal({
       serverUrl: trimmedServerUrl,
       authzServerIssuer: trimmedIssuer,
       clientId: trimmedClientId,
+      clientSecret: trimmedClientSecret,
       scope: trimmedScope,
       userId: trimmedUserId || value.userId,
       email: trimmedEmail || value.email,
@@ -96,10 +101,7 @@ export function XAAConfigModal({
           <DialogTitle>Configure XAA Debugger</DialogTitle>
         </DialogHeader>
 
-        <form
-          onSubmit={handleSubmit}
-          className="flex min-h-0 flex-1 flex-col"
-        >
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
             <div className="space-y-3">
               <div className="space-y-2">
@@ -155,6 +157,28 @@ export function XAAConfigModal({
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="xaa-client-secret">Client Secret</Label>
+                <Input
+                  id="xaa-client-secret"
+                  type="password"
+                  autoComplete="off"
+                  value={draft.clientSecret}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      clientSecret: event.target.value,
+                    }))
+                  }
+                  placeholder="Required by confidential-client auth servers"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Needed when the auth server requires client authentication for
+                  the jwt-bearer grant. Test credentials only — masked in the
+                  request log.
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="xaa-scope">Scope</Label>
                 <Input
                   id="xaa-scope"
@@ -178,19 +202,19 @@ export function XAAConfigModal({
                   <ChevronDown
                     className={cn(
                       "h-4 w-4 transition-transform",
-                      identityOpen && "rotate-180",
+                      identityOpen && "rotate-180"
                     )}
                   />
                 </span>
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-3 space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  The MCPJam issuer mints a mock ID token for this user.
-                  Defaults work for most flows.
+                  The MCPJam issuer mints a mock ID token for this user, then
+                  exchanges it for an ID-JAG. Defaults work for most flows.
                 </p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="xaa-user-id">User ID</Label>
+                    <Label htmlFor="xaa-user-id">Subject (sub)</Label>
                     <Input
                       id="xaa-user-id"
                       value={draft.userId}
@@ -202,6 +226,10 @@ export function XAAConfigModal({
                       }
                       placeholder="user-12345"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Becomes the <code>sub</code> claim — the end-user identity
+                      carried through the ID-JAG into the access token.
+                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -228,6 +256,14 @@ export function XAAConfigModal({
           )}
 
           <DialogFooter className="mt-4 flex-shrink-0 border-t border-border pt-3">
+            <Button
+              type="button"
+              variant="destructive"
+              className="mr-auto"
+              onClick={onClear}
+            >
+              Clear configuration
+            </Button>
             <Button
               type="button"
               variant="ghost"

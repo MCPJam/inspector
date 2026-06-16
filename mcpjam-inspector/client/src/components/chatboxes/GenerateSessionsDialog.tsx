@@ -97,6 +97,8 @@ export function GenerateSessionsDialog({
   // Server selection lives on the backend: the dialog forwards the full
   // chatbox server list and the start route filters optionals out so the
   // synthetic run matches what a real visitor with no opt-ins would see.
+  // With no required servers the run still proceeds: personas are grounded
+  // in the chatbox name only and sessions run toolless.
   const serversPayload = chatbox.servers.map((s) => ({
     serverId: s.serverId,
     serverName: s.serverName,
@@ -137,7 +139,6 @@ export function GenerateSessionsDialog({
   }
 
   async function handleGenerate() {
-    if (!hasRequiredServers) return;
     setGenerating(true);
     posthog.capture("chatbox_generate_personas_started", {
       ...standardEventProps("chatbox_usage_panel"),
@@ -421,6 +422,13 @@ export function GenerateSessionsDialog({
               </div>
             ) : null}
 
+            {!hasRequiredServers ? (
+              <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                No required servers attached — personas are generated from the
+                chatbox name only, and sessions run without tools.
+              </div>
+            ) : null}
+
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={onClose}>
                 Cancel
@@ -428,7 +436,7 @@ export function GenerateSessionsDialog({
               <Button
                 size="sm"
                 onClick={handleGenerate}
-                disabled={!hasRequiredServers || generating}
+                disabled={generating}
               >
                 {generating ? (
                   <>
@@ -465,14 +473,14 @@ export function GenerateSessionsDialog({
                           onChange={(e) =>
                             updatePersona(index, { name: e.target.value })
                           }
-                          placeholder="Name"
+                          placeholder="Persona"
                         />
                         <Input
                           value={persona.role}
                           onChange={(e) =>
                             updatePersona(index, { role: e.target.value })
                           }
-                          placeholder="Role"
+                          placeholder="Context"
                         />
                       </div>
                       <Textarea

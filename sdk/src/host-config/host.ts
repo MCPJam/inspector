@@ -39,8 +39,9 @@ import type {
   HostConfigMcpProfileV1,
 } from "./types.js";
 import type {
-  HostComputer,
+  HostComputerInput,
   HostConnectionDefaults,
+  Harness,
   HostInit,
   HostJson,
   HostMcp,
@@ -94,7 +95,7 @@ function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
 
 /** Map a public per-server override to the internal field names. */
 function serverOverrideToInternal(
-  override: HostServerOverride,
+  override: HostServerOverride
 ): NonNullable<HostConfigInputV2["serverConnectionOverrides"]>[string] {
   const out: NonNullable<
     HostConfigInputV2["serverConnectionOverrides"]
@@ -110,7 +111,7 @@ function serverOverrideToInternal(
 }
 
 function serverOverridesToInternal(
-  overrides: Record<string, HostServerOverride>,
+  overrides: Record<string, HostServerOverride>
 ): HostConfigInputV2["serverConnectionOverrides"] {
   if (Object.keys(overrides).length === 0) return undefined;
   const out: NonNullable<HostConfigInputV2["serverConnectionOverrides"]> = {};
@@ -133,7 +134,7 @@ function profileToHostMcp(profile: HostConfigMcpProfileV1): HostMcp {
 }
 
 function serverOverridesToPublic(
-  overrides: NonNullable<CanonicalHostConfigV2["serverConnectionOverrides"]>,
+  overrides: NonNullable<CanonicalHostConfigV2["serverConnectionOverrides"]>
 ): Record<string, HostServerOverride> {
   const out: Record<string, HostServerOverride> = {};
   for (const [id, ov] of Object.entries(overrides)) {
@@ -176,6 +177,9 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   }
   if (c.computer !== undefined) {
     out.computer = c.computer;
+  }
+  if (c.harness !== undefined) {
+    out.harness = c.harness;
   }
   if (c.hostCapabilitiesOverride !== undefined) {
     out.hostCapabilitiesOverride = c.hostCapabilitiesOverride;
@@ -251,7 +255,14 @@ export class Host {
    * no computer — both serialize identically, so a cleared field hashes
    * the same as one never set.
    */
-  computer?: HostComputer | null;
+  computer?: HostComputerInput | null;
+
+  /**
+   * Which harness runs the turn. `undefined` ⇒ emulated (MCPJam's own loop);
+   * `"claude-code"` runs the turn in a real Claude Code runtime via the AI SDK
+   * harness, which executes inside the host's attached `computer`.
+   */
+  harness?: Harness;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -333,6 +344,7 @@ export class Host {
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
     this.computer = cfg.computer;
+    this.harness = cfg.harness;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
@@ -389,12 +401,10 @@ export class Host {
   }
 
   /**
-   * Attach a personal computer (defaults to the only MVP shape), or pass
-   * `null` to detach.
+   * Attach a personal computer (the resource; grant capabilities on it via
+   * `builtInToolIds`, e.g. `"bash"`), or pass `null` to detach.
    */
-  setComputer(
-    computer: HostComputer | null = { kind: "personal", toolset: "bash" },
-  ): this {
+  setComputer(computer: HostComputerInput | null = { kind: "personal" }): this {
     this.computer = computer;
     return this;
   }
@@ -466,14 +476,14 @@ export class Host {
   private requireConfigured(): void {
     if (!this.style) {
       throw new Error(
-        "Host requires a `style` (e.g. \"mcpjam\", \"claude\", \"chatgpt\"). " +
-          'Pass it to the constructor (`new Host({ style: "..." })`) or assign `host.style = "..."`.',
+        'Host requires a `style` (e.g. "mcpjam", "claude", "chatgpt"). ' +
+          'Pass it to the constructor (`new Host({ style: "..." })`) or assign `host.style = "..."`.'
       );
     }
     if (!this.model) {
       throw new Error(
-        "Host requires a `model` (e.g. \"anthropic/claude-sonnet-4-6\"). " +
-          'Pass it to the constructor (`new Host({ model: "..." })`) or assign `host.model = "..."`.',
+        'Host requires a `model` (e.g. "anthropic/claude-sonnet-4-6"). ' +
+          'Pass it to the constructor (`new Host({ model: "..." })`) or assign `host.model = "..."`.'
       );
     }
   }
@@ -493,6 +503,7 @@ export class Host {
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
       computer: this.computer,
+      harness: this.harness,
       servers: this.servers,
       optionalServers: this.optionalServers,
       connectionDefaults: this.connectionDefaults,
@@ -526,6 +537,9 @@ export class Host {
     // undefined so it hashes identically to "never set".
     if (snap.computer !== undefined) {
       input.computer = snap.computer;
+    }
+    if (snap.harness !== undefined) {
+      input.harness = snap.harness;
     }
     if (snap.hostCapabilitiesOverride !== undefined) {
       input.hostCapabilitiesOverride = snap.hostCapabilitiesOverride;
@@ -571,7 +585,7 @@ export class Host {
    */
   withManager(
     manager: HostRuntimeManager,
-    defaults: HostRuntimeDefaults,
+    defaults: HostRuntimeDefaults
   ): HostRuntime {
     return new HostRuntime(this, manager, defaults);
   }
@@ -586,7 +600,7 @@ export class Host {
    */
   async run(
     input: string,
-    runtime: HostRuntimeDefaults & { mcpClientManager: HostRuntimeManager },
+    runtime: HostRuntimeDefaults & { mcpClientManager: HostRuntimeManager }
   ): Promise<import("../PromptResult.js").PromptResult> {
     const { mcpClientManager, ...defaults } = runtime;
     return this.withManager(mcpClientManager, defaults).run(input);
@@ -680,7 +694,7 @@ export type HostServerRegistry = {
  */
 export function assertHostServersKnown(
   host: HostJson,
-  registry: HostServerRegistry,
+  registry: HostServerRegistry
 ): void {
   const missing = host.servers.filter((id) => !registry.hasServer(id));
   if (missing.length === 0) return;
@@ -689,8 +703,8 @@ export function assertHostServersKnown(
     known && known.length > 0 ? ` Known servers: ${known.join(", ")}.` : "";
   throw new Error(
     `Host requires server id(s) not registered with the manager: ${missing.join(
-      ", ",
-    )}.${knownSuffix}`,
+      ", "
+    )}.${knownSuffix}`
   );
 }
 
@@ -701,7 +715,7 @@ export function assertHostServersKnown(
  */
 export function resolveKnownServerIds(
   host: HostJson,
-  registry: HostServerRegistry,
+  registry: HostServerRegistry
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

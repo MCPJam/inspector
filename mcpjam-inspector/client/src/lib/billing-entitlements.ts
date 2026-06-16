@@ -318,8 +318,33 @@ export function formatBillingLimitReachedMessage(
       ? `This organization has reached its project limit (${allowedValue}). Upgrade to create more projects.`
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
+  if (limitName === "computerStartsPerDay") {
+    if (typeof options?.resetsAt === "number") {
+      const resetTime = new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(options.resetsAt));
+      return `Daily computer limit reached (${allowedValue}). Resets ${resetTime}.`;
+    }
+    return `Daily computer limit reached (${allowedValue}).`;
+  }
 
   return null;
+}
+
+/**
+ * The guest daily computer-start cap (`computerStartsPerDay`). Detected
+ * separately so the computer surface can route it to the MCPJam limit dialog
+ * (sign-in CTA for guests) instead of a plain toast.
+ */
+export function isComputerStartLimitError(error: unknown): boolean {
+  const payload = extractBillingErrorPayload(error);
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return false;
+  }
+  return (payload.limitName ?? payload.limit) === "computerStartsPerDay";
 }
 
 export function getBillingErrorMessage(

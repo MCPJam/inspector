@@ -50,8 +50,8 @@ vi.mock("convex/react", () => ({
 
 // The goal-completion judge panel pulls the model catalog; stub it so the view
 // test stays isolated from the provider chain (auth / provider keys / ollama).
-vi.mock("@/hooks/use-available-eval-models", () => ({
-  useAvailableEvalModels: () => ({ availableModels: [] }),
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
@@ -197,7 +197,9 @@ describe("RunDetailView", () => {
     expect(kpi.getByText("Failed")).toBeInTheDocument();
     expect(kpi.getByText("Total")).toBeInTheDocument();
     expect(kpi.getByText("Duration")).toBeInTheDocument();
-    expect(screen.getByText(/^100$/)).toBeInTheDocument();
+    // Scope to the KPI strip: the run hero also renders "100" (accuracy 100%),
+    // so a global query is ambiguous.
+    expect(kpi.getByText(/^100$/)).toBeInTheDocument();
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
     const panelGroup = screen.getByTestId("run-detail-resizable-group");

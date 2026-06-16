@@ -12,7 +12,8 @@
 
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
-import { injectOpenAICompat } from "./widget-helpers";
+import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
+import type { WidgetCspMeta } from "./widget-helpers";
 import {
   extractHtmlFromResourceContent,
   isRecord,
@@ -46,7 +47,7 @@ export interface RenderMcpAppToolResultParams {
  * declares a UI resource — i.e. a tool result worth render-checking.
  */
 export function isRenderableMcpAppTool(
-  toolMetadata: unknown,
+  toolMetadata: unknown
 ): toolMetadata is Record<string, unknown> {
   if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) return false;
   return Boolean(getToolUiResourceUri({ _meta: toolMetadata }));
@@ -58,7 +59,7 @@ export function isRenderableMcpAppTool(
  * with `no_ui_resource` / `resource_read_failed` without launching the browser.
  */
 export async function renderMcpAppToolResult(
-  params: RenderMcpAppToolResultParams,
+  params: RenderMcpAppToolResultParams
 ): Promise<WidgetRenderObservation> {
   const { toolCallId, toolName, serverId, toolMetadata, mcpClientManager } =
     params;
@@ -72,22 +73,29 @@ export async function renderMcpAppToolResult(
 
   let html: string | undefined;
   let permissions: Record<string, unknown> | undefined;
+  let cspMeta: WidgetCspMeta | undefined;
   try {
     const resourceResult = await mcpClientManager.readResource(serverId, {
       uri: resourceUri,
     });
     const contents = Array.isArray(
-      (resourceResult as { contents?: unknown[] })?.contents,
+      (resourceResult as { contents?: unknown[] })?.contents
     )
       ? ((resourceResult as { contents: unknown[] }).contents as unknown[])
       : [];
     const content = contents[0];
     if (isRecord(content)) {
+      const contentMeta = isRecord(content._meta) ? content._meta : undefined;
       const uiMeta =
-        isRecord(content._meta) && isRecord(content._meta.ui)
-          ? (content._meta.ui as Record<string, unknown>)
+        contentMeta && isRecord(contentMeta.ui)
+          ? (contentMeta.ui as Record<string, unknown>)
           : undefined;
-      permissions = normalizeWidgetPermissions(uiMeta?.permissions) ?? undefined;
+      permissions =
+        normalizeWidgetPermissions(uiMeta?.permissions) ?? undefined;
+      // Widget-declared network policy (`_meta.ui.csp`, legacy
+      // `openai/widgetCSP`) — the harness network gate honors it per-widget,
+      // matching the sandbox proxy's `widget-declared` CSP mode.
+      cspMeta = normalizeWidgetCspMeta(contentMeta);
       html = extractHtmlFromResourceContent(content);
     }
   } catch {
@@ -126,6 +134,7 @@ export async function renderMcpAppToolResult(
     toolInput: params.toolInput,
     toolOutput: params.output,
     permissions,
+    cspMeta,
     keepMounted: params.keepMounted,
   });
 }

@@ -32,6 +32,7 @@ function makeEntry(
     sessionId: overrides.sessionId ?? `cs_${overrides.id}`,
     pricePaidCents: overrides.pricePaidCents ?? 1000,
     displayCredits: overrides.displayCredits ?? "1,000 credits",
+    details: overrides.details ?? "Credit top-up",
     status: overrides.status ?? "succeeded",
     occurredAt: overrides.occurredAt ?? Date.now(),
     ...(overrides.reversedPaidCents !== undefined
@@ -248,6 +249,49 @@ describe("PaymentsHistorySection", () => {
       );
       expect(screen.getAllByText("Disputed")).toHaveLength(2);
       expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+    });
+
+    it("renders a seat refund row without a receipt link", () => {
+      renderWithStatus(
+        makeEntry({
+          id: "seat-refund",
+          sessionId: "seat-downgrade:sub:item:period:3->2",
+          pricePaidCents: -35997,
+          displayCredits: "-9,974 credits",
+          details: "-1 Team seat · prorated",
+          status: "refunded",
+          reversedPaidCents: 35997,
+          occurredAt: Date.UTC(2026, 5, 10),
+        })
+      );
+
+      expect(screen.getAllByText("-$359.97")).toHaveLength(2);
+      expect(screen.getAllByText("-1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("Refunded")).toHaveLength(2);
+      expect(screen.queryByRole("link", { name: /View receipt/ })).toBeNull();
+    });
+
+    it("renders a split refund and credit fallback row", () => {
+      renderWithStatus(
+        makeEntry({
+          id: "seat-split",
+          sessionId: "seat-downgrade:sub:item:period:4->3",
+          pricePaidCents: -35997,
+          displayCredits: "-9,974 credits",
+          details:
+            "-1 Team seat · prorated · $300 card refund + $59.97 account credit",
+          status: "refunded_and_credited",
+          reversedPaidCents: 30000,
+          accountCreditedCents: 5997,
+        })
+      );
+
+      expect(screen.getAllByText("Refunded + credited")).toHaveLength(2);
+      expect(
+        screen.getAllByText(
+          "-1 Team seat · prorated · $300 card refund + $59.97 account credit"
+        )
+      ).toHaveLength(2);
     });
   });
 });

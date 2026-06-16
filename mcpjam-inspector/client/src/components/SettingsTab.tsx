@@ -11,6 +11,7 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { Info, KeyRound } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
+import { SettingsNav } from "./settings/SettingsNav";
 
 interface SettingsTabProps {
   activeOrganizationId?: string;
@@ -43,7 +44,13 @@ export function SettingsTab({
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-10 space-y-8 max-w-3xl">
-        <h1 className="text-2xl font-semibold">Settings</h1>
+        <div className="space-y-4">
+          <h1 className="text-2xl font-semibold">Settings</h1>
+          <SettingsNav
+            active="general"
+            activeOrganizationId={activeOrganizationId}
+          />
+        </div>
 
         {/* About */}
         <SettingsSection title="About">
@@ -107,9 +114,7 @@ export function SettingsTab({
                   variant="link"
                   className="h-auto p-0 text-sm justify-start"
                   onClick={() =>
-                    onNavigate?.(
-                      `organizations/${activeOrganizationId}/models`,
-                    )
+                    onNavigate?.(`organizations/${activeOrganizationId}/models`)
                   }
                 >
                   Go to Organization Models
@@ -135,7 +140,7 @@ export function SettingsTab({
                     window.open(
                       "https://app.mcpjam.com/organizations",
                       "_blank",
-                      "noopener,noreferrer",
+                      "noopener,noreferrer"
                     )
                   }
                 >

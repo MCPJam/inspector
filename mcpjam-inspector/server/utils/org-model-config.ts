@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
   getModelById,
+  isBedrockModelId,
   isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
@@ -9,6 +10,7 @@ import {
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,7 +211,41 @@ export async function resolveOrgModelConfig(
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
 
-    const result: ResolvedOrgModelConfig = { providers: data.providers ?? [] };
+    let providers = data.providers ?? [];
+    // Hosted mode: drop org-supplied Bedrock endpoints that point at
+    // private/internal address space before they are cached and handed to
+    // the AI SDK. Uses the DNS-aware guard so a public hostname resolving
+    // to a private IP (DNS rebinding) is rejected too — mirrors the check
+    // the local-runtime path applies in resolveOrgProviderRuntime. Only the
+    // offending provider is dropped (its own requests then fail with a
+    // clear missing-config error) so one bad endpoint can't block every
+    // other provider in the org config.
+    if (HOSTED_MODE) {
+      const safeProviders: ResolvedProviderConfig[] = [];
+      for (const provider of providers) {
+        if (
+          provider.providerKey === "bedrock" &&
+          typeof provider.baseUrl === "string" &&
+          provider.baseUrl.length > 0
+        ) {
+          try {
+            await assertSafeHostedOutboundUrl(provider.baseUrl);
+          } catch (error) {
+            logger.warn(
+              "[org-model-config] Dropping bedrock provider with blocked baseUrl",
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+            continue;
+          }
+        }
+        safeProviders.push(provider);
+      }
+      providers = safeProviders;
+    }
+
+    const result: ResolvedOrgModelConfig = { providers };
     resolveCache.set(cacheKey, {
       result,
       expiresAt: Date.now() + CACHE_TTL_MS,
@@ -290,6 +326,17 @@ export function buildLlmRuntimeConfigFromOrgConfig(
 
     if (provider.providerKey === "azure" && provider.baseUrl) {
       runtime.baseUrls.azure = provider.baseUrl;
+      continue;
+    }
+
+    if (provider.providerKey === "bedrock" && provider.baseUrl) {
+      // Hosted mode: don't promote a baseUrl that points at private/internal
+      // address space — eval-runner egress would otherwise follow it. Mirrors
+      // the guard the local-runtime path applies in resolveOrgProviderRuntime.
+      if (HOSTED_MODE && isUnsafeHostedOutboundUrl(provider.baseUrl)) {
+        continue;
+      }
+      runtime.baseUrls.bedrock = provider.baseUrl;
       continue;
     }
 
@@ -758,6 +805,7 @@ export async function resolveSyntheticModelSource(args: {
 const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
   anthropic: "anthropic",
   azure: "azure",
+  bedrock: "bedrock",
   deepseek: "deepseek",
   google: "google",
   "meta-llama": "meta",
@@ -779,22 +827,25 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  * Resolution order:
  *   1. `getModelById(modelId)` — MCPJam catalog hit returns the full
  *      definition unchanged (correct provider, contextLength, etc.).
- *   2. `custom:NAME/...` prefix — provider="custom", customProviderName
- *      parsed from the segment after `custom:`. Matches the
+ *   2. `custom:` prefix — provider="custom", customProviderName is the
+ *      segment after `custom:` up to the first `:` or `/` (the picker
+ *      mints `custom:<slug>:<modelId>`). Matches the
  *      `deriveOrgProviderKey` shape for custom providers.
  *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
  *      `ollama/...`, etc.) — provider is derived from the prefix via
  *      ID_PREFIX_TO_PROVIDER.
- *   4. Bare id with no recognized prefix — fall back to "ollama" since
+ *   4. Bedrock-shaped bare id (`[geo.]vendor.name...:N`) — provider
+ *      "bedrock". Org Bedrock models surface bare inference-profile ids
+ *      in the picker, so chatbox runtime configs store them unprefixed.
+ *   5. Bare id with no recognized shape — fall back to "ollama" since
  *      bare ids are how Ollama BYOK models are typically stored on
  *      chatbox runtime configs (no catalog ID uses a bare shape).
  *
- * This is **synthetic-runner-specific** — real chat callers always have
- * a client-supplied ModelDefinition with the provider set. Synthetic
- * only has `runtime.config.modelId` (the chatbox runtime endpoint
- * doesn't expose provider today). Hoisting the runner's catalog-only
- * lookup into a function with BYOK fallbacks makes the previously-fatal
- * `Unknown modelId for simulation` cases dispatchable.
+ * Callers: the synthetic session runner (which only has
+ * `runtime.config.modelId` — the chatbox runtime endpoint doesn't expose
+ * provider today) and the chat routes' host-wins merges, where the host
+ * config likewise pins a bare modelId and the provider must come from the
+ * id shape, never from the request body's model.
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
@@ -804,7 +855,11 @@ export function buildSyntheticModelDefinition(
 
   if (modelId.startsWith("custom:")) {
     const rest = modelId.slice("custom:".length);
-    const customProviderName = rest.split("/")[0];
+    // Picker-minted ids are `custom:<slug>:<modelId>` (both the local and
+    // org builders in model-helpers use a colon; the evals runner parses
+    // the same way); tolerate `custom:<slug>/<modelId>` too. The slug is
+    // the segment before the first `:` or `/`.
+    const customProviderName = rest.split(/[:/]/, 1)[0];
     return {
       id: modelId,
       name: modelId,
@@ -826,14 +881,112 @@ export function buildSyntheticModelDefinition(
     }
   }
 
-  // Bare id (no `/`) — Ollama BYOK is the only realistic case today since
-  // no catalog id is bare. If the org has a different bare-id provider in
-  // the future, deriveOrgProviderKey will produce "ollama" and the
-  // resolver round-trip will fail with a clearer error than the
-  // previously-fatal catalog-miss path.
+  if (isBedrockModelId(modelId)) {
+    return {
+      id: modelId,
+      name: modelId,
+      provider: "bedrock",
+    };
+  }
+
+  // Bare id (no `/`, not Bedrock-shaped) — Ollama BYOK is the remaining
+  // realistic case since no catalog id is bare. If the org has a different
+  // bare-id provider in the future, deriveOrgProviderKey will produce
+  // "ollama" and the resolver round-trip will fail with a clearer error
+  // than the previously-fatal catalog-miss path.
   return {
     id: modelId,
     name: modelId,
     provider: "ollama",
   };
+}
+
+// ---------------------------------------------------------------------------
+// Host-pinned model lift (org-config-aware)
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the org provider whose per-provider model list explicitly contains
+ * `modelId`, and build the definition from that provider. Mirrors the
+ * client's `isOrgManagedModel` matching: openrouter/bedrock list ids in
+ * `selectedModels`; ollama and `custom:<slug>` providers list them in
+ * `modelIds` (custom ids are compared with the `custom:<slug>:` prefix
+ * stripped). Returns null when no provider lists the id.
+ */
+export function matchOrgProviderForModelId(
+  config: ResolvedOrgModelConfig,
+  modelId: string,
+): ModelDefinition | null {
+  for (const p of config.providers) {
+    if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
+      if (p.selectedModels?.includes(modelId)) {
+        return { id: modelId, name: modelId, provider: p.providerKey };
+      }
+    } else if (p.providerKey === "ollama") {
+      if (p.modelIds?.includes(modelId)) {
+        return { id: modelId, name: modelId, provider: "ollama" };
+      }
+    } else if (p.providerKey.startsWith("custom:")) {
+      const slug = p.providerKey.slice("custom:".length);
+      const prefix = `custom:${slug}:`;
+      const bareId = modelId.startsWith(prefix)
+        ? modelId.slice(prefix.length)
+        : modelId;
+      if (p.modelIds?.includes(bareId)) {
+        return {
+          id: modelId,
+          name: modelId,
+          provider: "custom",
+          customProviderName: slug,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Lift a host-pinned bare modelId to a `ModelDefinition`, preferring the
+ * org's provider config over catalog and id-shape inference. A
+ * `vendor/model` id is intrinsically ambiguous — org OpenRouter selected
+ * models keep their vendor-prefixed ids but belong to providerKey
+ * "openrouter", while catalog/shape resolution would infer the native
+ * vendor from the prefix. When an enabled provider explicitly lists the
+ * id, that provider wins; catalog/shape inference is the fallback.
+ *
+ * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
+ * shape is exact, and this path sits on a live chat turn.
+ */
+export async function resolveHostModelDefinition(args: {
+  modelId: string;
+  projectId?: string | null;
+  auth?: ResolveOrgModelConfigAuth;
+}): Promise<ModelDefinition> {
+  const { modelId, projectId, auth } = args;
+
+  const shapeIsExact =
+    modelId.startsWith("custom:") || isBedrockModelId(modelId);
+  if (!shapeIsExact && projectId) {
+    try {
+      const config = await resolveOrgModelConfig({ projectId }, auth);
+      const fromConfig = matchOrgProviderForModelId(config, modelId);
+      if (fromConfig) return fromConfig;
+    } catch (error) {
+      // Org config unavailable — fall through to shape inference, the
+      // same best-effort behavior the synthetic runner has always had.
+      logger.warn(
+        "[org-model-config] Host model org config lookup failed; falling back to catalog/id-shape inference",
+        {
+          modelId,
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+
+  const catalogHit = getModelById(modelId);
+  if (catalogHit) return catalogHit;
+
+  return buildSyntheticModelDefinition(modelId);
 }

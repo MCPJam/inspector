@@ -21,8 +21,7 @@ import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
 import { AiTriageCard } from "./ai-triage-card";
 import { GoalCompletionCard } from "./goal-completion-card";
-import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
-import { useSharedAppState } from "@/state/app-state-context";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
@@ -368,22 +367,13 @@ export function RunDetailView({
 
   // Goal-completion judge: advisory, user-triggered (no auto-request — it spends
   // an LLM call). Never changes the run's deterministic pass/fail.
-  // Scope the judge model catalog to the run's project org (same derivation as
-  // useEvalTabContext) so hosted/BYOK orgs see the models they configured, not
-  // just the managed defaults. Execution still runs on the managed key in V1.
-  const appState = useSharedAppState();
-  const judgeOrganizationId = useMemo(() => {
-    const projectId =
-      selectedRunDetails.projectId ?? appState.activeProjectId ?? null;
-    return projectId
-      ? (appState.projects?.[projectId]?.organizationId ?? null)
-      : null;
-  }, [
-    selectedRunDetails.projectId,
-    appState.activeProjectId,
-    appState.projects,
-  ]);
-  const { availableModels } = useAvailableEvalModels(judgeOrganizationId);
+  // Scope the judge model catalog to the run's project org (the hook falls
+  // back to the active project) so hosted/BYOK orgs see the models they
+  // configured, not just the managed defaults. Execution still runs on the
+  // managed key in V1.
+  const { availableModels } = useAvailableModels({
+    projectId: selectedRunDetails.projectId ?? null,
+  });
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,

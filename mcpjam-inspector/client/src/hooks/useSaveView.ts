@@ -108,7 +108,7 @@ export function useSaveView({
     projectId,
   });
 
-  const { createServer } = useServerMutations();
+  const { createServerIfMissing } = useServerMutations();
 
   // Get or create server ID
   const getOrCreateServerId = useCallback(
@@ -124,7 +124,10 @@ export function useSaveView({
         throw new Error("No project selected");
       }
 
-      const serverId = await createServer({
+      // create-if-missing rather than create: `serversByName` can be stale or
+      // still loading, so a plain create would throw "already exists" on a row
+      // we just didn't see yet. This returns the existing server in that case.
+      const serverId = await createServerIfMissing({
         projectId,
         name,
         enabled: true,
@@ -133,7 +136,7 @@ export function useSaveView({
 
       return serverId;
     },
-    [serversByName, projectId, createServer],
+    [serversByName, projectId, createServerIfMissing],
   );
 
   // Upload output blob to Convex storage. The protocol arg is kept on

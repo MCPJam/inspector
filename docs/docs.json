@@ -34,7 +34,6 @@
     "tabs": [
       {
         "tab": "Get Started",
-        "icon": "rocket",
         "pages": [
           "index",
           "getting-started",
@@ -47,7 +46,6 @@
       },
       {
         "tab": "Inspector",
-        "icon": "binoculars",
         "groups": [
           {
             "group": "Connect",
@@ -72,7 +70,11 @@
           {
             "group": "Auth & Conformance",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/xaa-test-idp"
+            ]
           },
           {
             "group": "Primitives",
@@ -96,13 +98,13 @@
       },
       {
         "tab": "CLI",
-        "icon": "terminal",
         "groups": [
           {
             "group": "Guides",
             "icon": "map",
             "pages": [
               "cli/overview",
+              "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",
@@ -121,7 +123,6 @@
       },
       {
         "tab": "SDK",
-        "icon": "code",
         "tag": "v1",
         "groups": [
           {
@@ -161,7 +162,6 @@
       },
       {
         "tab": "API",
-        "icon": "webhook",
         "tag": "Preview",
         "groups": [
           {

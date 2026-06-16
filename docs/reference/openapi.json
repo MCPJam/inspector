@@ -3,7 +3,7 @@
   "info": {
     "title": "MCPJam API",
     "version": "1.0.0-preview",
-    "description": "Programmatic access to live MCP server diagnostics — validate, inspect, and export servers saved in your MCPJam projects.\n\n**The API is in preview**: the surface may change while we finish the design. Error `code` values are stable; error `message` strings are not. Write clients that ignore unknown response fields.",
+    "description": "Programmatic access to MCP servers saved in your MCPJam projects — live diagnostics (validate, inspect, export) and operations: call tools, render prompts, run eval suites asynchronously and poll their results, and import OAuth tokens.\n\n**The API is in preview**: the surface may change while we finish the design. Error `code` values are stable; error `message` strings are not. Write clients that ignore unknown response fields.",
     "contact": {
       "name": "MCPJam",
       "url": "https://github.com/MCPJam/inspector/issues"
@@ -28,6 +28,30 @@
     {
       "name": "Export",
       "description": "Full-server snapshots for diffing and CI."
+    },
+    {
+      "name": "Execution",
+      "description": "Run the server's primitives: call tools, render prompts."
+    },
+    {
+      "name": "Eval runs",
+      "description": "Asynchronous eval suite runs: create with 202, poll status, iterations, and traces."
+    },
+    {
+      "name": "OAuth",
+      "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
+    },
+    {
+      "name": "Chatboxes",
+      "description": "Read-only access to the chatboxes published from a project: listing, settings, attached servers, and share links."
+    },
+    {
+      "name": "Catalog",
+      "description": "Discover the resources the other routes operate on: your account, projects, servers, eval suites, and chat sessions."
+    },
+    {
+      "name": "Tunnels",
+      "description": "Relay tunnels that expose local MCP servers through a public URL, registered as first-class project servers (the `mcpjam tunnel` CLI flow)."
     }
   ],
   "paths": {
@@ -313,6 +337,674 @@
           "504": { "$ref": "#/components/responses/Timeout" }
         }
       }
+    },
+    "/projects/{projectId}/servers/{serverId}/tools/call": {
+      "post": {
+        "operationId": "callTool",
+        "tags": ["Execution"],
+        "summary": "Call a tool",
+        "description": "Executes a tool on the server and returns the MCP `CallToolResult` directly. Tool-level failures (`isError: true` in the result) are **successful calls** — the server answered; only transport/auth errors use the error envelope.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["toolName"],
+                "properties": {
+                  "toolName": {
+                    "type": "string",
+                    "description": "Tool name, exactly as returned by the tools list."
+                  },
+                  "parameters": {
+                    "type": "object",
+                    "description": "Tool arguments matching the tool's `inputSchema`. Defaults to `{}`.",
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "example": {
+                "toolName": "create_issue",
+                "parameters": { "title": "Bug: login fails" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The MCP `CallToolResult`. Check `isError` for tool-level failures.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CallToolResult" },
+                "example": {
+                  "content": [{ "type": "text", "text": "Issue created: #42" }]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/prompts/get": {
+      "post": {
+        "operationId": "getPrompt",
+        "tags": ["Execution"],
+        "summary": "Render a prompt",
+        "description": "Renders a prompt with arguments and returns the MCP `GetPromptResult` directly (`description?`, `messages`).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["promptName"],
+                "properties": {
+                  "promptName": {
+                    "type": "string",
+                    "description": "Prompt name, exactly as returned by the prompts list."
+                  },
+                  "arguments": {
+                    "type": "object",
+                    "description": "Prompt arguments. String, number, and boolean values.",
+                    "additionalProperties": {
+                      "type": ["string", "number", "boolean"]
+                    }
+                  }
+                }
+              },
+              "example": {
+                "promptName": "summarize",
+                "arguments": { "style": "bullet" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The MCP `GetPromptResult`.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GetPromptResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs": {
+      "post": {
+        "operationId": "createEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Create an eval run (async)",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EvalRunCreateRequest" },
+              "example": {
+                "suiteName": "smoke",
+                "serverIds": ["srv_abc123"],
+                "tests": [
+                  {
+                    "title": "echo works",
+                    "query": "Use the echo tool to say hi",
+                    "runs": 1,
+                    "model": "anthropic/claude-haiku-4.5",
+                    "provider": "anthropic",
+                    "expectedToolCalls": [
+                      { "toolName": "echo", "arguments": { "text": "hi" } }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Run created; execution continues in the background.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalRunCreated" },
+                "example": {
+                  "runId": "run_abc123",
+                  "suiteId": "suite_def456",
+                  "status": "running",
+                  "caseUpsert": {
+                    "committed": [{ "name": "echo works" }],
+                    "failed": []
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}": {
+      "get": {
+        "operationId": "getEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Get run status",
+        "description": "Run status, result, and summary. Poll until `status` is terminal (`completed`, `failed`, or `cancelled`).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalRun" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/iterations": {
+      "get": {
+        "operationId": "listEvalRunIterations",
+        "tags": ["Eval runs"],
+        "summary": "List run iterations",
+        "description": "Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1–200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from a previous response's `nextCursor`.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of iterations.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalIterationPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace": {
+      "get": {
+        "operationId": "getEvalIterationTrace",
+        "tags": ["Eval runs"],
+        "summary": "Get an iteration trace",
+        "description": "Full trace envelope for one iteration: conversation messages, expected-vs-actual tool call analysis, and spans. The shape is rich and may evolve — treat it as an open document. Returns `404` with `details.reason: \"TRACE_NOT_AVAILABLE\"` when the iteration finished without a stored trace.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" },
+          { "$ref": "#/components/parameters/iterationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trace envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Trace document: `messages`, `prompts` (per-prompt expected/actual tool-call analysis), `spans`, and more.",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/runs": {
+      "get": {
+        "operationId": "listEvalSuiteRuns",
+        "tags": ["Eval runs"],
+        "summary": "List a suite's runs",
+        "description": "Recent runs for a suite, newest first.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/suiteId" },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum runs to return, 1–100. Defaults to 25.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent runs, newest first.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalRunPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/oauth/import-tokens": {
+      "post": {
+        "operationId": "importOAuthTokens",
+        "tags": ["OAuth"],
+        "summary": "Import OAuth tokens",
+        "description": "Stores OAuth tokens you obtained yourself (e.g. via the SDK's `runOAuthLogin` — interactive loopback, headless, or client-credentials) for this server, scoped to your user, project, and server. Subsequent API calls against the server inject the stored access token automatically, and `401`s from the server trigger a server-side refresh — no further caller involvement.\n\nThis closes the loop after an `OAUTH_REQUIRED` error.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ImportTokensRequest" },
+              "example": {
+                "serverUrl": "https://mcp.example.com/mcp",
+                "clientInformation": { "clientId": "client_123" },
+                "tokens": {
+                  "access_token": "at_…",
+                  "refresh_token": "rt_…",
+                  "expires_in": 3600
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tokens stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImportTokensResult" },
+                "example": { "imported": true, "expiresAt": 1781142000000 }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "tags": ["Catalog"],
+        "summary": "Get the authenticated account",
+        "description": "The user behind the API key (keys act as their creator, scoped to one organization).",
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Me" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "tags": ["Catalog"],
+        "summary": "List projects",
+        "description": "Projects the caller can access. API keys only ever see projects inside the key's organization.",
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to one organization.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's projects.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProjectPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers": {
+      "get": {
+        "operationId": "listProjectServers",
+        "tags": ["Catalog"],
+        "summary": "List a project's servers",
+        "description": "The MCP servers saved in the project — the `serverId`s every other route takes. STDIO command/args/env and raw headers are never exposed.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's servers.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProjectServerPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites": {
+      "get": {
+        "operationId": "listEvalSuites",
+        "tags": ["Catalog"],
+        "summary": "List a project's eval suites",
+        "description": "Eval suites in the project with latest-run summaries and pass-rate trends — the `suiteId`s the eval-run routes take.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's eval suites.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalSuitePage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/chat-sessions": {
+      "get": {
+        "operationId": "listChatSessions",
+        "tags": ["Catalog"],
+        "summary": "List chat sessions",
+        "description": "Chat sessions visible to the caller (personal + project-shared merged). Top-level rather than project-nested because `projectId` is an optional filter, not an owning scope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to one project.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "`active` (default) or `archived`.",
+            "schema": {
+              "type": "string",
+              "enum": ["active", "archived"],
+              "default": "active"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1–200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Cursor: the previous page's `nextCursor` (a `lastActivityAt` timestamp).",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of chat sessions, newest activity first.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatSessionPage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/chatboxes": {
+      "get": {
+        "operationId": "listChatboxes",
+        "tags": ["Chatboxes"],
+        "summary": "List a project's chatboxes",
+        "description": "The chatboxes published from this project — name, access mode, attached servers, and share link. Read-only.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's chatboxes.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatboxPage" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/chatboxes/{chatboxId}": {
+      "get": {
+        "operationId": "getChatbox",
+        "tags": ["Chatboxes"],
+        "summary": "Get a chatbox",
+        "description": "One chatbox's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A chatbox that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/chatboxId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chatbox settings.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatboxDetail" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/tunnels": {
+      "post": {
+        "operationId": "createTunnel",
+        "tags": ["Tunnels"],
+        "summary": "Create (or revive) a relay tunnel for a named project server",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TunnelCreateRequest" },
+              "example": { "name": "everything" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tunnel grant minted and the server record updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TunnelGrant" },
+                "example": {
+                  "serverId": "srv_abc123",
+                  "name": "everything",
+                  "existed": false,
+                  "slug": "calm-otter",
+                  "url": "https://calm-otter.tunnels.mcpjam.com/api/mcp/adapter-http/srv_abc123?k=…",
+                  "connectToken": "ct_…",
+                  "connectTokenExpiresAt": 1767225600000,
+                  "relayWsUrl": "wss://tunnels.mcpjam.com/agent",
+                  "secretVersion": 3
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/tunnels/{serverId}/close": {
+      "post": {
+        "operationId": "closeTunnel",
+        "tags": ["Tunnels"],
+        "summary": "Revoke a tunnel's live grant",
+        "description": "Revokes the grant at the control plane and edge: the public URL stops working immediately and any live tunnel session is disconnected. The server record — including its now-dead `url` — is intentionally left untouched, so the next create revives the tunnel with the same slug.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grant revoked; the server record is unchanged.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TunnelClosed" },
+                "example": { "serverId": "srv_abc123", "status": "closed" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
     }
   },
   "components": {
@@ -336,6 +1028,34 @@
         "in": "path",
         "required": true,
         "description": "ID of the server inside the project.",
+        "schema": { "type": "string" }
+      },
+      "runId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "description": "Eval run ID, as returned by `POST /eval-runs`.",
+        "schema": { "type": "string" }
+      },
+      "iterationId": {
+        "name": "iterationId",
+        "in": "path",
+        "required": true,
+        "description": "Iteration ID, as returned by the run's iterations list.",
+        "schema": { "type": "string" }
+      },
+      "suiteId": {
+        "name": "suiteId",
+        "in": "path",
+        "required": true,
+        "description": "Eval suite ID, as returned by `POST /eval-runs`.",
+        "schema": { "type": "string" }
+      },
+      "chatboxId": {
+        "name": "chatboxId",
+        "in": "path",
+        "required": true,
+        "description": "Chatbox ID, as returned by the project's chatbox list.",
         "schema": { "type": "string" }
       }
     },
@@ -454,12 +1174,18 @@
             "description": "The server's negotiated MCP capabilities.",
             "additionalProperties": true
           },
-          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/Tool" } },
+          "tools": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Tool" }
+          },
           "resources": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/Resource" }
           },
-          "resourceTemplates": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "resourceTemplates": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
           "prompts": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/Prompt" }
@@ -474,7 +1200,9 @@
               "capabilities": { "$ref": "#/components/schemas/DoctorCheck" },
               "tools": { "$ref": "#/components/schemas/DoctorCheck" },
               "resources": { "$ref": "#/components/schemas/DoctorCheck" },
-              "resourceTemplates": { "$ref": "#/components/schemas/DoctorCheck" },
+              "resourceTemplates": {
+                "$ref": "#/components/schemas/DoctorCheck"
+              },
               "prompts": { "$ref": "#/components/schemas/DoctorCheck" }
             }
           },
@@ -643,6 +1371,539 @@
           }
         }
       },
+      "CallToolResult": {
+        "type": "object",
+        "description": "MCP tool execution result, returned verbatim from the server.",
+        "required": ["content"],
+        "properties": {
+          "content": {
+            "type": "array",
+            "description": "Content blocks (`text`, `image`, `resource`, ...).",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "structuredContent": {
+            "type": "object",
+            "description": "Structured output matching the tool's `outputSchema`, when declared.",
+            "additionalProperties": true
+          },
+          "isError": {
+            "type": "boolean",
+            "description": "`true` when the **tool** reported a failure. The HTTP call still succeeds — the server answered."
+          }
+        },
+        "additionalProperties": true
+      },
+      "GetPromptResult": {
+        "type": "object",
+        "description": "MCP prompt render result, returned verbatim from the server.",
+        "required": ["messages"],
+        "properties": {
+          "description": { "type": "string" },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "content"],
+              "properties": {
+                "role": { "type": "string", "enum": ["user", "assistant"] },
+                "content": {
+                  "description": "MCP prompt message content block.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "EvalTestCase": {
+        "type": "object",
+        "description": "Inline eval test case. Same shape the hosted eval editor produces.",
+        "required": [
+          "title",
+          "query",
+          "runs",
+          "model",
+          "provider",
+          "expectedToolCalls"
+        ],
+        "properties": {
+          "title": { "type": "string" },
+          "query": {
+            "type": "string",
+            "description": "The user prompt the model is given."
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Iterations to execute for this case."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model ID. Hosted-catalog ids use `provider/name` form (e.g. `anthropic/claude-haiku-4.5`) and run on org credits; provider-native ids require a matching `modelApiKeys` entry (BYOK). Unknown models are rejected with VALIDATION_ERROR at create time."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider, e.g. `anthropic`, `openai`."
+          },
+          "expectedToolCalls": {
+            "type": "array",
+            "description": "Tool calls the model is expected to make. Empty array for negative tests.",
+            "items": {
+              "type": "object",
+              "required": ["toolName", "arguments"],
+              "properties": {
+                "toolName": { "type": "string" },
+                "arguments": { "type": "object", "additionalProperties": true }
+              }
+            }
+          },
+          "isNegativeTest": {
+            "type": "boolean",
+            "description": "When `true`, the case passes if NO tools are called."
+          },
+          "expectedOutput": { "type": "string" },
+          "advancedConfig": {
+            "type": "object",
+            "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "EvalRunCreateRequest": {
+        "type": "object",
+        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.",
+        "anyOf": [
+          { "required": ["suiteId"] },
+          {
+            "required": ["suiteName", "tests", "serverIds"],
+            "properties": { "tests": { "minItems": 1 } }
+          }
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "description": "Existing suite to rerun. A bare `suiteId` with no `tests` reruns the suite exactly as configured."
+          },
+          "suiteName": {
+            "type": "string",
+            "description": "Name for a new suite. Required (non-empty) when no `suiteId` is given."
+          },
+          "suiteDescription": { "type": "string" },
+          "tests": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "Inline test cases to upsert into the suite before running.",
+            "items": { "$ref": "#/components/schemas/EvalTestCase" }
+          },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
+            "items": { "type": "string" }
+          },
+          "modelApiKeys": {
+            "type": "object",
+            "description": "Optional per-provider model API keys (e.g. `{ \"anthropic\": \"sk-ant-…\" }`). Falls back to your organization's configured providers when omitted.",
+            "additionalProperties": { "type": "string" }
+          },
+          "notes": { "type": "string" },
+          "passCriteria": {
+            "type": "object",
+            "properties": {
+              "minimumPassRate": { "type": "number" }
+            }
+          },
+          "iterationOverride": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Override the per-case `runs` count for this run only."
+          }
+        },
+        "additionalProperties": true
+      },
+      "EvalRunCreated": {
+        "type": "object",
+        "required": ["runId", "suiteId", "status", "caseUpsert"],
+        "properties": {
+          "runId": { "type": "string" },
+          "suiteId": { "type": "string" },
+          "status": { "type": "string", "const": "running" },
+          "servers": {
+            "type": "array",
+            "description": "The servers the run connects to — explicit or derived from the suite's saved selection. `name` is present when known (always, on the derived path).",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" }
+              }
+            }
+          },
+          "caseUpsert": {
+            "type": "object",
+            "description": "Per-case upsert outcomes for inline `tests`. Partial failures don't abort the run.",
+            "properties": {
+              "committed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              },
+              "failed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "EvalRun": {
+        "type": "object",
+        "required": ["id", "suiteId", "status", "source", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "suiteId": { "type": "string" },
+          "runNumber": { "type": ["integer", "null"] },
+          "status": {
+            "type": "string",
+            "description": "Poll until terminal: `completed`, `failed`, or `cancelled`.",
+            "enum": ["pending", "running", "completed", "failed", "cancelled"]
+          },
+          "result": {
+            "type": ["string", "null"],
+            "description": "Pass/fail verdict once terminal.",
+            "enum": ["passed", "failed", null]
+          },
+          "summary": {
+            "type": ["object", "null"],
+            "properties": {
+              "total": { "type": "integer" },
+              "passed": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "passRate": { "type": "number" }
+            }
+          },
+          "source": {
+            "type": "string",
+            "description": "Run origin. API-created runs are `api`.",
+            "enum": ["ui", "api", "sdk"]
+          },
+          "notes": { "type": ["string", "null"] },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "completedAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds, `null` until terminal."
+          }
+        }
+      },
+      "EvalRunPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EvalRun" }
+          }
+        }
+      },
+      "EvalIteration": {
+        "type": "object",
+        "required": ["id", "iterationNumber", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "testCaseId": { "type": ["string", "null"] },
+          "title": { "type": ["string", "null"] },
+          "iterationNumber": { "type": "integer" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "completed", "failed", "cancelled"]
+          },
+          "result": {
+            "type": ["string", "null"],
+            "enum": ["passed", "failed", null]
+          },
+          "model": { "type": ["string", "null"] },
+          "provider": { "type": ["string", "null"] },
+          "startedAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "durationMs": {
+            "type": ["number", "null"],
+            "description": "Wall-clock duration; `null` until terminal."
+          },
+          "tokensUsed": { "type": ["number", "null"] },
+          "usage": {
+            "type": ["object", "null"],
+            "description": "Structured token usage (input/output/cached/reasoning) when available.",
+            "additionalProperties": true
+          },
+          "actualToolCalls": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "expectedToolCalls": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "error": { "type": ["string", "null"] }
+        }
+      },
+      "EvalIterationPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EvalIteration" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ImportTokensRequest": {
+        "type": "object",
+        "required": ["serverUrl", "tokens"],
+        "properties": {
+          "serverUrl": {
+            "type": "string",
+            "description": "The MCP server URL the tokens were obtained for."
+          },
+          "oauthResourceUrl": {
+            "type": "string",
+            "description": "OAuth protected-resource URL, when it differs from `serverUrl`."
+          },
+          "clientInformation": {
+            "type": "object",
+            "description": "OAuth client used to obtain the tokens. Optional, but without it server-side refresh cannot run — always include it when you provide a `refresh_token`.",
+            "required": ["clientId"],
+            "properties": {
+              "clientId": { "type": "string" },
+              "clientSecret": { "type": "string", "format": "password" }
+            }
+          },
+          "tokens": {
+            "type": "object",
+            "required": ["access_token"],
+            "properties": {
+              "access_token": { "type": "string", "format": "password" },
+              "refresh_token": { "type": "string", "format": "password" },
+              "expires_in": {
+                "type": "number",
+                "description": "Seconds until the access token expires."
+              },
+              "token_type": { "type": "string" },
+              "scope": { "type": "string" },
+              "id_token": { "type": "string", "format": "password" }
+            }
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "required": ["id", "email", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string" },
+          "name": { "type": "string" },
+          "imageUrl": { "type": ["string", "null"] },
+          "profilePictureUrl": { "type": ["string", "null"] },
+          "plan": { "type": ["string", "null"] },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "icon": { "type": ["string", "null"] },
+          "organizationId": { "type": ["string", "null"] },
+          "visibility": { "type": ["string", "null"] },
+          "role": {
+            "type": "string",
+            "description": "Caller's role on the project, when resolved."
+          },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "ProjectPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Project" }
+          }
+        }
+      },
+      "ProjectServer": {
+        "type": "object",
+        "description": "A saved MCP server, projected toward the hosted (HTTP) shape. STDIO command/args/env and raw headers are never exposed.",
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "transportType",
+          "useOAuth",
+          "hasClientSecret"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "transportType": { "type": "string" },
+          "url": {
+            "type": ["string", "null"],
+            "description": "Endpoint for HTTP-transport servers; `null` for stdio."
+          },
+          "useOAuth": { "type": "boolean" },
+          "hasClientSecret": { "type": "boolean" },
+          "oauthScopes": { "type": "array", "items": { "type": "string" } },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": { "type": ["number", "null"] }
+        }
+      },
+      "ProjectServerPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ProjectServer" }
+          }
+        }
+      },
+      "EvalSuite": {
+        "type": "object",
+        "required": ["id", "totals", "passRateTrend"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": ["string", "null"] },
+          "projectId": { "type": ["string", "null"] },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": { "type": ["number", "null"] },
+          "latestRun": {
+            "type": ["object", "null"],
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "status": { "type": ["string", "null"] },
+              "passRate": { "type": ["number", "null"] },
+              "passed": { "type": ["integer", "null"] },
+              "failed": { "type": ["integer", "null"] },
+              "createdAt": { "type": ["number", "null"] }
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "passed": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "runs": { "type": "integer" }
+            }
+          },
+          "passRateTrend": {
+            "type": "array",
+            "description": "Recent runs' pass rates, oldest first.",
+            "items": { "type": "number" }
+          }
+        }
+      },
+      "EvalSuitePage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EvalSuite" }
+          }
+        }
+      },
+      "ChatSession": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "status": { "type": ["string", "null"] },
+          "projectId": { "type": ["string", "null"] },
+          "visibility": {
+            "type": ["string", "null"],
+            "description": "`private` or `project`."
+          },
+          "lastActivityAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "createdAt": { "type": ["number", "null"] },
+          "isPinned": { "type": "boolean" },
+          "isUnread": { "type": "boolean" }
+        }
+      },
+      "ChatSessionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatSession" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass as `before` to fetch the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ImportTokensResult": {
+        "type": "object",
+        "required": ["imported"],
+        "properties": {
+          "imported": { "type": "boolean", "const": true },
+          "expiresAt": {
+            "type": ["number", "null"],
+            "description": "Epoch milliseconds when the stored access token expires, or `null` if unknown."
+          }
+        }
+      },
       "ExportSnapshot": {
         "type": "object",
         "required": ["serverId", "exportedAt", "tools", "resources", "prompts"],
@@ -661,6 +1922,228 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/Prompt" }
           }
+        }
+      },
+      "ChatboxLink": {
+        "type": "object",
+        "description": "Share link for the chatbox. The URL embeds the access token; visible to any caller who can read the chatbox (the same audience that sees it in the hosted UI).",
+        "required": ["path", "url"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "App-relative share path."
+          },
+          "url": { "type": "string", "description": "Absolute share URL." }
+        }
+      },
+      "ChatboxServer": {
+        "type": "object",
+        "description": "A server attached to the chatbox. Chatboxes attach HTTP servers only, so `url` is the server's endpoint.",
+        "required": ["id", "name", "useOAuth"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "url": {
+            "type": ["string", "null"],
+            "description": "HTTP endpoint of the server."
+          },
+          "useOAuth": { "type": "boolean" }
+        }
+      },
+      "Chatbox": {
+        "type": "object",
+        "description": "Summary of a published chatbox, as returned by the list endpoint.",
+        "required": ["id", "name", "serverCount", "serverNames"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "mode": {
+            "type": ["string", "null"],
+            "description": "Who can use the chatbox.",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link",
+              null
+            ]
+          },
+          "hostStyle": {
+            "type": ["string", "null"],
+            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+          },
+          "hostId": {
+            "type": ["string", "null"],
+            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+          },
+          "hostName": { "type": ["string", "null"] },
+          "serverCount": { "type": "integer" },
+          "serverNames": { "type": "array", "items": { "type": "string" } },
+          "link": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/ChatboxLink" },
+              { "type": "null" }
+            ]
+          },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Unix epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": ["number", "null"],
+            "description": "Unix epoch milliseconds."
+          }
+        }
+      },
+      "ChatboxDetail": {
+        "type": "object",
+        "description": "A chatbox's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "required": [
+          "id",
+          "name",
+          "serverCount",
+          "serverNames",
+          "requireToolApproval",
+          "servers"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "mode": {
+            "type": ["string", "null"],
+            "description": "Who can use the chatbox.",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link",
+              null
+            ]
+          },
+          "hostStyle": {
+            "type": ["string", "null"],
+            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+          },
+          "hostId": {
+            "type": ["string", "null"],
+            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+          },
+          "hostName": { "type": ["string", "null"] },
+          "serverCount": { "type": "integer" },
+          "serverNames": { "type": "array", "items": { "type": "string" } },
+          "link": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/ChatboxLink" },
+              { "type": "null" }
+            ]
+          },
+          "createdAt": {
+            "type": ["number", "null"],
+            "description": "Unix epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": ["number", "null"],
+            "description": "Unix epoch milliseconds."
+          },
+          "modelId": {
+            "type": ["string", "null"],
+            "description": "Model the chatbox chats with."
+          },
+          "systemPrompt": { "type": ["string", "null"] },
+          "temperature": { "type": ["number", "null"] },
+          "requireToolApproval": { "type": "boolean" },
+          "servers": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatboxServer" }
+          }
+        }
+      },
+      "ChatboxPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Chatbox" }
+          }
+        }
+      },
+      "TunnelCreateRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel: its `url` is overwritten and stdio records are converted to `transportType: \"http\"`."
+          }
+        }
+      },
+      "TunnelGrant": {
+        "type": "object",
+        "description": "Everything the caller needs to host the tunnel connection. **Treat the whole object as a credential**: `url` embeds the plaintext `?k=` bearer secret and `connectToken` authenticates the relay WebSocket.",
+        "required": [
+          "serverId",
+          "name",
+          "existed",
+          "slug",
+          "url",
+          "connectToken",
+          "relayWsUrl"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "The registered project server's ID."
+          },
+          "name": { "type": "string" },
+          "existed": {
+            "type": "boolean",
+            "description": "True when a server record with this name already existed (its config now points at the tunnel)."
+          },
+          "previousUrl": {
+            "type": "string",
+            "description": "The record's previous URL, present when it existed with a different one (it has been overwritten)."
+          },
+          "previousTransportType": {
+            "type": "string",
+            "description": "The record's previous transport, present when it existed (a `stdio` record has been converted to `http`)."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Stable public subdomain slug; survives re-creates for the same server."
+          },
+          "url": {
+            "type": "string",
+            "description": "Public tunnel URL including the `?k=` bearer secret. Also persisted on the server record's `url`."
+          },
+          "connectToken": {
+            "type": "string",
+            "description": "Bearer for the relay edge WebSocket handshake."
+          },
+          "connectTokenExpiresAt": {
+            "type": "number",
+            "description": "Epoch-ms expiry of `connectToken`."
+          },
+          "relayWsUrl": {
+            "type": "string",
+            "description": "Relay edge WebSocket endpoint to connect to."
+          },
+          "secretVersion": {
+            "type": "number",
+            "description": "Monotonic secret version; each create bumps it."
+          }
+        }
+      },
+      "TunnelClosed": {
+        "type": "object",
+        "required": ["serverId", "status"],
+        "properties": {
+          "serverId": { "type": "string" },
+          "status": { "type": "string", "enum": ["closed"] }
         }
       }
     },

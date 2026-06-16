@@ -18,8 +18,10 @@ export type ListResourcesResult = {
 export async function listResources(
   serverId: string,
   cursor?: string,
+  opts?: { forceHosted?: boolean },
 ): Promise<ListResourcesResult> {
   return runByMode({
+    forceHosted: opts?.forceHosted,
     hosted: async () => {
       const body = await listHostedResources({
         serverNameOrId: serverId,
@@ -54,8 +56,13 @@ export async function listResources(
   });
 }
 
-export async function readResource(serverId: string, uri: string) {
+export async function readResource(
+  serverId: string,
+  uri: string,
+  opts?: { forceHosted?: boolean },
+) {
   return runByMode({
+    forceHosted: opts?.forceHosted,
     hosted: async () => readHostedResource({ serverNameOrId: serverId, uri }),
     local: async () => {
       const response = await authFetch(`/api/mcp/resources/read`, {

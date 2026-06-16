@@ -1,3 +1,8 @@
+// Inspector boundary shim. The persisted-execution replay builder LOGIC is
+// single-sourced in @mcpjam/chat-ui/trace; this module keeps the inspector's
+// real MCP-Apps SDK widget/CSP types on the input/output (the package uses
+// opaque `unknown` placeholders) and delegates the builder to the package.
+import { buildPersistedExecutionReplay as buildPersistedExecutionReplayImpl } from "@mcpjam/chat-ui/trace";
 import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
@@ -25,15 +30,7 @@ export interface PersistedExecutionReplayInput {
   widgetPermissions?: McpUiResourcePermissions | null;
   widgetPermissive?: boolean;
   prefersBorder?: boolean;
-  /** Persisted compat-runtime flag from the cached HTML blob. */
   injectedOpenAiCompat?: boolean;
-  /**
-   * Persisted per-method `window.openai.*` capability surface that
-   * was injected into the cached HTML blob. Sibling of
-   * `injectedOpenAiCompat`. Threads through the replay path so the
-   * renderer can advertise the same matrix the cached bytes were
-   * built against. Absent for pre-feature snapshots.
-   */
   injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities;
 }
 
@@ -51,35 +48,13 @@ export interface PersistedExecutionReplay {
 export function buildPersistedExecutionReplay(
   input: PersistedExecutionReplayInput,
 ): PersistedExecutionReplay {
+  // Input's real MCP-Apps types widen into the package's `unknown` placeholders.
+  // Only `renderOverride` carries the placeholder widget/CSP types, so narrow
+  // the cast to that field and keep the rest structurally checked against the
+  // package shape.
+  const replay = buildPersistedExecutionReplayImpl(input);
   return {
-    toolName: input.toolName,
-    params: (input.toolInput ?? {}) as Record<string, unknown>,
-    result: input.toolOutput,
-    toolMeta: input.toolMetadata,
-    state: input.toolState,
-    errorText: input.toolErrorText,
-    toolCallId: input.toolCallId,
-    renderOverride: {
-      serverId: input.serverId,
-      isOffline: input.isOffline,
-      cachedWidgetHtmlUrl: input.cachedWidgetHtmlUrl,
-      liveFetchPreferred: input.liveFetchPreferred,
-      toolOutput: input.toolOutput,
-      initialWidgetState:
-        input.protocol === "openai-apps" ? input.initialWidgetState : undefined,
-      resourceUri:
-        input.protocol === "mcp-apps" ? input.resourceUri : undefined,
-      toolMetadata: input.toolMetadata,
-      widgetCsp: input.protocol === "mcp-apps" ? input.widgetCsp : undefined,
-      widgetPermissions:
-        input.protocol === "mcp-apps" ? input.widgetPermissions : undefined,
-      widgetPermissive:
-        input.protocol === "mcp-apps" ? input.widgetPermissive : undefined,
-      prefersBorder:
-        input.protocol === "mcp-apps" ? input.prefersBorder : undefined,
-      injectedOpenAiCompat: input.injectedOpenAiCompat,
-      injectedOpenAiCompatCapabilities:
-        input.injectedOpenAiCompatCapabilities,
-    },
+    ...replay,
+    renderOverride: replay.renderOverride as ToolRenderOverride,
   };
 }

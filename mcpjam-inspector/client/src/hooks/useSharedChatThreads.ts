@@ -1,4 +1,8 @@
 import { useQuery } from "convex/react";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceWidgetRenderObservationView,
+} from "@/shared/eval-trace";
 
 export type SharedChatSourceType = "chatbox";
 
@@ -166,4 +170,28 @@ export function useSharedChatTurnTraces({
   ) as SharedChatTurnTrace[] | undefined;
 
   return { traces };
+}
+
+export interface SessionBrowserArtifacts {
+  widgetRenderObservations: EvalTraceWidgetRenderObservationView[];
+  browserInteractionSteps: EvalTraceBrowserInteractionStepView[];
+}
+
+/**
+ * Browser-rendered MCP App artifacts for a session (render observations +
+ * Computer Use steps), written by the synthetic-session runner. Sorted and
+ * screenshot-url-resolved server-side; empty arrays for sessions without
+ * browser artifacts (live visitor sessions, pre-feature synthetic runs).
+ */
+export function useSessionBrowserArtifacts({
+  threadId,
+}: {
+  threadId: string | null;
+}) {
+  const artifacts = useQuery(
+    "chatSessions:getBrowserArtifacts" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip",
+  ) as SessionBrowserArtifacts | undefined;
+
+  return { artifacts };
 }

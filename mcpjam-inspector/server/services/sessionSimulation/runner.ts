@@ -8,13 +8,14 @@ import type { ModelDefinition } from "@/shared/types";
 // when the chatbox modelId isn't in SUPPORTED_MODELS, which is the common
 // case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
-import {
-  handleMCPJamFreeChatModel,
-  type MCPJamHandlerOptions,
+import type {
+  MCPJamEngineErrorEvent,
+  MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
+import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import {
-  handleHostedOrgChatModel,
-  handleLocalOrgChatModel,
+  runLocalOrgChatTurnHeadless,
+  type RunLocalOrgChatTurnHeadlessOptions,
 } from "../../utils/org-model-stream-handler.js";
 import {
   buildSyntheticModelDefinition,
@@ -22,13 +23,23 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
+import {
+  createBrowserSessionContext,
+  type BrowserSessionContext,
+} from "../browser-session-context.js";
+import {
+  serializeBrowserStepsForBackend,
+  serializeRenderObservationsForBackend,
+  toBrowserStepPayload,
+  toObservationPayload,
+} from "../browser-artifact-serialization.js";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import {
   evalTraceSnapshotToPayload,
@@ -58,8 +69,14 @@ async function tryUpdateRunWithRetry(
   projectId: string,
   runId: string,
   delta: { succeeded?: number; failed?: number; rateLimited?: number },
-  status: "running" | "completed" | "partial" | "failed" | "rate_limited" | undefined,
-  context: string,
+  status:
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "rate_limited"
+    | undefined,
+  context: string
 ): Promise<void> {
   try {
     await updateRun(
@@ -68,7 +85,7 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status,
+      status
     );
     return;
   } catch (err) {
@@ -78,7 +95,9 @@ async function tryUpdateRunWithRetry(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  await new Promise((resolve) => setTimeout(resolve, UPDATE_RUN_RETRY_DELAY_MS));
+  await new Promise((resolve) =>
+    setTimeout(resolve, UPDATE_RUN_RETRY_DELAY_MS)
+  );
   try {
     await updateRun(
       convexHttpUrl,
@@ -86,7 +105,7 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status,
+      status
     );
   } catch (err) {
     logger.error("[sessionSimulation.runner] updateRun failed after retry", {
@@ -192,14 +211,14 @@ export function getRunningSimulationCount(): number {
  * "running" run.
  */
 export async function shutdownRunningSimulations(
-  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS
 ): Promise<void> {
   const handles = Array.from(runningRuns.entries());
   for (const [, handle] of handles) {
     handle.abort();
   }
   const timeoutPromise = new Promise<void>((resolve) =>
-    setTimeout(resolve, timeoutMs),
+    setTimeout(resolve, timeoutMs)
   );
   await Promise.race([
     Promise.allSettled(handles.map(([, h]) => h.done)),
@@ -217,9 +236,9 @@ export async function shutdownRunningSimulations(
         runId,
         {},
         "failed",
-        "shutdown-straggler",
-      ),
-    ),
+        "shutdown-straggler"
+      )
+    )
   );
 }
 
@@ -227,7 +246,7 @@ export async function startSimulation(
   partial: Omit<RunSimulationOptions, "runId"> & {
     /** Returned by backend `createRun`. */
     runId: string;
-  },
+  }
 ): Promise<void> {
   const controller = new AbortController();
   const composed = composeAbortSignals(partial.abortSignal, controller.signal);
@@ -260,11 +279,9 @@ function composeAbortSignals(
       controller.abort(signal.reason);
       return controller.signal;
     }
-    signal.addEventListener(
-      "abort",
-      () => controller.abort(signal.reason),
-      { once: true },
-    );
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
   }
   return controller.signal;
 }
@@ -311,7 +328,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           runId,
           error: err instanceof Error ? err.message : String(err),
         });
-      },
+      }
     );
   }, HEARTBEAT_INTERVAL_MS);
 
@@ -356,7 +373,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
             rateLimited: outcome === "rate_limited" ? 1 : 0,
           },
           undefined,
-          "per-session-progress",
+          "per-session-progress"
         );
 
         if (outcome === "rate_limited") {
@@ -374,10 +391,10 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       totalSucceeded === total
         ? "completed"
         : totalSucceeded === 0 && totalFailed === 0 && totalRateLimited > 0
-          ? "rate_limited"
-          : totalSucceeded === 0
-            ? "failed"
-            : "partial";
+        ? "rate_limited"
+        : totalSucceeded === 0
+        ? "failed"
+        : "partial";
     await tryUpdateRunWithRetry(
       convexHttpUrl,
       convexAuthToken,
@@ -385,7 +402,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       status,
-      "final-status",
+      "final-status"
     );
   } catch (error) {
     logger.error("[sessionSimulation.runner] run failed", {
@@ -399,7 +416,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       "failed",
-      "run-failed",
+      "run-failed"
     );
   } finally {
     clearInterval(heartbeat);
@@ -455,6 +472,11 @@ async function runOneSession(args: {
   const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
+  // Browser-rendered MCP App pipeline (same machinery as eval iterations):
+  // declared before the try so the finally can dispose a launched Chromium
+  // on every exit. Construction is cheap; Chromium launches lazily on the
+  // first widget render, so sessions that never touch an MCP App pay nothing.
+  let browser: BrowserSessionContext | undefined;
 
   try {
     const built = await managerFactory();
@@ -482,11 +504,14 @@ async function runOneSession(args: {
     // Built-in tools from the chatbox host config (e.g. web_search) resolve
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
-    const builtInTools = safeResolveBuiltInTools(builtInToolIds, {
-      authHeader,
-      projectId,
-      chatSessionId,
-    });
+    const builtInTools = resolveHostTools(
+      { builtInToolIds },
+      {
+        authHeader,
+        projectId,
+        chatSessionId,
+      }
+    );
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -504,6 +529,18 @@ async function runOneSession(args: {
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
+    });
+
+    // One browser context per session: renders MCP App tool results in the
+    // headless harness (render observations for every model) and, for assistant
+    // models with vision + tool calling, adds the `computer` / `finish_widget` tools so the
+    // simulated assistant can interact with rendered widgets (interaction
+    // steps). `injectOpenAiCompat` is omitted to match the snapshot capture
+    // below — the chatbox runtime config doesn't carry the flag.
+    browser = await createBrowserSessionContext({
+      model: String(modelDefinition.id),
+      mcpClientManager: manager,
+      logScope: "sessionSimulation",
     });
 
     let messageHistory: ModelMessage[] = [];
@@ -525,7 +562,7 @@ async function runOneSession(args: {
         projectId,
         runId,
         persona.id,
-        lastTranscript,
+        lastTranscript
       );
 
       if (next.endSession) break;
@@ -535,6 +572,13 @@ async function runOneSession(args: {
         content: next.message,
       } as ModelMessage);
       lastTranscript.push({ role: "user", content: next.message });
+
+      // Stamp artifacts with this persona turn and start it with a clean
+      // widget surface — a widget kept mounted by the previous turn must not
+      // be advertised/targeted before this turn's own MCP App tool runs
+      // (same per-turn hygiene as the eval runners).
+      browser.setActivePromptIndex(turn);
+      await browser.dismissCarriedWidget();
 
       const {
         history: updatedHistory,
@@ -548,7 +592,18 @@ async function runOneSession(args: {
         sourceType: "chatbox",
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
-        tools: prepared.allTools,
+        // `computer` / `finish_widget` merge into the advertised set; the
+        // prepareAdvertisedTools hook hides them until a widget is mounted.
+        tools: { ...prepared.allTools, ...browser.computerWidgetTools },
+        hooks: {
+          onToolCall: (event) => browser!.noteToolCallInput(event),
+          onToolResult: (event) => browser!.handleEngineToolResult(event),
+          ...(browser.prepareAdvertisedTools
+            ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
+            : {}),
+          onToolResultChunk: (chunk) =>
+            browser!.handleDirectToolResultChunk(chunk),
+        },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
         mcpClientManager: manager,
@@ -580,7 +635,16 @@ async function runOneSession(args: {
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
 
-      if (!turnTrace) continue;
+      if (!turnTrace) {
+        // No-trace turns skip persistence (today only the aborted local-BYOK
+        // path reaches here — failed turns throw above). Discard whatever the
+        // browser context collected during this turn: a later turn's drain
+        // would otherwise sweep these rows up and persist them under ITS
+        // batch promptIndex, misattributing artifacts across turns
+        // (CodeRabbit, PR 2610).
+        browser.drainNewArtifacts();
+        continue;
+      }
 
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
@@ -594,11 +658,12 @@ async function runOneSession(args: {
             ? selectedServerIds.filter((id) => liveManager.hasServer(id))
             : selectedServerIds;
         if (knownIds.length > 0) {
-          toolSnapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
-            liveManager,
-            knownIds,
-            { logPrefix: "sessionSimulation.persist" },
-          );
+          toolSnapshot =
+            await exportConnectedServerToolSnapshotForEvalAuthoring(
+              liveManager,
+              knownIds,
+              { logPrefix: "sessionSimulation.persist" }
+            );
         }
       } catch {
         toolSnapshot = undefined;
@@ -645,6 +710,20 @@ async function runOneSession(args: {
         chatSessionId,
         chatboxId,
         accessVersion,
+      });
+
+      // Persist this turn's browser-rendered artifacts (render observations
+      // + Computer Use steps) — additive to the inert HTML snapshots above,
+      // which keep powering the viewer's interactive Data/Sandbox iframe.
+      // Best-effort like the snapshot capture; the session row exists (the
+      // turn persist above just ran), so there's no /ingest-chat race here.
+      await persistBrowserArtifactsForTurn({
+        browser,
+        convexAuthToken,
+        chatSessionId,
+        chatboxId,
+        accessVersion,
+        promptIndex: turn,
       });
     }
 
@@ -708,6 +787,19 @@ async function runOneSession(args: {
     });
     return "failed";
   } finally {
+    // Tear down the browser harness (and its headless Chromium, if launched)
+    // before the manager: the harness's widget bridge dispatches tools/call
+    // through the manager, so it must die first.
+    if (browser) {
+      try {
+        await browser.dispose();
+      } catch (err) {
+        logger.warn("[sessionSimulation.runner] browser dispose failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (dispose) {
       try {
         await dispose();
@@ -762,7 +854,7 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
   if (!convexUrl) {
     logger.warn(
       "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
-      { chatSessionId, chatboxId },
+      { chatSessionId, chatboxId }
     );
     return;
   }
@@ -820,35 +912,124 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
-          },
+          }
         );
       } catch (err) {
-        logger.warn(
-          "[sessionSimulation.runner] createWidgetSnapshot failed",
-          {
-            chatSessionId,
-            toolCallId: snap.toolCallId,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        );
+        logger.warn("[sessionSimulation.runner] createWidgetSnapshot failed", {
+          chatSessionId,
+          toolCallId: snap.toolCallId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    }),
+    })
   );
+}
+
+/**
+ * Drain the browser session context's artifacts collected during this turn
+ * (render observations + Computer Use interaction steps), upload screenshots,
+ * and persist via `chatSessions:recordBrowserArtifacts` — the synthetic
+ * sibling of the eval finalizer's artifact hand-off. Idempotent backend
+ * upserts (`(sessionId, toolCallId)` / `(sessionId, toolCallId, stepIndex)`)
+ * make a retried turn-write safe.
+ *
+ * Best-effort end-to-end, mirroring the widget-snapshot capture above: any
+ * failure is logged and swallowed — never aborts the synthetic run. (The
+ * drained rows are dropped on failure; the next turn's drain only carries
+ * new artifacts. Screenshots are the only loss — statuses for re-rendered
+ * widgets re-upsert on later renders.)
+ */
+async function persistBrowserArtifactsForTurn(args: {
+  browser: BrowserSessionContext;
+  convexAuthToken: string;
+  chatSessionId: string;
+  chatboxId: string;
+  accessVersion: number | undefined;
+  promptIndex: number;
+}): Promise<void> {
+  const { observations, steps } = args.browser.drainNewArtifacts();
+  if (observations.length === 0 && steps.length === 0) {
+    return;
+  }
+
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    logger.warn(
+      "[sessionSimulation.runner] CONVEX_URL not set; skipping browser artifact persist",
+      { chatSessionId: args.chatSessionId, chatboxId: args.chatboxId }
+    );
+    return;
+  }
+
+  try {
+    const convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(args.convexAuthToken);
+
+    // Serialize uploads the transient base64 screenshots → blob ids; the
+    // payload mappers strip the per-row promptIndex (the mutation stamps the
+    // batch-level value server-side).
+    const serializedObservations = (
+      await serializeRenderObservationsForBackend(observations, convexClient)
+    ).map(toObservationPayload);
+    const serializedSteps = (
+      await serializeBrowserStepsForBackend(steps, convexClient)
+    ).map(toBrowserStepPayload);
+
+    await convexClient.mutation("chatSessions:recordBrowserArtifacts" as any, {
+      chatboxId: args.chatboxId,
+      ...(args.accessVersion !== undefined
+        ? { accessVersion: args.accessVersion }
+        : {}),
+      chatSessionId: args.chatSessionId,
+      promptIndex: args.promptIndex,
+      ...(serializedObservations.length
+        ? { widgetRenderObservations: serializedObservations }
+        : {}),
+      ...(serializedSteps.length
+        ? { browserInteractionSteps: serializedSteps }
+        : {}),
+    });
+  } catch (err) {
+    logger.warn("[sessionSimulation.runner] browser artifact persist failed", {
+      chatSessionId: args.chatSessionId,
+      observations: observations.length,
+      steps: steps.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 // `SyntheticModelSource` is imported from `org-model-config.ts` so the
 // runner and the shared resolver stay in lockstep.
 
 /**
- * Drive one assistant turn through the appropriate model handler:
- *   - MCPJam-provided modelId → `handleMCPJamFreeChatModel` (JAM-paid)
- *   - Org-BYOK cloud runtime → `handleHostedOrgChatModel`
- *   - Org-BYOK local runtime → `handleLocalOrgChatModel`
+ * Hooks a caller can attach to the assistant turn (the browser session
+ * context wires these so MCP App tool results render in the headless
+ * harness and Computer Use tools gate on a live widget mount).
+ */
+export interface DrainAssistantTurnHooks {
+  /** Engine branches (`/stream`, `/stream/org`): MCPJamHandlerOptions pass-throughs. */
+  onToolCall?: MCPJamHandlerOptions["onToolCall"];
+  onToolResult?: MCPJamHandlerOptions["onToolResult"];
+  /** All branches: per-step advertised-tool narrowing. */
+  prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
+  /** Local AI-SDK branch: awaited per-tool-result render hook. */
+  onToolResultChunk?: RunLocalOrgChatTurnHeadlessOptions["onToolResultChunk"];
+}
+
+/**
+ * Drive one assistant turn through the appropriate headless turn driver:
+ *   - MCPJam-provided modelId → `runAssistantTurn` (JAM-paid `/stream`)
+ *   - Org-BYOK cloud runtime → `runAssistantTurn` with
+ *     `endpointPath: "/stream/org"` + `extraBodyFields: { providerKey,
+ *     serverIds }` (byte-matching what `handleHostedOrgChatModel` builds)
+ *   - Org-BYOK local runtime → `runLocalOrgChatTurnHeadless`
  *
- * Mirrors `web-chat-turn.ts`'s three-way dispatch but re-implements the
- * minimum branch logic here because the shared dispatcher's surface is
- * UIMessage-shaped and bakes in persist/SSE concerns that synthetic runs
- * own themselves (per-turn `persistChatSessionToConvex` from
+ * No SSE Response is built or drained: the engine branches run
+ * `streamSink: "none"` / `persistMode: "caller"` (the agent loop and the
+ * transcript capture complete before `runAssistantTurn` returns), and the
+ * local branch consumes `runDirectChatTurn` headlessly. Synthetic runs own
+ * persistence themselves (per-turn `persistChatSessionToConvex` from
  * `runOneSession` with `synthetic: true`, `personaId`, `synthesisRunId`).
  *
  * User-API-key direct chats are NOT supported on the synthetic path —
@@ -856,47 +1037,39 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
  * the route boundary; this dispatcher's only fallthrough is for an
  * unexpected `resolveOrgProviderRuntime` shape, which throws.
  *
- * Returns the post-turn message history, the per-turn trace captured by
- * `onConversationComplete`, and the resolved `modelSource` so the caller
- * can stamp `persistChatSessionToConvex` correctly.
+ * Error contract: turn failures THROW. The engine doesn't throw in
+ * `streamSink: "none"` mode — it routes failures through `onEngineError`
+ * and returns with no turnTrace — so this dispatcher converts that signal
+ * into a throw. The old SSE-drain implementation discarded error chunks
+ * into the drained stream, silently recording an empty assistant turn;
+ * surfacing the failure lets `runOneSession`'s classifier see real spend-cap
+ * / rate-limit errors (→ `"rate_limited"`) and genuine provider failures
+ * (→ `"failed"`).
  *
- * Drains the SSE response body (`createUIMessageStreamResponse` requires
- * the consumer to read the stream before `onFinish` runs).
+ * Returns the post-turn message history, the per-turn trace, and the
+ * resolved `modelSource` so the caller can stamp
+ * `persistChatSessionToConvex` correctly.
  */
 export async function drainAssistantTurn(
-  args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
+  args: Omit<
+    MCPJamHandlerOptions,
+    "onConversationComplete" | "onStreamComplete"
+  > & {
     chatSessionId: string;
     /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
     modelDefinition: ModelDefinition;
     /** Synthesis run id — stamped onto BYOK usage records for attribution. */
     synthesisRunId: string;
-  },
+    /** Optional turn hooks (browser session context attachment points). */
+    hooks?: DrainAssistantTurnHooks;
+  }
 ): Promise<{
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
   modelSource: SyntheticModelSource;
 }> {
-  let captured: ModelMessage[] = [];
-  let capturedTurnTrace: PersistedTurnTrace | undefined;
-  const {
-    chatSessionId: _omitSession,
-    modelDefinition,
-    synthesisRunId,
-    extraBodyFields,
-    ...rest
-  } = args;
-
+  const { modelDefinition, synthesisRunId, extraBodyFields, hooks } = args;
   const modelIdStr = String(modelDefinition.id);
-  const onConversationComplete = (
-    fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
-  ) => {
-    captured = [...fullHistory];
-    capturedTurnTrace = turnTrace;
-  };
-
-  let response: Response;
-  let modelSource: SyntheticModelSource;
 
   // Classify once, dispatch off the result. The same resolver is used by
   // the empty-session fallback persist so the two attribution paths can't
@@ -911,52 +1084,44 @@ export async function drainAssistantTurn(
     serverIds: args.selectedServers,
   });
 
-  if (resolution.source === "mcpjam") {
-    // MCPJam-paid path: synthesisRunId rides via extraBodyFields on /stream
-    // so the JAM-paid forwarder stamps it onto the llmUsageRecord.
-    modelSource = "mcpjam";
-    const options: MCPJamHandlerOptions = {
-      ...rest,
-      approvalMode: "auto-deny",
-      extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
-      onConversationComplete,
-    };
-    response = await handleMCPJamFreeChatModel(options);
-  } else {
+  // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine
+  // union; the simulation runner always passes "chatbox".
+  const sourceType =
+    args.sourceType === "direct" || args.sourceType === "eval"
+      ? args.sourceType
+      : ("chatbox" as const);
+
+  if (resolution.source !== "mcpjam") {
     // resolution.orgRuntime is guaranteed defined for non-"mcpjam" sources
-    // (the resolver only omits it when source === "mcpjam"). The type
-    // narrows after the explicit check below; cast comment + check keeps
-    // strict mode happy without weakening the contract.
+    // (the resolver only omits it when source === "mcpjam").
     const orgRuntime = resolution.orgRuntime!;
 
     if (orgRuntime.runtimeLocation === "local") {
-      modelSource = "local_byok";
       // Local-runtime org providers don't have an approval loop today —
-      // handleLocalOrgChatModel rejects synchronously with
-      // `tool_approval_unsupported` when requireToolApproval is true and
-      // any tools are exposed. Cloud BYOK paths handle this via
-      // `approvalMode: "auto-deny"` (the loop denies each call and
-      // continues); the local path has no equivalent yet, so a synthetic
-      // run on an approval-required chatbox would have every turn fail
-      // with the same error. Refuse upfront with a clear message rather
-      // than letting the per-turn errors stack up silently. Disable
-      // approval on the chatbox or switch the provider to cloud runtime
-      // to unblock.
+      // the local turn driver rejects with `tool_approval_unsupported`
+      // when requireToolApproval is true and any tools are exposed. Cloud
+      // BYOK paths handle this via `approvalMode: "auto-deny"` (the loop
+      // denies each call and continues); the local path has no equivalent
+      // yet, so a synthetic run on an approval-required chatbox would have
+      // every turn fail with the same error. Refuse upfront with a clear
+      // message rather than letting the per-turn errors stack up silently.
+      // Disable approval on the chatbox or switch the provider to cloud
+      // runtime to unblock.
       if (
         args.requireToolApproval === true &&
         args.tools &&
         Object.keys(args.tools as Record<string, unknown>).length > 0
       ) {
         throw new Error(
-          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime."
         );
       }
-      response = handleLocalOrgChatModel({
+      const headless = await runLocalOrgChatTurnHeadless({
         provider: orgRuntime.provider,
         projectId: args.projectId ?? "",
         modelId: modelIdStr,
         chatSessionId: args.chatSessionId,
-        sourceType: args.sourceType,
+        sourceType,
         messages: args.messages,
         systemPrompt: args.systemPrompt,
         temperature: args.temperature,
@@ -969,56 +1134,127 @@ export async function drainAssistantTurn(
         selectedServers: args.selectedServers,
         serverIds: args.selectedServers,
         requireToolApproval: args.requireToolApproval,
-        onConversationComplete,
         abortSignal: args.abortSignal,
+        // Forwarded to /stream/org/local-usage so the backend BYOK writer
+        // stamps synthesisRunId onto the resulting llmUsageRecord.
         synthesisRunId,
+        ...(hooks?.prepareAdvertisedTools
+          ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
+          : {}),
+        ...(hooks?.onToolResultChunk
+          ? { onToolResultChunk: hooks.onToolResultChunk }
+          : {}),
       });
-    } else {
-      modelSource = "byok";
-      response = await handleHostedOrgChatModel({
-        projectId: args.projectId ?? "",
-        providerKey: orgRuntime.providerKey,
-        modelId: modelIdStr,
-        chatSessionId: args.chatSessionId,
-        sourceType: args.sourceType,
-        messages: args.messages,
-        systemPrompt: args.systemPrompt,
-        temperature: args.temperature,
-        tools: args.tools as ToolSet,
-        progressivePlan: args.progressivePlan,
-        discoveryState: args.discoveryState,
-        authHeader: args.authHeader,
-        chatboxId: args.chatboxId,
-        accessVersion: args.accessVersion,
-        mcpClientManager: args.mcpClientManager,
-        selectedServers: args.selectedServers,
-        serverIds: args.selectedServers,
-        requireToolApproval: args.requireToolApproval,
-        // Synthetic runs have no human-in-the-loop. Auto-deny any
-        // approval-required tool call inside the loop so the run can
-        // make forward progress instead of pausing forever waiting for
-        // an approval that will never arrive. Matches the MCPJam-paid
-        // branch above.
-        approvalMode: "auto-deny",
-        onConversationComplete,
-        abortSignal: args.abortSignal,
-        // Threaded through to /stream/org so the BYOK forwarder stamps
-        // synthesisRunId onto the resulting llmUsageRecord.
-        extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
-      });
+      return {
+        history: headless.messages,
+        turnTrace: headless.turnTrace,
+        modelSource: "local_byok",
+      };
     }
   }
 
-  if (response.body) {
-    const reader = response.body.getReader();
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
+  // Engine branches (JAM-paid `/stream` and hosted org-BYOK `/stream/org`)
+  // share the runAssistantTurn surface; only the endpoint + extra body
+  // fields differ.
+  const modelSource: SyntheticModelSource =
+    resolution.source === "mcpjam" ? "mcpjam" : "byok";
+  let lastEngineError: MCPJamEngineErrorEvent | undefined;
+
+  const result = await runAssistantTurn({
+    messages: args.messages,
+    modelDefinition,
+    systemPrompt: args.systemPrompt,
+    ...(args.temperature !== undefined
+      ? { temperature: args.temperature }
+      : {}),
+    tools: args.tools as ToolSet,
+    mcpClientManager: args.mcpClientManager,
+    authContext: { kind: "user_bearer", token: args.authHeader ?? "" },
+    sourceType,
+    origin: "chatbox",
+    streamSink: "none",
+    persistMode: "caller",
+    // Synthetic runs have no human-in-the-loop. Auto-deny any
+    // approval-required tool call inside the loop so the run can make
+    // forward progress instead of pausing forever waiting for an approval
+    // that will never arrive.
+    approvalMode: "auto-deny",
+    chatSessionId: args.chatSessionId,
+    ...(args.projectId ? { projectId: args.projectId } : {}),
+    ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
+    ...(args.accessVersion !== undefined
+      ? { accessVersion: args.accessVersion }
+      : {}),
+    ...(args.selectedServers
+      ? { selectedServerIds: args.selectedServers }
+      : {}),
+    ...(args.requireToolApproval !== undefined
+      ? { requireToolApproval: args.requireToolApproval }
+      : {}),
+    ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
+    ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
+    ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    // `runAssistantTurn` appends synthesisRunId to extraBodyFields last, so
+    // the merged `/stream` body matches the old handler-built shape.
+    synthesisRunId,
+    ...(resolution.source === "mcpjam"
+      ? { ...(extraBodyFields ? { extraBodyFields } : {}) }
+      : {
+          // Hosted org-BYOK contract — byte-matching what
+          // `handleHostedOrgChatModel` constructs: providerKey + serverIds
+          // ride extraBodyFields on /stream/org.
+          endpointPath: "/stream/org",
+          extraBodyFields: {
+            ...(extraBodyFields ?? {}),
+            providerKey: resolution.orgRuntime!.providerKey,
+            ...(args.selectedServers?.length
+              ? { serverIds: args.selectedServers }
+              : {}),
+          },
+        }),
+    ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
+    ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
+    ...(hooks?.prepareAdvertisedTools
+      ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
+      : {}),
+    onEngineError: (event) => {
+      lastEngineError = event;
+    },
+  });
+
+  // Surface engine failures as throws (see the error contract above). A
+  // produced turnTrace means the turn semantically succeeded — per-step
+  // engine errors that the loop recovered from don't fail the turn. A
+  // MISSING turnTrace on a non-aborted turn always means the engine failed
+  // (`runSucceeded === false`) — the same signal the eval runners' failure
+  // detection keys on — so throw even when no `onEngineError` event was
+  // captured (engine-internal aborts without our signal flipping, or error
+  // sites the callback doesn't cover). Without this, a failed turn would
+  // silently record an empty assistant reply and skip persistence.
+  if (!result.turnTrace && !args.abortSignal?.aborted) {
+    if (lastEngineError) {
+      const detail = [
+        lastEngineError.code,
+        lastEngineError.httpStatus !== undefined
+          ? `HTTP ${lastEngineError.httpStatus}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(
+        detail
+          ? `${lastEngineError.message} (${detail})`
+          : lastEngineError.message
+      );
     }
+    throw new Error(
+      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)"
+    );
   }
+
   return {
-    history: captured.length > 0 ? captured : args.messages,
-    turnTrace: capturedTurnTrace,
+    history: result.messages,
+    turnTrace: result.turnTrace,
     modelSource,
   };
 }
@@ -1036,7 +1272,7 @@ function extractAssistantText(history: ModelMessage[]): string {
           typeof part === "object" &&
           part !== null &&
           (part as { type?: string }).type === "text" &&
-          typeof (part as { text?: unknown }).text === "string",
+          typeof (part as { text?: unknown }).text === "string"
       )
       .map((part) => part.text)
       .join("");

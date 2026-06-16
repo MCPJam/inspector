@@ -301,8 +301,19 @@ vi.mock("../lib/guest-session", () => ({
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
+vi.mock("../components/HomeTab", () => ({
+  HomeTab: () => <div data-testid="home-tab" />,
+}));
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
+}));
+// Signed-in users get the Hosts hub at /servers (and /clients); the real
+// component embeds the legacy Servers tab as its `serversTabElement` view, so
+// the mock passes it through to keep "Servers Tab" queries meaningful.
+vi.mock("../components/HostsTab", () => ({
+  HostsTab: ({ serversTabElement }: { serversTabElement?: ReactNode }) => (
+    <div data-testid="hosts-tab">{serversTabElement}</div>
+  ),
 }));
 vi.mock("../components/ToolsTab", () => ({
   ToolsTab: () => <div />,
@@ -405,17 +416,6 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
 }));
 vi.mock("../components/mcp-sidebar", () => ({
   MCPSidebar: (props: unknown) => mockMCPSidebar(props),
-  // App.tsx imports this helper to gate the Connect/Clients route on
-  // desktop. Tests run in jsdom (hosted-mode = true is the default but
-  // we still want the helper to behave correctly), so return the real
-  // semantic: hosted defers to PostHog, desktop default-on.
-  computeHostsHubFlagEnabled: ({
-    hostsFlag,
-    hostedMode,
-  }: {
-    hostsFlag: unknown;
-    hostedMode: boolean;
-  }) => (hostedMode ? hostsFlag === true : true),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -765,6 +765,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.queryByTestId("hosted-oauth-loading")
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -1840,7 +1841,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
     expect(
@@ -2673,24 +2674,22 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects conformance to servers when the feature flag is disabled", async () => {
+  it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/conformance");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
-  it("redirects xaa-flow to Servers when the xaa flag is disabled", async () => {
+  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");
@@ -2699,10 +2698,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
   });
 
@@ -2933,10 +2932,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 });

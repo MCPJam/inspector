@@ -93,7 +93,7 @@ describe("server replay config auto-save wiring", () => {
     await test.run(agent as any, {
       iterations: 1,
       mcpjam: {
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         serverNames: ["asana"],
       },
     });
@@ -127,7 +127,7 @@ describe("server replay config auto-save wiring", () => {
     await suite.run(agent as any, {
       iterations: 1,
       mcpjam: {
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
         serverNames: ["asana"],
       },
     });
@@ -161,7 +161,7 @@ describe("server replay config auto-save wiring", () => {
     await test.run(agent as any, {
       iterations: 1,
       mcpjam: {
-        apiKey: "mcpjam_test_key",
+        apiKey: "sk_test_key",
       },
     });
 

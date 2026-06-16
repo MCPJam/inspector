@@ -7,7 +7,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import posthog from "posthog-js";
 import {
   ArrowLeft,
@@ -105,7 +104,7 @@ import {
   hasUnavailableServers,
   normalizeSuiteServerRefs,
 } from "./use-eval-handlers";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   reduceEvalStreamEvent,
   initialEvalStreamState,
@@ -120,6 +119,7 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { WidgetProbeEditor } from "./widget-probe-editor";
 
 interface TestTemplate {
   title: string;
@@ -399,7 +399,9 @@ export function TestTemplateEditor({
   ensureServersReady,
   projectServers,
 }: TestTemplateEditorProps) {
-  const { getAccessToken } = useAuth();
+  // Resolves the WorkOS token for signed-in users and the guest bearer for
+  // guests (project-owning guests included). See use-convex-access-token.
+  const getAccessToken = useConvexAccessToken();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
@@ -529,23 +531,20 @@ export function TestTemplateEditor({
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
+  }, [openCompareFromRoute]);
+
+  useEffect(() => {
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-  }, [openCompareFromRoute, selectedTestCaseId]);
+  }, [selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
-
-  useEffect(() => {
-    if (openCompareFromRoute) {
-      setEditorMode("run");
-    }
-  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -1356,12 +1355,16 @@ export function TestTemplateEditor({
 
         const preparedRun = await prepareSingleTestCaseRun({
           projectId: isDirectGuest ? null : projectId,
-          suite,
+          suite: {
+            ...suite,
+            environment: {
+              ...(suite.environment ?? {}),
+              servers: suiteServers,
+            },
+          },
           testCase: currentTestCase,
           selectedModel: modelValue,
-          getAccessToken: isDirectGuest
-            ? getGuestBearerToken
-            : getAccessToken,
+          getAccessToken,
           testCaseOverrides: {
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,
@@ -1865,6 +1868,22 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
+  // Widget probes get a dedicated, much smaller editor — none of the
+  // prompt-turn / model / compare machinery below applies to them. Placed
+  // after every hook call so both editors share identical hook order.
+  if (currentTestCase?.caseType === "widget_probe") {
+    return (
+      <WidgetProbeEditor
+        testCase={currentTestCase}
+        suiteServers={effectiveSuiteServers}
+        availableTools={availableTools}
+        projectServers={projectServers}
+        onBackToList={onBackToList}
+        updateTestCase={updateTestCaseMutation}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (

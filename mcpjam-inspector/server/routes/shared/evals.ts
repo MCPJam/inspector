@@ -6,7 +6,10 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
-import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  startSuiteRunWithRecorder,
+  type SuiteRunRecorder,
+} from "../../services/evals/recorder";
 import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
@@ -22,6 +25,12 @@ import {
   streamTestCase,
 } from "../../services/evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import {
+  probeConfigSchema,
+  TEST_CASE_TYPES,
+  type ProbeConfig,
+  type TestCaseType,
+} from "@/shared/probe-config";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -97,6 +106,35 @@ export const RunEvalsRequestSchema = z.object({
       // boundary on the wire so it doesn't get silently stripped
       // (feedback_zod_strips_unthreaded_fields).
       predicates: casePredicatesSchema.optional(),
+      // Widget-probe discriminant + pinned tool call. Same silent-strip
+      // rationale as `predicates` above. Probe entries carry display-only
+      // model/provider sentinels to satisfy the required fields; the
+      // runner forks off the LLM path before any model resolution and
+      // `assertSuiteRunWithinCap` excludes them from LLM-call math.
+      caseType: z.enum(TEST_CASE_TYPES).optional(),
+      probeConfig: probeConfigSchema.optional(),
+    }).superRefine((test, ctx) => {
+      // Cross-field invariant the runner and cap math both assume. The cap
+      // excludes rows purely by caseType while the runner only forks off
+      // the LLM path when probeConfig is ALSO present — a widget_probe row
+      // without probeConfig would be cap-exempt yet still execute as an
+      // LLM case (cap bypass). The reverse direction mirrors the backend's
+      // assertValidResolvedTestCaseState, which rejects stray probeConfig
+      // on prompt cases; failing fast here beats a late Convex error.
+      if (test.caseType === "widget_probe" && !test.probeConfig) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["probeConfig"],
+          message: "probeConfig is required when caseType is widget_probe",
+        });
+      }
+      if (test.caseType !== "widget_probe" && test.probeConfig) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["probeConfig"],
+          message: "probeConfig is only allowed on widget_probe cases",
+        });
+      }
     }),
   ),
   serverIds: z
@@ -165,6 +203,16 @@ export const RunEvalsRequestSchema = z.object({
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
+  /**
+   * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
+   * the scheduled-evals worker passes 'schedule'.
+   */
+  source?: "ui" | "api" | "schedule";
+  /**
+   * Forwarded to `startTestSuiteRun.idempotencyKey`. The scheduled worker
+   * passes its trigger id so claim retries can never double-create a run.
+   */
+  idempotencyKey?: string;
 };
 
 export const RunTestCaseRequestSchema = z.object({
@@ -252,9 +300,11 @@ export function assertSuiteRunWithinCap(
 ) {
   const override = request.iterationOverride;
   // Each iteration issues one model call per prompt turn; counting only `runs`
-  // lets a multi-turn save-from-chat case bypass the cap.
+  // lets a multi-turn save-from-chat case bypass the cap. Widget probes issue
+  // zero model calls and are excluded entirely.
   const totalCalls =
     request.tests.reduce((sum, t) => {
+      if (t.caseType === "widget_probe") return sum;
       const iterations = override ?? t.runs ?? 0;
       const turns = Math.max(t.promptTurns?.length ?? 0, 1);
       return sum + iterations * turns;
@@ -265,6 +315,109 @@ export function assertSuiteRunWithinCap(
       ErrorCode.VALIDATION_ERROR,
       `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
       { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
+
+/**
+ * Synthesize cap-math entries from PERSISTED suite cases for bare suite
+ * reruns (`suiteId` + empty wire `tests`: the scheduled-evals worker and the
+ * /api/v1 suiteId-only rerun). Without this, `assertSuiteRunWithinCap` sums
+ * an empty list and unattended runs bypass the cap interactive launches
+ * enforce. One entry per (case × model) mirrors the interactive fan-out;
+ * model-less prompt cases count once (they are rejected up front by
+ * {@link assertBareRerunCasesRunnable}, but still counted here so cap math
+ * never under-reports); widget probes carry `caseType` so the cap reducer
+ * excludes them.
+ */
+export function buildCapEntriesFromPersistedCases(
+  cases: Array<{
+    title?: string;
+    runs?: number;
+    models?: Array<{ model: string; provider: string }>;
+    promptTurns?: unknown;
+    caseType?: string;
+  }>,
+): RunEvalsRequest["tests"] {
+  const entries: RunEvalsRequest["tests"] = [];
+  for (const testCase of cases ?? []) {
+    const promptTurns = Array.isArray(testCase.promptTurns)
+      ? (testCase.promptTurns as RunEvalsRequest["tests"][number]["promptTurns"])
+      : undefined;
+    const fanout =
+      testCase.caseType === "widget_probe"
+        ? 1
+        : Math.max(testCase.models?.length ?? 0, 1);
+    for (let i = 0; i < fanout; i++) {
+      entries.push({
+        title: testCase.title ?? "",
+        query: "",
+        runs: Math.max(1, Math.floor(testCase.runs ?? 1)),
+        model: "cap-check",
+        provider: "none",
+        expectedToolCalls: [],
+        ...(promptTurns ? { promptTurns } : {}),
+        ...(testCase.caseType === "widget_probe"
+          ? { caseType: "widget_probe" as const }
+          : {}),
+      });
+    }
+  }
+  return entries;
+}
+
+/**
+ * Reject a bare suite rerun (scheduled worker, /api/v1 suiteId-only) whose
+ * persisted snapshot contains a prompt case that cannot contribute a single
+ * runnable entry.
+ *
+ * The bare-rerun path builds the runner's `config.tests` straight from the
+ * persisted cases (see `startSuiteRunWithRecorder`). A prompt case with an
+ * empty `models` array and no legacy `model`/`provider` relies on
+ * `suite.defaultConfig.modelId` — but that substitution only ever runs
+ * client-side (it needs the model catalog to resolve the provider) and is
+ * absent here, so the recorder's config builder silently drops the case
+ * (`return []`). The run would then execute fewer cases than the cap reserved
+ * for — or, for a model-default-only suite, zero — while reporting success.
+ * For an unattended monitor that silent under-run is the dangerous failure
+ * mode, so surface it loudly instead: a 400 on the /api/v1 surface, and on the
+ * scheduled path a failed claim the backend's failure accounting can pause and
+ * notify on.
+ *
+ * (Honest scope: full suite-default support for bare reruns needs the backend
+ * snapshot + `precreateIterationsForRun` to carry the substituted model so the
+ * recorder has a precreated row to pair against — substituting only in the
+ * inspector's config builder would execute the case with nowhere to record it.
+ * Tracked as a follow-up.)
+ */
+export function assertBareRerunCasesRunnable(
+  cases:
+    | Array<{
+        title?: string;
+        models?: Array<{ model: string; provider: string }>;
+        model?: string;
+        provider?: string;
+        caseType?: string;
+      }>
+    | null,
+): void {
+  const unrunnable = (cases ?? [])
+    .filter(
+      (c) =>
+        c.caseType !== "widget_probe" &&
+        !(c.models && c.models.length > 0) &&
+        !(c.model && c.provider),
+    )
+    .map((c) => c.title?.trim() || "(untitled)");
+  if (unrunnable.length > 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Cannot run this suite unattended: ${unrunnable.length} prompt case(s) ` +
+        `have no model of their own and rely on the suite default model, ` +
+        `which is only applied for interactive launches. Add a per-case ` +
+        `model to run on a schedule or via the API: ${unrunnable.join(", ")}.`,
+      { unrunnableCases: unrunnable },
     );
   }
 }
@@ -512,10 +665,75 @@ function buildPersistedSuiteEnvironment(args: {
   };
 }
 
-export async function runEvalsWithManager(
+export type PreparedEvalRun = {
+  suiteId: string;
+  runId: string;
+  caseUpsert: {
+    committed: Array<{ id?: string; name: string }>;
+    failed: Array<{ id?: string; name: string; error: string }>;
+  };
+  recorder: SuiteRunRecorder;
+  /**
+   * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
+   * terminal run status (completed/failed/cancelled); callers that detach
+   * this (the async /api/v1 route) should still catch and defensively
+   * finalize via `recorder` for errors thrown outside the runner's own
+   * try.
+   */
+  execute: () => Promise<void>;
+};
+
+/**
+ * A probe's identity is title + server + tool: every probe shares query ""
+ * and arrives as exactly one wire row (no model fan-out to reassemble).
+ * Used both as the upsert dedupe key for probe rows and to pair a probe
+ * wire entry with its persisted case. NUL-joined so a title containing the
+ * other segments can't forge a collision.
+ */
+export function probeIdentityKey(entry: {
+  title: string;
+  probeConfig?: ProbeConfig;
+}): string {
+  return [
+    "widget_probe",
+    entry.title,
+    entry.probeConfig?.serverId ?? entry.probeConfig?.serverName ?? "",
+    entry.probeConfig?.toolName ?? "",
+  ].join("\u0000");
+}
+
+/**
+ * Dedupe key for `prepareEvalRun`'s per-case upsert map. Prompt rows keep
+ * the historical title+query key (the per-model fan-out sends one row per
+ * model of the same case and must reassemble); probe rows key by probe
+ * identity — title+query would merge distinct same-titled probes (all
+ * probes share query "") or collide a probe with a prompt row, silently
+ * dropping probeConfig or pushing prompt models into a probe entry.
+ */
+export function buildUpsertCaseKey(test: {
+  title: string;
+  query: string;
+  caseType?: TestCaseType;
+  probeConfig?: ProbeConfig;
+}): string {
+  return test.caseType === "widget_probe"
+    ? probeIdentityKey(test)
+    : `${test.title}-${test.query}`;
+}
+
+/**
+ * Prepare phase of a suite run: validate, upsert suite + cases, create the
+ * run record (status 'running'), store replay configs, and resolve model
+ * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
+ * callers choose whether to await execution inline (`runEvalsWithManager`,
+ * the /api/web path) or detach it and respond immediately with the runId
+ * (the async public /api/v1 path). All request/quota validation errors
+ * surface here, synchronously, before any caller responds.
+ */
+export async function prepareEvalRun(
   clientManager: MCPClientManager,
   request: RunEvalsWithManagerRequest,
-) {
+): Promise<PreparedEvalRun> {
   const {
     suiteId,
     projectId,
@@ -538,6 +756,8 @@ export async function runEvalsWithManager(
     namedHostId,
     refreshSnapshot,
     runGroupId,
+    source,
+    idempotencyKey,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -555,7 +775,29 @@ export async function runEvalsWithManager(
     );
   }
 
-  assertSuiteRunWithinCap(request);
+  // Bare suite reruns (scheduled worker, /api/v1 suiteId-only) carry no wire
+  // tests — cap-math over the empty list would let unattended runs bypass
+  // MAX_TOTAL_LLM_CALLS. Assert over the persisted cases instead; the wired
+  // path below re-derives the same cases for execution.
+  if (suiteId && tests.length === 0) {
+    const { convexClient: capClient } = createConvexClients(convexAuthToken);
+    const persistedCases = (await capClient.query(
+      "testSuites:listTestCases" as any,
+      { suiteId },
+    )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
+    // No client substituted the suite default model onto these cases, so a
+    // model-less prompt case would be silently dropped from execution. Reject
+    // before cap-math so the error names the real cause, not the cap.
+    assertBareRerunCasesRunnable(
+      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0],
+    );
+    assertSuiteRunWithinCap({
+      ...request,
+      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
+    });
+  } else {
+    assertSuiteRunWithinCap(request);
+  }
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -601,11 +843,13 @@ export async function runEvalsWithManager(
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
       predicates?: import("@/shared/eval-matching").CasePredicates;
+      caseType?: TestCaseType;
+      probeConfig?: ProbeConfig;
     }
   >();
 
   for (const test of tests) {
-    const key = `${test.title}-${test.query}`;
+    const key = buildUpsertCaseKey(test);
     if (!testCaseMap.has(key)) {
       testCaseMap.set(key, {
         title: test.title,
@@ -620,12 +864,18 @@ export async function runEvalsWithManager(
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
+        caseType: test.caseType,
+        probeConfig: test.probeConfig,
       });
     }
-    testCaseMap.get(key)!.models.push({
-      model: test.model,
-      provider: test.provider,
-    });
+    // Probe entries carry display-only model sentinels — never collect them
+    // into the case's persisted model list.
+    if (test.caseType !== "widget_probe") {
+      testCaseMap.get(key)!.models.push({
+        model: test.model,
+        provider: test.provider,
+      });
+    }
   }
 
   if (resolvedSuiteId) {
@@ -658,9 +908,18 @@ export async function runEvalsWithManager(
     );
 
     for (const [, testCaseData] of testCaseMap.entries()) {
-      const existingTestCase = existingTestCases?.find(
-        (tc: any) =>
-          tc.title === testCaseData.title && tc.query === testCaseData.query,
+      // Match within the same case category. Probes match by the pinned-call
+      // identity used for the wire dedupe above (they all share query "", so
+      // title+query would adopt the first same-titled case — probe or
+      // prompt — as the update target); prompts match by title+query as
+      // before but never against a probe case.
+      const existingTestCase = existingTestCases?.find((tc: any) =>
+        testCaseData.caseType === "widget_probe"
+          ? tc.caseType === "widget_probe" &&
+            probeIdentityKey(tc) === probeIdentityKey(testCaseData)
+          : tc.caseType !== "widget_probe" &&
+            tc.title === testCaseData.title &&
+            tc.query === testCaseData.query,
       );
 
       try {
@@ -716,6 +975,17 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.predicates),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.predicates));
+        // caseType is immutable after create and updateTestCase rejects
+        // probeConfig on prompt cases — a wire probe entry that collides
+        // with an existing PROMPT case by title+query must not push probe
+        // fields at it (the category mismatch is unresolvable here).
+        const existingIsProbe = existingTestCase.caseType === "widget_probe";
+        const probeConfigChanged =
+          existingIsProbe &&
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.probeConfig),
+          ) !==
+            JSON.stringify(normalizeForComparison(testCaseData.probeConfig));
 
         const hasChanges =
           modelsChanged ||
@@ -728,7 +998,8 @@ export async function runEvalsWithManager(
           judgeRequirementChanged ||
           advancedConfigChanged ||
           matchOptionsChanged ||
-          predicatesChanged;
+          predicatesChanged ||
+          probeConfigChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -747,6 +1018,15 @@ export async function runEvalsWithManager(
             ),
             matchOptions: testCaseData.matchOptions,
             predicates: testCaseData.predicates,
+            // Threaded only when the PERSISTED case is a probe (see
+            // existingIsProbe above).
+            ...(existingIsProbe && testCaseData.probeConfig
+              ? {
+                  probeConfig: sanitizeForConvexTransport(
+                    testCaseData.probeConfig,
+                  ),
+                }
+              : {}),
           });
         }
         committedCases.push({
@@ -773,6 +1053,14 @@ export async function runEvalsWithManager(
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          caseType: testCaseData.caseType,
+          ...(testCaseData.probeConfig
+            ? {
+                probeConfig: sanitizeForConvexTransport(
+                  testCaseData.probeConfig,
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       }
@@ -829,6 +1117,14 @@ export async function runEvalsWithManager(
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          caseType: testCaseData.caseType,
+          ...(testCaseData.probeConfig
+            ? {
+                probeConfig: sanitizeForConvexTransport(
+                  testCaseData.probeConfig,
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {
@@ -877,6 +1173,8 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     runGroupId,
+    source,
+    idempotencyKey,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -950,36 +1248,54 @@ export async function runEvalsWithManager(
     }
   }
 
-  await runEvalSuiteWithAiSdk({
-    suiteId: resolvedSuiteId,
-    runId,
-    config,
-    modelApiKeys: resolvedModelApiKeys ?? undefined,
-    orgModelConfig: resolvedOrgModelConfig,
-    orgModelConfigTarget: resolvedOrgModelConfigTarget,
-    convexClient,
-    convexHttpUrl,
-    convexAuthToken,
-    mcpClientManager: clientManager,
-    recorder,
-    suiteInjectOpenAiCompat,
-    hostExecutionPolicy: suiteHostPolicy,
-    // PR 4d: thread the raw suite hostConfig record into the runner so
-    // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
-    // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
-    // is the POLICY subset extracted upstream; this is the rest.
-    suiteHostConfig,
-  });
+  const execute = async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: resolvedSuiteId,
+      runId,
+      config,
+      modelApiKeys: resolvedModelApiKeys ?? undefined,
+      orgModelConfig: resolvedOrgModelConfig,
+      orgModelConfigTarget: resolvedOrgModelConfigTarget,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+      mcpClientManager: clientManager,
+      recorder,
+      suiteInjectOpenAiCompat,
+      hostExecutionPolicy: suiteHostPolicy,
+      // PR 4d: thread the raw suite hostConfig record into the runner so
+      // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
+      // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
+      // is the POLICY subset extracted upstream; this is the rest.
+      suiteHostConfig,
+    });
+  };
 
   return {
-    success: true,
     suiteId: resolvedSuiteId,
     runId,
-    message: "Evals completed successfully. Check the Evals tab for results.",
     caseUpsert: {
       committed: committedCases,
       failed: failedCases,
     },
+    recorder,
+    execute,
+  };
+}
+
+export async function runEvalsWithManager(
+  clientManager: MCPClientManager,
+  request: RunEvalsWithManagerRequest,
+) {
+  const prepared = await prepareEvalRun(clientManager, request);
+  await prepared.execute();
+
+  return {
+    success: true,
+    suiteId: prepared.suiteId,
+    runId: prepared.runId,
+    message: "Evals completed successfully. Check the Evals tab for results.",
+    caseUpsert: prepared.caseUpsert,
   };
 }
 

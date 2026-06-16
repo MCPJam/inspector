@@ -47,6 +47,15 @@ export type ServerId = string;
 export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
 
 /**
+ * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
+ * **emulated** loop — the only historical behavior, so pre-feature rows hash
+ * byte-identically (the key is simply never written). `"claude-code"` runs the
+ * turn inside a real Claude Code runtime via the AI SDK harness. Extensible to
+ * additional runtimes (e.g. `"codex"`, `"pi"`) later without a schema migration.
+ */
+export type Harness = "claude-code";
+
+/**
  * Permissions Policy feature tokens corresponding to the four
  * SEP-1865 spec permissions. These are the KEBAB-CASE browser tokens
  * (as they appear in iframe `allow=` attributes), NOT the camelCase
@@ -207,16 +216,28 @@ export type McpAppsCapabilities = {
 };
 
 // Personal cloud workstation attached to a host: one machine per
-// (project, user), surfaced as the chat `bash` tool and the web terminal.
-// `{ kind: "personal", toolset: "bash" }` is the only shape in MVP
-// (docs/project-computers.md in mcpjam-backend). The hash describes intent,
-// not environment: two hosts with the same `computer` value hash identically
-// even though each member resolves their own machine.
+// (project, user), surfaced through computer-backed built-in tools (e.g.
+// `bash` in `builtInToolIds`) and the web terminal. `computer` is the
+// RESOURCE attachment only — which capabilities the model gets on it is
+// expressed in `builtInToolIds`, the same list every other built-in tool
+// uses (docs/project-computers.md in mcpjam-backend). The hash describes
+// intent, not environment: two hosts with the same `computer` value hash
+// identically even though each member resolves their own machine.
 export type HostConfigComputer = {
   kind: "personal";
-  toolset: "bash";
-  // Optional initial working directory for bash/terminal sessions. Trimmed
+  // Optional initial working directory for shell/terminal sessions. Trimmed
   // during canonicalization; empty-after-trim collapses to absent.
+  workdir?: string;
+};
+
+// Input-side shape: accepts the legacy `toolset` key from the original MVP
+// shape (`{ kind, toolset: "bash" }`) and DROPS it during canonicalization —
+// capability naming moved to `builtInToolIds`. Remove once no caller sends
+// it (it never shipped in a UI, so this is belt-and-suspenders for old
+// programmatic callers).
+export type HostConfigComputerInput = {
+  kind: "personal";
+  toolset?: "bash";
   workdir?: string;
 };
 
@@ -236,12 +257,20 @@ export type HostConfigInputV2 = {
   // `false` → show every tool (faithful to hosts that don't implement
   // SEP-1865). `undefined` → "use the spec default" (filter).
   respectToolVisibility?: boolean;
-  // Personal computer opt-in. Optional + absent ⇒ no computer, hashing
+  // Personal computer opt-in (resource only; capabilities ride
+  // `builtInToolIds`). Optional + absent ⇒ no computer, hashing
   // byte-identically to pre-feature rows (the `progressiveToolDiscovery`
   // policy). `null` is accepted so the host editor can clear the field; the
   // canonicalizer collapses it to undefined so "cleared" and "never set"
-  // hash identically.
-  computer?: HostConfigComputer | null;
+  // hash identically. Legacy `toolset` input is accepted and dropped.
+  computer?: HostConfigComputerInput | null;
+  // Which real agent harness runs the turn. Absent ⇒ emulated loop;
+  // `"claude-code"` runs the real Claude Code runtime. Optional + near
+  // pass-through (like progressiveToolDiscovery) so absent hashes
+  // byte-identically to pre-feature rows. Emulated has exactly one canonical
+  // form (the key absent), so all emulated hosts dedupe together. The
+  // canonicalizer rejects any value other than the known harness ids.
+  harness?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); chatbox/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -298,6 +327,9 @@ export type CanonicalHostConfigV2 = {
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.
   computer?: HostConfigComputer;
+  // Mirrors HostConfigInputV2.harness (validated pass-through). Optional so
+  // absent rows hash byte-identically to pre-feature rows.
+  harness?: Harness;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or

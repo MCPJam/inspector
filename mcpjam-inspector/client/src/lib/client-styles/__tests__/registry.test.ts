@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
+  CLAUDE_CODE_HOST_STYLE,
   CODEX_HOST_STYLE,
   COPILOT_HOST_STYLE,
   DEFAULT_HOST_STYLE,
@@ -23,6 +24,7 @@ describe("host-styles registry", () => {
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
+    expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
   });
 
   it("returns undefined for unknown ids", () => {
@@ -44,6 +46,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
+    expect(isKnownHostStyleId("claude-code")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
     expect(isKnownHostStyleId(42)).toBe(false);
     expect(isKnownHostStyleId(null)).toBe(false);
@@ -56,14 +59,16 @@ describe("host-styles registry", () => {
     expect(ids).toContain("chatgpt");
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
+    expect(ids).toContain("claude-code");
     // MCPJam ships first so the default-fallback host appears at the top
     // of pickers.
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
-    // Codex ships last (registered after Copilot in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
+    // Claude Code ships last (registered after Codex in BUILT_IN_HOST_STYLES).
+    expect(ids.indexOf("codex")).toBeLessThan(ids.indexOf("claude-code"));
   });
 
   it("registers custom host styles for project-defined hosts", () => {

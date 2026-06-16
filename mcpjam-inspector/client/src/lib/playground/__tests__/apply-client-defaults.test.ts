@@ -93,7 +93,7 @@ describe("applyHostDefaultsToPlayground", () => {
     // But the playground's device-frame viewport is NOT shrunk to the
     // View's container dimensions — chat stays full-width.
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
-    expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
 
     expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
@@ -103,19 +103,19 @@ describe("applyHostDefaultsToPlayground", () => {
     expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
-  it("snapshots ChatGPT template defaults: container metadata stays in host context, playground viewport stays desktop, model openai/gpt-5-nano (guest-allowed)", () => {
+  it("snapshots ChatGPT template defaults: container metadata stays in host context, playground viewport stays fill, model openai/gpt-5-nano (guest-allowed)", () => {
     applyHostDefaultsToPlayground("chatgpt", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("chatgpt");
     expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("openai/gpt-5-nano");
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
-    expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
     expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
-  it("snapshots Cursor template defaults: container metadata stays in host context, playground viewport stays desktop, model anthropic/claude-sonnet-4.5 (guest-allowed)", () => {
+  it("snapshots Cursor template defaults: container metadata stays in host context, playground viewport stays fill, model anthropic/claude-sonnet-4.5 (guest-allowed)", () => {
     applyHostDefaultsToPlayground("cursor", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("cursor");
@@ -123,13 +123,13 @@ describe("applyHostDefaultsToPlayground", () => {
       "anthropic/claude-sonnet-4.5",
     );
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
-    expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
     expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
-  it("snapshots MCPJam fallback: setDeviceType('desktop'), widget-declared CSP, override set, model id NOT touched", () => {
+  it("snapshots MCPJam fallback: setDeviceType('fill'), widget-declared CSP, override set, model id NOT touched", () => {
     applyHostDefaultsToPlayground("mcpjam", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("mcpjam");
@@ -139,7 +139,7 @@ describe("applyHostDefaultsToPlayground", () => {
     expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
 
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
-    expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
 
     // MCPJam template advertises apps.sandbox.csp.mode "declared" so the
     // Permissive chip resolves to widget-declared, same as Claude/ChatGPT.
@@ -163,7 +163,7 @@ describe("applyHostDefaultsToPlayground", () => {
     // MCPJam template's modelId is empty, the user's last picked model
     // is preserved.
     expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
-    expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
     // MCPJam fallback now stamps apps.sandbox.csp.mode "declared" and a
     // hostCapabilitiesOverride, so the BYO unknown id inherits both like
     // other branded templates.
@@ -208,7 +208,7 @@ describe("applyHostDefaultsToPlayground", () => {
       // containerDimensions belongs to the View iframe (delivered via
       // applyHostTemplate above), not the playground's device frame.
       expect(setCustomViewportSpy).not.toHaveBeenCalled();
-      expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+      expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
       expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
       expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
       expect(setHostCapabilitiesOverride).toHaveBeenCalledWith({
@@ -299,7 +299,7 @@ describe("applyHostDefaultsToPlayground", () => {
       );
       expect(applyHostTemplateSpy).toHaveBeenCalledWith({});
       expect(setCustomViewportSpy).not.toHaveBeenCalled();
-      expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
+      expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
       expect(setCspModeSpy).toHaveBeenCalledWith("permissive");
       expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("permissive");
       expect(setHostCapabilitiesOverride).toHaveBeenCalledWith(undefined);

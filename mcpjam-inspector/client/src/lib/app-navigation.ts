@@ -26,6 +26,7 @@ export const routePaths = {
   servers: "/servers",
   hosts: "/hosts",
   hostCompare: "/host-compare",
+  computer: "/computer",
   registry: "/registry",
   tools: "/tools",
   resources: "/resources",
@@ -62,13 +63,26 @@ export function buildHostsPath(hostId?: string | null): string {
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */
 export function buildHostComparePath(
-  hostIds?: ReadonlyArray<string> | null,
+  hostIds?: ReadonlyArray<string> | null
 ): string {
   if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
   const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
   if (param.length === 0) return routePaths.hostCompare;
   const search = new URLSearchParams({ hosts: param.join(",") });
   return `${routePaths.hostCompare}?${search.toString()}`;
+}
+
+/**
+ * Build a path that deep-links to one chatbox session in the Sessions tab.
+ * `host` selects the previewed host (chatboxes are 1:1 with hosts) and
+ * `session` is the sharedChatThreads doc id to open in the detail pane.
+ */
+export function buildChatboxSessionPath(
+  hostId: string,
+  threadId: string,
+): string {
+  const search = new URLSearchParams({ host: hostId, session: threadId });
+  return `${routePaths.chatboxes}?${search.toString()}`;
 }
 
 /** Build a path for a specific organization route. */
@@ -244,6 +258,11 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   // from "clients" so the sidebar's first-segment isActive resolution
   // doesn't light up Connect when this is the active route.
   "host-compare",
+  // Project Computers tab — a peer of the connect views (Servers/Host/
+  // Compare). Its own first segment so return-target normalization and
+  // activeTab resolution treat /computer as a known route, not a fallback
+  // to Servers.
+  "computer",
 ]);
 
 function isSpecialEntryPathname(pathname: string): boolean {

@@ -9,6 +9,26 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
   useBuiltInToolCatalog: () => [],
 }));
 
+// The model picker reuses the Playground ModelSelector fed by the shared
+// app-state + Convex model hooks; stub them so the tab renders without
+// providers.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({
+    availableModels: [
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+    ],
+  }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+  useFeatureFlagEnabled: () => false,
+}));
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: ({ provider }: { provider: string }) => (
+    <span aria-hidden="true">{provider}</span>
+  ),
+}));
+
 import { BehaviorTab } from "../BehaviorTab";
 import { ProtocolTab } from "../ProtocolTab";
 import { AppsExtensionTab } from "../AppsExtensionTab";
@@ -34,8 +54,11 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         readOnly
       />,
     );
-    const modelSelect = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(modelSelect).toBeDisabled();
+    // Empty draft modelId renders the picker trigger as "Select model".
+    const modelTrigger = screen.getByRole("button", {
+      name: /select model/i,
+    });
+    expect(modelTrigger).toBeDisabled();
   });
 
   it("BehaviorTab readOnly disables the system-prompt textarea", () => {
@@ -80,8 +103,10 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         attention={[]}
       />,
     );
-    const modelSelect = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(modelSelect).not.toBeDisabled();
+    const modelTrigger = screen.getByRole("button", {
+      name: /select model/i,
+    });
+    expect(modelTrigger).not.toBeDisabled();
   });
 
   it("AppsExtensionTab readOnly wraps the body in a disabled fieldset", () => {

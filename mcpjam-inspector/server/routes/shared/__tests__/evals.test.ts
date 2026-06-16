@@ -5,6 +5,10 @@ import {
   RunEvalsRequestSchema,
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
+  assertBareRerunCasesRunnable,
+  buildCapEntriesFromPersistedCases,
+  buildUpsertCaseKey,
+  probeIdentityKey,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
   filterAndRemapReplayConfigs,
@@ -86,6 +90,55 @@ describe("RunEvalsRequestSchema runs cap", () => {
     expect(
       RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 11 }).success,
     ).toBe(false);
+  });
+});
+
+describe("RunEvalsRequestSchema widget_probe invariant", () => {
+  const baseTest = {
+    title: "t",
+    query: "",
+    runs: 1,
+    model: "widget-probe",
+    provider: "none",
+    expectedToolCalls: [],
+  };
+  const probeConfig = {
+    serverId: "srv-1",
+    serverName: "server-1",
+    toolName: "show_map",
+    arguments: {},
+  };
+  const withTests = (tests: unknown[]) => ({
+    ...(buildSuiteRequest() as Record<string, unknown>),
+    tests,
+  });
+
+  it("accepts a widget_probe row carrying probeConfig", () => {
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([{ ...baseTest, caseType: "widget_probe", probeConfig }]),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a widget_probe row without probeConfig (cap-bypass guard)", () => {
+    // Cap math exempts rows by caseType alone while the runner only forks
+    // off the LLM path when probeConfig is also present — without this
+    // rejection the row would run as a cap-exempt LLM case.
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([
+        { ...baseTest, model: "claude-3", provider: "anthropic", caseType: "widget_probe" },
+      ]),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stray probeConfig on a prompt row", () => {
+    const result = RunEvalsRequestSchema.safeParse(
+      withTests([
+        { ...baseTest, model: "claude-3", provider: "anthropic", query: "q", probeConfig },
+      ]),
+    );
+    expect(result.success).toBe(false);
   });
 });
 
@@ -233,6 +286,68 @@ function makeManagerStub(serverIds: string[]): MCPClientManager {
   return { listServers: () => serverIds } as unknown as MCPClientManager;
 }
 
+describe("buildUpsertCaseKey (probe/prompt dedupe identity)", () => {
+  const probe = (overrides?: {
+    title?: string;
+    serverId?: string;
+    toolName?: string;
+  }) => ({
+    title: overrides?.title ?? "Render check",
+    query: "",
+    caseType: "widget_probe" as const,
+    probeConfig: {
+      serverId: overrides?.serverId ?? "srv-1",
+      serverName: "server-1",
+      toolName: overrides?.toolName ?? "show_map",
+      arguments: {},
+    },
+  });
+
+  it("keeps the historical title+query key for prompt rows", () => {
+    expect(
+      buildUpsertCaseKey({ title: "Case A", query: "do the thing" }),
+    ).toBe("Case A-do the thing");
+  });
+
+  it("merges the per-model fan-out rows of one prompt case", () => {
+    expect(buildUpsertCaseKey({ title: "Case A", query: "q" })).toBe(
+      buildUpsertCaseKey({ title: "Case A", query: "q" }),
+    );
+  });
+
+  it("never collides a probe with a prompt row sharing title and empty query", () => {
+    expect(buildUpsertCaseKey(probe())).not.toBe(
+      buildUpsertCaseKey({ title: "Render check", query: "" }),
+    );
+  });
+
+  it("keeps same-titled probes of different tools distinct", () => {
+    expect(buildUpsertCaseKey(probe({ toolName: "show_map" }))).not.toBe(
+      buildUpsertCaseKey(probe({ toolName: "show_weather" })),
+    );
+  });
+
+  it("keeps same-titled probes of different servers distinct", () => {
+    expect(buildUpsertCaseKey(probe({ serverId: "srv-1" }))).not.toBe(
+      buildUpsertCaseKey(probe({ serverId: "srv-2" })),
+    );
+  });
+
+  it("treats the same probe identity as one case", () => {
+    expect(buildUpsertCaseKey(probe())).toBe(buildUpsertCaseKey(probe()));
+  });
+
+  it("a crafted title cannot forge another probe's identity", () => {
+    // Title embedding the other probe's tail must not collide thanks to
+    // the NUL separator.
+    const forged = probeIdentityKey({
+      title: "Render check srv-1 show_map",
+      probeConfig: { serverId: "", serverName: "", toolName: "" } as any,
+    });
+    expect(forged).not.toBe(probeIdentityKey(probe()));
+  });
+});
+
 describe("buildManagerKeyToDisplayNameMap", () => {
   it("maps each manager key to its parallel display name", () => {
     const manager = makeManagerStub(["p170sbx_convex_id"]);
@@ -344,5 +459,129 @@ describe("filterAndRemapReplayConfigs", () => {
         accessToken: "at_123",
       },
     ]);
+  });
+});
+
+describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
+  it("fans out one cap entry per case x model with runs and prompt turns", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "Multi-model",
+        runs: 3,
+        models: [
+          { model: "a", provider: "p1" },
+          { model: "b", provider: "p2" },
+        ],
+        promptTurns: [
+          { id: "t1", prompt: "one", expectedToolCalls: [] },
+          { id: "t2", prompt: "two", expectedToolCalls: [] },
+        ],
+      },
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].runs).toBe(3);
+    expect(entries[0].promptTurns).toHaveLength(2);
+    // 2 models x 3 runs x 2 turns = 12 LLM calls
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).not.toThrow();
+  });
+
+  it("counts model-less prompt cases once (suite-default substitution)", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      { title: "No models", runs: 2, models: [] },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].runs).toBe(2);
+  });
+
+  it("marks widget probes so the cap reducer excludes them", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      { title: "Probe", runs: 10, caseType: "widget_probe" },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].caseType).toBe("widget_probe");
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).not.toThrow();
+  });
+
+  it("a persisted suite over the cap is rejected (the scheduled-run gap)", () => {
+    // 31 cases x 1 model x 10 runs x 1 turn = 310 > 300
+    const cases = Array.from({ length: 31 }, (_, i) => ({
+      title: `case-${i}`,
+      runs: 10,
+      models: [{ model: "m", provider: "p" }],
+    }));
+    const entries = buildCapEntriesFromPersistedCases(cases);
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never),
+    ).toThrow(WebRouteError);
+  });
+});
+
+describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
+  it("accepts cases with per-case models", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "A", models: [{ model: "m", provider: "p" }] },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts a legacy model/provider case (no models array)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Legacy", model: "m", provider: "p" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts widget probes (no model expected)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Probe", caseType: "widget_probe" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("accepts null / empty case lists", () => {
+    expect(() => assertBareRerunCasesRunnable(null)).not.toThrow();
+    expect(() => assertBareRerunCasesRunnable([])).not.toThrow();
+  });
+
+  it("rejects a model-less prompt case (would be silently dropped)", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([
+        { title: "Default-only", models: [] },
+      ]),
+    ).toThrow(WebRouteError);
+  });
+
+  it("rejects a partial suite and names every offending case", () => {
+    let captured: WebRouteError | undefined;
+    try {
+      assertBareRerunCasesRunnable([
+        { title: "Runs", models: [{ model: "m", provider: "p" }] },
+        { title: "Default-only-1", models: [] },
+        { title: "Default-only-2" },
+      ]);
+    } catch (error) {
+      captured = error as WebRouteError;
+    }
+    expect(captured).toBeInstanceOf(WebRouteError);
+    expect(captured!.message).toContain("Default-only-1");
+    expect(captured!.message).toContain("Default-only-2");
+    expect(captured!.message).not.toContain("Runs");
+    expect(captured!.details?.unrunnableCases).toEqual([
+      "Default-only-1",
+      "Default-only-2",
+    ]);
+  });
+
+  it("labels an untitled offending case rather than dropping it from the message", () => {
+    expect(() =>
+      assertBareRerunCasesRunnable([{ models: [] }]),
+    ).toThrow(/\(untitled\)/);
   });
 });

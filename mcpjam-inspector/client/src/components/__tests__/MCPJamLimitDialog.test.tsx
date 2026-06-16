@@ -15,7 +15,6 @@ const sortedOrganizationsState: Array<{
   myRole?: string;
   isCreator?: boolean;
 }> = [];
-let creditsFlagState = true;
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -46,10 +45,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
       org.isCreator === true),
 }));
 
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditsFlagState,
-}));
-
 const originalHash = window.location.hash;
 
 beforeEach(() => {
@@ -57,7 +52,6 @@ beforeEach(() => {
   authState.isLoading = false;
   authState.user = null;
   sortedOrganizationsState.length = 0;
-  creditsFlagState = true;
   window.location.hash = "";
   localStorage.clear();
   useMCPJamLimitDialogStore.setState({
@@ -135,27 +129,6 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("button", { name: /^top up$/i })
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /bring your own key/i })
-    ).toBeInTheDocument();
-  });
-
-  it("hides the Top up button when the credits UI flag is off", () => {
-    creditsFlagState = false;
-    authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
-    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
-    render(<MCPJamLimitDialog />);
-
-    expect(
-      screen.queryByRole("button", { name: /^top up$/i })
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      "without waiting for your org's credits to reset"
-    );
-    expect(screen.getByTestId("limit-dialog-description")).not.toHaveTextContent(
-      /tomorrow/i
-    );
     expect(
       screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();

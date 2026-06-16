@@ -804,6 +804,42 @@ describe("useEvalHandlers", () => {
   });
 
   describe("handleRunTestCase", () => {
+    it("declines widget probes with an accurate message instead of the model guard", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      let runResult: unknown;
+      await act(async () => {
+        runResult = await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Probe suite",
+            description: "Suite with a probe",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-probe-1",
+            title: "Render check",
+            caseType: "widget_probe",
+            models: [],
+            probeConfig: {
+              serverId: "srv-1",
+              serverName: "server-1",
+              toolName: "show_map",
+              arguments: {},
+            },
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(runResult).toBeNull();
+      expect(toast.info).toHaveBeenCalledWith(
+        "Widget probes run with the full suite or on its schedule.",
+      );
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+    });
+
     it("auto-connects suite servers before running a test case", async () => {
       const ensureServersReady = vi.fn().mockResolvedValue({
         readyServerNames: ["server-1"],

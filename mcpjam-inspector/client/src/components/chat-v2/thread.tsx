@@ -35,6 +35,7 @@ import {
   WidgetSurfaceHost,
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
+import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
 import type {
   AppToolInvocation,
@@ -362,7 +363,9 @@ export function Thread({
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
         />
-        <WidgetSurfaceHost chatSessionId={chatSessionId} />
+        <InspectorWidgetHostProvider>
+          <WidgetSurfaceHost chatSessionId={chatSessionId} />
+        </InspectorWidgetHostProvider>
 
         {shouldShowStandaloneThinkingIndicator && (
           <div className="min-w-0 w-full max-w-4xl mx-auto px-4">

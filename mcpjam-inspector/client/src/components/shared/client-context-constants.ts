@@ -7,11 +7,11 @@ import { Smartphone, Tablet, Monitor } from "lucide-react";
 import {
   DEVICE_VIEWPORT_CONFIGS,
   type CspMode,
-  type DeviceType,
+  type PresetDeviceType,
 } from "@/stores/ui-playground-store";
 
 export const PRESET_DEVICE_CONFIGS: Record<
-  Exclude<DeviceType, "custom">,
+  PresetDeviceType,
   {
     width: number;
     height: number;

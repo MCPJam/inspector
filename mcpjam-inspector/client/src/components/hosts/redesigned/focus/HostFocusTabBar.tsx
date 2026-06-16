@@ -1,11 +1,20 @@
 import type { KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 import type { HostFocusTabId } from "../types";
-import { HOST_FOCUS_TAB_DEFS } from "./host-focus-tab-defs";
+import {
+  HOST_FOCUS_TAB_DEFS,
+  type HostFocusTabDef,
+} from "./host-focus-tab-defs";
 
 interface HostFocusTabBarProps {
   tab: HostFocusTabId;
   onTabChange: (next: HostFocusTabId) => void;
+  /**
+   * Tabs to render. Defaults to the full static set; callers pass a filtered
+   * list (e.g. from `useVisibleHostFocusTabs`) to hide conditional tabs like
+   * the flag-gated Computer tab or the catalog-dependent Tools tab.
+   */
+  tabs?: ReadonlyArray<HostFocusTabDef>;
   className?: string;
 }
 
@@ -20,20 +29,18 @@ const tabBtnClass = cn(
 export function HostFocusTabBar({
   tab,
   onTabChange,
+  tabs = HOST_FOCUS_TAB_DEFS,
   className,
 }: HostFocusTabBarProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const idx = HOST_FOCUS_TAB_DEFS.findIndex((t) => t.id === tab);
+    const idx = tabs.findIndex((t) => t.id === tab);
     if (idx === -1) return;
     const next =
       event.key === "ArrowRight"
-        ? HOST_FOCUS_TAB_DEFS[(idx + 1) % HOST_FOCUS_TAB_DEFS.length]
-        : HOST_FOCUS_TAB_DEFS[
-            (idx - 1 + HOST_FOCUS_TAB_DEFS.length) %
-              HOST_FOCUS_TAB_DEFS.length
-          ];
+        ? tabs[(idx + 1) % tabs.length]
+        : tabs[(idx - 1 + tabs.length) % tabs.length];
     onTabChange(next.id);
   };
 
@@ -47,7 +54,7 @@ export function HostFocusTabBar({
         className,
       )}
     >
-      {HOST_FOCUS_TAB_DEFS.map((t) => {
+      {tabs.map((t) => {
         const active = tab === t.id;
         return (
           <button

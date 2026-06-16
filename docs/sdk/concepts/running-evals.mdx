@@ -135,7 +135,7 @@ console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 
 ## Save Results to MCPJam
 
-Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` in your environment and results are saved automatically:
+Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` to an **MCPJam API key (`sk_…`)** from Settings → API keys and results are saved automatically:
 
 ```typescript
 await test.run(agent, {
@@ -147,7 +147,7 @@ await test.run(agent, {
 });
 ```
 
-For manual save APIs, CI metadata, and artifact uploads, see the [Save Results to MCPJam](/sdk/concepts/saving-results) guide.
+Results are filed under the project in `MCPJAM_PROJECT_ID` (or the `project` option), defaulting to your organization's **Default** project. For manual save APIs, CI metadata, and artifact uploads, see the [Save Results to MCPJam](/sdk/concepts/saving-results) guide.
 
 ### Tool errors vs. `passed` on upload
 
@@ -318,8 +318,6 @@ const r2 = await runtime.run("List my projects", { context: [r1] });
 ## Generate evals from the Inspector
 
 You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy markdown for evals** on any server card, then paste it into an LLM. See the [Quickstart](/sdk/quickstart#generate-evals-from-the-inspector) for details.
-
-If you have a `MCPJAM_API_KEY`, the generated code will automatically save results to the **Evals** tab in the Inspector. Go to **Settings > Project API Key** to get your key.
 
 ## Next Steps
 

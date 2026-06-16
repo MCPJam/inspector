@@ -45,6 +45,107 @@ export function isLocalhostRequest(hostHeader: string | undefined): boolean {
 }
 
 /**
+ * Tunnel host suffixes. Matching is suffix-based so any tunnel subdomain
+ * (e.g. "x7d9j2m1p9k3.tunnels.mcpjam.com") is covered. The retired ngrok
+ * suffixes stay as defense-in-depth for stragglers with live ngrok
+ * listeners from older versions.
+ */
+const TUNNEL_HOST_SUFFIXES = [
+  ".tunnels.mcpjam.com",
+  ".ngrok.app",
+  ".ngrok.dev",
+  ".ngrok-free.app",
+  ".ngrok-free.dev",
+  ".ngrok.io",
+];
+
+/**
+ * Check whether the Host header belongs to a tunnel (relay) domain.
+ *
+ * SECURITY INVARIANT: the session token must NEVER be served or injected
+ * for a tunnel host — tunnels expose the MCP adapter surface to the public
+ * internet, and the bearer secret in the tunnel URL is the only credential
+ * remote clients are meant to hold. This check is enforced independently of
+ * `isAllowedHost` so a future config that allowlists a tunnel domain cannot
+ * silently start leaking the session token through the tunnel.
+ *
+ * @param hostHeader - The Host header value from the request (the original
+ *   tunnel host survives forwarding via the X-Forwarded-Host header the
+ *   relay edge injects; callers should check both).
+ * @param extraTunnelHosts - Exact additional tunnel hostnames to treat as
+ *   tunnels (e.g. the domains of currently active listeners).
+ */
+export function isTunnelHost(
+  hostHeader: string | undefined,
+  extraTunnelHosts: string[] = []
+): boolean {
+  if (!hostHeader) {
+    return false;
+  }
+  const host = hostHeader.toLowerCase().split(":")[0];
+  if (TUNNEL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+    return true;
+  }
+  return extraTunnelHosts.some((tunnel) => tunnel.toLowerCase() === host);
+}
+
+/**
+ * Single decision point for serving/injecting the session token.
+ *
+ * Tunnel hosts are denied BEFORE the allowlist is consulted, so even a
+ * misconfiguration that adds a tunnel domain to MCPJAM_ALLOWED_HOSTS can
+ * never leak the session token through a tunnel.
+ */
+export function mayServeSessionToken(options: {
+  host: string | undefined;
+  forwardedHost?: string | undefined;
+  allowedHosts: string[];
+  hostedMode: boolean;
+  activeTunnelDomains?: string[];
+}): boolean {
+  const tunnelDomains = options.activeTunnelDomains ?? [];
+  if (
+    isTunnelHost(options.host, tunnelDomains) ||
+    isTunnelHost(options.forwardedHost, tunnelDomains)
+  ) {
+    return false;
+  }
+  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+}
+
+/**
+ * Decision point for injecting the guest bootstrap bearer into the SPA
+ * document.
+ *
+ * Like `mayServeSessionToken`, the guest bearer is a credential and must
+ * never be injected for a tunnel/relay `Host`/`X-Forwarded-Host` — tunnels
+ * are denied BEFORE the allowlist is consulted so a misconfiguration that
+ * adds a tunnel domain to MCPJAM_ALLOWED_HOSTS cannot leak the bearer.
+ *
+ * UNLIKE the session token (localhost-only), the guest bearer is meant to be
+ * served to the hosted app host(s) (e.g. `app.mcpjam.com`). It therefore
+ * shares the `isAllowedHost` allowlist — in hosted mode that includes the
+ * configured `MCPJAM_ALLOWED_HOSTS`, which the hosted deployment sets to its
+ * canonical app host(s).
+ */
+export function mayServeGuestBootstrap(options: {
+  host: string | undefined;
+  forwardedHost?: string | undefined;
+  allowedHosts: string[];
+  hostedMode: boolean;
+  activeTunnelDomains?: string[];
+}): boolean {
+  const tunnelDomains = options.activeTunnelDomains ?? [];
+  if (
+    isTunnelHost(options.host, tunnelDomains) ||
+    isTunnelHost(options.forwardedHost, tunnelDomains)
+  ) {
+    return false;
+  }
+  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+}
+
+/**
  * Check if the request is from an allowed host.
  *
  * In hosted mode (cloud deployments), this allows both localhost and
@@ -60,7 +161,7 @@ export function isLocalhostRequest(hostHeader: string | undefined): boolean {
 export function isAllowedHost(
   hostHeader: string | undefined,
   allowedHosts: string[],
-  hostedMode: boolean,
+  hostedMode: boolean
 ): boolean {
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {

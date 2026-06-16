@@ -8,6 +8,7 @@ import {
   parseWithSchema,
   readJsonBody,
   createAuthorizedManager,
+  callerContextFromHono,
   withManager,
 } from "./auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -39,6 +40,9 @@ function requireConvexHttpUrl(): string {
 // optionals out, matching what a real visitor with no opt-ins would see.
 // Optional-default-off is enforced server-side so a tampered body can't
 // quietly widen the synthetic tool set beyond the no-opt-in baseline.
+// An empty result (all-optional or no servers attached) is allowed: persona
+// generation degrades to surface-name grounding and sessions run toolless,
+// the same as a real no-opt-in visitor's chat.
 const chatboxServerSchema = z.object({
   serverId: z.string().min(1),
   serverName: z.string().min(1).optional(),
@@ -47,7 +51,7 @@ const chatboxServerSchema = z.object({
 
 const generatePersonasSchema = z.object({
   projectId: z.string().min(1),
-  servers: z.array(chatboxServerSchema).min(1),
+  servers: z.array(chatboxServerSchema),
   personaCount: z.number().int().min(1).max(10),
   accessVersion: z.number().int().nonnegative().optional(),
   // Optional human label for the chatbox surface. Forwarded to the backend
@@ -65,7 +69,7 @@ const personaSlateSchema = z.object({
 
 const startSimulationSchema = z.object({
   projectId: z.string().min(1),
-  servers: z.array(chatboxServerSchema).min(1),
+  servers: z.array(chatboxServerSchema),
   accessVersion: z.number().int().nonnegative().optional(),
   personas: z.array(personaSlateSchema).min(1).max(10),
   sessionsPerPersona: z.number().int().min(1).max(5),
@@ -100,20 +104,16 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
       await readJsonBody<unknown>(c),
     );
     const convexHttpUrl = requireConvexHttpUrl();
+    // selectedServerIds may be empty (no required servers): the manager
+    // comes back connection-less, the snapshot captures zero servers, and
+    // the backend grounds personas in the chatbox name instead of tools.
     const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
       body.servers,
     );
-    if (selectedServerIds.length === 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Chatbox has no required servers",
-      );
-    }
 
     const result = await withManager(
       createAuthorizedManager(
-        c,
+        callerContextFromHono(c),
         bearerToken,
         body.projectId,
         selectedServerIds,
@@ -196,16 +196,12 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
+    // selectedServerIds may be empty (no required servers): the manager
+    // factory returns a connection-less manager and the sessions run
+    // toolless, exactly like a real no-opt-in visitor's chat.
     const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
       body.servers,
     );
-    if (selectedServerIds.length === 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Chatbox has no required servers",
-      );
-    }
 
     // BYOK is now supported on synthetic runs: the runner's
     // `drainAssistantTurn` dispatches MCPJam-provided models through
@@ -278,7 +274,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         authHeader,
         managerFactory: async () => {
           const { manager } = await createAuthorizedManager(
-            c,
+            callerContextFromHono(c),
             bearerToken,
             projectId,
             selectedServerIds,

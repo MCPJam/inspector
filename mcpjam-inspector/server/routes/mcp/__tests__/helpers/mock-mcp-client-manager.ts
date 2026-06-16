@@ -29,6 +29,7 @@ const defaultImplementations = {
   getServerSummaries: () => [],
   getConnectionStatus: () => "connected",
   getInitializationInfo: () => null,
+  addNotificationHandler: () => undefined,
 
   // Tools
   listTools: async () => ({ tools: [] }),
@@ -80,14 +81,14 @@ type DefaultMocks = {
  * manager.listTools.mockResolvedValue({ tools: [{ name: "custom" }] });
  */
 export function createMockMcpClientManager(
-  overrides: Partial<Record<keyof typeof defaultImplementations, MockFn>> = {},
+  overrides: Partial<Record<keyof typeof defaultImplementations, MockFn>> = {}
 ): DefaultMocks {
   const freshMocks = Object.fromEntries(
     (
       Object.keys(defaultImplementations) as Array<
         keyof typeof defaultImplementations
       >
-    ).map((key) => [key, vi.fn(defaultImplementations[key] as any)]),
+    ).map((key) => [key, vi.fn(defaultImplementations[key] as any)])
   ) as DefaultMocks;
 
   return {
@@ -104,7 +105,7 @@ export const mockFactories = {
    * Creates a manager with tools configured
    */
   withTools: (
-    tools: Array<{ name: string; description?: string; inputSchema?: object }>,
+    tools: Array<{ name: string; description?: string; inputSchema?: object }>
   ) =>
     createMockMcpClientManager({
       listTools: vi.fn().mockResolvedValue({ tools }),
@@ -115,7 +116,7 @@ export const mockFactories = {
    * Creates a manager with resources configured
    */
   withResources: (
-    resources: Array<{ uri: string; name: string; mimeType?: string }>,
+    resources: Array<{ uri: string; name: string; mimeType?: string }>
   ) =>
     createMockMcpClientManager({
       listResources: vi
@@ -127,7 +128,7 @@ export const mockFactories = {
    * Creates a manager with prompts configured
    */
   withPrompts: (
-    prompts: Array<{ name: string; description?: string; arguments?: any[] }>,
+    prompts: Array<{ name: string; description?: string; arguments?: any[] }>
   ) =>
     createMockMcpClientManager({
       listPrompts: vi.fn().mockResolvedValue({ prompts }),
@@ -137,7 +138,7 @@ export const mockFactories = {
    * Creates a manager with servers configured
    */
   withServers: (
-    servers: Array<{ id: string; status: string; config: object }>,
+    servers: Array<{ id: string; status: string; config: object }>
   ) =>
     createMockMcpClientManager({
       getServerSummaries: vi.fn().mockReturnValue(servers),

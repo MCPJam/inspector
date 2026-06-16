@@ -276,6 +276,8 @@ export const startSuiteRunWithRecorder = async ({
   matchOptionsOverride,
   namedHostId,
   runGroupId,
+  source,
+  idempotencyKey,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -321,6 +323,18 @@ export const startSuiteRunWithRecorder = async ({
    * single-host launches.
    */
   runGroupId?: string;
+  /**
+   * Run origin persisted on `testSuiteRun.source` for audit attribution.
+   * Omitted means 'ui' (backend default); the public /api/v1 surface
+   * passes 'api'; the scheduled-evals worker passes 'schedule'.
+   */
+  source?: "ui" | "api" | "schedule";
+  /**
+   * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
+   * (scheduled-run claim retries) can never double-create a run. Absent on
+   * interactive paths — the mutation's fingerprint window covers those.
+   */
+  idempotencyKey?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -337,6 +351,8 @@ export const startSuiteRunWithRecorder = async ({
       matchOptionsOverride,
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
+      ...(source ? { source } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     },
   );
 
@@ -417,6 +433,35 @@ export const startSuiteRunWithRecorder = async ({
   const config = {
     tests: testCases.flatMap((tc: any) => {
       const successPredicates = resolvePredicatesForCase(tc);
+      // Widget probes have no models — without this branch the model
+      // fan-out below would silently drop them from the run. The sentinel
+      // model/provider strings are display-only; the runner forks off the
+      // LLM path before any model resolution.
+      if (tc.caseType === "widget_probe" && !tc.probeConfig) {
+        // Malformed probe (caseType without a pinned call): the model-free
+        // fallthrough below would drop it without a trace — surface it.
+        logger.warn("[evals] widget probe case missing probeConfig; skipped", {
+          testCaseId: tc._id ?? tc.testCaseId,
+          title: tc.title,
+        });
+        return [];
+      }
+      if (tc.caseType === "widget_probe" && tc.probeConfig) {
+        return [
+          {
+            title: tc.title,
+            query: "",
+            model: "widget-probe",
+            provider: "none",
+            runs: tc.runs || 1,
+            expectedToolCalls: [],
+            successPredicates,
+            testCaseId: tc._id ?? tc.testCaseId,
+            caseType: "widget_probe" as const,
+            probeConfig: tc.probeConfig,
+          },
+        ];
+      }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => ({
           title: tc.title,
