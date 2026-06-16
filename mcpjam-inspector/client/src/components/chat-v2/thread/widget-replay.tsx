@@ -9,6 +9,7 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   readToolResultMeta,
@@ -88,6 +89,7 @@ export function WidgetReplay({
   minimalMode = false,
 }: WidgetReplayProps) {
   const resolveHostCaps = useActiveHostCapsResolver();
+  const hostStyle = useChatboxHostStyle();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -115,7 +117,9 @@ export function WidgetReplay({
   // above) is passed through so any per-server `clientCapabilities`
   // override is honored, matching `initialize`.
   const hasUi =
-    hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+    hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
+      hostStyle,
+    }) &&
     (uiType === UIType.MCP_APPS ||
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.OPENAI_SDK_AND_MCP_APPS);

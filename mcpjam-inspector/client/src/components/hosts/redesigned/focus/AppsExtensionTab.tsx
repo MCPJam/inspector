@@ -26,7 +26,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
 import { hostConfigField } from "@/lib/host-config-field-schema";
-import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
+import {
+  hostSupportsWidgetRendering,
+  isRecord,
+} from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -1256,6 +1259,19 @@ function setMcpAppsOverridesOnDraft(
   };
 }
 
+function onlyEmptyExtensions(
+  caps: Record<string, unknown> | undefined
+): boolean {
+  if (!caps) return false;
+  const keys = Object.keys(caps);
+  return (
+    keys.length === 1 &&
+    keys[0] === "extensions" &&
+    isRecord(caps.extensions) &&
+    Object.keys(caps.extensions).length === 0
+  );
+}
+
 type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
   "availableDisplayModes" | "widgetDisplayModeRequests"
@@ -1385,7 +1401,9 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
-  const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
+  const advertised = hostSupportsWidgetRendering(draft.clientCapabilities, {
+    hostStyle: draft.hostStyle,
+  });
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1470,6 +1488,18 @@ function McpAppsCapabilityMatrix({
   // Add the MCP UI client extension so the host advertises MCP App
   // support. Shared by the master Switch and the build-from-off path.
   const withMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
+    // Le Chat's native capture reports base `clientCapabilities: {}` while
+    // still rendering MCP Apps through `ui/initialize`. If the user toggled
+    // support off in the editor, we wrote an inert `extensions: {}` marker
+    // (see withoutMcpUiExtension). Toggling back on should restore the
+    // faithful native empty shape instead of inventing an MCP UI extension
+    // Le Chat does not send.
+    if (
+      prev.hostStyle === "mistral" &&
+      onlyEmptyExtensions(prev.clientCapabilities)
+    ) {
+      return { ...prev, clientCapabilities: {} };
+    }
     const nextCaps: Record<string, unknown> = {
       ...(prev.clientCapabilities ?? {}),
     };
@@ -1511,6 +1541,13 @@ function McpAppsCapabilityMatrix({
       nextCaps.extensions = exts;
     } else {
       delete nextCaps.extensions;
+    }
+    // Le Chat's exact empty capability blob means "native MCP Apps host" in
+    // MCPJam. When the user explicitly turns that support off, keep a tiny
+    // inert marker so the switch can represent off without adding unrelated
+    // capabilities.
+    if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
+      nextCaps.extensions = {};
     }
     let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);

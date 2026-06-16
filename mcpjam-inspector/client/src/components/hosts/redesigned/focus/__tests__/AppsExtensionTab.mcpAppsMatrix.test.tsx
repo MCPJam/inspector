@@ -168,6 +168,29 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     ).toBeChecked();
   });
 
+  it("shows Le Chat's capability-less MCP Apps capture as supported", async () => {
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix({
+      hostStyle: "mistral",
+      clientCapabilities: {},
+    });
+    const mcpAppsToggle = screen.getByRole("switch", {
+      name: "Advertise MCP App support",
+    });
+    expect(mcpAppsToggle).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Inject window.openai" }),
+    ).not.toBeChecked();
+
+    await user.click(mcpAppsToggle);
+    expect(draftRef.current.clientCapabilities).toEqual({ extensions: {} });
+    expect(mcpAppsToggle).not.toBeChecked();
+
+    await user.click(mcpAppsToggle);
+    expect(draftRef.current.clientCapabilities).toEqual({});
+    expect(mcpAppsToggle).toBeChecked();
+  });
+
   it("renders all matrix dimensions in one flat list", async () => {
     const user = userEvent.setup();
     renderMatrix();

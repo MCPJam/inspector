@@ -8,6 +8,7 @@ import {
   applyHostConfigToPlayground,
   applyHostDefaultsToPlayground,
 } from "../apply-client-defaults";
+import { seedFromHostTemplate } from "@/lib/client-templates";
 import * as selectedModelStorage from "@/lib/selected-model-storage";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -113,6 +114,76 @@ describe("applyHostDefaultsToPlayground", () => {
     expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
     expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
+  });
+
+  it("snapshots Le Chat template defaults from the Mistral capture", () => {
+    applyHostDefaultsToPlayground("mistral", setters);
+
+    expect(setHostStyle).toHaveBeenCalledWith("mistral");
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
+      "mistral-large-latest",
+    );
+    expect(applyHostTemplateSpy).toHaveBeenCalledTimes(1);
+    expect(applyHostTemplateSpy.mock.calls[0]?.[0]).toMatchObject({
+      theme: "dark",
+      displayMode: "fullscreen",
+      availableDisplayModes: ["inline", "fullscreen"],
+      containerDimensions: { width: 1130.5 },
+      locale: "en",
+      timeZone: "America/Los_Angeles",
+      userAgent: "Le Chat/1.0.0",
+      platform: "web",
+      styles: {
+        variables: {
+          "--color-background-primary": "#111115",
+          "--color-text-info": "#48bfff",
+        },
+      },
+    });
+    expect(setCustomViewportSpy).not.toHaveBeenCalled();
+    expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
+    expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
+    expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
+    expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toMatchObject({
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+      updateModelContext: { text: {} },
+      message: { text: {}, image: {} },
+    });
+
+    const seed = seedFromHostTemplate("mistral");
+    expect(seed.clientCapabilities).toEqual({});
+    expect(seed.mcpProfile).toMatchObject({
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25"],
+        clientInfo: { name: "mcp", version: "0.1.0" },
+      },
+      apps: {
+        uiInitialize: {
+          hostInfo: { name: "Le Chat", version: "1.0.0" },
+        },
+        compatRuntime: { openaiApps: false },
+        sandbox: {
+          csp: {
+            mode: "declared",
+            restrictTo: {
+              connectDomains: [
+                "https://api.openai.com",
+                "https://api.anthropic.com",
+                "https://cdn.jsdelivr.net",
+              ],
+              resourceDomains: ["https://cdn.jsdelivr.net"],
+            },
+          },
+          permissions: {
+            mode: "custom",
+            allow: { clipboardWrite: true },
+          },
+          sandboxAttrs: ["allow-forms"],
+        },
+      },
+    });
   });
 
   it("snapshots Cursor template defaults: container metadata stays in host context, playground viewport stays fill, model anthropic/claude-sonnet-4.5 (guest-allowed)", () => {

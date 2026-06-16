@@ -8,10 +8,12 @@ import {
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
+import { getMistralStyleVariables } from "@/config/mistral-client-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -213,6 +215,7 @@ export type HostTemplateId =
   | "claude"
   | "claude-code"
   | "chatgpt"
+  | "mistral"
   | "cursor"
   | "codex"
   | "copilot"
@@ -857,6 +860,87 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             //     host.
             // So ChatGPT contributes no host-specific allowFeatures
             // extras — the runtime grant matches real ChatGPT for free.
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "mistral",
+    label: "Mistral",
+    description: "Mistral web host. MCP Apps, no OpenAI shim.",
+    logoSrc: mistralLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "mistral",
+        // Local model catalog carries Mistral's provider ids as bare names
+        // (not "mistral/<slug>"), so use the supported id verbatim.
+        modelId: "mistral-large-latest",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+
+      // Verbatim from Le Chat's base MCP `initialize` capture:
+      //   clientInfo: { name: "mcp", version: "0.1.0" }
+      //   clientCapabilities: {}
+      //
+      // Unlike Claude/Cursor, Le Chat currently renders MCP Apps without
+      // advertising the MCP UI extension in base clientCapabilities. The
+      // render gate handles "mistral" as a known capability-less Apps host
+      // so this template can keep the wire data honest.
+      base.clientCapabilities = {};
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        updateModelContext: { text: {} },
+        message: { text: {}, image: {} },
+      };
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { width: 1130.5 },
+        locale: "en",
+        timeZone: "America/Los_Angeles",
+        userAgent: "Le Chat/1.0.0",
+        platform: "web",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: getMistralStyleVariables("dark"),
+        },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "mcp", version: "0.1.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "Le Chat", version: "1.0.0" },
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                resourceDomains: ["https://cdn.jsdelivr.net"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            sandboxAttrs: ["allow-forms"],
           },
         },
       };

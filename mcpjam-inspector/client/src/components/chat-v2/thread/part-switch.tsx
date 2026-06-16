@@ -39,6 +39,7 @@ import {
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
@@ -121,6 +122,7 @@ export function PartSwitch({
   const posthog = usePostHog();
   const appState = useSharedAppState();
   const resolveHostCaps = useActiveHostCapsResolver();
+  const hostStyle = useChatboxHostStyle();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
   // Get the Convex project ID (sharedProjectId) from the active project
@@ -332,7 +334,9 @@ export function PartSwitch({
       tornDownWidgetIds?.has(toolInfo.toolCallId);
     const shouldRenderWidget =
       !isWidgetTornDown &&
-      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
+        hostStyle,
+      }) &&
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);

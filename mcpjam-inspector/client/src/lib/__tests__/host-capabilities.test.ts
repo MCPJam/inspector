@@ -25,6 +25,24 @@ describe("hostSupportsWidgetRendering", () => {
     expect(hostSupportsWidgetRendering({ elicitation: {} })).toBe(false);
   });
 
+  it("returns true for Le Chat's captured capability-less MCP Apps host", () => {
+    expect(hostSupportsWidgetRendering({}, { hostStyle: "mistral" })).toBe(
+      true,
+    );
+  });
+
+  it("does not treat arbitrary hosts with empty capabilities as widget-capable", () => {
+    expect(hostSupportsWidgetRendering({}, { hostStyle: "codex" })).toBe(
+      false,
+    );
+  });
+
+  it("keeps Le Chat's exception scoped to the exact empty capability capture", () => {
+    expect(
+      hostSupportsWidgetRendering({ elicitation: {} }, { hostStyle: "mistral" }),
+    ).toBe(false);
+  });
+
   it("returns false when the UI extension is explicitly stripped (Codex)", () => {
     // Mirrors the Codex template in client-templates.ts:803-810, which
     // REPLACES clientCapabilities (no spread) so the SDK-default UI

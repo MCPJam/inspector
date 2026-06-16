@@ -7,6 +7,7 @@ import {
   COPILOT_HOST_STYLE,
   DEFAULT_HOST_STYLE,
   MCPJAM_HOST_STYLE,
+  MISTRAL_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
   getHostCapabilitiesForStyle,
@@ -18,10 +19,11 @@ import {
 } from "..";
 
 describe("host-styles registry", () => {
-  it("registers built-in mcpjam, claude, chatgpt, copilot, and codex hosts by id", () => {
+  it("registers built-in mcpjam, claude, chatgpt, mistral, copilot, and codex hosts by id", () => {
     expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
+    expect(findHostStyle("mistral")).toBe(MISTRAL_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
     expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
@@ -44,6 +46,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("mcpjam")).toBe(true);
     expect(isKnownHostStyleId("claude")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
+    expect(isKnownHostStyleId("mistral")).toBe(true);
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
     expect(isKnownHostStyleId("claude-code")).toBe(true);
@@ -57,6 +60,7 @@ describe("host-styles registry", () => {
     expect(ids).toContain("mcpjam");
     expect(ids).toContain("claude");
     expect(ids).toContain("chatgpt");
+    expect(ids).toContain("mistral");
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
     expect(ids).toContain("claude-code");
@@ -64,6 +68,8 @@ describe("host-styles registry", () => {
     // of pickers.
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
+    expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("mistral"));
+    expect(ids.indexOf("mistral")).toBeLessThan(ids.indexOf("cursor"));
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
@@ -120,6 +126,14 @@ describe("host-styles registry", () => {
       updateModelContext: { text: {} },
       message: { text: {} },
       downloadFile: {},
+    });
+    expect(getHostCapabilitiesForStyle("mistral")).toEqual({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+      updateModelContext: { text: {} },
+      message: { text: {}, image: {} },
     });
   });
 

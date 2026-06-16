@@ -1,6 +1,7 @@
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -14,6 +15,12 @@ import {
   CHATGPT_PLATFORM,
   getChatGPTStyleVariables,
 } from "@/config/chatgpt-client-context";
+import {
+  MISTRAL_CHAT_BACKGROUND,
+  MISTRAL_FONT_CSS,
+  MISTRAL_PLATFORM,
+  getMistralStyleVariables,
+} from "@/config/mistral-client-context";
 import {
   CLAUDE_DESKTOP_CHAT_BACKGROUND,
   CLAUDE_DESKTOP_FONT_CSS,
@@ -321,6 +328,45 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
+  id: "mistral",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MISTRAL_PLATFORM,
+    fontCss: MISTRAL_FONT_CSS,
+    // Le Chat renders MCP Apps but the base MCP initialize capture reports
+    // `clientCapabilities: {}`. Keep this preset keyed to the Apps-side
+    // `ui/initialize` evidence: no PIP, no downloadFile, no teardown claims,
+    // no `window.openai` shim, and a text+image message surface.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      availableDisplayModes: ["inline", "fullscreen"],
+      toolCancelled: false,
+      resourceTeardown: false,
+      toolInfo: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+      widgetDisplayModeRequests: "accept",
+    },
+    hostCapabilitiesAugment: {
+      message: { image: {} },
+    },
+    resolveStyleVariables: getMistralStyleVariables,
+  },
+  chatUi: {
+    label: "Mistral",
+    shortLabel: "Mistral-style host",
+    pickerDescription: "Mistral web host",
+    logoSrc: mistralLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],
+    loadingIndicator: ChatGptDotIndicator,
+  },
+};
+
 export const CURSOR_HOST_STYLE: HostStyleDefinition = {
   id: "cursor",
   mcp: {
@@ -589,6 +635,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  MISTRAL_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
