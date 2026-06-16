@@ -44,6 +44,7 @@ npx -y @mcpjam/cli@latest --help
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+| [`mcp`](/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
 | [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
 ## Global flags
@@ -176,8 +177,19 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
 ```
 
+## Use from an MCP client instead of a shell
+
+If your agent speaks MCP but can't run shell commands (Claude Desktop, chat clients), run the same testing engine as a stdio MCP server:
+
+```bash
+npx -y @mcpjam/cli@latest mcp
+```
+
+Connections to servers under test stay open between tool calls, so agents can also observe notifications and session behavior that one-shot CLI commands can't. See [MCPJam as an MCP server](/cli/mcp-server).
+
 ## What's next
 
+- [MCPJam as an MCP server](/cli/mcp-server) — give MCP clients the testing engine over stdio
 - [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
 - [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
 - [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows

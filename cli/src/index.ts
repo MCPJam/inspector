@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerAuthCommands } from "./commands/auth.js";
+import { registerMcpCommands } from "./commands/mcp.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
@@ -76,6 +77,7 @@ export async function main(
   registerProjectsCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);
+  registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 
   if (argv.length <= 2) {

@@ -16,6 +16,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
   HOST_TEMPLATES,
@@ -45,6 +46,14 @@ export function CreateHostDialog({
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // The Claude Code host template is gated behind a PostHog flag while the
+  // CLI host profile is iterated on. Off ⇒ drop it from the picker grid.
+  // claude-code is never a default or `initialTemplateId` (no caller seeds
+  // it), so hiding it here can't strand the selection on a missing tile.
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const visibleTemplates = HOST_TEMPLATES.filter(
+    (t) => t.id !== "claude-code" || claudeCodeEnabled,
+  );
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
     initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
@@ -53,8 +62,17 @@ export function CreateHostDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId]);
+    // Clamp the selection to a visible template. This enforces the
+    // flag at the selection source, not just in the grid render: a
+    // gated template (e.g. claude-code) can never become
+    // `selectedTemplateId`, so it can't flow into `seedFromHostTemplate`
+    // — even if a future caller passes it as `initialTemplateId` or the
+    // flag flips off after the dialog opened (claudeCodeEnabled is in
+    // the dep list so a flip-off re-clamps a stranded selection).
+    const requested = initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID;
+    const allowed = visibleTemplates.some((t) => t.id === requested);
+    setSelectedTemplateId(allowed ? requested : DEFAULT_HOST_TEMPLATE_ID);
+  }, [isOpen, initialTemplateId, claudeCodeEnabled]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -131,7 +149,7 @@ export function CreateHostDialog({
           <div className="flex flex-col gap-2">
             <Label>Start from template</Label>
             <div className="grid grid-cols-3 gap-2">
-              {HOST_TEMPLATES.map((template) => {
+              {visibleTemplates.map((template) => {
                 const isSelected = template.id === selectedTemplateId;
                 return (
                   <button
