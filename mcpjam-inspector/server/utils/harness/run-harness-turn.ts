@@ -291,6 +291,13 @@ export async function runHarnessTurn(
             writer.write({ type: "text-delta", id: textId, delta });
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
+            // Flush any open text block before the tool so the UI stream stays
+            // balanced (matches the emulated engine's flush-before-tool order);
+            // later text opens a fresh block with a new id.
+            if (textId !== undefined) {
+              writer.write({ type: "text-end", id: textId });
+              textId = undefined;
+            }
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? crypto.randomUUID(),
             );
