@@ -1,118 +1,64 @@
-import type { HostCompatProfile } from "./types";
+import {
+  findHostStyle,
+  getCompatRuntimeForStyle,
+} from "@/lib/client-styles/registry";
+import type { CompatProvenance, HostCompatProfile } from "./types";
 
 /**
- * Per-host compatibility profiles for the L0 prototype.
+ * The "market view" host list — the real shipping targets a developer asks
+ * "where can I ship this?" about. MCPJam is omitted (compatible by
+ * construction — it's the surface you're already on).
  *
- * These extend the apps-dimension knowledge in `lib/client-styles/built-ins`
- * with the non-apps dimensions the design doc calls for (transport reach,
- * auth, server-capability surfacing). Like the host-style presets, they are
- * best-effort mocks of what each vendor supports today — every profile
- * carries a `provenance` tag and the UI must keep it visible. Verify against
- * vendor docs before promoting any fact out of "assumed".
+ * Each entry carries the facts the registry can't give us:
+ *   - identity (label/logo) and `provenance` (how much to trust the matrix).
+ *   - `rendersMcpApps`: does this host render MCP Apps (`ui://`) widgets at
+ *     all? Every modern host does EXCEPT Codex — a CLI that carries an
+ *     `mcpAppsCapabilities` matrix for protocol-bucket reasons but has no
+ *     rendering surface. That "is it a CLI" fact isn't in the registry, so
+ *     it's explicit here. (ChatGPT/Copilot render BOTH MCP Apps and the
+ *     OpenAI bridge — `rendersOpenAiApps` is resolved separately below.)
  *
- * Apps booleans mirror `built-ins.ts`: claude/cursor render MCP Apps only;
- * chatgpt/copilot render both bridges; codex is a CLI with no widget
- * surface.
+ * The granular *capabilities* (which widget features each host supports —
+ * serverResources, message, sandbox, …) still come live from the registry,
+ * so the report never drifts from the playground's emulation.
+ *
+ * Provenance: probe = captured from a real host (Cursor 3.4.17);
+ * vendor-doc = published vendor table (Copilot; ChatGPT's OpenAI surface);
+ * assumed = best-effort preset, unverified.
  */
-
-export const CLAUDE_COMPAT_PROFILE: HostCompatProfile = {
-  id: "claude",
-  label: "Claude",
-  logoSrc: "/claude_logo.png",
-  provenance: "assumed",
-  transports: { stdio: true, remoteHttp: true },
-  oauth: true,
-  serverCapabilities: {
-    prompts: true,
-    resources: true,
-    logging: true,
-    completions: false,
-  },
-  apps: { mcpApps: true, openaiApps: false },
+type MarketHost = {
+  id: string;
+  label: string;
+  logoSrc: string;
+  provenance: CompatProvenance;
+  rendersMcpApps: boolean;
 };
 
-export const CHATGPT_COMPAT_PROFILE: HostCompatProfile = {
-  id: "chatgpt",
-  label: "ChatGPT",
-  logoSrc: "/openai_logo.png",
-  provenance: "vendor-doc",
-  // ChatGPT connectors/apps reach servers over the network only — there is
-  // no local stdio path.
-  transports: { stdio: false, remoteHttp: true },
-  oauth: true,
-  serverCapabilities: {
-    prompts: false,
-    resources: false,
-    logging: false,
-    completions: false,
-  },
-  apps: { mcpApps: true, openaiApps: true },
-};
-
-export const CURSOR_COMPAT_PROFILE: HostCompatProfile = {
-  id: "cursor",
-  label: "Cursor",
-  logoSrc: "/cursor_logo.png",
-  // Apps matrix is probe-captured (Cursor 3.4.17); the non-apps dimensions
-  // here are still assumed. Probe wins as the dominant tag because the
-  // widget rows are the facts most likely to gate a verdict.
-  provenance: "probe",
-  transports: { stdio: true, remoteHttp: true },
-  oauth: true,
-  serverCapabilities: {
-    prompts: true,
-    resources: true,
-    logging: false,
-    completions: false,
-  },
-  apps: { mcpApps: true, openaiApps: false },
-};
-
-export const COPILOT_COMPAT_PROFILE: HostCompatProfile = {
-  id: "copilot",
-  label: "Copilot",
-  logoSrc: "/copilot_logo.png",
-  // From Microsoft's published "Supported MCP Apps capabilities in Copilot"
-  // table (see MCP_APPS_COPILOT_SURFACE in client-styles/built-ins.ts).
-  provenance: "vendor-doc",
-  transports: { stdio: false, remoteHttp: true },
-  oauth: true,
-  serverCapabilities: {
-    prompts: false,
-    resources: false,
-    logging: false,
-    completions: false,
-  },
-  apps: { mcpApps: true, openaiApps: true },
-};
-
-export const CODEX_COMPAT_PROFILE: HostCompatProfile = {
-  id: "codex",
-  label: "Codex",
-  logoSrc: "/codex-logo.svg",
-  provenance: "assumed",
-  transports: { stdio: true, remoteHttp: true },
-  oauth: true,
-  serverCapabilities: {
-    prompts: true,
-    resources: false,
-    logging: false,
-    completions: false,
-  },
-  // CLI surface — no widget rendering of either flavor.
-  apps: { mcpApps: false, openaiApps: false },
-};
-
-/**
- * The "market view" host list from the design doc: real shipping targets,
- * in the order the strip renders them. MCPJam itself is omitted — it is
- * compatible by construction (it's the surface the developer is already
- * using).
- */
-export const HOST_COMPAT_PROFILES: readonly HostCompatProfile[] = [
-  CLAUDE_COMPAT_PROFILE,
-  CHATGPT_COMPAT_PROFILE,
-  CURSOR_COMPAT_PROFILE,
-  COPILOT_COMPAT_PROFILE,
-  CODEX_COMPAT_PROFILE,
+const MARKET_HOSTS: readonly MarketHost[] = [
+  { id: "claude", label: "Claude", logoSrc: "/claude_logo.png", provenance: "assumed", rendersMcpApps: true },
+  { id: "chatgpt", label: "ChatGPT", logoSrc: "/openai_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
+  { id: "cursor", label: "Cursor", logoSrc: "/cursor_logo.png", provenance: "probe", rendersMcpApps: true },
+  { id: "copilot", label: "Copilot", logoSrc: "/copilot_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
+  // Codex is a CLI — it renders no widgets, of either flavor.
+  { id: "codex", label: "Codex", logoSrc: "/codex-logo.svg", provenance: "assumed", rendersMcpApps: false },
 ];
+
+/**
+ * Build the compat profiles by joining the market-host facts with the
+ * registry's live capability matrix. `rendersOpenAiApps` is the one render
+ * flag the registry CAN give us cleanly (the `window.openai` shim toggle),
+ * so it stays derived; `rendersMcpApps` is the explicit CLI-aware fact.
+ */
+export function buildHostCompatProfiles(): HostCompatProfile[] {
+  return MARKET_HOSTS.map((host) => {
+    const rendersOpenAiApps = getCompatRuntimeForStyle(host.id).injected;
+    const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
+    return {
+      ...host,
+      rendersOpenAiApps,
+      capabilities: rendersWidgets
+        ? findHostStyle(host.id)?.mcp.mcpAppsCapabilities
+        : undefined,
+    };
+  });
+}

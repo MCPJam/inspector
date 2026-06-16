@@ -20,7 +20,7 @@ import {
 import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
-import { useActiveServerTunnel } from "@/lib/host-compat/use-active-tunnel";
+import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
 import type {
   CompatFinding,
   CompatProvenance,
@@ -115,12 +115,10 @@ export function HostCompatContent({
   /** Close the detail modal before we navigate to the playground. */
   onClose?: () => void;
 }) {
-  // Resolve tunnel state the same way the card does, so a tunneled stdio
-  // server isn't blocked here while the card strip shows it reachable.
-  const hasActiveTunnel = useActiveServerTunnel(server.name);
+  const widgetUsage = useWidgetUsage(server.name, toolsData);
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(server, toolsData, { hasActiveTunnel }),
-    [server, toolsData, hasActiveTunnel],
+    () => evaluateAllHosts(toolsData, widgetUsage),
+    [toolsData, widgetUsage],
   );
 
   const posthog = usePostHog();

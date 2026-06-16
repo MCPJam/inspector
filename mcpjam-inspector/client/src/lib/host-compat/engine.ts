@@ -1,7 +1,7 @@
-import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { HOST_COMPAT_PROFILES } from "./profiles";
+import { buildHostCompatProfiles } from "./profiles";
+import type { WidgetCapabilityNeed, WidgetUsage } from "./widget-scan";
 import type {
   CompatFinding,
   HostCompatProfile,
@@ -10,85 +10,77 @@ import type {
 } from "./types";
 
 /**
- * L0 static compatibility engine (prototype).
+ * L0/L1 static compatibility engine (prototype).
  *
- * `deriveServerRequirements` reads only data the client already holds:
- * the server config blob (transport, OAuth), `initializationInfo`
- * (advertised capabilities), and an optional tools list (widget usage via
- * `_meta`). `evaluateHostCompat` is a pure join against one host profile.
- * No fetches, no host emulation — verdicts are recomputed on read.
+ * `deriveServerRequirements` reads the tools list (L0 — widget bridges and
+ * `visibility`) plus an optional `widgetUsage` map (L1 — which host APIs the
+ * widgets actually call, from the HTML scan). `evaluateHostCompat` joins
+ * that against a host's SEP-1865 capability matrix (from the registry).
+ *
+ * Every finding is server-specific: render failures key off this server's
+ * tools; capability gaps fire ONLY when a widget actually uses a capability
+ * the host lacks — never as general host knowledge.
+ *
+ * No transport/auth/protocol checks — a local dev server is *expected* not
+ * to reach a cloud host; flagging it is noise.
  */
 
-const hasAdvertisedCapability = (
-  capabilities: Record<string, unknown>,
-  key: string,
-): boolean => capabilities[key] != null;
-
-export type CompatDerivationOptions = {
-  /** An ngrok tunnel is live, exposing a stdio server over HTTPS. */
-  hasActiveTunnel?: boolean;
-};
+/** A tool is app-only when its `_meta.ui.visibility` excludes `"model"`. */
+function isAppOnlyTool(meta: Record<string, unknown> | undefined): boolean {
+  const ui = meta?.ui as { visibility?: unknown } | undefined;
+  const visibility = ui?.visibility;
+  return Array.isArray(visibility) && !visibility.includes("model");
+}
 
 export function deriveServerRequirements(
-  server: ServerWithName,
   toolsData?: ListToolsResultWithMetadata | null,
-  options?: CompatDerivationOptions,
+  widgetUsage?: WidgetUsage,
 ): ServerRequirements {
-  const transport = "url" in server.config ? "http" : "stdio";
-  const reachableRemotely =
-    transport === "http" || options?.hasActiveTunnel === true;
-  const usesOAuth = server.useOAuth === true || server.oauthTokens != null;
-
   const unknownDimensions: string[] = [];
 
-  const serverCapabilities = server.initializationInfo?.serverCapabilities;
-  let capabilities: ServerRequirements["capabilities"];
-  if (serverCapabilities) {
-    capabilities = {
-      prompts: hasAdvertisedCapability(serverCapabilities, "prompts"),
-      resources: hasAdvertisedCapability(serverCapabilities, "resources"),
-      logging: hasAdvertisedCapability(serverCapabilities, "logging"),
-      completions: hasAdvertisedCapability(serverCapabilities, "completions"),
+  if (!toolsData?.tools) {
+    unknownDimensions.push("widget usage (tools metadata not loaded)");
+    return {
+      widgets: { mcpAppsOnly: [], openaiAppsOnly: [], dual: [] },
+      appOnlyWidgets: [],
+      hasWidgets: false,
+      widgetUsage,
+      unknownDimensions,
     };
-  } else {
-    unknownDimensions.push("advertised capabilities (connect to capture)");
   }
 
-  let widgets: ServerRequirements["widgets"];
-  if (toolsData?.tools) {
-    const mcpAppsOnly: string[] = [];
-    const openaiAppsOnly: string[] = [];
-    const dual: string[] = [];
-    for (const tool of toolsData.tools) {
-      const meta =
-        toolsData.toolsMetadata?.[tool.name] ??
-        (tool._meta as Record<string, unknown> | undefined);
-      switch (detectUIType(meta, undefined)) {
-        case UIType.MCP_APPS:
-          mcpAppsOnly.push(tool.name);
-          break;
-        case UIType.OPENAI_SDK:
-          openaiAppsOnly.push(tool.name);
-          break;
-        case UIType.OPENAI_SDK_AND_MCP_APPS:
-          dual.push(tool.name);
-          break;
-        default:
-          break;
-      }
+  const mcpAppsOnly: string[] = [];
+  const openaiAppsOnly: string[] = [];
+  const dual: string[] = [];
+  const appOnlyWidgets: string[] = [];
+
+  for (const tool of toolsData.tools) {
+    const meta =
+      toolsData.toolsMetadata?.[tool.name] ??
+      (tool._meta as Record<string, unknown> | undefined);
+    let isWidget = true;
+    switch (detectUIType(meta, undefined)) {
+      case UIType.MCP_APPS:
+        mcpAppsOnly.push(tool.name);
+        break;
+      case UIType.OPENAI_SDK:
+        openaiAppsOnly.push(tool.name);
+        break;
+      case UIType.OPENAI_SDK_AND_MCP_APPS:
+        dual.push(tool.name);
+        break;
+      default:
+        isWidget = false;
+        break;
     }
-    widgets = { mcpAppsOnly, openaiAppsOnly, dual };
-  } else {
-    unknownDimensions.push("widget usage (tools metadata not loaded)");
+    if (isWidget && isAppOnlyTool(meta)) appOnlyWidgets.push(tool.name);
   }
 
   return {
-    transport,
-    reachableRemotely,
-    usesOAuth,
-    protocolVersion: server.initializationInfo?.protocolVersion,
-    capabilities,
-    widgets,
+    widgets: { mcpAppsOnly, openaiAppsOnly, dual },
+    appOnlyWidgets,
+    hasWidgets: mcpAppsOnly.length + openaiAppsOnly.length + dual.length > 0,
+    widgetUsage,
     unknownDimensions,
   };
 }
@@ -99,97 +91,95 @@ const formatToolNames = (names: string[]): string => {
   return rest > 0 ? `${shown.join(", ")} +${rest} more` : shown.join(", ");
 };
 
+/**
+ * Per-capability finding copy, keyed by the same dimensions the L1 scan
+ * detects. A finding fires only when (a) the widget needs the capability
+ * and (b) the host's matrix lacks it. `degraded` for real functional loss,
+ * `info` for cosmetic.
+ */
+const CAPABILITY_CHECKS: ReadonlyArray<{
+  key: WidgetCapabilityNeed;
+  severity: CompatFinding["severity"];
+  title: string;
+  api: string;
+  consequence: string;
+}> = [
+  { key: "serverTools", severity: "degraded", title: "Server tool calls won't work", api: "tools/call", consequence: "its interactive actions won't reach the server" },
+  { key: "serverResources", severity: "degraded", title: "Resource reads won't work", api: "resources/read", consequence: "it won't get the MCP resources it fetches" },
+  { key: "message", severity: "degraded", title: "Follow-up messages won't work", api: "ui/message", consequence: "it can't send follow-up chat messages" },
+  { key: "updateModelContext", severity: "degraded", title: "Model-context updates won't work", api: "ui/update-model-context", consequence: "it can't push state into the model's context" },
+  { key: "openLinks", severity: "degraded", title: "Links won't open", api: "ui/open-link", consequence: "its external links won't open" },
+  { key: "downloadFile", severity: "degraded", title: "Downloads won't work", api: "ui/download-file", consequence: "its export/download won't work" },
+  { key: "sandboxPermissions", severity: "degraded", title: "Device permissions denied", api: "sandbox permissions", consequence: "the camera/mic/geo/clipboard access it requests won't be granted" },
+  { key: "cspFrameDomains", severity: "degraded", title: "Nested iframes blocked", api: "csp.frameDomains", consequence: "the nested iframes it declares won't load" },
+  { key: "logging", severity: "info", title: "Widget logs dropped", api: "notifications/message", consequence: "its log messages won't surface" },
+];
+
 export function evaluateHostCompat(
   requirements: ServerRequirements,
   profile: HostCompatProfile,
 ): HostCompatReport {
   const findings: CompatFinding[] = [];
 
-  // A stdio server with an active tunnel is reachable over HTTPS, so it no
-  // longer blocks on remote-only hosts.
-  if (
-    requirements.transport === "stdio" &&
-    !profile.transports.stdio &&
-    !requirements.reachableRemotely
-  ) {
-    findings.push({
-      severity: "blocker",
-      title: "Local server unreachable",
-      detail: `This server runs locally over stdio, but ${profile.label} can only reach servers over the internet.`,
-      remediation:
-        "Deploy the server behind a public HTTPS endpoint, or create an ngrok tunnel from the server card.",
-    });
-  }
-  if (requirements.transport === "http" && !profile.transports.remoteHttp) {
-    findings.push({
-      severity: "blocker",
-      title: "Remote servers unsupported",
-      detail: `${profile.label} cannot connect to remote HTTP servers.`,
-    });
-  }
-
-  if (requirements.usesOAuth && !profile.oauth) {
-    findings.push({
-      severity: "blocker",
-      title: "OAuth flow unsupported",
-      detail: `This server requires OAuth, which ${profile.label} cannot complete.`,
-    });
-  }
-
-  if (requirements.capabilities) {
-    const caps = requirements.capabilities;
-    if (caps.prompts && !profile.serverCapabilities.prompts) {
-      findings.push({
-        severity: "degraded",
-        title: "Prompts won't appear",
-        detail: `The server advertises MCP prompts, but ${profile.label} doesn't surface them to users.`,
-      });
-    }
-    if (caps.resources && !profile.serverCapabilities.resources) {
-      findings.push({
-        severity: "degraded",
-        title: "Resources won't be browsable",
-        detail: `The server advertises MCP resources, but ${profile.label} doesn't expose them.`,
-      });
-    }
-    if (caps.logging && !profile.serverCapabilities.logging) {
-      findings.push({
-        severity: "info",
-        title: "Log messages dropped",
-        detail: `${profile.label} doesn't surface MCP log messages.`,
-      });
-    }
-    if (caps.completions && !profile.serverCapabilities.completions) {
-      findings.push({
-        severity: "info",
-        title: "Argument autocomplete unavailable",
-        detail: `${profile.label} doesn't request completions.`,
-      });
-    }
-  }
-
-  if (requirements.widgets) {
-    const { mcpAppsOnly, openaiAppsOnly, dual } = requirements.widgets;
-    // Dual-bridge tools render anywhere either bridge exists; they only
-    // degrade when the host has no widget surface at all.
-    const unrenderable: string[] = [
-      ...(profile.apps.mcpApps ? [] : mcpAppsOnly),
-      ...(profile.apps.openaiApps ? [] : openaiAppsOnly),
-      ...(profile.apps.mcpApps || profile.apps.openaiApps ? [] : dual),
+  if (requirements.hasWidgets) {
+    // 1. Render failures: widgets whose bridge this host can't render.
+    const unrenderable = [
+      ...(profile.rendersMcpApps ? [] : requirements.widgets.mcpAppsOnly),
+      ...(profile.rendersOpenAiApps
+        ? []
+        : requirements.widgets.openaiAppsOnly),
+      ...(profile.rendersMcpApps || profile.rendersOpenAiApps
+        ? []
+        : requirements.widgets.dual),
     ];
-    if (unrenderable.length > 0) {
-      const count = unrenderable.length;
+
+    const remediation =
+      profile.rendersMcpApps && !profile.rendersOpenAiApps
+        ? "Declare an MCP Apps template (`_meta.ui.resourceUri`) alongside the OpenAI one."
+        : !profile.rendersMcpApps && profile.rendersOpenAiApps
+          ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
+          : undefined; // host renders neither (CLI) — nothing to declare.
+
+    // App-only widgets have no text fallback: unrenderable = unusable tool.
+    const blockedAppOnly = unrenderable.filter((name) =>
+      requirements.appOnlyWidgets.includes(name),
+    );
+    const degradedFallback = unrenderable.filter(
+      (name) => !requirements.appOnlyWidgets.includes(name),
+    );
+
+    if (blockedAppOnly.length > 0) {
+      const count = blockedAppOnly.length;
+      findings.push({
+        severity: "blocker",
+        title: `${count} app-only tool${count === 1 ? "" : "s"} unusable`,
+        detail: `${formatToolNames(blockedAppOnly)} ${count === 1 ? "is" : "are"} app-only (hidden from the model, no text fallback) and need${count === 1 ? "s" : ""} a UI ${profile.label} can't render — so ${count === 1 ? "it's" : "they're"} dead here.`,
+        remediation,
+      });
+    }
+    if (degradedFallback.length > 0) {
+      const count = degradedFallback.length;
       findings.push({
         severity: "degraded",
         title: `${count} widget${count === 1 ? "" : "s"} fall back to text`,
-        detail: `${formatToolNames(unrenderable)} declare${count === 1 ? "s" : ""} a UI that ${profile.label} won't render — users get the plain-text result instead.`,
-        remediation:
-          profile.apps.mcpApps && !profile.apps.openaiApps
-            ? "Declare an MCP Apps template (`_meta.ui.resourceUri`) alongside the OpenAI one."
-            : !profile.apps.mcpApps && profile.apps.openaiApps
-              ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
-              : undefined,
+        detail: `${formatToolNames(degradedFallback)} declare${count === 1 ? "s" : ""} a UI ${profile.label} won't render — users get the plain-text result instead.`,
+        remediation,
       });
+    }
+
+    // 2. Capability gaps — SERVER-SPECIFIC: only for widgets that actually
+    //    use a capability (from the L1 scan) the host lacks.
+    if (profile.capabilities && requirements.widgetUsage) {
+      for (const check of CAPABILITY_CHECKS) {
+        const tools = requirements.widgetUsage[check.key];
+        if (tools && tools.length > 0 && profile.capabilities[check.key] !== true) {
+          findings.push({
+            severity: check.severity,
+            title: check.title,
+            detail: `${formatToolNames(tools)} need \`${check.api}\`, which ${profile.label} doesn't support — ${check.consequence}.`,
+          });
+        }
+      }
     }
   }
 
@@ -219,14 +209,13 @@ export type HostCompatEvaluation = {
 };
 
 export function evaluateAllHosts(
-  server: ServerWithName,
   toolsData?: ListToolsResultWithMetadata | null,
-  options?: CompatDerivationOptions,
+  widgetUsage?: WidgetUsage,
 ): HostCompatEvaluation {
-  const requirements = deriveServerRequirements(server, toolsData, options);
+  const requirements = deriveServerRequirements(toolsData, widgetUsage);
   return {
     requirements,
-    reports: HOST_COMPAT_PROFILES.map((profile) =>
+    reports: buildHostCompatProfiles().map((profile) =>
       evaluateHostCompat(requirements, profile),
     ),
   };

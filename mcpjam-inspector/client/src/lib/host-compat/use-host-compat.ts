@@ -5,15 +5,15 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts, type HostCompatEvaluation } from "./engine";
+import { useWidgetUsage } from "./use-widget-usage";
 
 const TOOLS_FETCH_MAX_ATTEMPTS = 3;
 
 /**
  * Compat reports for one server, for surfaces that don't already hold a
- * tools list (the server card strip). Fetches tools per connection so widget
- * findings can be derived; transport/auth/capability findings work without
- * it. Surfaces that already fetched tools (the detail modal) should call
- * `evaluateAllHosts` directly instead.
+ * tools list (the server card strip). Fetches tools per connection so the
+ * widget findings can be derived. Surfaces that already fetched tools (the
+ * detail modal) should call `evaluateAllHosts` directly instead.
  *
  * A transient `listTools` failure is retried with backoff so the strip
  * doesn't get stuck advertising "unknown" widgets while the detail modal's
@@ -22,10 +22,8 @@ const TOOLS_FETCH_MAX_ATTEMPTS = 3;
  */
 export function useHostCompatReports(
   server: ServerWithName,
-  options?: { hasActiveTunnel?: boolean },
 ): HostCompatEvaluation {
   const isConnected = server.connectionStatus === "connected";
-  const hasActiveTunnel = options?.hasActiveTunnel === true;
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
 
@@ -62,8 +60,10 @@ export function useHostCompatReports(
     };
   }, [isConnected, server.name]);
 
+  const widgetUsage = useWidgetUsage(server.name, toolsData);
+
   return useMemo(
-    () => evaluateAllHosts(server, toolsData, { hasActiveTunnel }),
-    [server, toolsData, hasActiveTunnel],
+    () => evaluateAllHosts(toolsData, widgetUsage),
+    [toolsData, widgetUsage],
   );
 }

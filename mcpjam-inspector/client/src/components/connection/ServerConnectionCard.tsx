@@ -667,7 +667,6 @@ export function ServerConnectionCard({
           {isConnected && (
             <HostCompatStrip
               server={server}
-              hasTunnel={hasTunnel}
               onOpenDetails={
                 isDetailModalEnabled
                   ? () => openDetailModal("compatibility", "card_click")

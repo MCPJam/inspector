@@ -5,34 +5,9 @@ import {
   evaluateHostCompat,
 } from "../engine";
 import { summarizeReports } from "@/components/compat/HostCompatStrip";
-import {
-  CHATGPT_COMPAT_PROFILE,
-  CLAUDE_COMPAT_PROFILE,
-  CODEX_COMPAT_PROFILE,
-  COPILOT_COMPAT_PROFILE,
-  CURSOR_COMPAT_PROFILE,
-} from "../profiles";
-import type { ServerWithName } from "@/state/app-types";
+import type { HostCompatProfile, ServerRequirements } from "../types";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles/types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
-
-const baseServer = (overrides: Partial<ServerWithName>): ServerWithName =>
-  ({
-    name: "test-server",
-    config: { url: new URL("https://example.com/mcp") },
-    lastConnectionTime: new Date(),
-    connectionStatus: "connected",
-    retryCount: 0,
-    ...overrides,
-  }) as ServerWithName;
-
-const stdioServer = baseServer({
-  config: { command: "npx", args: ["my-server"] } as never,
-});
-
-const connectedInfo = {
-  protocolVersion: "2025-06-18",
-  serverCapabilities: { tools: {}, prompts: {}, resources: {} },
-};
 
 const toolsWith = (
   toolsMetadata: Record<string, Record<string, unknown>>,
@@ -45,150 +20,224 @@ const toolsWith = (
     toolsMetadata,
   }) as ListToolsResultWithMetadata;
 
+const mcpAppsMeta = (extra: Record<string, unknown> = {}) => ({
+  ui: { resourceUri: "ui://widget", ...extra },
+});
+const openaiMeta = { "openai/outputTemplate": "ui://widget" };
+
+const FULL_CAPS: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: true,
+  toolCancelled: true,
+  hostContextChanged: true,
+  resourceTeardown: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: true,
+  message: true,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
+  widgetDisplayModeRequests: "accept",
+};
+
+const profile = (over: Partial<HostCompatProfile> = {}): HostCompatProfile => ({
+  id: "x",
+  label: "TestHost",
+  logoSrc: "",
+  provenance: "assumed",
+  rendersMcpApps: true,
+  rendersOpenAiApps: false,
+  capabilities: FULL_CAPS,
+  ...over,
+});
+
+const reqs = (over: Partial<ServerRequirements> = {}): ServerRequirements => ({
+  widgets: { mcpAppsOnly: [], openaiAppsOnly: [], dual: [] },
+  appOnlyWidgets: [],
+  hasWidgets: false,
+  unknownDimensions: [],
+  ...over,
+});
+
 describe("deriveServerRequirements", () => {
-  it("derives transport and OAuth from the config blob", () => {
-    const reqs = deriveServerRequirements(
-      baseServer({ useOAuth: true, initializationInfo: connectedInfo }),
-    );
-    expect(reqs.transport).toBe("http");
-    expect(reqs.usesOAuth).toBe(true);
-    expect(reqs.capabilities?.prompts).toBe(true);
-    expect(reqs.capabilities?.logging).toBe(false);
+  it("reports unknown widget usage when tools aren't loaded", () => {
+    const r = deriveServerRequirements(undefined);
+    expect(r.hasWidgets).toBe(false);
+    expect(r.unknownDimensions.length).toBe(1);
   });
 
-  it("reports unknown dimensions when never connected", () => {
-    const reqs = deriveServerRequirements(stdioServer);
-    expect(reqs.transport).toBe("stdio");
-    expect(reqs.capabilities).toBeUndefined();
-    expect(reqs.widgets).toBeUndefined();
-    expect(reqs.unknownDimensions).toHaveLength(2);
-  });
-
-  it("buckets widget tools by declared bridge", () => {
-    const reqs = deriveServerRequirements(
-      baseServer({ initializationInfo: connectedInfo }),
+  it("buckets widgets by bridge and flags app-only tools", () => {
+    const r = deriveServerRequirements(
       toolsWith({
-        mcp_widget: { ui: { resourceUri: "ui://w/a" } },
-        openai_widget: { "openai/outputTemplate": "ui://w/b" },
-        dual_widget: {
-          ui: { resourceUri: "ui://w/c" },
-          "openai/outputTemplate": "ui://w/c",
-        },
-        plain_tool: {},
+        mcpTool: mcpAppsMeta(),
+        openaiTool: openaiMeta,
+        dualTool: { ...mcpAppsMeta(), ...openaiMeta },
+        plainTool: {},
+        appOnlyTool: mcpAppsMeta({ visibility: ["app"] }),
       }),
     );
-    expect(reqs.widgets).toEqual({
-      mcpAppsOnly: ["mcp_widget"],
-      openaiAppsOnly: ["openai_widget"],
-      dual: ["dual_widget"],
-    });
+    expect(r.widgets.mcpAppsOnly).toEqual(["mcpTool", "appOnlyTool"]);
+    expect(r.widgets.openaiAppsOnly).toEqual(["openaiTool"]);
+    expect(r.widgets.dual).toEqual(["dualTool"]);
+    expect(r.appOnlyWidgets).toEqual(["appOnlyTool"]);
+    expect(r.hasWidgets).toBe(true);
+  });
+
+  it("treats a model+app tool as not app-only", () => {
+    const r = deriveServerRequirements(
+      toolsWith({ t: mcpAppsMeta({ visibility: ["model", "app"] }) }),
+    );
+    expect(r.appOnlyWidgets).toEqual([]);
   });
 });
 
 describe("evaluateHostCompat", () => {
-  it("blocks stdio servers on remote-only hosts and not elsewhere", () => {
-    const reqs = deriveServerRequirements(stdioServer);
-    expect(evaluateHostCompat(reqs, CHATGPT_COMPAT_PROFILE).verdict).toBe(
-      "blocked",
-    );
-    expect(evaluateHostCompat(reqs, COPILOT_COMPAT_PROFILE).verdict).toBe(
-      "blocked",
-    );
-    // Claude reaches stdio; remaining dimensions are unknown, not failing.
-    expect(evaluateHostCompat(reqs, CLAUDE_COMPAT_PROFILE).verdict).toBe(
-      "unknown",
-    );
+  it("a plain (no-widget) server works everywhere with no findings", () => {
+    const report = evaluateHostCompat(reqs(), profile());
+    expect(report.verdict).toBe("works");
+    expect(report.findings).toEqual([]);
   });
 
-  it("clears the stdio blocker on remote-only hosts when a tunnel is active", () => {
-    const reqs = deriveServerRequirements(stdioServer, null, {
-      hasActiveTunnel: true,
-    });
-    expect(reqs.reachableRemotely).toBe(true);
-    // ChatGPT/Copilot are remote-only; with a tunnel they're no longer
-    // blocked (the remaining dimensions are merely unknown).
-    expect(evaluateHostCompat(reqs, CHATGPT_COMPAT_PROFILE).verdict).not.toBe(
-      "blocked",
+  it("degrades a widget to text on a host that renders no widgets", () => {
+    const report = evaluateHostCompat(
+      reqs({ widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] }, hasWidgets: true }),
+      profile({ rendersMcpApps: false, rendersOpenAiApps: false, capabilities: undefined }),
     );
-    expect(evaluateHostCompat(reqs, COPILOT_COMPAT_PROFILE).verdict).not.toBe(
-      "blocked",
-    );
-  });
-
-  it("degrades OpenAI-only widgets on MCP-Apps-only hosts, with remediation", () => {
-    const reqs = deriveServerRequirements(
-      baseServer({ initializationInfo: { serverCapabilities: { tools: {} } } }),
-      toolsWith({
-        openai_widget: { "openai/outputTemplate": "ui://w/b" },
-      }),
-    );
-    const report = evaluateHostCompat(reqs, CLAUDE_COMPAT_PROFILE);
     expect(report.verdict).toBe("degraded");
-    expect(report.findings[0].title).toContain("1 widget");
-    expect(report.findings[0].remediation).toContain("_meta.ui.resourceUri");
+    expect(report.findings[0].title).toMatch(/fall back to text/);
   });
 
-  it("lets dual-bridge widgets render on either host kind", () => {
-    const reqs = deriveServerRequirements(
-      baseServer({ initializationInfo: { serverCapabilities: { tools: {} } } }),
-      toolsWith({
-        dual_widget: {
-          ui: { resourceUri: "ui://w/c" },
-          "openai/outputTemplate": "ui://w/c",
-        },
+  it("blocks an app-only widget that can't render (no text fallback)", () => {
+    const report = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        appOnlyWidgets: ["w"],
+        hasWidgets: true,
       }),
+      profile({ rendersMcpApps: false, rendersOpenAiApps: false, capabilities: undefined }),
     );
-    expect(evaluateHostCompat(reqs, CLAUDE_COMPAT_PROFILE).verdict).toBe(
-      "works",
-    );
-    expect(evaluateHostCompat(reqs, CHATGPT_COMPAT_PROFILE).verdict).toBe(
-      "works",
-    );
-    // Codex has no widget surface at all — dual still degrades there.
-    const codex = evaluateHostCompat(reqs, CODEX_COMPAT_PROFILE);
-    expect(codex.verdict).toBe("degraded");
+    expect(report.verdict).toBe("blocked");
+    expect(report.findings[0].title).toMatch(/app-only/);
   });
 
-  it("degrades advertised prompts/resources on hosts that don't surface them", () => {
-    const reqs = deriveServerRequirements(
-      baseServer({ initializationInfo: connectedInfo }),
-      toolsWith({}),
+  it("degrades an OpenAI-only widget on an MCP-Apps-only host, advising the MCP Apps bridge", () => {
+    const report = evaluateHostCompat(
+      reqs({ widgets: { mcpAppsOnly: [], openaiAppsOnly: ["w"], dual: [] }, hasWidgets: true }),
+      profile({ rendersMcpApps: true, rendersOpenAiApps: false }),
     );
-    const chatgpt = evaluateHostCompat(reqs, CHATGPT_COMPAT_PROFILE);
-    expect(chatgpt.verdict).toBe("degraded");
-    expect(chatgpt.findings.map((f) => f.title)).toEqual([
-      "Prompts won't appear",
-      "Resources won't be browsable",
-    ]);
-    expect(evaluateHostCompat(reqs, CURSOR_COMPAT_PROFILE).verdict).toBe(
-      "works",
+    expect(report.verdict).toBe("degraded");
+    // The host renders MCP Apps, so the fix is to add that bridge.
+    expect(report.findings[0].remediation).toMatch(/MCP Apps template/);
+  });
+
+  it("fires a server-specific capability finding when a scanned widget uses an unsupported API", () => {
+    const report = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+        widgetUsage: { message: ["w"] },
+      }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
     );
+    expect(report.verdict).toBe("degraded");
+    const finding = report.findings.find((f) => /ui\/message/.test(f.detail));
+    expect(finding?.detail).toMatch(/`w`/);
+  });
+
+  it("withholds capability findings until the widget is scanned (no widgetUsage)", () => {
+    const report = evaluateHostCompat(
+      reqs({ widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] }, hasWidgets: true }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+    );
+    expect(report.verdict).toBe("works");
+    expect(report.findings).toEqual([]);
+  });
+
+  it("does not fire a capability finding the widget doesn't actually use", () => {
+    const report = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+        widgetUsage: { serverTools: ["w"] }, // uses serverTools, not message
+      }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+    );
+    expect(report.findings).toEqual([]);
+    expect(report.verdict).toBe("works");
+  });
+
+  it("does not report capability gaps for a server with no widgets", () => {
+    const report = evaluateHostCompat(
+      reqs({ widgetUsage: { message: ["w"] } }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+    );
+    expect(report.findings).toEqual([]);
+  });
+});
+
+describe("evaluateAllHosts (real registry)", () => {
+  it("a dual-bridge widget works in Claude but degrades in Codex (CLI)", () => {
+    const { reports } = evaluateAllHosts(
+      toolsWith({ w: { ...mcpAppsMeta(), ...openaiMeta } }),
+    );
+    const claude = reports.find((r) => r.hostId === "claude");
+    const codex = reports.find((r) => r.hostId === "codex");
+    expect(claude?.verdict).toBe("works");
+    expect(codex?.verdict).toBe("degraded");
+  });
+
+  it("renders MCP Apps widgets in ChatGPT (does NOT fall back to text)", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }));
+    const chatgpt = reports.find((r) => r.hostId === "chatgpt");
+    // ChatGPT renders both bridges — an MCP Apps widget must render here.
+    expect(
+      chatgpt?.findings.some((f) => /fall back to text/.test(f.title)),
+    ).toBe(false);
+    // Its only gaps are info-level (serverResources / logging), so: Works.
+    expect(chatgpt?.verdict).toBe("works");
+  });
+
+  it("surfaces Cursor's follow-up gap only for a widget that actually uses it", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {
+      message: ["w"],
+    });
+    const cursor = reports.find((r) => r.hostId === "cursor");
+    // Cursor renders MCP Apps, so no text-fallback finding…
+    expect(cursor?.findings.some((f) => /fall back to text/.test(f.title))).toBe(
+      false,
+    );
+    // …and its matrix has `message` off, so the scanned widget's use of it
+    // surfaces a server-specific finding naming the tool.
+    const finding = cursor?.findings.find((f) => /ui\/message/.test(f.detail));
+    expect(finding?.detail).toMatch(/`w`/);
+    // Claude supports `message` → no such finding even though the widget uses it.
+    const claude = reports.find((r) => r.hostId === "claude");
+    expect(claude?.findings.some((f) => /ui\/message/.test(f.detail))).toBe(false);
   });
 });
 
 describe("summarizeReports", () => {
+  it("rolls up definite verdicts", () => {
+    expect(
+      summarizeReports([
+        { hostId: "a", hostLabel: "A", logoSrc: "", verdict: "works", provenance: "assumed", findings: [] },
+        { hostId: "b", hostLabel: "B", logoSrc: "", verdict: "degraded", provenance: "assumed", findings: [] },
+      ]),
+    ).toBe("works in 1 · degraded in 1");
+  });
+
   it("labels an all-unknown result as unknown, not 'checking…'", () => {
-    // An http server (reachable by every host) with no capabilities and no
-    // tools loaded → no blockers, no degradations, but two unknown
-    // dimensions → every host is unknown.
-    const { reports } = evaluateAllHosts(baseServer({}));
-    expect(reports.every((r) => r.verdict === "unknown")).toBe(true);
-    const summary = summarizeReports(reports);
-    expect(summary).not.toBe("checking…");
-    expect(summary).toContain("unknown in");
-  });
-
-  it("reports 'checking…' only for the genuinely empty pre-eval state", () => {
-    expect(summarizeReports([])).toBe("checking…");
-  });
-
-  it("rolls up definite verdicts and omits unknown when something decided", () => {
-    const { reports } = evaluateAllHosts(
-      baseServer({ initializationInfo: connectedInfo }),
-      toolsWith({}),
-    );
-    const summary = summarizeReports(reports);
-    expect(summary).toMatch(/works in \d|degraded in \d/);
-    expect(summary).not.toContain("unknown in");
+    expect(
+      summarizeReports([
+        { hostId: "a", hostLabel: "A", logoSrc: "", verdict: "unknown", provenance: "assumed", findings: [] },
+      ]),
+    ).toBe("unknown in 1");
   });
 });
