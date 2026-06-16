@@ -46,6 +46,7 @@ import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
+import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
 import type {
   HostStyleDefinition,
   ResolvedMcpAppsCapabilities,
@@ -363,7 +364,7 @@ export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
     logoSrc: mistralLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],
-    loadingIndicator: ChatGptDotIndicator,
+    loadingIndicator: MistralSpinnerIndicator,
   },
 };
 

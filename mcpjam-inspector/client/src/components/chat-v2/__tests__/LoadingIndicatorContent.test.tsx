@@ -113,6 +113,21 @@ describe("LoadingIndicatorContent", () => {
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
   });
 
+  it("renders the Le Chat spinner for Mistral-style chatbox hosts", () => {
+    render(
+      <ChatboxHostStyleProvider value="mistral">
+        <LoadingIndicatorContent />
+      </ChatboxHostStyleProvider>,
+    );
+
+    expect(
+      screen.getByTestId("loading-indicator-mistral"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-dot"),
+    ).not.toBeInTheDocument();
+  });
+
   it("falls back to the model provider when no chatbox host context is set", () => {
     render(<LoadingIndicatorContent modelProvider="openai" />);
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
