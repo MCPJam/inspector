@@ -22,12 +22,12 @@ import { logger } from "../../utils/logger";
  * always comes from the local Inspector install (Playwright postinstall /
  * on-demand `ensureLocalChromiumInstalled`), never the hosted image.
  *
- * Flow: listTools (populate the metadata cache) -> renderability gate -> (only
- * if renderable) executeTool -> harness render -> dispose. Gating BEFORE
- * execution means a non-widget, side-effectful tool isn't run just to discover
- * it has no UI. The CLI (`mcpjam apps render`) is the primary caller; it stays
- * thin (no Playwright) because the harness runs server-side where local
- * Chromium lives.
+ * Flow: listTools (drained across pages to find the tool's _meta) ->
+ * renderability gate -> (only if renderable) executeTool -> harness render ->
+ * dispose. Gating BEFORE execution means a non-widget, side-effectful tool
+ * isn't run just to discover it has no UI. The CLI (`mcpjam apps render`) is the
+ * primary caller; it stays thin (no Playwright) because the harness runs
+ * server-side where local Chromium lives.
  */
 
 const widgetRender = new Hono();
@@ -38,6 +38,11 @@ const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
 /** Upper bound for a requested viewport edge (px). Guards against absurd
  *  allocations while comfortably covering desktop/retina capture sizes. */
 const MAX_VIEWPORT_EDGE = 8192;
+
+/** Safety bound on `tools/list` pages drained while resolving a tool's metadata
+ *  (a server that loops cursors forever can't hang the gate). 50 pages covers
+ *  any realistic tool count. */
+const MAX_TOOL_LIST_PAGES = 50;
 
 interface WidgetRenderBody {
   serverId?: unknown;
@@ -112,17 +117,33 @@ widgetRender.post("/", async (c) => {
   const startedAt = Date.now();
 
   // ── renderability gate (BEFORE executing the tool) ─────────────────────
-  // Populate the tool-metadata cache first: connecting a server does NOT list
-  // its tools, and executeTool doesn't cache metadata, so without this the gate
-  // would always see empty metadata (=> always no_ui_resource). Then gate on
-  // the declared UI resource — a non-MCP-App / resource-less tool has no widget
-  // to mount, so report `no_ui_resource` WITHOUT running a possibly
-  // side-effectful tool.
-  let toolMetadata: Record<string, unknown>;
+  // Resolve the tool's declared `_meta` by listing the server's tools:
+  // connecting does NOT list them, and executeTool doesn't cache metadata, so
+  // without this the gate would always see empty metadata (=> no_ui_resource).
+  // `tools/list` can paginate, and the manager's metadata cache only retains the
+  // LAST page, so read each page's `_meta` directly and drain pages until we
+  // find `toolName` (a renderable tool on page 2+ must not be missed). Then gate
+  // on the declared UI resource — a resource-less tool has no widget to mount,
+  // so report `no_ui_resource` WITHOUT running a possibly side-effectful tool.
+  let toolMetadata: Record<string, unknown> = {};
   try {
-    await c.mcpClientManager.listTools(serverId);
-    toolMetadata =
-      c.mcpClientManager.getAllToolsMetadata(serverId)?.[toolName] ?? {};
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < MAX_TOOL_LIST_PAGES; page++) {
+      const { tools, nextCursor } = await c.mcpClientManager.listTools(
+        serverId,
+        cursor ? { cursor } : undefined,
+      );
+      const match = tools.find((tool) => tool.name === toolName);
+      if (match) {
+        toolMetadata = (match._meta ?? {}) as Record<string, unknown>;
+        break;
+      }
+      // Stop at the last page, or if the server loops a cursor (no progress).
+      if (!nextCursor || seenCursors.has(nextCursor)) break;
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
   } catch (error) {
     return c.json(
       {
