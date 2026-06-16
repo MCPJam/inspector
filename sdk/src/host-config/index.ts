@@ -38,6 +38,7 @@ export type {
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
+  Harness,
   McpProtocolVersion,
   ServerId,
   CspDomainSet,
