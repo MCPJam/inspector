@@ -11,6 +11,7 @@ const mockState = vi.hoisted(() => ({
   getCachedGuestSession: vi.fn(),
   getOrCreateGuestSession: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
+  markGuestActivated: vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -21,6 +22,7 @@ vi.mock("@/lib/guest-session", () => ({
   getCachedGuestSession: mockState.getCachedGuestSession,
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
   forceRefreshGuestSession: mockState.forceRefreshGuestSession,
+  markGuestActivated: mockState.markGuestActivated,
 }));
 
 describe("useUnifiedConvexAuth", () => {
@@ -66,5 +68,30 @@ describe("useUnifiedConvexAuth", () => {
       __guest: true,
       id: "__guest__",
     });
+  });
+
+  it("marks the guest activated only when Convex pulls the guest token, not on resolve", async () => {
+    const session = {
+      guestId: "guest-1",
+      token: "guest-token",
+      expiresAt: Date.now() + 60_000,
+    };
+    mockState.getOrCreateGuestSession.mockResolvedValue(session);
+    mockState.getCachedGuestSession.mockReturnValue(session);
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Resolving the session must NOT activate — otherwise an authed user who
+    // merely opened the app would be promotable (the incidental-cookie guard).
+    expect(mockState.markGuestActivated).not.toHaveBeenCalled();
+
+    // Convex authenticating as the guest is the real activation signal.
+    await act(async () => {
+      await result.current.getAccessToken();
+    });
+    expect(mockState.markGuestActivated).toHaveBeenCalledWith("guest-1");
   });
 });

@@ -12,7 +12,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
@@ -27,7 +26,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: true,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("auth-loading");
   });
@@ -42,7 +40,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("auth-loading");
   });
@@ -57,12 +54,11 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
 
-  it("returns project-loading when auth is ready but project data is pending", () => {
+  it("returns ready when hosted auth is settled (no longer blocks on project data)", () => {
     expect(
       resolveHostedShellGateState({
         hostedMode: true,
@@ -72,22 +68,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteProjects: true,
-      }),
-    ).toBe("project-loading");
-  });
-
-  it("returns ready when hosted auth and project are fully ready", () => {
-    expect(
-      resolveHostedShellGateState({
-        hostedMode: true,
-        nonProdLockdown: false,
-        isConvexAuthLoading: false,
-        isConvexAuthenticated: true,
-        isWorkOsLoading: false,
-        hasWorkOsUser: true,
-        workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
@@ -102,7 +82,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("logged-out");
   });
@@ -117,7 +96,6 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "contractor@example.com",
-        isLoadingRemoteProjects: false,
       }),
     ).toBe("restricted");
   });

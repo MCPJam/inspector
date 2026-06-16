@@ -14,7 +14,25 @@
 
 import { NON_PROD_LOCKDOWN } from "@/lib/config";
 
+declare global {
+  interface Window {
+    // Server-injected guest bootstrap blob (Pillar 1). Read once at module
+    // eval before React renders, then deleted. NEVER written to localStorage —
+    // the bearer stays in module memory only, like a client-minted session.
+    __MCP_GUEST_BOOTSTRAP__?: {
+      token: string;
+      guestId?: string;
+      expiresAt: number;
+    };
+  }
+}
+
 const LEGACY_STORAGE_KEY = "mcpjam_guest_session_v1";
+// Persistent, non-secret marker recording that a guest was actually
+// *activated* (drove Convex auth as a guest), keyed by guestId. It is not the
+// bearer; it survives the guest→sign-in navigation so the promotion path can
+// tell a genuine guest from an incidental document bootstrap.
+const GUEST_ACTIVATED_STORAGE_KEY = "mcpjam_guest_activated";
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 type GuestSessionMode = "lookup_or_create" | "lookup_only";
@@ -56,6 +74,86 @@ export function subscribeGuestSessionChanges(
     sessionListeners.delete(listener);
   };
 }
+
+/**
+ * Mark the guest identified by `guestId` as *activated* — i.e. it actually
+ * drove Convex auth as a guest (not just an incidental document bootstrap).
+ * Persisted (localStorage, non-secret) so the marker survives the guest →
+ * WorkOS sign-in navigation. The promotion path reads this to distinguish a
+ * genuine guest from an incidental cookie.
+ */
+export function markGuestActivated(guestId: string): void {
+  if (!guestId) return;
+  try {
+    if (localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) !== guestId) {
+      localStorage.setItem(GUEST_ACTIVATED_STORAGE_KEY, guestId);
+    }
+  } catch {
+    // ignore (private mode / storage disabled)
+  }
+}
+
+/**
+ * Returns true when the guest identified by `guestId` was previously
+ * activated as a guest (`markGuestActivated`). Used by the promotion path to
+ * gate `getGuestPromotionProof()` on real activation, not mere cookie
+ * presence.
+ */
+export function isGuestActivated(guestId: string | null | undefined): boolean {
+  if (!guestId) return false;
+  try {
+    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) === guestId;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the server-injected `window.__MCP_GUEST_BOOTSTRAP__` blob once at
+ * module load (before the first React render), validate it, and seed the
+ * in-memory cache so the lazy `useState` initializers in
+ * `unified-convex-auth.ts` / `use-actor-key.ts` see a non-null token on the
+ * very first render. One-shot: the global is deleted after reading; the bearer
+ * is never persisted to localStorage.
+ */
+function seedFromBootstrap(): void {
+  if (typeof window === "undefined") return;
+  const blob = window.__MCP_GUEST_BOOTSTRAP__;
+  try {
+    delete window.__MCP_GUEST_BOOTSTRAP__;
+  } catch {
+    window.__MCP_GUEST_BOOTSTRAP__ = undefined;
+  }
+  if (!blob) return;
+  // Require a non-empty guestId: a seeded session with an empty guestId would
+  // read as "resolved" (token present) yet leave the promotion path unable to
+  // identify the guest — activation and incidental-revoke would both no-op,
+  // stranding the document-minted cookie. If the server omitted guestId, skip
+  // the seed and fall back to the client lookup path (which fills guestId).
+  if (
+    typeof blob.token !== "string" ||
+    blob.token.length === 0 ||
+    typeof blob.expiresAt !== "number" ||
+    typeof blob.guestId !== "string" ||
+    blob.guestId.length === 0
+  ) {
+    return;
+  }
+  // Honor the same expiry buffer the rest of the cache uses so we never seed a
+  // token that's about to expire.
+  if (blob.expiresAt - EXPIRY_BUFFER_MS <= Date.now()) {
+    return;
+  }
+  cachedSession = {
+    guestId: blob.guestId,
+    token: blob.token,
+    expiresAt: blob.expiresAt,
+  };
+}
+
+// Runs at import time (main.tsx imports this module transitively before
+// root.render), so the seed is in place before the first render.
+seedFromBootstrap();
 
 function consumeLegacyToken(): string | null {
   if (legacyMigrationConsumed) return null;
@@ -264,6 +362,29 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
 
   const session = await inFlightLookupOnly;
   return session?.token ?? null;
+}
+
+/**
+ * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
+ * minting a new guest. Prefers the in-memory cache (the common same-tab
+ * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
+ * null when there is no existing guest cookie or on transient failure.
+ *
+ * Used by the promotion path to look up the activation marker for the cookie
+ * actually present, so an incidental document-bootstrap cookie (never
+ * activated) is not promoted.
+ */
+export async function getExistingGuestId(): Promise<string | null> {
+  const cached = getCachedGuestSession();
+  if (cached?.guestId) {
+    return cached.guestId;
+  }
+  try {
+    await getExistingGuestBearerToken();
+  } catch {
+    return null;
+  }
+  return getCachedGuestSession()?.guestId ?? null;
 }
 
 /**
