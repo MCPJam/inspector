@@ -432,6 +432,52 @@ export async function ensureInspector(
   };
 }
 
+export interface EnsureInspectorBackendOptions extends InspectorApiClientOptions {
+  startIfNeeded?: boolean;
+  timeoutMs?: number;
+}
+
+export interface EnsureInspectorBackendResult {
+  baseUrl: string;
+  hasActiveClient: boolean;
+  started: boolean;
+}
+
+/**
+ * Ensure the local Inspector BACKEND is reachable (starting it if asked),
+ * without resolving a browser frontend URL. Headless callers (e.g. `apps
+ * render`, which runs the render server-side) need only a live backend — and
+ * the full {@link ensureInspector} additionally probes/validates the frontend
+ * and can throw a frontend-mismatch error when no browser client is present,
+ * which would wrongly block a render that never touches the browser UI.
+ */
+export async function ensureInspectorBackend(
+  options: EnsureInspectorBackendOptions = {},
+): Promise<EnsureInspectorBackendResult> {
+  const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
+
+  const health = await getInspectorHealth(baseUrl);
+  if (health.healthy) {
+    return { baseUrl, hasActiveClient: health.hasActiveClient, started: false };
+  }
+
+  if (!options.startIfNeeded) {
+    throw operationalError(
+      "Inspector is not running. Run `mcpjam inspector open` first or pass an Inspector-backed option that starts it.",
+    );
+  }
+
+  await startInspector(baseUrl, options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS);
+  clearInspectorSessionTokenCache(baseUrl);
+
+  const startedHealth = await getInspectorHealth(baseUrl);
+  return {
+    baseUrl,
+    hasActiveClient: startedHealth.hasActiveClient,
+    started: true,
+  };
+}
+
 export async function stopInspector(
   baseUrl: string,
 ): Promise<{ stopped: boolean; baseUrl: string }> {
@@ -476,6 +522,12 @@ export class InspectorApiClient {
 
   async ensure(options: Omit<EnsureInspectorOptions, "baseUrl"> = {}) {
     return ensureInspector({ ...options, baseUrl: this.baseUrl });
+  }
+
+  async ensureBackend(
+    options: Omit<EnsureInspectorBackendOptions, "baseUrl"> = {},
+  ) {
+    return ensureInspectorBackend({ ...options, baseUrl: this.baseUrl });
   }
 
   async connectServer(
