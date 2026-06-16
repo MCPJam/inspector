@@ -131,7 +131,23 @@ export function createE2BSandboxProvider(
       // but not pnpm — provision it now (idempotent; the writable
       // /opt/npm-global prefix means `-g` needs no sudo). Real fix: bake pnpm
       // into templates/computer/e2b.Dockerfile so this no-ops.
-      await sandbox.commands.run("command -v pnpm || npm install -g pnpm");
+      //
+      // If this throws, the caller never receives a session to tear down, so a
+      // box WE created would leak until its E2B timeout — kill an owned box
+      // before rethrowing. A reused (shared) box is the control plane's to
+      // manage, so never kill it here.
+      try {
+        await sandbox.commands.run("command -v pnpm || npm install -g pnpm");
+      } catch (err) {
+        if (ownsSandbox) {
+          try {
+            await sandbox.kill();
+          } catch {
+            /* best effort — surface the original setup error, not a kill error */
+          }
+        }
+        throw err;
+      }
 
       const session: HarnessV1NetworkSandboxSession = {
         id: sandbox.sandboxId,
