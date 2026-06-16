@@ -252,6 +252,17 @@ export async function executeToolCallsFromMessages(
           ).toModelOutput;
           if (typeof toModelOutput === "function") {
             const mappedOutput = await toModelOutput({ output: result });
+            // MCP App tools scrub structuredContent from the model-facing copy
+            // (`mappedOutput`), but their widgets read structuredContent from
+            // the raw result. Preserve the raw result for UI hydration whenever
+            // it carries structuredContent — the model copy no longer does.
+            // Other toModelOutput tools (e.g. the eval `computer` tool) return
+            // no structuredContent, so they keep omitting `result:` and don't
+            // bloat subsequent per-step request bodies with large content.
+            const rawHasStructuredContent =
+              !!result &&
+              typeof result === "object" &&
+              "structuredContent" in (result as Record<string, unknown>);
             const toolResultMessage: ModelMessage = {
               role: "tool" as const,
               content: [
@@ -260,6 +271,9 @@ export async function executeToolCallsFromMessages(
                   toolCallId: content.toolCallId,
                   toolName: toolName,
                   output: mappedOutput,
+                  // UI-only raw result for app-tool widgets (stripped from the
+                  // model copy via `output`/toModelOutput above).
+                  ...(rawHasStructuredContent ? { result } : {}),
                   serverId: extractServerId(toolName),
                 },
               ],
