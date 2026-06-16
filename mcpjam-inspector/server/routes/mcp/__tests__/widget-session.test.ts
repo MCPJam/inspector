@@ -30,6 +30,8 @@ const harnessState = vi.hoisted(() => ({
     elapsedMs: 3,
   } as Record<string, unknown>,
   disposeCalls: 0,
+  /** When set, dispose() awaits it — lets a test hold a teardown open. */
+  disposeGate: null as Promise<void> | null,
   reset() {
     this.renderObservation = {
       status: "rendered",
@@ -44,6 +46,7 @@ const harnessState = vi.hoisted(() => ({
       elapsedMs: 3,
     };
     this.disposeCalls = 0;
+    this.disposeGate = null;
   },
 }));
 
@@ -68,6 +71,7 @@ vi.mock("../../../utils/mcp-app-browser-harness", async () => {
     }
     async dispose() {
       harnessState.disposeCalls += 1;
+      if (harnessState.disposeGate) await harnessState.disposeGate;
     }
   }
   return { ...actual, McpAppBrowserHarness: FakeHarness };
@@ -198,6 +202,38 @@ describe("widget-session route", () => {
       expect((await third.json()).error).toMatch(/session limit reached/i);
       expect(widgetRenderSessions.size()).toBe(2);
     });
+
+    it("holds the reserved slot until a non-rendered start's browser is disposed", async () => {
+      // One of the two slots is a live session.
+      expect((await startSession(app)).status).toBe(200);
+
+      // A non-rendered start that still launched a browser, with a gated dispose.
+      let finishDispose!: () => void;
+      harnessState.disposeGate = new Promise<void>((resolve) => {
+        finishDispose = resolve;
+      });
+      harnessState.renderObservation = { status: "browser_unavailable" };
+      const disposingStart = startSession(app);
+
+      // Let it reach the (parked) dispose.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(harnessState.disposeCalls).toBe(1);
+
+      // While that browser is still disposing, its slot must stay counted — a
+      // concurrent start is rejected rather than allowed to exceed the cap.
+      expect((await startSession(app)).status).toBe(429);
+
+      // Finish disposal -> slot freed -> a start succeeds.
+      finishDispose();
+      harnessState.disposeGate = null;
+      expect((await disposingStart).status).toBe(200);
+      harnessState.renderObservation = {
+        status: "rendered",
+        screenshotBase64: "cmVuZGVyZWQtc2hvdA==",
+        bridgeInitialized: true,
+      };
+      expect((await startSession(app)).status).toBe(200);
+    });
   });
 
   describe("action", () => {
@@ -248,6 +284,11 @@ describe("widget-session route", () => {
         { action: "teleport" },
         { action: "left_click", coordinate: [1] },
         { action: "scroll", scrollDirection: "diagonal" },
+        // Negative/zero numeric flags are rejected server-side too (not just in
+        // the CLI) — a negative duration must not reach page.waitForTimeout.
+        { action: "scroll", scrollDirection: "down", scrollAmount: -5 },
+        { action: "scroll", scrollDirection: "down", scrollAmount: 0 },
+        { action: "wait", duration: -1 },
         {},
       ]) {
         const res = await app.request(

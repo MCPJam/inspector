@@ -103,14 +103,17 @@ function parseBrowserAction(
       a.scrollDirection as BrowserActionSpec["scrollDirection"];
   }
   if (a.scrollAmount !== undefined && a.scrollAmount !== null) {
-    if (!isFiniteNumber(a.scrollAmount)) {
-      return { ok: false, error: "scrollAmount must be a number" };
+    if (!isFiniteNumber(a.scrollAmount) || a.scrollAmount <= 0) {
+      return { ok: false, error: "scrollAmount must be a number greater than 0" };
     }
     spec.scrollAmount = a.scrollAmount;
   }
   if (a.duration !== undefined && a.duration !== null) {
-    if (!isFiniteNumber(a.duration)) {
-      return { ok: false, error: "duration must be a number" };
+    if (!isFiniteNumber(a.duration) || a.duration < 0) {
+      return {
+        ok: false,
+        error: "duration must be a number greater than or equal to 0",
+      };
     }
     spec.duration = a.duration;
   }
@@ -177,10 +180,13 @@ widgetSession.post("/", async (c) => {
   }
 
   // Only a fully-rendered widget yields a steppable session; anything else
-  // (no_ui_resource, blank, bridge_timeout, browser_unavailable, …) tears down,
-  // frees the reserved slot, and returns the observation with no sessionId.
+  // (no_ui_resource, blank, bridge_timeout, browser_unavailable, …) tears down
+  // and returns the observation with no sessionId. A non-rendered start may
+  // still have launched a browser, so dispose it BEFORE releasing the
+  // reservation: freeing the slot while dispose() is pending would let a
+  // concurrent start exceed the cap (the registry counts disposing browsers,
+  // and this failed-start path must hold the slot the same way).
   if (result.observation.status !== "rendered") {
-    widgetRenderSessions.release(reservation);
     await result.harness?.dispose().catch((error) => {
       logger.warn(
         `[widget-session] harness disposal failed: ${
@@ -188,6 +194,7 @@ widgetSession.post("/", async (c) => {
         }`,
       );
     });
+    widgetRenderSessions.release(reservation);
     return c.json(buildWidgetRenderResponseBody(result.observation), 200);
   }
 
@@ -218,9 +225,11 @@ widgetSession.post("/", async (c) => {
     );
   } catch (error) {
     // Never leak the browser or the reserved slot. Registration can legitimately
-    // fail if shutdown began mid-render (the in-flight start is refused).
-    widgetRenderSessions.release(reservation);
+    // fail if shutdown began mid-render (the in-flight start is refused). Dispose
+    // BEFORE releasing so the slot stays counted against the cap until the
+    // browser is actually gone.
     await result.harness?.dispose().catch(() => {});
+    widgetRenderSessions.release(reservation);
     if (error instanceof WidgetSessionUnavailableError) {
       return c.json({ error: error.message }, 503);
     }
