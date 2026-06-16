@@ -46,10 +46,34 @@ import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import { useQuery } from "convex/react";
 import type { ConnectionStatus } from "@/state/app-types";
+import type { ToolQualityInfo } from "./tools/ToolItem";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
+
+// Shape returned by the backend tool-quality lint query (string-named). The
+// inspector renders these purely as neutral per-tool quality badges.
+interface ToolQualityCodeView {
+  code: string;
+  label: string;
+  class: string;
+  detail?: Record<string, number>;
+}
+interface ToolQualityView {
+  serverId: string;
+  toolName: string;
+  severity: "error" | "warn";
+  codes: ToolQualityCodeView[];
+}
+type ToolQualityQueryResult = ToolQualityView[] | { tooLarge: true };
+
+function formatQualityLabel(code: ToolQualityCodeView): string {
+  if (!code.detail) return code.label;
+  const parts = Object.entries(code.detail).map(([k, v]) => `${k}=${v}`);
+  return parts.length ? `${code.label} (${parts.join(", ")})` : code.label;
+}
 
 type ActiveElicitation = {
   executionId: string;
@@ -66,7 +90,7 @@ export type DialogElicitation = {
 };
 
 function normalizeElicitationContent(
-  parameters?: Record<string, unknown>,
+  parameters?: Record<string, unknown>
 ): ElicitResult["content"] | undefined {
   if (!parameters) return undefined;
   const content: ElicitResult["content"] = {};
@@ -116,7 +140,7 @@ export function ToolsTab({
     import("@mcpjam/sdk/browser").NormalizedError | null
   >(null);
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
-    null,
+    null
   );
   const [activeElicitation, setActiveElicitation] =
     useState<ActiveElicitation | null>(null);
@@ -241,6 +265,36 @@ export function ToolsTab({
     void fetchTaskCapabilities();
   }, [serverConfig, serverName, isServerConnected]);
 
+  // Live per-tool quality lint for the loaded tools. Pure backend compute over
+  // a snapshot of the current tool definitions; the sidebar renders a small
+  // badge per flagged tool. The snapshot intentionally carries no version (the
+  // backend owns it) and no timestamp — keeping the query args purely a
+  // function of the tool set lets the subscription dedupe across renders and
+  // identical refetches instead of churning.
+  const toolQualitySnapshot = useMemo(() => {
+    const toolList = Object.values(tools);
+    if (!serverName || toolList.length === 0) return null;
+    return { servers: [{ serverId: serverName, tools: toolList }] };
+  }, [tools, serverName]);
+
+  const toolQualityResult = useQuery(
+    "toolPrechecks:get" as any,
+    toolQualitySnapshot ? ({ snapshot: toolQualitySnapshot } as any) : "skip"
+  ) as ToolQualityQueryResult | undefined;
+
+  const toolQualityByName = useMemo(() => {
+    const map = new Map<string, ToolQualityInfo>();
+    if (Array.isArray(toolQualityResult)) {
+      for (const view of toolQualityResult) {
+        map.set(view.toolName, {
+          severity: view.severity,
+          labels: view.codes.map(formatQualityLabel),
+        });
+      }
+    }
+    return map;
+  }, [toolQualityResult]);
+
   const toolNames = Object.keys(tools);
   const filteredToolNames = searchQuery.trim()
     ? toolNames.filter((name) => {
@@ -306,7 +360,7 @@ export function ToolsTab({
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
       );
     }
   }, [selectedTool, tools]);
@@ -350,7 +404,7 @@ export function ToolsTab({
       if (fetchVersion !== toolFetchVersionRef.current) return;
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool]),
+        toolArray.map((tool: Tool) => [tool.name, tool])
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       setCursor(data.nextCursor);
@@ -370,7 +424,7 @@ export function ToolsTab({
       setNormalizedError(
         err instanceof WebApiError && isNormalizedError(err.normalized)
           ? err.normalized
-          : null,
+          : null
       );
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
@@ -382,16 +436,16 @@ export function ToolsTab({
   const updateFieldValue = (fieldName: string, value: unknown) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field,
-      ),
+        field.name === fieldName ? { ...field, value } : field
+      )
     );
   };
 
   const updateFieldIsSet = (fieldName: string, isSet: boolean) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, isSet } : field,
-      ),
+        field.name === fieldName ? { ...field, isSet } : field
+      )
     );
   };
 
@@ -403,14 +457,14 @@ export function ToolsTab({
     buildParametersFromFields(formFields, (msg, ctx) => logger.warn(msg, ctx));
 
   const getToolMeta = (
-    toolName: string | null,
+    toolName: string | null
   ): Record<string, any> | undefined => {
     return toolName ? tools[toolName]?._meta : undefined;
   };
 
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
-    toolName: string,
+    toolName: string
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -426,7 +480,7 @@ export function ToolsTab({
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
       setStructuredContentValid(
-        validateToolOutput(rawResult, currentTool?.outputSchema),
+        validateToolOutput(rawResult, currentTool?.outputSchema)
       );
 
       logger.info("Tool execution completed", {
@@ -490,7 +544,7 @@ export function ToolsTab({
       // actual message and yields a generic "Unknown error" ErrorCard.
       const maybeNormalized = (response as { normalized?: unknown }).normalized;
       setNormalizedError(
-        isNormalizedError(maybeNormalized) ? maybeNormalized : null,
+        isNormalizedError(maybeNormalized) ? maybeNormalized : null
       );
     }
   };
@@ -541,7 +595,7 @@ export function ToolsTab({
         serverName,
         selectedTool,
         params,
-        taskOptions,
+        taskOptions
       );
       handleExecutionResponse(response, selectedTool);
     } catch (err) {
@@ -587,7 +641,7 @@ export function ToolsTab({
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, unknown>,
+    parameters?: Record<string, unknown>
   ) => {
     if (!activeElicitation) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -604,7 +658,7 @@ export function ToolsTab({
       const response = await respondToElicitationApi(
         activeElicitation.executionId,
         activeElicitation.requestId,
-        payload,
+        payload
       );
       handleExecutionResponse(response, selectedTool);
     } catch (err) {
@@ -658,8 +712,9 @@ export function ToolsTab({
 
   const filteredSavedRequests = searchQuery.trim()
     ? savedRequests.filter((tool) => {
-        const haystack =
-          `${tool.title} ${tool.description ?? ""}`.toLowerCase();
+        const haystack = `${tool.title} ${
+          tool.description ?? ""
+        }`.toLowerCase();
         return haystack.includes(searchQuery.trim().toLowerCase());
       })
     : savedRequests;
@@ -690,6 +745,7 @@ export function ToolsTab({
       activeTab={activeTab}
       onChangeTab={setActiveTab}
       tools={tools}
+      toolQuality={toolQualityByName}
       toolNames={toolNames}
       filteredToolNames={filteredToolNames}
       selectedToolName={selectedTool}
