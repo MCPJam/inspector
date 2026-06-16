@@ -649,14 +649,13 @@ export function MCPAppsRendererSurface({
   const chatboxHostStyle = environment.chatboxHostStyle;
   const chatboxHostTheme = environment.chatboxHostTheme;
   const hostCapabilitiesOverride = environment.hostCapabilitiesOverride;
-  // Active hostConfig.mcpProfile from the surrounding scope (chatbox
-  // session, project default, eval suite). Drives the resolver below
-  // when set; undefined preserves widget-derived sandbox behavior.
-  const activeMcpProfile = environment.activeMcpProfile;
-  const activeMcpProfileKey = useMemo(
-    () => resolvers.stableStringifyJson(activeMcpProfile ?? null),
-    [activeMcpProfile]
-  );
+  // Active hostConfig.mcpProfile from the surrounding scope (chatbox session,
+  // project default, eval suite) is bound inside the adapter's resolvers (3d-iii);
+  // the renderer keys its capability memos on `profileKey` and reads only the
+  // minimal projections it inspects (sandbox overrides + hostInfo override).
+  const activeMcpProfileKey = environment.profileKey;
+  const profileSandbox = environment.profileSandbox;
+  const profileHostInfo = environment.profileHostInfo;
   const hostCapabilitiesOverrideKey = useMemo(
     () => resolvers.stableStringifyJson(hostCapabilitiesOverride ?? null),
     [hostCapabilitiesOverride]
@@ -670,7 +669,6 @@ export function MCPAppsRendererSurface({
   const liveEffectiveCompatRuntime = useMemo(
     () =>
       resolvers.resolveEffectiveCompatRuntime({
-        profile: activeMcpProfile,
         hostStyle: chatboxHostStyle ?? sharedHostStyle,
       }),
     [activeMcpProfileKey, chatboxHostStyle, sharedHostStyle]
@@ -798,7 +796,6 @@ export function MCPAppsRendererSurface({
   const earlyEffectiveMcpAppsCapabilities = useMemo(
     () =>
       resolvers.resolveEffectiveMcpAppsCapabilities({
-        profile: activeMcpProfile,
         hostStyle: earlyEffectiveHostStyle,
       }),
     [activeMcpProfileKey, earlyEffectiveHostStyle]
@@ -2098,7 +2095,6 @@ export function MCPAppsRendererSurface({
     () =>
       resolvers.resolveEffectiveHostCapabilities({
         hostStyle: effectiveHostStyle,
-        profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
     [effectiveHostStyle, activeMcpProfileKey, hostCapabilitiesOverrideKey]
@@ -2283,11 +2279,11 @@ export function MCPAppsRendererSurface({
   // — SandboxedIframe treats `permissive: true` as "skip CSP injection
   // entirely", which would silently neuter the resolver output.
   const sandboxCspPolicy = useMemo(
-    () => activeMcpProfile?.apps?.sandbox?.csp,
+    () => profileSandbox?.csp,
     [activeMcpProfileKey]
   );
   const sandboxPermissionsPolicy = useMemo(
-    () => activeMcpProfile?.apps?.sandbox?.permissions,
+    () => profileSandbox?.permissions,
     [activeMcpProfileKey]
   );
   // Inspector-only emission knobs sourced directly from the profile. They
@@ -2295,15 +2291,15 @@ export function MCPAppsRendererSurface({
   // that has no spec slot (raw `sandbox=`/`allow=` tokens, CSP source
   // expressions). Passed through unchanged to <SandboxedIframe>.
   const sandboxAttrsPolicy = useMemo(
-    () => activeMcpProfile?.apps?.sandbox?.sandboxAttrs,
+    () => profileSandbox?.sandboxAttrs,
     [activeMcpProfileKey]
   );
   const allowFeaturesPolicy = useMemo(
-    () => activeMcpProfile?.apps?.sandbox?.allowFeatures,
+    () => profileSandbox?.allowFeatures,
     [activeMcpProfileKey]
   );
   const cspDirectivesPolicy = useMemo(
-    () => activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives,
+    () => profileSandbox?.csp?.cspDirectives,
     [activeMcpProfileKey]
   );
   // Hosted-mode clamp for cspDirectives. The resolver's
@@ -2680,7 +2676,7 @@ export function MCPAppsRendererSurface({
     name: string;
     version: string;
   } | null>(() => {
-    const raw = activeMcpProfile?.apps?.uiInitialize?.hostInfo;
+    const raw = profileHostInfo;
     if (!raw || typeof raw !== "object") return null;
     const name = (raw as { name?: unknown }).name;
     const version = (raw as { version?: unknown }).version;
@@ -2690,7 +2686,7 @@ export function MCPAppsRendererSurface({
   }, [activeMcpProfileKey]);
   const resolvedBridgeHostInfo = useMemo(
     () =>
-      (resolvers.resolveHostInfo(activeMcpProfile) ?? {
+      (resolvers.resolveHostInfo() ?? {
         name: "mcpjam-inspector",
         version: __APP_VERSION__,
       }) as { name: string; version: string },
