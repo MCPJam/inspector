@@ -4,4 +4,5 @@ export {
   readToolResultObject,
   readToolResultMeta,
   readToolResultServerId,
+  toCallToolResult,
 } from "@mcpjam/widget-react";

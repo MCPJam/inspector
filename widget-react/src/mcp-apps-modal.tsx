@@ -8,10 +8,10 @@ import {
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { CallToolResult } from "@modelcontextprotocol/client";
 // Pure JSON-RPC parser + logging transport are shared, framework-free runtime
 // helpers in the SDK.
 import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
+import { toCallToolResult } from "./tool-result-utils";
 // The `CspMode` type comes from the package's `WidgetHost` contract.
 import { type CspMode } from "./widget-host";
 // The package owns lifecycle + bridge; the inspector injects modal CHROME
@@ -286,7 +286,7 @@ export function McpAppsModal({
       const resolvedToolInput = toolInputRef.current ?? {};
       bridge.sendToolInput({ arguments: resolvedToolInput });
       if (toolOutputRef.current) {
-        bridge.sendToolResult(toolOutputRef.current as CallToolResult);
+        bridge.sendToolResult(toCallToolResult(toolOutputRef.current));
       }
 
       const appCaps = bridge.getAppCapabilities();

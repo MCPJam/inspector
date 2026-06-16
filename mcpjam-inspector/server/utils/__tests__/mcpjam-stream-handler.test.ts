@@ -1168,6 +1168,103 @@ describe("mcpjam-stream-handler", () => {
     ]);
   });
 
+  it("emits structuredContent in the UI tool-output chunk for a widget tool (scrubbed model output, raw result)", async () => {
+    // Reproduces the agent's "Missing structured content" bug: the model copy
+    // is scrubbed, but the raw `result` carries structuredContent. The UI chunk
+    // MUST surface structuredContent at the top level for the widget to render.
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-w1",
+            toolName: "show_servers",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const structuredContent = {
+      project: { id: "p1", name: "Default" },
+      servers: [{ name: "notion" }],
+      widget: "servers",
+    };
+    const rawResult = {
+      content: [{ type: "text", text: "8 servers" }],
+      structuredContent,
+      _meta: { "mcpjam/widget": true },
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-w1",
+              toolName: "show_servers",
+              // model-facing copy is scrubbed (no structuredContent)…
+              output: {
+                type: "json",
+                value: { content: rawResult.content },
+              },
+              // …raw result preserved for UI hydration.
+              result: rawResult,
+              serverId: "widget-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show servers" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: { show_servers: { _serverId: "widget-server" } } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({ show_servers: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const toolOutputChunk = writtenChunks.find(
+      (chunk) =>
+        chunk?.type === "tool-output-available" &&
+        chunk?.toolCallId === "call-w1"
+    );
+    expect(toolOutputChunk).toBeDefined();
+    expect((toolOutputChunk!.output as any).structuredContent).toEqual(
+      structuredContent
+    );
+  });
+
   describe("progressive discovery approval semantics", () => {
     // Minimal "plan enabled" — only the `enabled` flag is read on the
     // post-stream unresolved-tool detection + drain paths exercised here.
