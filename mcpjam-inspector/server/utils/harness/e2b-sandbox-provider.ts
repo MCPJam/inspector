@@ -58,10 +58,17 @@ function nullIfMissing(err: unknown): null {
 }
 
 /** E2B's `files.write` `data` accepts string | ArrayBuffer | Blob |
- *  ReadableStream (not a Uint8Array view), so hand it a clean, exactly-sized
- *  ArrayBuffer. */
+ *  ReadableStream (not a Uint8Array view), so copy into a fresh, exactly-sized
+ *  ArrayBuffer. We must NOT return `u8.slice().buffer`: when `u8` is a Node
+ *  `Buffer` (a Uint8Array subclass), `Buffer.prototype.slice` returns a *view*
+ *  that shares the pooled backing store rather than a copy, so `.buffer` would
+ *  expose the whole (often 8 KiB) allocation pool — writing unrelated adjacent
+ *  bytes into the sandbox file. Allocating exactly `byteLength` and `.set()`ing
+ *  respects the source's byteOffset/length for both Buffers and subarray views. */
 function u8ToArrayBuffer(u8: Uint8Array): ArrayBuffer {
-  return u8.slice().buffer as ArrayBuffer;
+  const out = new ArrayBuffer(u8.byteLength);
+  new Uint8Array(out).set(u8);
+  return out;
 }
 
 /** One-chunk ReadableStream from already-materialized bytes. */
