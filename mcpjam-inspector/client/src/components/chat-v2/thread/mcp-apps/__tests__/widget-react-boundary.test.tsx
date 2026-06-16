@@ -21,7 +21,10 @@ describe("@mcpjam/widget-react package boundary (inspector consumer)", () => {
     // Stand-in for the value the inspector's use-widget-host adapter feeds the
     // provider in 3d. Its surface is a structural subset of the adapter's
     // WidgetSurfaceInfo, so the real adapter will satisfy this contract too.
-    const host: WidgetHost = {
+    // Minimal host for the cross-boundary plumbing smoke test (the probe reads
+    // only `surface.kind`). The full WidgetHost contract is type-checked by the
+    // use-widget-host adapter conforming to it (typecheck:client).
+    const host = {
       surface: {
         kind: "chat",
         persistentSurfaceHost: false,
@@ -29,7 +32,7 @@ describe("@mcpjam/widget-react package boundary (inspector consumer)", () => {
         sandboxOrigin: "",
         playgroundCspMode: "widget-declared",
       },
-    };
+    } as unknown as WidgetHost;
     render(
       <WidgetHostProvider value={host}>
         <SurfaceProbe />

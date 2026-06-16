@@ -16,9 +16,31 @@ export type {
   DisplayMode,
   UiProtocol,
   OpenAiAppsCapabilities,
+  // environment data types
+  ThemeMode,
+  ChatboxHostStyle,
+  DeviceCapabilities,
+  DeviceType,
+  SafeAreaInsets,
+  ProjectHostContextDraft,
+  // resolved profile shapes
+  ResolvedHostCapabilities,
+  ResolvedHostInfo,
+  ResolvedOpenAiAppsCapabilities,
+  EffectiveCompatRuntime,
+  ResolvedMcpAppsCapabilities,
+  ResolvedHostStyle,
   // surface
   WidgetSurfaceInfo,
   WidgetSurfaceKind,
+  // environment / resolvers / services
+  WidgetHostEnvironment,
+  WidgetHostEnvironmentInputs,
+  WidgetHostResolvers,
+  WidgetHostServices,
+  FetchWidgetContentRequest,
+  FetchWidgetContentResponse,
+  ListResourcesResult,
   // instrumentation
   WidgetDebugSink,
   WidgetDebugInfo,

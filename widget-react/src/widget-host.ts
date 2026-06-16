@@ -16,6 +16,15 @@
 // `services` (the fn-heavy + profile-derived slices).
 
 import type { ComponentType, ReactNode } from "react";
+import type {
+  McpUiHostCapabilities,
+  McpUiHostContext,
+  McpUiResourceCsp,
+  McpUiResourcePermissions,
+  McpUiStyles,
+} from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { HostConfigMcpProfileV1 } from "@mcpjam/sdk/host-config/internal";
+import type { MCPPrompt, MCPResourceTemplate } from "@mcpjam/sdk/browser";
 
 // --- Primitives --------------------------------------------------------------
 
@@ -46,6 +55,94 @@ export interface OpenAiAppsCapabilities {
   getFileDownloadUrl?: boolean;
   requestCheckout?: boolean;
   requestClose?: boolean;
+}
+
+// --- Environment data types --------------------------------------------------
+
+/** usePreferencesStore theme mode. */
+export type ThemeMode = "light" | "dark";
+
+/** Host-style id (the inspector's `ChatboxHostStyle`). */
+export type ChatboxHostStyle = string;
+
+export interface DeviceCapabilities {
+  hover: boolean;
+  touch: boolean;
+}
+
+export type DeviceType = "fill" | "mobile" | "tablet" | "desktop" | "custom";
+
+export interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** useHostContextStore draftHostContext. */
+export type ProjectHostContextDraft = Record<string, unknown>;
+
+// --- Resolved profile shapes -------------------------------------------------
+//
+// The profile system (client-config-v2 / client-styles) stays in the inspector;
+// these are the structural shapes its resolvers PRODUCE, typed to what the
+// renderer reads. The adapter assigns the real resolver results, which are
+// assignable to these (drift caught there).
+
+/** resolveEffectiveHostCapabilities — vendor-trait host caps (sandbox composed separately). */
+export type ResolvedHostCapabilities = Omit<McpUiHostCapabilities, "sandbox">;
+
+/** resolveHostInfo. */
+export type ResolvedHostInfo = Record<string, unknown> | undefined;
+
+/** Required form of the OpenAI Apps compat surface. */
+export type ResolvedOpenAiAppsCapabilities = Required<OpenAiAppsCapabilities>;
+
+/** resolveEffectiveCompatRuntime result. */
+export type EffectiveCompatRuntime =
+  | { injected: false }
+  | { injected: true; capabilities: ResolvedOpenAiAppsCapabilities };
+
+/** resolveEffectiveMcpAppsCapabilities — the resolved MCP-Apps capability matrix. */
+export type ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ("inline" | "fullscreen" | "pip")[];
+  toolInputPartial: boolean;
+  toolCancelled: boolean;
+  hostContextChanged: boolean;
+  resourceTeardown: boolean;
+  toolInfo: boolean;
+  openLinks: boolean;
+  serverTools: boolean;
+  serverResources: boolean;
+  logging: boolean;
+  updateModelContext: boolean;
+  message: boolean;
+  sandboxPermissions: boolean;
+  cspFrameDomains: boolean;
+  cspBaseUriDomains: boolean;
+  resourcePrefersBorder: boolean;
+  downloadFile: boolean;
+  requestTeardown: boolean;
+  widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
+};
+
+/**
+ * getHostStyleOrDefault / DEFAULT_HOST_STYLE result — typed to the renderer's
+ * AUDITED reads only: `.mcp.{resolveStyleVariables,fontCss,platform}` and
+ * `.chatUi.resolveChatBackground` (+ `.id`). The real `HostStyleDefinition` has
+ * more (the full profile/chat-ui graph); the adapter assigns it (assignable to
+ * this minimal surface), so the package never replicates that graph.
+ */
+export interface ResolvedHostStyle {
+  id: string;
+  mcp: {
+    resolveStyleVariables: (theme: "light" | "dark") => McpUiStyles;
+    fontCss: string;
+    platform: "web" | "desktop" | "mobile";
+  };
+  chatUi: {
+    resolveChatBackground: (theme: "light" | "dark") => string;
+  };
 }
 
 // --- Surface -----------------------------------------------------------------
@@ -279,12 +376,182 @@ export interface WidgetHostComponents {
   Modal?: ComponentType<WidgetModalProps>;
 }
 
+// --- Environment -------------------------------------------------------------
+
+/**
+ * Per-`serverId` resolved host environment — the deferred `resolveEnvironment`
+ * target. Currently unused by the renderer (Phase 1b reads the raw `environment`
+ * inputs + `resolvers` instead); kept on the contract for the eventual fold-in.
+ */
+export interface WidgetHostEnvironment {
+  hostInfo: ResolvedHostInfo;
+  hostCapabilities: ResolvedHostCapabilities;
+  mcpAppsCapabilities: ResolvedMcpAppsCapabilities;
+  injectOpenAiCompat: boolean;
+  openAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
+  supportsWidgetRendering: boolean;
+  theme: string;
+  hostStyle: ResolvedHostStyle;
+  baseHostContext: McpUiHostContext;
+}
+
+/**
+ * Raw ambient ENV inputs the renderer reads (Phase 1b). The inspector's
+ * use-widget-host adapter supplies these from its stores/contexts; these are
+ * structural mirrors of the inspector store/context shapes.
+ */
+export interface WidgetHostEnvironmentInputs {
+  themeMode: ThemeMode;
+  sharedHostStyle: ChatboxHostStyle;
+  chatboxHostStyle: ChatboxHostStyle | null;
+  chatboxHostTheme: "light" | "dark" | null;
+  hostCapabilitiesOverride: Record<string, unknown> | undefined;
+  activeMcpProfile: HostConfigMcpProfileV1 | undefined;
+  draftHostContext: ProjectHostContextDraft;
+  isPlaygroundActive: boolean;
+  playgroundLocale: string;
+  playgroundTimeZone: string;
+  playgroundDisplayMode: DisplayMode;
+  playgroundCapabilities: DeviceCapabilities;
+  playgroundSafeAreaInsets: SafeAreaInsets;
+  playgroundDeviceType: DeviceType;
+}
+
+// --- Resolvers ---------------------------------------------------------------
+
+/**
+ * Resolver / projection fns the renderer calls. The inspector's use-widget-host
+ * adapter binds them to the real client-config-v2 / client-styles /
+ * client-config implementations; typed structurally so the package owns no
+ * inspector code. Drift is caught where the adapter assigns the real fns.
+ */
+export interface WidgetHostResolvers {
+  resolveEffectiveCompatRuntime: (args: {
+    profile: HostConfigMcpProfileV1 | undefined;
+    hostStyle: ChatboxHostStyle | string | null | undefined;
+  }) => EffectiveCompatRuntime;
+  resolveEffectiveMcpAppsCapabilities: (args: {
+    profile: HostConfigMcpProfileV1 | undefined;
+    hostStyle: ChatboxHostStyle | string | null | undefined;
+  }) => ResolvedMcpAppsCapabilities;
+  resolveEffectiveHostCapabilities: (args: {
+    hostStyle: string | null | undefined;
+    profile?: HostConfigMcpProfileV1;
+    hostCapabilitiesOverride?: Record<string, unknown>;
+  }) => ResolvedHostCapabilities;
+  resolveHostInfo: (
+    profile: HostConfigMcpProfileV1 | undefined,
+  ) => ResolvedHostInfo;
+  getHostStyleOrDefault: (id: string | null | undefined) => ResolvedHostStyle;
+  DEFAULT_HOST_STYLE: ResolvedHostStyle;
+  extractHostTheme: (
+    hostContext?: Record<string, unknown>,
+  ) => "light" | "dark" | undefined;
+  extractHostDisplayMode: (
+    hostContext?: Record<string, unknown>,
+  ) => DisplayMode | undefined;
+  extractHostDisplayModes: (
+    hostContext?: Record<string, unknown>,
+  ) => DisplayMode[];
+  clampDisplayModeToAvailableModes: (
+    displayMode: DisplayMode | undefined,
+    availableDisplayModes: DisplayMode[],
+  ) => DisplayMode;
+  stableStringifyJson: (value: unknown) => string;
+}
+
+// --- Services ----------------------------------------------------------------
+
+export interface FetchWidgetContentRequest {
+  serverId: string;
+  resourceUri: string;
+  toolInput: Record<string, unknown> | undefined;
+  toolOutput: unknown;
+  toolResponseMetadata?: Record<string, unknown> | null;
+  initialWidgetState?: unknown;
+  toolId: string;
+  toolName: string;
+  theme: string;
+  cspMode: CspMode;
+  injectOpenAiCompat: boolean;
+  openAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
+  template?: string;
+  viewMode?: string;
+  viewParams?: Record<string, unknown>;
+  forceWebEndpoint?: boolean;
+}
+
+export interface FetchWidgetContentResponse {
+  html: string;
+  csp?: McpUiResourceCsp;
+  permissions?: McpUiResourcePermissions;
+  permissive?: boolean;
+  mimeTypeWarning?: string;
+  mimeTypeValid?: boolean;
+  prefersBorder?: boolean;
+  injectedOpenAiCompat?: boolean;
+  injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
+}
+
+// A `type` alias (not interface) on purpose: the inspector api's
+// `ListResourcesResult` is a type alias, so it carries an implicit index
+// signature and stays assignable to the MCP bridge handler's index-signature
+// target. An interface here would break that assignability.
+export type ListResourcesResult = {
+  resources: Array<{
+    uri: string;
+    name: string;
+    description?: string;
+    mimeType?: string;
+  }>;
+  nextCursor?: string;
+};
+
+/**
+ * Widget content fetch + MCP transport. The inspector binds these to
+ * `fetchMcpAppsWidgetContent` + the MCP resource/prompt apis.
+ * `listResourceTemplates` is HOST-OWNED — the inspector applies the
+ * HOSTED_MODE / web-managed guard before calling the raw api.
+ */
+export interface WidgetHostServices {
+  fetchWidgetContent: (
+    req: FetchWidgetContentRequest,
+  ) => Promise<FetchWidgetContentResponse>;
+  // Mirrors the inspector api fn (returns `Promise<any>`); the bridge handler
+  // treats the resource payload opaquely.
+  readResource: (
+    serverId: string,
+    uri: string,
+    opts?: { forceHosted?: boolean },
+  ) => Promise<any>;
+  listResources: (
+    serverId: string,
+    cursor?: string,
+    opts?: { forceHosted?: boolean },
+  ) => Promise<ListResourcesResult>;
+  listPrompts: (
+    serverId: string,
+    opts?: { forceHosted?: boolean },
+  ) => Promise<MCPPrompt[]>;
+  listResourceTemplates: (serverId: string) => Promise<MCPResourceTemplate[]>;
+}
+
 // --- The seam ----------------------------------------------------------------
 
 export interface WidgetHost {
+  /**
+   * Resolved per-server environment — the deferred `resolveEnvironment` target.
+   * OPTIONAL: Phase 1b reads the raw `environment` inputs + `resolvers` instead.
+   * Folding into this (and dropping the raw inputs + the `HostConfigMcpProfileV1`
+   * surface) is the publish-ready pass (3d-iii).
+   */
+  resolveEnvironment?: (serverId: string | undefined) => WidgetHostEnvironment;
+  /** Raw ambient ENV inputs (Phase 1b); supplied by the inspector adapter. */
+  environment: WidgetHostEnvironmentInputs;
+  /** Bound resolver/projection fns (Phase 1b); bound by the inspector adapter. */
+  resolvers: WidgetHostResolvers;
+  services: WidgetHostServices;
   surface: WidgetSurfaceInfo;
   debug?: WidgetDebugSink;
   components?: WidgetHostComponents;
-  // 3d-i-b: `environment`, `resolvers`, `services` fold in here as the
-  // fn-heavy / profile-derived slices relocate.
 }
