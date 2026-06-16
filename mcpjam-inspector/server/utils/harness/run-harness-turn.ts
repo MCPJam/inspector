@@ -186,6 +186,19 @@ export async function runHarnessTurn(
       if (!authHeader) {
         throw new Error("harness turn requires an auth bearer to resolve the computer");
       }
+      // Tool approval isn't bridged into the harness yet (no
+      // tool-approval-request continuation handling). Fail closed rather than
+      // silently bypass the host's approval policy or hang on an approval
+      // prompt the loop can't answer: refuse approval-required turns. Until
+      // continuations land, run a Claude Code host with requireToolApproval
+      // off, or use the emulated engine.
+      if (requireToolApproval || approvalMode === "auto-deny") {
+        throw new Error(
+          "harness (Claude Code) turns don't support tool approval yet — turn " +
+            "off requireToolApproval on this host, or use the emulated engine, " +
+            "until approval continuation handling lands",
+        );
+      }
 
       // 1. Resolve (and wake) the host's computer → sandbox id.
       const { sandboxId } = await resolveHarnessSandbox({
@@ -205,14 +218,9 @@ export async function runHarnessTurn(
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
-      // Map the host's approval policy onto the harness permission mode.
-      // Interactive approval bridging is deferred, so fail closed: when the
-      // host requires approval (or the synthetic "auto-deny" path), only
-      // auto-approve reads instead of everything.
-      const permissionMode: "allow-reads" | "allow-edits" | "allow-all" =
-        requireToolApproval || approvalMode === "auto-deny"
-          ? "allow-reads"
-          : "allow-all";
+      // Approval-required turns are refused above, so the remaining turns run
+      // with full tool access (the agentic default).
+      const permissionMode = "allow-all" as const;
 
       const harness = createClaudeCode({ model: modelId, auth });
       const agent = new HarnessAgent({
@@ -417,11 +425,14 @@ export async function runHarnessTurn(
             }
           }
         }
+        // Close any open text block first so BOTH the cancelled and normal
+        // paths leave a balanced UI stream.
+        if (textId !== undefined) writer.write({ type: "text-end", id: textId });
+
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
         // session, stopping the in-sandbox Claude Code run.
         if (aborted) return;
-        if (textId !== undefined) writer.write({ type: "text-end", id: textId });
 
         // Settle usage/finish on res.
         await res.text;
