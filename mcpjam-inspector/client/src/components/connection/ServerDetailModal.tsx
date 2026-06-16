@@ -39,6 +39,7 @@ import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent
 import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
+import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
@@ -53,6 +54,7 @@ export type ServerDetailTab =
   | "overview"
   | "configuration"
   | "tools-metadata"
+  | "compatibility"
   | "history";
 
 interface ServerDetailModalProps {
@@ -594,9 +596,8 @@ export function ServerDetailModal({
     }
   };
 
-  const tabGridClass = showHistory
-    ? "grid w-full grid-cols-4"
-    : "grid w-full grid-cols-3";
+  const tabTriggerClass =
+    "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -706,12 +707,35 @@ export function ServerDetailModal({
             onValueChange={(v) => setActiveTab(v as ServerDetailTab)}
             className="flex min-h-0 flex-col"
           >
-            <TabsList className={tabGridClass}>
-              <TabsTrigger value="configuration">Configuration</TabsTrigger>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="tools-metadata">Tools Metadata</TabsTrigger>
+            <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+              <TabsTrigger
+                value="configuration"
+                aria-label="Configuration"
+                className={tabTriggerClass}
+              >
+                Config
+              </TabsTrigger>
+              <TabsTrigger value="overview" className={tabTriggerClass}>
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="tools-metadata"
+                aria-label="Tools metadata"
+                className={tabTriggerClass}
+              >
+                Tools
+              </TabsTrigger>
+              <TabsTrigger
+                value="compatibility"
+                aria-label="Host compatibility"
+                className={tabTriggerClass}
+              >
+                Hosts
+              </TabsTrigger>
               {showHistory && (
-                <TabsTrigger value="history">History</TabsTrigger>
+                <TabsTrigger value="history" className={tabTriggerClass}>
+                  History
+                </TabsTrigger>
               )}
             </TabsList>
 
@@ -830,6 +854,23 @@ export function ServerDetailModal({
                   ) : (
                     <ServerInfoToolsMetadataContent toolsData={toolsData} />
                   )}
+                </div>
+              </TabsContent>
+
+              {/* Compatibility: per-host static compat report; degrades
+                  gracefully while disconnected (transport/auth facts only) */}
+              <TabsContent
+                value="compatibility"
+                className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+              >
+                <div className="pl-1 pr-6">
+                  <HostCompatContent
+                    server={server}
+                    toolsData={toolsData}
+                    projectId={projectId}
+                    serverId={serverId}
+                    onClose={onClose}
+                  />
                 </div>
               </TabsContent>
 

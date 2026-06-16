@@ -33,21 +33,26 @@ vi.mock("@/components/hosts/HostBuilderView", () => ({
 // jsdom doesn't fully expose; stub both to the bare DOM so the chrome assertion
 // can run without spinning up the animation runtime.
 vi.mock("framer-motion", () => {
-  const MotionDiv = React.forwardRef<
-    HTMLDivElement,
-    React.HTMLAttributes<HTMLDivElement> & Record<string, unknown>
-  >(function MotionDiv(props, ref) {
-    const {
-      initial: _initial,
-      animate: _animate,
-      exit: _exit,
-      transition: _transition,
-      ...rest
-    } = props;
-    return <div ref={ref} {...rest} />;
-  });
+  const makeMotion = (Tag: "div" | "span") =>
+    React.forwardRef<HTMLElement, Record<string, unknown>>(function Motion(
+      props,
+      ref,
+    ) {
+      const {
+        initial: _initial,
+        animate: _animate,
+        exit: _exit,
+        transition: _transition,
+        layoutId: _layoutId,
+        whileHover: _whileHover,
+        whileTap: _whileTap,
+        ...rest
+      } = props;
+      return React.createElement(Tag, { ref, ...rest });
+    });
   return {
-    motion: { div: MotionDiv },
+    motion: { div: makeMotion("div"), span: makeMotion("span") },
+    useReducedMotion: () => false,
     AnimatePresence: ({ children }: { children: React.ReactNode }) => (
       <>{children}</>
     ),

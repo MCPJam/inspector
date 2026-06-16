@@ -1,6 +1,21 @@
-import { authFetch } from "@/lib/session-token";
-import { isValidUploadedFileId } from "../uploaded-file-id";
-import { HOSTED_MODE } from "@/lib/config";
+// Tier-B (Phase 3d-ii-c): the file-message bridge moved into @mcpjam/widget-react
+// alongside the renderer. The inspector-supplied `authFetch` (session-token auth)
+// and `hostedMode` flag are passed in as a `WidgetFileMessageContext` rather than
+// imported from `@/lib/*`, so this module carries no inspector internals.
+
+/** Validates the inspector's uploaded-file id format (`file_<hex/uuid>`). */
+const UPLOADED_FILE_ID_PATTERN = /^file_[0-9a-f-]+$/;
+function isValidUploadedFileId(fileId: unknown): fileId is string {
+  return typeof fileId === "string" && UPLOADED_FILE_ID_PATTERN.test(fileId);
+}
+
+/** Host-supplied capabilities the file-message handlers need. */
+export interface WidgetFileMessageContext {
+  /** Session-authenticated fetch (`host.services.authFetch`). */
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  /** Whether the app runs against the hosted backend (`host.surface.hostedMode`). */
+  hostedMode: boolean;
+}
 
 type UploadFileMessage = {
   type: "openai:uploadFile";
@@ -38,10 +53,10 @@ export type SendWidgetFileResponse = (
   message: WidgetFileResponseMessage,
 ) => void;
 
-function buildWidgetDownloadUrl(fileId: string): string {
+function buildWidgetDownloadUrl(fileId: string, hostedMode: boolean): string {
   const loc = window.location;
   const widgetHost = loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
-  const basePath = HOSTED_MODE
+  const basePath = hostedMode
     ? "/api/web/apps/files/file"
     : "/api/apps/files/file";
   return `${loc.protocol}//${widgetHost}:${loc.port}${basePath}/${fileId}`;
@@ -50,9 +65,10 @@ function buildWidgetDownloadUrl(fileId: string): string {
 export async function handleUploadFileMessage(
   data: UploadFileMessage,
   sendResponse: SendWidgetFileResponse,
+  { authFetch, hostedMode }: WidgetFileMessageContext,
 ): Promise<void> {
   const uploadCallId = data.callId;
-  if (HOSTED_MODE) {
+  if (hostedMode) {
     sendResponse({
       type: "openai:uploadFile:response",
       callId: uploadCallId,
@@ -103,9 +119,10 @@ export async function handleUploadFileMessage(
 export function handleGetFileDownloadUrlMessage(
   data: GetFileDownloadUrlMessage,
   sendResponse: SendWidgetFileResponse,
+  { hostedMode }: Pick<WidgetFileMessageContext, "hostedMode">,
 ): void {
   const dlCallId = data.callId;
-  if (HOSTED_MODE) {
+  if (hostedMode) {
     sendResponse({
       type: "openai:getFileDownloadUrl:response",
       callId: dlCallId,
@@ -127,6 +144,6 @@ export function handleGetFileDownloadUrlMessage(
   sendResponse({
     type: "openai:getFileDownloadUrl:response",
     callId: dlCallId,
-    result: { downloadUrl: buildWidgetDownloadUrl(fileId) },
+    result: { downloadUrl: buildWidgetDownloadUrl(fileId, hostedMode) },
   });
 }

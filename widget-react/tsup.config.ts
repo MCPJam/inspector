@@ -20,10 +20,12 @@ export default defineConfig({
   external: [
     "react",
     "react-dom",
+    "react-dom/client",
     "react/jsx-runtime",
     /^@mcpjam\/sdk/,
     /^@modelcontextprotocol\//,
     /^@mcp-ui\//,
     /^zustand/,
+    /^lucide-react/,
   ],
 });

@@ -49,6 +49,7 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
@@ -663,7 +664,7 @@ export function HostCompareRoute() {
       className="flex h-full min-h-0 flex-col"
     >
       <ConnectViewHeader
-        value="compare"
+        value="host"
         previewedHostId={previewedHostId}
         onChange={(next) => {
           if (next === "servers") {
@@ -674,6 +675,21 @@ export function HostCompareRoute() {
             navigate(routePaths.computer);
           }
         }}
+        rightSlot={
+          // Host/Compare sub-nav inline in the header row (single bar) rather
+          // than stacked beneath the primary nav.
+          <div className="flex min-w-0 items-center justify-center md:justify-end">
+            <HostSectionTabs
+              value="compare"
+              hostEnabled={Boolean(previewedHostId)}
+              onSelect={(next) => {
+                if (next === "host" && previewedHostId) {
+                  navigate(buildHostsPath(previewedHostId));
+                }
+              }}
+            />
+          </div>
+        }
       />
       <div className="min-h-0 flex-1">{compareView}</div>
     </motion.div>

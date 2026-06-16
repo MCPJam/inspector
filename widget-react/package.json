@@ -39,6 +39,7 @@
     "@mcpjam/sdk": "^1.17.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "lucide-react": "^0.525.0",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
