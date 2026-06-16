@@ -181,7 +181,7 @@ export function XAAIdpCard() {
               </li>
               <li>
                 <code className="font-mono">client_id</code> → the Client ID you
-                set in Configure Target
+                set in Configure Server to Test
               </li>
             </ul>
           </div>

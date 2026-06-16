@@ -3,6 +3,16 @@ import posthog from "posthog-js";
 import { Loader2, Play } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
+import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -12,9 +22,12 @@ import type { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
+import {
+  useXaaTestTarget,
+  type XAAFlowInput,
+} from "@/hooks/useXaaTestTarget";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
-import { XAAConfigModal } from "./XAAConfigModal";
 import { XAAServerModal } from "./XAAServerModal";
 import { XAASimulatedIdentity } from "./XAASimulatedIdentity";
 import { XAAIdpCard } from "./XAAIdpCard";
@@ -27,16 +40,7 @@ import {
   createInitialXAAFlowState,
   type XAAFlowState,
   type XAAFlowStep,
-  type XaaResourceApp,
 } from "@/lib/xaa/types";
-import {
-  clearStoredXAADebugProfile,
-  deriveXAADebugProfileFromServer,
-  EMPTY_XAA_DEBUG_PROFILE,
-  loadStoredXAADebugProfile,
-  saveStoredXAADebugProfile,
-  type XAADebugProfile,
-} from "@/lib/xaa/profile";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
@@ -47,28 +51,6 @@ const INITIAL_RESOURCE_PARAM =
   typeof window === "undefined"
     ? null
     : new URLSearchParams(window.location.search).get("resource");
-
-const isHttpServer = (server?: ServerWithName) =>
-  Boolean(server && "url" in server.config);
-
-/**
- * The single mode-resolved input the runner consumes. Hosted runs against a
- * selected registration; everything else uses the manual debug profile.
- */
-interface XAAFlowInput {
-  mode: "hosted-registration" | "local-profile";
-  registrationId?: string;
-  serverUrl: string;
-  authzServerIssuer: string;
-  clientId: string;
-  /** Manual-profile runs only; registration-backed runs resolve the stored
-   * secret server-side and keep this empty. */
-  clientSecret: string;
-  scope: string;
-  userId: string;
-  email: string;
-  negativeTestMode: NegativeTestMode;
-}
 
 function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
   return createInitialXAAFlowState({
@@ -83,46 +65,14 @@ function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
   });
 }
 
-function inputFromProfile(profile: XAADebugProfile): XAAFlowInput {
-  return {
-    mode: "local-profile",
-    serverUrl: profile.serverUrl,
-    authzServerIssuer: profile.authzServerIssuer,
-    clientId: profile.clientId,
-    clientSecret: profile.clientSecret,
-    scope: profile.scope,
-    userId: profile.userId,
-    email: profile.email,
-    negativeTestMode: profile.negativeTestMode,
-  };
-}
-
-function inputFromRegistration(
-  registration: XaaResourceApp,
-  profile: XAADebugProfile
-): XAAFlowInput {
-  return {
-    mode: "hosted-registration",
-    registrationId: registration.id,
-    serverUrl: registration.resourceUrl,
-    authzServerIssuer: registration.issuer ?? "",
-    clientId: registration.targetClientId ?? "",
-    // The stored secret never enters the browser; /proxy/token resolves it.
-    clientSecret: "",
-    scope: (registration.scopes ?? []).join(" "),
-    // Synthetic identity stays user-configurable regardless of source.
-    userId: profile.userId,
-    email: profile.email,
-    negativeTestMode: profile.negativeTestMode,
-  };
-}
-
 interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
   organizationId?: string | null;
-  // Shared server-bar callbacks (mirror the OAuth Debugger). Wired in PR-I1;
-  // consumed starting in PR-I2 (modal save) and PR-I5 (chip selection).
+  /** Active Convex project id — resolves the selected server's id + project
+   * for server-side secret resolution. */
+  projectId?: string | null;
+  // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
   onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
 }
@@ -131,10 +81,10 @@ export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
   organizationId,
+  projectId,
   onSelectServer,
   onSaveServerConfig,
 }: XAAFlowTabProps) {
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
@@ -143,43 +93,6 @@ export function XAAFlowTab({
     selectedServerName !== "none"
       ? serverConfigs[selectedServerName]
       : undefined;
-  const activeServer = isHttpServer(selectedServer)
-    ? selectedServer
-    : undefined;
-
-  const [profile, setProfile] = useState(() =>
-    deriveXAADebugProfileFromServer(activeServer, loadStoredXAADebugProfile())
-  );
-  const [flowState, setFlowState] = useState<XAAFlowState>(() =>
-    buildFlowStateFromInput(
-      inputFromProfile(
-        deriveXAADebugProfileFromServer(
-          activeServer,
-          loadStoredXAADebugProfile()
-        )
-      )
-    )
-  );
-
-  // The machine reads state through this ref (lazy getState). Keep it in
-  // sync *synchronously* with every write so a run that resets and then
-  // immediately advances never observes a stale snapshot.
-  const flowStateRef = useRef(flowState);
-
-  // Set when the user explicitly clears their config, so the auto-derive-from
-  // -server effect below doesn't immediately re-fill the target — letting the
-  // tab return to the initial "Configure XAA Target" screen. Reset on save.
-  const suppressAutoDerive = useRef(false);
-
-  const applyFlowState = useCallback((next: XAAFlowState) => {
-    flowStateRef.current = next;
-    setFlowState(next);
-  }, []);
-
-  const updateFlowState = useCallback((updates: Partial<XAAFlowState>) => {
-    flowStateRef.current = { ...flowStateRef.current, ...updates };
-    setFlowState((current) => ({ ...current, ...updates }));
-  }, []);
 
   // ── Registration selection (hosted) ────────────────────────────────
   const { resourceApps } = useXaaResourceApps(organizationId ?? null);
@@ -200,40 +113,49 @@ export function XAAFlowTab({
   const selectedRegistration =
     resourceApps.find((app) => app.id === selectedRegistrationId) ?? null;
 
-  // Global run settings: simulated identity (sub/email) + negative-test Mode
-  // are the same across every target, so they override the per-target base
-  // input rather than living on the singleton profile.
+  // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
-
-  const flowInput = useMemo(() => {
-    const base = selectedRegistration
-      ? inputFromRegistration(selectedRegistration, profile)
-      : inputFromProfile(profile);
-    return {
-      ...base,
-      userId: runSettings.userId,
-      email: runSettings.email,
-      negativeTestMode: runSettings.negativeTestMode,
-    };
-  }, [
+  const target = useXaaTestTarget({
+    server: selectedServer,
+    selectedServerName,
     selectedRegistration,
-    profile,
-    runSettings.userId,
-    runSettings.email,
-    runSettings.negativeTestMode,
-  ]);
+    runSettings,
+    projectId: projectId ?? null,
+  });
+  const runInput = target.runInput;
+  const { targetKey, isTestable } = target;
 
-  // Target identity for the positive-run gate; "local-profile" is its own
-  // session-scoped key.
-  const targetKey = selectedRegistration?.id ?? "local-profile";
+  const [flowState, setFlowState] = useState<XAAFlowState>(() =>
+    buildFlowStateFromInput(target.runInput)
+  );
+
+  // The machine reads state through this ref (lazy getState). Keep it in
+  // sync *synchronously* with every write so a run that resets and then
+  // immediately advances never observes a stale snapshot.
+  const flowStateRef = useRef(flowState);
+
+  const applyFlowState = useCallback((next: XAAFlowState) => {
+    flowStateRef.current = next;
+    setFlowState(next);
+  }, []);
+
+  const updateFlowState = useCallback((updates: Partial<XAAFlowState>) => {
+    flowStateRef.current = { ...flowStateRef.current, ...updates };
+    setFlowState((current) => ({ ...current, ...updates }));
+  }, []);
 
   // ── Telemetry (started / terminal completed, once per run) ─────────
   const completedFired = useRef(false);
   const authServerModeForTelemetry =
     selectedRegistration?.authServerMode ?? "own";
+  // Captured in a ref so the success effect (which can fire on a re-render
+  // after the run) reports the source the run actually used.
+  const targetSourceRef = useRef(target.targetSource);
+  targetSourceRef.current = target.targetSource;
 
-  // In-memory: targets that have completed a successful flow this session.
-  // A page refresh clears it, re-locking the scorecard (§ negative-test gate).
+  // In-memory: targets that have completed a successful flow this session,
+  // keyed per target so a green run on one server can't unlock another's
+  // scorecard. A page refresh clears it, re-locking the scorecard.
   const [positiveRunTargets, setPositiveRunTargets] = useState<Set<string>>(
     () => new Set()
   );
@@ -241,18 +163,20 @@ export function XAAFlowTab({
   const fireFlowStarted = useCallback(() => {
     completedFired.current = false;
     posthog.capture("xaa_flow_started", {
-      mode: flowInput.mode,
+      mode: runInput.mode,
+      target_source: target.targetSource,
       auth_server_mode: authServerModeForTelemetry,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
-  }, [flowInput.mode, authServerModeForTelemetry]);
+  }, [runInput.mode, target.targetSource, authServerModeForTelemetry]);
 
   useEffect(() => {
     if (flowState.currentStep === "complete" && !completedFired.current) {
       completedFired.current = true;
       posthog.capture("xaa_flow_completed", {
         success: true,
+        target_source: targetSourceRef.current,
         auth_server_mode: authServerModeForTelemetry,
         platform: detectPlatform(),
         environment: detectEnvironment(),
@@ -275,11 +199,11 @@ export function XAAFlowTab({
   } => {
     const audience =
       flowState.authzMetadata?.issuer ||
-      flowInput.authzServerIssuer ||
+      runInput.authzServerIssuer ||
       selectedRegistration?.issuer ||
       "";
     const resource =
-      flowState.resourceMetadata?.resource || flowInput.serverUrl || "";
+      flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
     if (selectedRegistration) {
       if (selectedRegistration.authServerMode === "mcpjam") {
@@ -301,13 +225,35 @@ export function XAAFlowTab({
           registrationId: selectedRegistration.id,
           audience,
           resource,
-          clientId: flowInput.clientId || undefined,
-          scope: flowInput.scope || undefined,
+          clientId: runInput.clientId || undefined,
+          scope: runInput.scope || undefined,
         },
       };
     }
 
-    // Local profile: the token endpoint comes from discovery during a run.
+    // Confidential bar server: the secret + token endpoint are resolved
+    // server-side from the stored config — only the issuer/resource matter.
+    if (target.usesServerSideSecret && target.serverId) {
+      if (!audience || !resource) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run the flow once so the auth server issuer is known.",
+        };
+      }
+      return {
+        input: {
+          serverId: target.serverId,
+          projectId: target.projectId,
+          audience,
+          resource,
+          clientId: runInput.clientId || undefined,
+          scope: runInput.scope || undefined,
+        },
+      };
+    }
+
+    // Public bar server: the token endpoint comes from discovery during a run.
     if (!flowState.tokenEndpoint) {
       return {
         input: null,
@@ -323,30 +269,52 @@ export function XAAFlowTab({
         tokenEndpoint: flowState.tokenEndpoint,
         audience,
         resource,
-        clientId: flowInput.clientId || undefined,
-        clientSecret: flowInput.clientSecret || undefined,
-        scope: flowInput.scope || undefined,
+        clientId: runInput.clientId || undefined,
+        scope: runInput.scope || undefined,
       },
     };
-  }, [flowState, flowInput, selectedRegistration]);
+  }, [flowState, runInput, selectedRegistration, target]);
 
-  // ── Flow-state lifecycle ────────────────────────────────────────────
+  // ── Single target-reset owner ──────────────────────────────────────
+  // One effect keyed on (targetKey, negativeTestMode) rebuilds the flow when
+  // the resolved target or the global mode changes. Guarded by value-compared
+  // refs; confirms via AlertDialog before discarding a busy or completed run.
+  const lastAppliedTargetKey = useRef<string | null>(null);
+  const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  const [pendingReset, setPendingReset] = useState<{
+    targetKey: string;
+    negativeTestMode: NegativeTestMode;
+  } | null>(null);
+
+  const applyTargetReset = useCallback(
+    (nextTargetKey: string, nextMode: NegativeTestMode) => {
+      lastAppliedTargetKey.current = nextTargetKey;
+      lastNegativeTestMode.current = nextMode;
+      applyFlowState(buildFlowStateFromInput(runInput));
+      setFocusedStep(null);
+    },
+    [applyFlowState, runInput]
+  );
+
   useEffect(() => {
+    const nextMode = runSettings.negativeTestMode;
     if (
-      suppressAutoDerive.current ||
-      selectedRegistration ||
-      profile.serverUrl.trim()
+      lastAppliedTargetKey.current === targetKey &&
+      lastNegativeTestMode.current === nextMode
     ) {
       return;
     }
 
-    const derived = deriveXAADebugProfileFromServer(activeServer, profile);
-    setProfile(derived);
-    applyFlowState(buildFlowStateFromInput(inputFromProfile(derived)));
-    // Matches the original effect: keyed on serverUrl, not the profile
-    // object, so the derived profile (a fresh object) can't retrigger it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeServer, profile.serverUrl, selectedRegistration]);
+    const current = flowStateRef.current;
+    const needsConfirm =
+      lastAppliedTargetKey.current !== null &&
+      (current.isBusy || current.currentStep === "complete");
+    if (needsConfirm) {
+      setPendingReset({ targetKey, negativeTestMode: nextMode });
+      return;
+    }
+    applyTargetReset(targetKey, nextMode);
+  }, [targetKey, runSettings.negativeTestMode, applyTargetReset]);
 
   useEffect(() => {
     setFocusedStep(null);
@@ -355,35 +323,18 @@ export function XAAFlowTab({
   useEffect(() => {
     posthog.capture("xaa_tab_viewed", {
       location: "xaa_flow_tab",
+      target_count: resourceApps.length + Object.keys(serverConfigs).length,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
+    // Fires once per mount; the counts are a point-in-time anchor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switching the run target (registration picked/cleared) starts a fresh
-  // flow against it.
-  const lastAppliedRegistrationId = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastAppliedRegistrationId.current === selectedRegistrationId) {
-      return;
-    }
-    lastAppliedRegistrationId.current = selectedRegistrationId;
-    applyFlowState(buildFlowStateFromInput(flowInput));
+  const resetFlow = useCallback(() => {
+    applyFlowState(buildFlowStateFromInput(runInput));
     setFocusedStep(null);
-  }, [selectedRegistrationId, flowInput, applyFlowState]);
-
-  const resetFlow = useCallback(
-    (nextProfile?: XAADebugProfile) => {
-      const input = nextProfile
-        ? selectedRegistration
-          ? inputFromRegistration(selectedRegistration, nextProfile)
-          : inputFromProfile(nextProfile)
-        : flowInput;
-      applyFlowState(buildFlowStateFromInput(input));
-      setFocusedStep(null);
-    },
-    [flowInput, selectedRegistration, applyFlowState]
-  );
+  }, [runInput, applyFlowState]);
 
   const handleChangeNegativeTestMode = useCallback(
     (mode: NegativeTestMode) => {
@@ -392,18 +343,6 @@ export function XAAFlowTab({
     },
     [runSettings]
   );
-
-  // Rebuild the flow when the global negative-test mode changes.
-  const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
-  useEffect(() => {
-    if (lastNegativeTestMode.current === runSettings.negativeTestMode) {
-      return;
-    }
-    lastNegativeTestMode.current = runSettings.negativeTestMode;
-    applyFlowState(buildFlowStateFromInput(flowInput));
-  }, [runSettings.negativeTestMode, flowInput, applyFlowState]);
-
-  const hasTarget = Boolean(flowInput.serverUrl.trim());
 
   // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG
   // inspection step lints against the issuer actually stamped into `iss`, not
@@ -425,21 +364,26 @@ export function XAAFlowTab({
     return createInspectorXAAStateMachine({
       getState: () => flowStateRef.current,
       updateState: updateFlowState,
-      serverUrl: flowInput.serverUrl || "http://localhost",
-      negativeTestMode: flowInput.negativeTestMode,
-      userId: flowInput.userId,
-      email: flowInput.email,
-      clientId: flowInput.clientId,
-      clientSecret: flowInput.clientSecret,
-      scope: flowInput.scope,
-      authzServerIssuer: flowInput.authzServerIssuer,
-      registrationId: flowInput.registrationId,
+      serverUrl: runInput.serverUrl || "http://localhost",
+      negativeTestMode: runInput.negativeTestMode,
+      userId: runInput.userId,
+      email: runInput.email,
+      clientId: runInput.clientId,
+      clientSecret: runInput.clientSecret,
+      scope: runInput.scope,
+      authzServerIssuer: runInput.authzServerIssuer,
+      registrationId: runInput.registrationId,
+      // Confidential bar-server runs send only serverId/projectId; the server
+      // resolves the secret and discovers the token endpoint.
+      ...(target.usesServerSideSecret && target.serverId
+        ? { serverId: target.serverId, projectId: target.projectId }
+        : {}),
       issuerBaseUrl: resolvedIssuerBaseUrl,
     });
-  }, [flowInput, updateFlowState, resolvedIssuerBaseUrl]);
+  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl]);
 
   const handleAdvance = useCallback(async () => {
-    if (!hasTarget) {
+    if (!isTestable) {
       setIsServerModalOpen(true);
       return;
     }
@@ -448,16 +392,16 @@ export function XAAFlowTab({
       fireFlowStarted();
     }
     await xaaStateMachine.proceedToNextStep();
-  }, [hasTarget, xaaStateMachine, fireFlowStarted]);
+  }, [isTestable, xaaStateMachine, fireFlowStarted]);
 
   const handleRunAll = useCallback(async () => {
-    if (!hasTarget) {
+    if (!isTestable) {
       setIsServerModalOpen(true);
       return;
     }
 
     // Every Run all begins from a clean slate so the chips reflect this run.
-    applyFlowState(buildFlowStateFromInput(flowInput));
+    applyFlowState(buildFlowStateFromInput(runInput));
     setFocusedStep(null);
     fireFlowStarted();
     setIsRunningAll(true);
@@ -472,6 +416,7 @@ export function XAAFlowTab({
       completedFired.current = true;
       posthog.capture("xaa_flow_completed", {
         success: false,
+        target_source: targetSourceRef.current,
         // The step the run stopped on — an enum, never a raw error string.
         error_category: final.currentStep,
         auth_server_mode: authServerModeForTelemetry,
@@ -480,16 +425,16 @@ export function XAAFlowTab({
       });
     }
   }, [
-    hasTarget,
-    flowInput,
+    isTestable,
+    runInput,
     xaaStateMachine,
     applyFlowState,
     fireFlowStarted,
     authServerModeForTelemetry,
   ]);
 
-  const continueLabel = !hasTarget
-    ? "Configure Target"
+  const continueLabel = !isTestable
+    ? "Configure Server to Test"
     : flowState.negativeProbe
     ? "Negative test complete"
     : flowState.currentStep === "idle"
@@ -503,13 +448,23 @@ export function XAAFlowTab({
     : "Continue";
 
   const continueDisabled =
-    !hasTarget ||
+    !isTestable ||
     flowState.isBusy ||
     isRunningAll ||
     flowState.currentStep === "complete" ||
     Boolean(flowState.negativeProbe);
 
-  const runAllDisabled = !hasTarget || flowState.isBusy || isRunningAll;
+  const runAllDisabled = !isTestable || flowState.isBusy || isRunningAll;
+
+  const targetLabel = selectedRegistration
+    ? `Target: ${selectedRegistration.name} · registered app`
+    : isTestable
+    ? `Target: ${runInput.serverUrl} · from server`
+    : "No server selected";
+
+  // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
+  const showNotTestable =
+    target.targetSource === "bar_server" && !isTestable;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -547,55 +502,88 @@ export function XAAFlowTab({
           activeStep={focusedStep ?? flowState.currentStep}
           onFocusStep={setFocusedStep}
         />
-        <span className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground">
-          {selectedRegistration
-            ? `Target: ${selectedRegistration.name}`
-            : hasTarget
-            ? `Target: ${flowInput.serverUrl}`
-            : "No target configured"}
+        <span
+          className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground"
+          aria-live="polite"
+        >
+          {targetLabel}
         </span>
         <div className="ml-auto shrink-0">
           <XAASimulatedIdentity />
         </div>
       </div>
+      {selectedRegistration ? (
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
+          <span>Using registered app — overrides the bar selection</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 text-xs"
+            onClick={() => setSelectedRegistrationId(null)}
+          >
+            Use bar server
+          </Button>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          <ResizablePanel defaultSize={52} minSize={30}>
-            <XAASequenceDiagram
-              flowState={flowState}
-              focusedStep={focusedStep}
-              hasProfile={hasTarget}
-              onConfigure={() => setIsServerModalOpen(true)}
-            />
-          </ResizablePanel>
+        {showNotTestable ? (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-md space-y-4 rounded-lg border border-dashed border-border p-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                This server can't be XAA-tested — it needs an HTTP URL and
+                OAuth.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsServerModalOpen(true)}
+              >
+                Configure Server to Test
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={52} minSize={30}>
+              <XAASequenceDiagram
+                flowState={flowState}
+                focusedStep={focusedStep}
+                hasProfile={isTestable}
+                onConfigure={() => setIsServerModalOpen(true)}
+              />
+            </ResizablePanel>
 
-          <ResizableHandle withHandle />
+            <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={48} minSize={24} maxSize={52}>
-            <XAAFlowLogger
-              flowState={flowState}
-              hasProfile={hasTarget}
-              activeStep={focusedStep ?? flowState.currentStep}
-              onFocusStep={setFocusedStep}
-              actions={{
-                onConfigure: () => setIsServerModalOpen(true),
-                onReset: hasTarget ? () => resetFlow() : undefined,
-                onContinue: continueDisabled ? undefined : handleAdvance,
-                onChangeNegativeTestMode: handleChangeNegativeTestMode,
-                continueLabel,
-                continueDisabled,
-                resetDisabled: !hasTarget || flowState.isBusy || isRunningAll,
-              }}
-              summary={{
-                serverUrl: flowInput.serverUrl,
-                authzServerIssuer: flowInput.authzServerIssuer || undefined,
-                clientId: flowInput.clientId || undefined,
-                scope: flowInput.scope || undefined,
-                negativeTestMode: flowInput.negativeTestMode,
-              }}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+            <ResizablePanel defaultSize={48} minSize={24} maxSize={52}>
+              <XAAFlowLogger
+                flowState={flowState}
+                hasProfile={isTestable}
+                activeStep={focusedStep ?? flowState.currentStep}
+                onFocusStep={setFocusedStep}
+                actions={{
+                  onConfigure: () => setIsServerModalOpen(true),
+                  onReset: isTestable ? () => resetFlow() : undefined,
+                  onContinue: continueDisabled ? undefined : handleAdvance,
+                  onChangeNegativeTestMode: handleChangeNegativeTestMode,
+                  continueLabel,
+                  continueDisabled,
+                  resetDisabled:
+                    !isTestable || flowState.isBusy || isRunningAll,
+                }}
+                summary={{
+                  serverUrl: runInput.serverUrl,
+                  authzServerIssuer: runInput.authzServerIssuer || undefined,
+                  clientId: runInput.clientId || undefined,
+                  scope: runInput.scope || undefined,
+                  negativeTestMode: runInput.negativeTestMode,
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
       </div>
 
       <NegativeTestScorecard
@@ -604,41 +592,59 @@ export function XAAFlowTab({
         unavailableReason={scorecard.unavailableReason}
       />
 
-      <XAAConfigModal
-        open={isConfigModalOpen}
-        onOpenChange={setIsConfigModalOpen}
-        value={profile}
-        onSave={(nextProfile) => {
-          suppressAutoDerive.current = false;
-          saveStoredXAADebugProfile(nextProfile);
-          setProfile(nextProfile);
-          resetFlow(nextProfile);
-        }}
-        onClear={() => {
-          clearStoredXAADebugProfile();
-          // Return to the initial "Configure XAA Target" screen and keep it
-          // there — suppress the auto-derive effect so it doesn't re-fill.
-          suppressAutoDerive.current = true;
-          setSelectedRegistrationId(null);
-          setProfile(EMPTY_XAA_DEBUG_PROFILE);
-          applyFlowState(
-            buildFlowStateFromInput(inputFromProfile(EMPTY_XAA_DEBUG_PROFILE))
-          );
-          setFocusedStep(null);
-          setIsConfigModalOpen(false);
-        }}
-      />
-
       <XAAServerModal
         open={isServerModalOpen}
         onOpenChange={setIsServerModalOpen}
-        server={activeServer}
+        server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
         onSave={({ formData }) => {
           void onSaveServerConfig?.(formData);
           onSelectServer?.(formData.name);
+          // A bar server overrides any selected registration.
+          setSelectedRegistrationId(null);
         }}
       />
+
+      <AlertDialog
+        open={pendingReset !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            // Cancel: acknowledge the switch without resetting, so the effect
+            // doesn't immediately re-prompt; the current run stays visible.
+            if (pendingReset) {
+              lastAppliedTargetKey.current = pendingReset.targetKey;
+              lastNegativeTestMode.current = pendingReset.negativeTestMode;
+            }
+            setPendingReset(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch target?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The current run will be discarded and the flow reset for the new
+              target.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep current run</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingReset) {
+                  applyTargetReset(
+                    pendingReset.targetKey,
+                    pendingReset.negativeTestMode
+                  );
+                }
+                setPendingReset(null);
+              }}
+            >
+              Switch and reset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

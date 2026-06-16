@@ -134,7 +134,7 @@ export function NegativeTestScorecard({
   // previous target lingers and contradicts the empty/locked body.
   const targetKey = input
     ? [
-        input.registrationId ?? input.tokenEndpoint ?? "",
+        input.registrationId ?? input.serverId ?? input.tokenEndpoint ?? "",
         input.audience,
         input.resource,
       ].join("|")

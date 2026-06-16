@@ -1041,6 +1041,7 @@ export function XAAFlowRoute() {
     xaaEnabled,
     appState,
     activeOrganizationId,
+    convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
   } = useAppRouteContext();
@@ -1058,6 +1059,7 @@ export function XAAFlowRoute() {
         serverConfigs={appState.servers}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
+        projectId={convexProjectId ?? null}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
       />

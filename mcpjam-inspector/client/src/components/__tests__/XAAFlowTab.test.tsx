@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
-import type { ServerWithName } from "@/hooks/use-app-state";
+import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 
 const captureMock = vi.fn();
 vi.mock("posthog-js", () => ({
@@ -21,6 +21,14 @@ vi.mock("../xaa/XAAIdpCard", () => ({
   XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
 }));
 
+vi.mock("../xaa/XAAServerModal", () => ({
+  XAAServerModal: () => <div data-testid="xaa-server-modal" />,
+}));
+
+vi.mock("../xaa/XAASimulatedIdentity", () => ({
+  XAASimulatedIdentity: () => <div data-testid="xaa-simulated-identity" />,
+}));
+
 let resourceApps: unknown[] = [];
 vi.mock("@/hooks/useXaaResourceApps", () => ({
   useXaaResourceApps: () => ({
@@ -31,6 +39,12 @@ vi.mock("@/hooks/useXaaResourceApps", () => ({
     upsert: vi.fn(),
     remove: vi.fn(),
   }),
+}));
+
+// Controllable resolved target. Each test sets it before render.
+let currentTarget: XaaTestTarget;
+vi.mock("@/hooks/useXaaTestTarget", () => ({
+  useXaaTestTarget: () => currentTarget,
 }));
 
 vi.mock("../ui/resizable", () => ({
@@ -50,20 +64,17 @@ vi.mock("../xaa/XAASequenceDiagram", () => ({
 vi.mock("../xaa/XAAFlowLogger", () => ({
   XAAFlowLogger: ({
     summary,
+    actions,
   }: {
     summary: { serverUrl?: string };
+    actions: { continueLabel: string };
   }) => (
     <div data-testid="xaa-flow-logger">
-      {summary.serverUrl || "No target configured"}
+      <span data-testid="logger-server-url">
+        {summary.serverUrl || "No target configured"}
+      </span>
+      <span data-testid="logger-continue-label">{actions.continueLabel}</span>
     </div>
-  ),
-}));
-
-vi.mock("../xaa/XAAConfigModal", () => ({
-  XAAConfigModal: ({ onClear }: { onClear: () => void }) => (
-    <button type="button" data-testid="xaa-clear-config" onClick={onClear}>
-      clear
-    </button>
   ),
 }));
 
@@ -72,129 +83,99 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
 }));
 
 vi.mock("../xaa/NegativeTestScorecard", () => ({
-  NegativeTestScorecard: () => (
-    <div data-testid="xaa-negative-test-scorecard" />
+  NegativeTestScorecard: ({ unlocked }: { unlocked: boolean }) => (
+    <div data-testid="xaa-scorecard" data-unlocked={String(unlocked)} />
   ),
 }));
 
-const runAllMock = vi.fn(async () => undefined);
+const runAllMock = vi.fn();
+let capturedMachineConfig: any = null;
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
-  createInspectorXAAStateMachine: () => ({
-    proceedToNextStep: vi.fn(),
-    runAll: runAllMock,
-  }),
+  createInspectorXAAStateMachine: (config: any) => {
+    capturedMachineConfig = config;
+    return {
+      proceedToNextStep: vi.fn(),
+      // A "successful" run marks the flow complete, which fires the success
+      // telemetry + unlocks this target's scorecard.
+      runAll: vi.fn(async () => {
+        runAllMock();
+        config.updateState({ currentStep: "complete", isBusy: false });
+      }),
+    };
+  },
 }));
 
-vi.mock("@/lib/xaa/profile", () => {
-  const emptyProfile = {
-    serverUrl: "",
-    authzServerIssuer: "",
-    negativeTestMode: "none",
-    userId: "",
-    email: "",
-    clientId: "",
-    scope: "",
-  };
-
+function makeTarget(overrides: Partial<XaaTestTarget> = {}): XaaTestTarget {
   return {
-    EMPTY_XAA_DEBUG_PROFILE: emptyProfile,
-    loadStoredXAADebugProfile: () => emptyProfile,
-    saveStoredXAADebugProfile: vi.fn(),
-    clearStoredXAADebugProfile: vi.fn(),
-    deriveXAADebugProfileFromServer: (
-      server: ServerWithName | undefined,
-      fallback = emptyProfile,
-    ) => ({
-      ...fallback,
-      serverUrl:
-        server && "url" in server.config && server.config.url
-          ? server.config.url.toString()
-          : "",
-    }),
+    targetSource: "bar_server",
+    targetKey: "bar_server:staging",
+    isTestable: true,
+    usesServerSideSecret: false,
+    runInput: {
+      mode: "local-profile",
+      serverUrl: "https://staging.mcp.example.com",
+      authzServerIssuer: "",
+      clientId: "staging-client",
+      clientSecret: "",
+      scope: "",
+      userId: "u",
+      email: "e@example.com",
+      negativeTestMode: "valid",
+    },
+    ...overrides,
   };
-});
+}
 
 describe("XAAFlowTab", () => {
   beforeEach(() => {
     captureMock.mockClear();
     runAllMock.mockClear();
+    capturedMachineConfig = null;
     resourceApps = [];
+    localStorage.clear();
+    currentTarget = makeTarget();
   });
 
-  const createServer = (
-    overrides: Partial<ServerWithName> = {},
-  ): ServerWithName =>
-    ({
-      name: "test-server",
-      connectionStatus: "connected",
-      enabled: true,
-      retryCount: 0,
-      useOAuth: false,
-      lastConnectionTime: new Date("2024-01-01"),
-      config: {
-        transportType: "stdio",
-        command: "node",
-        args: ["server.js"],
-      },
-      ...overrides,
-    } as ServerWithName);
-
-  it("shows no configured target when opened with a non-HTTP selection", () => {
-    const serverConfigs = {
-      "selected-stdio": createServer({ name: "selected-stdio" }),
-      "available-oauth": createServer({
-        name: "available-oauth",
-        useOAuth: true,
-        config: {
-          url: "https://example.com/mcp",
-        },
-      }),
-    };
+  it("shows the not-testable state for a selected STDIO/non-OAuth server", () => {
+    currentTarget = makeTarget({
+      isTestable: false,
+      notTestableReason:
+        "This server can't be XAA-tested — it needs an HTTP URL and OAuth.",
+    });
 
     render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />,
+    );
+
+    expect(
+      screen.getByText(/can't be XAA-tested/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /run all/i }),
+    ).toBeDisabled();
+  });
+
+  it("fires xaa_tab_viewed once per mount with a target_count", () => {
+    resourceApps = [{ id: "a" }];
+    render(
       <XAAFlowTab
-        serverConfigs={serverConfigs}
-        selectedServerName="selected-stdio"
+        serverConfigs={{ s1: {} as any, s2: {} as any }}
+        selectedServerName="none"
       />,
     );
 
-    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
-      "No target configured",
-    );
-  });
-
-  it("fires xaa_tab_viewed once per mount", () => {
-    captureMock.mockClear();
-
-    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
-
-    const viewedCalls = captureMock.mock.calls.filter(
+    const viewed = captureMock.mock.calls.filter(
       ([event]) => event === "xaa_tab_viewed",
     );
-    expect(viewedCalls).toHaveLength(1);
-    expect(viewedCalls[0][1]).toMatchObject({ location: "xaa_flow_tab" });
+    expect(viewed).toHaveLength(1);
+    // 1 registration + 2 servers.
+    expect(viewed[0][1]).toMatchObject({ target_count: 3 });
   });
 
-  it("disables Run all without a target", () => {
-    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
-
-    expect(screen.getByRole("button", { name: /run all/i })).toBeDisabled();
-  });
-
-  it("Run all drives the machine and fires start + terminal telemetry", async () => {
+  it("Run all drives the machine and fires telemetry carrying target_source", async () => {
     const user = userEvent.setup();
-    const serverConfigs = {
-      "http-server": createServer({
-        name: "http-server",
-        config: { url: "https://mcp.example.com" },
-      }),
-    };
-
     render(
-      <XAAFlowTab
-        serverConfigs={serverConfigs}
-        selectedServerName="http-server"
-      />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
     );
 
     await user.click(screen.getByRole("button", { name: /run all/i }));
@@ -202,43 +183,88 @@ describe("XAAFlowTab", () => {
     await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
     expect(captureMock).toHaveBeenCalledWith(
       "xaa_flow_started",
-      expect.objectContaining({ mode: "local-profile" }),
-    );
-    // The mocked machine never reaches `complete`, so the terminal event
-    // reports the failure with the stalled step as its category.
-    expect(captureMock).toHaveBeenCalledWith(
-      "xaa_flow_completed",
-      expect.objectContaining({ success: false, error_category: "idle" }),
+      expect.objectContaining({
+        mode: "local-profile",
+        target_source: "bar_server",
+      }),
     );
   });
 
-  it("clearing the config returns to the initial no-target screen", async () => {
+  it("retargets the run summary when the selected server changes", () => {
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+    );
+    expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
+      "https://staging.mcp.example.com",
+    );
+
+    currentTarget = makeTarget({
+      targetKey: "bar_server:prod",
+      runInput: {
+        ...makeTarget().runInput,
+        serverUrl: "https://prod.mcp.example.com",
+      },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="prod" />);
+
+    expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
+      "https://prod.mcp.example.com",
+    );
+  });
+
+  it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
     const user = userEvent.setup();
-    const serverConfigs = {
-      "http-server": createServer({
-        name: "http-server",
-        config: { url: "https://mcp.example.com" },
-      }),
-    };
-
-    render(
-      <XAAFlowTab
-        serverConfigs={serverConfigs}
-        selectedServerName="http-server"
-      />,
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
     );
 
-    // The connected HTTP server auto-fills the target.
-    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
-      "https://mcp.example.com",
+    // A successful run unlocks staging's scorecard.
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-unlocked",
+        "true",
+      ),
     );
 
-    await user.click(screen.getByTestId("xaa-clear-config"));
+    // Switching to a different server shows a locked scorecard — the green run
+    // on staging must not unlock prod.
+    currentTarget = makeTarget({
+      targetKey: "bar_server:prod",
+      runInput: {
+        ...makeTarget().runInput,
+        serverUrl: "https://prod.mcp.example.com",
+      },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="prod" />);
 
-    // Cleared → back to "no target", and it stays there (auto-derive is
-    // suppressed) rather than re-filling from the connected server.
-    expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
-      "No target configured",
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unlocked",
+      "false",
     );
+  });
+
+  it("passes serverId/projectId to the machine for a confidential server", () => {
+    currentTarget = makeTarget({
+      usesServerSideSecret: true,
+      serverId: "srv_1",
+      projectId: "proj_1",
+    });
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    expect(capturedMachineConfig).toMatchObject({
+      serverId: "srv_1",
+      projectId: "proj_1",
+    });
+    // The confidential secret is never handed to the machine from the browser.
+    expect(capturedMachineConfig.clientSecret).toBe("");
+  });
+
+  it("no legacy 'Configure Target' / 'Configure XAA Debugger' copy remains", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    expect(screen.queryByText("Configure Target")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Configure XAA Debugger/i),
+    ).not.toBeInTheDocument();
   });
 });
