@@ -46,7 +46,8 @@ export function ConnectViewHeader({
                 label: "Host",
                 disabled: !previewedHostId,
               },
-              { value: "compare", label: "Compare" },
+              // "Compare" now lives as a sub-tab inside the Host section
+              // (see HostSectionTabs) rather than a peer primary tab.
               ...(computersEnabled
                 ? ([{ value: "computer", label: "Computer" }] as const)
                 : []),

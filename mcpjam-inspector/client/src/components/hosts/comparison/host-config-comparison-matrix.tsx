@@ -1,11 +1,16 @@
 import { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import {
@@ -20,6 +25,12 @@ interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
+  /**
+   * When true, render each field's description inline beneath its label.
+   * When false (default), the description moves into a hover `i` affordance
+   * so rows stay compact and scannable.
+   */
+  showDescriptions?: boolean;
   /** Remove a column; omitted when only one host remains. */
   onRemoveHost?: (hostId: string) => void;
 }
@@ -35,6 +46,7 @@ interface HostConfigComparisonMatrixProps {
 export function HostConfigComparisonMatrix({
   subjects,
   divergingOnly = false,
+  showDescriptions = false,
   onRemoveHost,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
@@ -57,7 +69,12 @@ export function HostConfigComparisonMatrix({
   }
 
   return (
-    <div className="overflow-auto rounded-xl border border-border bg-card">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="overflow-auto rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]"
+    >
       <table className="w-full border-collapse text-[13px]">
         <colgroup>
           <col style={{ width: 300 }} />
@@ -84,7 +101,7 @@ export function HostConfigComparisonMatrix({
         </thead>
 
         <tbody>
-          {groups.map((group) => {
+          {groups.map((group, groupIndex) => {
             const visibleFieldsInGroup = group.subsections
               .flatMap((sub) => sub.fields)
               .filter((f) => !divergingOnly || divergingIds.has(f.id));
@@ -97,22 +114,25 @@ export function HostConfigComparisonMatrix({
             return (
               <SectionRows
                 key={group.section.id}
+                index={groupIndex}
                 sectionLabel={group.section.label}
                 divergeCount={groupDivergeCount}
                 subsections={group.subsections}
                 subjects={subjects}
                 divergingIds={divergingIds}
                 divergingOnly={divergingOnly}
+                showDescriptions={showDescriptions}
               />
             );
           })}
         </tbody>
       </table>
-    </div>
+    </motion.div>
   );
 }
 
 interface SectionRowsProps {
+  index: number;
   sectionLabel: string;
   divergeCount: number;
   subsections: ReadonlyArray<{
@@ -122,15 +142,18 @@ interface SectionRowsProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
   divergingIds: ReadonlySet<string>;
   divergingOnly: boolean;
+  showDescriptions: boolean;
 }
 
 function SectionRows({
+  index,
   sectionLabel,
   divergeCount,
   subsections,
   subjects,
   divergingIds,
   divergingOnly,
+  showDescriptions,
 }: SectionRowsProps) {
   const colSpan = subjects.length + 1;
   return (
@@ -141,14 +164,32 @@ function SectionRows({
           scope="colgroup"
           className="sticky top-[64px] z-20 bg-secondary border-y border-border px-5 py-2 text-left"
         >
-          <div className="flex items-baseline gap-3">
+          <motion.div
+            className="flex items-baseline gap-3"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{
+              delay: 0.08 + index * 0.07,
+              duration: 0.4,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+          >
             <span className="text-[15px] font-medium tracking-tight">
               {sectionLabel}
             </span>
+            {divergeCount > 0 && (
+              <motion.span
+                aria-hidden
+                className="inline-block size-1.5 rounded-full bg-primary/70"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ delay: 0.2 + index * 0.07, type: "spring", stiffness: 600, damping: 18 }}
+              />
+            )}
             <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
               {divergeCount} diverging
             </span>
-          </div>
+          </motion.div>
         </th>
       </tr>
 
@@ -165,6 +206,7 @@ function SectionRows({
             subjects={subjects}
             divergingIds={divergingIds}
             colSpan={colSpan}
+            showDescriptions={showDescriptions}
           />
         );
       })}
@@ -178,12 +220,14 @@ function SubsectionRows({
   subjects,
   divergingIds,
   colSpan,
+  showDescriptions,
 }: {
   label: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
   divergingIds: ReadonlySet<string>;
   colSpan: number;
+  showDescriptions: boolean;
 }) {
   return (
     <>
@@ -201,6 +245,7 @@ function SubsectionRows({
           field={field}
           subjects={subjects}
           diverges={divergingIds.has(field.id)}
+          showDescriptions={showDescriptions}
         />
       ))}
     </>
@@ -211,10 +256,12 @@ function FieldRow({
   field,
   subjects,
   diverges,
+  showDescriptions,
 }: {
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
   diverges: boolean;
+  showDescriptions: boolean;
 }) {
   return (
     <tr className="border-b border-border last:border-b-0">
@@ -237,10 +284,32 @@ function FieldRow({
             }}
           />
         )}
-        <div className="text-[13px] font-medium text-foreground leading-tight">
-          {field.label}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13px] font-medium text-foreground leading-tight">
+            {field.label}
+          </span>
+          {field.description && !showDescriptions && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`About ${field.label}`}
+                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  <Info className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                variant="muted"
+                className="max-w-[260px] text-left [text-wrap:normal]"
+              >
+                {field.description}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
-        {field.description && (
+        {field.description && showDescriptions && (
           <div className="text-[11px] text-muted-foreground mt-1 leading-snug">
             {field.description}
           </div>

@@ -19,6 +19,7 @@ import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServe
 import { useSharedAppState } from "@/state/app-state-context";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { HostSectionTabs } from "@/components/hosts/HostSectionTabs";
 import type { ServerFormData } from "@/shared/types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
@@ -416,6 +417,15 @@ export function HostBuilderViewRedesigned({
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
         <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+          {/* Host/Compare sub-nav sits inline beside Save — a single header
+              row instead of a second segmented bar stacked over the canvas. */}
+          <HostSectionTabs
+            value="host"
+            hostEnabled
+            onSelect={(next) => {
+              if (next === "compare") navigate("/host-compare");
+            }}
+          />
           <Button
             size="sm"
             onClick={() => void handleSave()}
@@ -447,8 +457,6 @@ export function HostBuilderViewRedesigned({
                   // The URL→state sync in HostsRoute will clear the
                   // selected host when /servers takes over.
                   navigate("/servers");
-                } else if (next === "compare") {
-                  navigate("/host-compare");
                 } else if (next === "computer") {
                   navigate("/computer");
                 }
@@ -456,7 +464,8 @@ export function HostBuilderViewRedesigned({
               options={[
                 { value: "servers", label: "Servers" },
                 { value: "host", label: "Host" },
-                { value: "compare", label: "Compare" },
+                // "Compare" is reached from the inline Host|Compare pill, not
+                // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled
                   ? [{ value: "computer", label: "Computer" }]
                   : []),
