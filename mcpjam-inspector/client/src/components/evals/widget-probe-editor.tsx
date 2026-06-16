@@ -306,7 +306,7 @@ export function WidgetProbeEditor({
                   setArgsError(null);
                 }}
                 spellCheck={false}
-                aria-label="Probe arguments JSON"
+                aria-label="Arguments (JSON)"
               />
               {"error" in parsedArgs ? (
                 <div className="text-[11px] text-red-600 dark:text-red-400">
