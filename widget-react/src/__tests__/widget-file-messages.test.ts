@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { authFetch } from "@/lib/session-token";
 import {
   handleGetFileDownloadUrlMessage,
   handleUploadFileMessage,
 } from "../widget-file-messages";
 
-vi.mock("@/lib/session-token", () => ({
-  authFetch: vi.fn(),
-}));
+// Post-3d-ii-c the handlers receive `authFetch` + `hostedMode` via a context
+// argument (sourced from the WidgetHost) instead of importing `@/lib/*`, so the
+// tests inject a mock `authFetch` directly.
+const authFetch = vi.fn();
 
 describe("widget-file-messages", () => {
   beforeEach(() => {
@@ -16,7 +16,7 @@ describe("widget-file-messages", () => {
 
   it("forwards upload success responses", async () => {
     const sendResponse = vi.fn();
-    vi.mocked(authFetch).mockResolvedValue({
+    authFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
         fileId: "file_550e8400-e29b-41d4-a716-446655440000",
@@ -32,6 +32,7 @@ describe("widget-file-messages", () => {
         fileName: "image.png",
       },
       sendResponse,
+      { authFetch, hostedMode: false },
     );
 
     expect(sendResponse).toHaveBeenCalledWith({
@@ -43,7 +44,7 @@ describe("widget-file-messages", () => {
 
   it("maps upload http errors to widget error responses", async () => {
     const sendResponse = vi.fn();
-    vi.mocked(authFetch).mockResolvedValue({
+    authFetch.mockResolvedValue({
       ok: false,
       statusText: "Bad Request",
       json: async () => ({ error: "Upload failed from server" }),
@@ -55,6 +56,7 @@ describe("widget-file-messages", () => {
         callId: 2,
       },
       sendResponse,
+      { authFetch, hostedMode: false },
     );
 
     expect(sendResponse).toHaveBeenCalledWith({
@@ -66,7 +68,7 @@ describe("widget-file-messages", () => {
 
   it("maps thrown upload errors to widget error responses", async () => {
     const sendResponse = vi.fn();
-    vi.mocked(authFetch).mockRejectedValue(new Error("Network down"));
+    authFetch.mockRejectedValue(new Error("Network down"));
 
     await handleUploadFileMessage(
       {
@@ -74,12 +76,33 @@ describe("widget-file-messages", () => {
         callId: 3,
       },
       sendResponse,
+      { authFetch, hostedMode: false },
     );
 
     expect(sendResponse).toHaveBeenCalledWith({
       type: "openai:uploadFile:response",
       callId: 3,
       error: "Network down",
+    });
+  });
+
+  it("blocks uploads in hosted mode without calling authFetch", async () => {
+    const sendResponse = vi.fn();
+
+    await handleUploadFileMessage(
+      {
+        type: "openai:uploadFile",
+        callId: 6,
+      },
+      sendResponse,
+      { authFetch, hostedMode: true },
+    );
+
+    expect(authFetch).not.toHaveBeenCalled();
+    expect(sendResponse).toHaveBeenCalledWith({
+      type: "openai:uploadFile:response",
+      callId: 6,
+      error: "File upload is not supported in hosted mode",
     });
   });
 
@@ -93,6 +116,7 @@ describe("widget-file-messages", () => {
         fileId: "../../other-endpoint",
       },
       sendResponse,
+      { hostedMode: false },
     );
 
     expect(sendResponse).toHaveBeenCalledWith({
@@ -115,6 +139,7 @@ describe("widget-file-messages", () => {
         fileId: "file_550e8400-e29b-41d4-a716-446655440000",
       },
       sendResponse,
+      { hostedMode: false },
     );
 
     expect(sendResponse).toHaveBeenCalledWith({

@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 /**
- * Tier-B import guard for the interactive widget renderer.
+ * Tier-B import guard for the inspector-side widget-runtime glue.
  *
- * Phase 1b inverts `mcp-apps-renderer.tsx`'s ambient inspector-app-state reads
- * (preferences / playground / chatbox / active-profile / host-context stores +
- * contexts, and the `client-config*` / `client-styles` resolvers) behind the
- * `useWidgetHost()` adapter (see ../src/components/chat-v2/thread/mcp-apps/
- * widget-host.ts + use-widget-host.ts). Once inverted, the renderer must import
- * ZERO inspector-app-state modules — that decoupling is what lets a later phase
- * relocate the renderer into a framework-free widget package.
+ * As of Phase 3d-ii-c the interactive renderer cluster (renderer, modal,
+ * surfaces, sandboxed-iframe, file-message bridge, app-tools registry,
+ * tool-input streaming) has RELOCATED into `@mcpjam/widget-react`, where the
+ * package's own `scripts/check-tier-imports.mjs` enforces it imports zero `@/`
+ * inspector internals. The renderer reads inspector app-state only through the
+ * `WidgetHost` contract, supplied via `<InspectorWidgetHostProvider>`
+ * (use-widget-host.tsx) — the one module that legitimately owns those reads.
  *
- * This guard fails (exit 1) if the renderer re-acquires a forbidden import. The
- * adapter (`use-widget-host.ts`) is EXEMPT: it is the inspector-side boundary
- * that legitimately owns these reads.
+ * What stays in the inspector is thin routing/util glue. This guard keeps that
+ * glue from re-acquiring direct inspector-app-state imports (it must reach state
+ * through the provider/host, not ad-hoc store/context reads). It fails (exit 1)
+ * if any guarded file (see GUARDED_FILES) imports a forbidden module.
  *
  * Matching mirrors the requested "exact specifier, `bad/` subpath, or
  * path-segment" style: a forbidden entry `F` trips on `spec === F`,
  * `spec` starting with `F + "/"`, or `F` appearing as a full slash-delimited
  * segment of `spec`.
  *
- * Deliberately NOT forbidden (widget-runtime deps that relocate with the
- * renderer in a later phase): `@modelcontextprotocol/ext-apps`,
- * `@mcp-ui/client`, `@/components/ui/sandboxed-iframe`, `@mcpjam/sdk/*`, and
- * relative `./` sibling imports.
+ * Deliberately NOT forbidden: `@mcpjam/widget-react` (the package the glue
+ * delegates to), `@mcpjam/sdk/*`, `@modelcontextprotocol/*`, `@mcp-ui/client`,
+ * and relative `./` sibling imports.
  */
 
 import { readFileSync } from "node:fs";
@@ -31,11 +31,16 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// File under guard (relative to client/).
-const RENDERER_PATH = resolve(
-  __dirname,
-  "../src/components/chat-v2/thread/mcp-apps/mcp-apps-renderer.tsx",
-);
+// Inspector-side widget glue under guard (relative to client/). The renderer
+// cluster itself now lives in `@mcpjam/widget-react` (guarded there); these are
+// the thin inspector files that route into it and must not reach into app-state
+// directly — they go through `<InspectorWidgetHostProvider>` / the host. The
+// adapter (`use-widget-host.tsx`) and renderer-path glue (`part-switch.tsx`) are
+// NOT listed: they legitimately own the inspector-state reads.
+const GUARDED_FILES = [
+  "src/components/chat-v2/thread/widget-replay.tsx",
+  "src/lib/mcp-ui/mcp-apps-utils.ts",
+].map((rel) => resolve(__dirname, "..", rel));
 
 /**
  * Inspector-app-state module specifiers (and prefixes) the renderer must not
@@ -104,37 +109,43 @@ function extractSpecifiers(source) {
 }
 
 function main() {
-  let source;
-  try {
-    source = readFileSync(RENDERER_PATH, "utf8");
-  } catch (err) {
-    console.error(
-      `[tier-b-guard] could not read renderer at ${RENDERER_PATH}: ${err.message}`,
-    );
-    process.exit(2);
-  }
-
   const violations = [];
-  for (const spec of extractSpecifiers(source)) {
-    const hit = matchForbidden(spec);
-    if (hit) violations.push({ spec, rule: hit });
+  for (const filePath of GUARDED_FILES) {
+    let source;
+    try {
+      source = readFileSync(filePath, "utf8");
+    } catch (err) {
+      console.error(
+        `[tier-b-guard] could not read ${filePath}: ${err.message}`,
+      );
+      process.exit(2);
+    }
+    for (const spec of extractSpecifiers(source)) {
+      const hit = matchForbidden(spec);
+      if (hit) violations.push({ file: filePath, spec, rule: hit });
+    }
   }
 
   if (violations.length > 0) {
     console.error(
-      "[tier-b-guard] mcp-apps-renderer.tsx imports forbidden inspector-app-state modules.",
+      "[tier-b-guard] widget-runtime cluster files import forbidden inspector-app-state modules.",
     );
     console.error(
-      "  The renderer must read these through useWidgetHost() (see widget-host.ts / use-widget-host.ts).",
+      "  Read app state through useWidgetHost() or receive it injected (see widget-host.ts / use-widget-host.ts).",
     );
     for (const v of violations) {
-      console.error(`  - "${v.spec}"  (matched forbidden rule: "${v.rule}")`);
+      const rel = v.file.includes("/client/")
+        ? v.file.slice(v.file.indexOf("/client/") + "/client/".length)
+        : v.file;
+      console.error(
+        `  - ${rel}: "${v.spec}"  (matched forbidden rule: "${v.rule}")`,
+      );
     }
     process.exit(1);
   }
 
   console.log(
-    "[tier-b-guard] OK: mcp-apps-renderer.tsx imports no forbidden inspector-app-state modules.",
+    `[tier-b-guard] OK: ${GUARDED_FILES.length} widget-runtime cluster files import no forbidden inspector-app-state modules.`,
   );
 }
 

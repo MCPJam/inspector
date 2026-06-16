@@ -28,7 +28,8 @@
       "@mcpjam/chat-ui/thread-helpers": [
         "../../chat-ui/src/thread-helpers.ts"
       ],
-      "@mcpjam/chat-ui/trace": ["../../chat-ui/src/trace.ts"]
+      "@mcpjam/chat-ui/trace": ["../../chat-ui/src/trace.ts"],
+      "@mcpjam/widget-react": ["../../widget-react/src/index.ts"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],

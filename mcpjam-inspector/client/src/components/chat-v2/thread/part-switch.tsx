@@ -379,6 +379,12 @@ export function PartSwitch({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             renderOverride={renderOverride}
+            // PartSwitch owns the inspector host-capabilities context; inject
+            // the gate so WidgetReplay re-checks per-server support without
+            // importing `@/contexts` / `@/lib/host-capabilities` itself.
+            resolveHostSupportsWidget={(sid) =>
+              hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
+            }
             onSendFollowUp={interactive ? onSendFollowUp : undefined}
             onCallTool={
               interactive

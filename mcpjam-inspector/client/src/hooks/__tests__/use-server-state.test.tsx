@@ -29,6 +29,7 @@ const {
   testConnectionMock,
   reconnectServerMock,
   getInitializationInfoMock,
+  importHostedOAuthTokensMock,
   tryResolveProjectServerMock,
   mockConvexQuery,
   mockCreateServer,
@@ -49,6 +50,7 @@ const {
   testConnectionMock: vi.fn(),
   reconnectServerMock: vi.fn(),
   getInitializationInfoMock: vi.fn(),
+  importHostedOAuthTokensMock: vi.fn(),
   tryResolveProjectServerMock: vi.fn<
     (serverNameOrId: string) => { projectId: string; serverId: string } | null
   >(() => null),
@@ -108,6 +110,17 @@ vi.mock("@/lib/apis/web/context", () => ({
   tryGetHostedServerDisplayName: vi.fn(),
   tryResolveProjectServer: tryResolveProjectServerMock,
 }));
+
+vi.mock("@/lib/apis/hosted-oauth-import-tokens-api", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/apis/hosted-oauth-import-tokens-api")
+    >();
+  return {
+    ...actual,
+    importHostedOAuthTokens: importHostedOAuthTokensMock,
+  };
+});
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(async () => ({
@@ -278,6 +291,11 @@ beforeEach(() => {
     serverId: "srv_demo",
   });
   reconnectServerMock.mockReset();
+  importHostedOAuthTokensMock.mockReset();
+  importHostedOAuthTokensMock.mockResolvedValue({
+    expiresAt: null,
+    kind: "generic",
+  });
   getInitializationInfoMock.mockResolvedValue({
     success: true,
     initInfo: null,
@@ -696,6 +714,66 @@ describe("useServerState OAuth callback failures", () => {
       projectId: "project_default",
       serverId: "srv_demo",
     });
+  });
+
+  it("imports debugger-applied OAuth tokens before reconnecting a synced local server", async () => {
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    readStoredOAuthConfigMock.mockReturnValueOnce({
+      registryServerId: "asana",
+      useRegistryOAuthProxy: true,
+      resourceUrl: "https://mcp.asana.com/sse",
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          tokenType: "Bearer",
+          expiresIn: 3600,
+          clientId: "client-id",
+          clientSecret: "client-secret",
+        },
+        "https://mcp.asana.com/sse"
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).toHaveBeenCalledWith({
+      projectId: "project_default",
+      serverId: "srv_demo",
+      serverUrl: "https://mcp.asana.com/sse",
+      oauthResourceUrl: "https://mcp.asana.com/sse",
+      kind: "registry",
+      registryServerId: "asana",
+      useRegistryOAuthProxy: true,
+      clientInformation: {
+        clientId: "client-id",
+        clientSecret: "client-secret",
+      },
+      tokens: {
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      },
+    });
+    expect(reconnectServerMock).toHaveBeenCalledWith(
+      "srv_demo",
+      expect.objectContaining({
+        url: "https://mcp.asana.com/sse",
+      }),
+      expect.objectContaining({
+        projectId: "project_default",
+        serverName: "demo-server",
+      })
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {

@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
+import { SandboxedIframe } from "@/components/ui/sandboxed-iframe";
 
 const ORIGINAL_LOCATION = window.location;
 
@@ -37,31 +38,26 @@ afterEach(() => {
     configurable: true,
     value: ORIGINAL_LOCATION,
   });
-  vi.resetModules();
   vi.restoreAllMocks();
-  vi.doUnmock("@/lib/config");
 });
 
+// Post-3d-ii-c the component reads `hostedMode` / `sandboxOrigin` as props
+// (supplied by `host.surface.*`) instead of importing the inspector
+// `@/lib/config` flags, so these contracts are exercised by passing the props
+// directly rather than mocking the config module.
 describe("SandboxedIframe — hosted-mode sandbox origin", () => {
   beforeEach(() => {
     setLocation("https://app.mcpjam.test");
   });
 
-  it("uses the configured SANDBOX_ORIGIN, not window.location.origin", async () => {
-    vi.doMock("@/lib/config", () => ({
-      HOSTED_MODE: true,
-      SANDBOX_ORIGIN: "https://sandbox.mcpjam.test",
-      SANITIZE_OAUTH_TRACES: true,
-      NON_PROD_LOCKDOWN: false,
-      EMPLOYEE_EMAIL_DOMAINS: [],
-      isAllowedEmployeeEmail: () => false,
-    }));
-    const { SandboxedIframe } = await import(
-      "@/components/ui/sandboxed-iframe"
-    );
-
+  it("uses the configured sandboxOrigin, not window.location.origin", async () => {
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={() => {}} />,
+      <SandboxedIframe
+        html={null}
+        onMessage={() => {}}
+        hostedMode
+        sandboxOrigin="https://sandbox.mcpjam.test"
+      />,
     );
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();
@@ -72,22 +68,16 @@ describe("SandboxedIframe — hosted-mode sandbox origin", () => {
     expect(srcUrl.pathname).toBe("/api/web/apps/mcp-apps/sandbox-proxy");
   });
 
-  it("falls back to same-origin and logs a security warning when SANDBOX_ORIGIN is unset", async () => {
-    vi.doMock("@/lib/config", () => ({
-      HOSTED_MODE: true,
-      SANDBOX_ORIGIN: null,
-      SANITIZE_OAUTH_TRACES: true,
-      NON_PROD_LOCKDOWN: false,
-      EMPLOYEE_EMAIL_DOMAINS: [],
-      isAllowedEmployeeEmail: () => false,
-    }));
+  it("falls back to same-origin and logs a security warning when sandboxOrigin is unset", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { SandboxedIframe } = await import(
-      "@/components/ui/sandboxed-iframe"
-    );
 
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={() => {}} />,
+      <SandboxedIframe
+        html={null}
+        onMessage={() => {}}
+        hostedMode
+        sandboxOrigin=""
+      />,
     );
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();

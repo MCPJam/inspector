@@ -1,15 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
-import {
-  SandboxedIframe,
-  SandboxedIframeHandle,
-} from "@/components/ui/sandboxed-iframe";
-import { extractMethod } from "@/stores/traffic-log-store";
+import { SandboxedIframe, SandboxedIframeHandle } from "./sandboxed-iframe";
 import {
   AppBridge,
   PostMessageTransport,
@@ -19,16 +9,15 @@ import {
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import type { CspMode } from "@/stores/ui-playground-store";
-import { LoggingTransport } from "./mcp-apps-logging-transport";
-import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
-import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
-import { resolveHostInfo } from "@/lib/client-config-v2";
+// Pure JSON-RPC parser + logging transport are shared, framework-free runtime
+// helpers in the SDK.
+import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
+// The `CspMode` type comes from the package's `WidgetHost` contract.
+import { type CspMode } from "./widget-host";
+// The package owns lifecycle + bridge; the inspector injects modal CHROME
+// (its design-system <Dialog>) + the widget-content fetch via the WidgetHost.
+import { useWidgetHost } from "./widget-host-context";
 import { useAppToolsRegistry } from "./app-tools-registry";
-
-// Injected by Vite at build time from package.json
-declare const __APP_VERSION__: string;
 
 export interface McpAppsModalProps {
   open: boolean;
@@ -93,6 +82,21 @@ export interface McpAppsModalProps {
    * permissions props.
    */
   effectiveHostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
+  /**
+   * Resolved AppBridge `hostInfo` the inline renderer already computed
+   * (`resolvers.resolveHostInfo(activeMcpProfile)` with the inspector
+   * fallback). Passed down rather than re-resolved here so the modal and
+   * inline bridges hand the widget an identical `hostInfo`, and so the modal
+   * holds no inspector-app-state coupling (`useActiveMcpProfile` /
+   * `resolveHostInfo` now live only in the renderer's `useWidgetHost()`).
+   */
+  hostInfo: { name: string; version: string };
+  /**
+   * Whether the active surface routes through web-managed (hosted) servers.
+   * Sourced from the renderer's `host.surface.webManagedServers` so the modal's
+   * widget-content fetch hits the same endpoint as the inline view.
+   */
+  webManagedServers: boolean;
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
@@ -129,12 +133,16 @@ export function McpAppsModal({
   cspMode,
   injectOpenAiCompat,
   effectiveHostCapabilities,
+  hostInfo,
+  webManagedServers,
   toolInputRef,
   toolOutputRef,
   themeModeRef,
   addUiLog,
   onCspViolation,
 }: McpAppsModalProps) {
+  const host = useWidgetHost();
+  const Modal = host.components?.Modal;
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
@@ -144,12 +152,6 @@ export function McpAppsModal({
   // tools separate. Cleared on teardown so `isLive` short-circuits any
   // in-flight `listTools` after the modal closes.
   const modalAppToolsBridgeIdRef = useRef<string | null>(null);
-  // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
-  // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
-  const activeMcpProfile = useActiveMcpProfile();
-  // Same scope as the inline renderer — chatbox runtime sessions route
-  // widget-content fetches through the hosted API on every platform.
-  const webManagedServers = useWebManagedServers();
   const modalColorScheme =
     hostContextRef.current?.theme === "light" ||
     hostContextRef.current?.theme === "dark"
@@ -179,7 +181,7 @@ export function McpAppsModal({
 
     const fetchModalHtml = async () => {
       try {
-        const { html } = await fetchMcpAppsWidgetContent({
+        const { html } = await host.services.fetchWidgetContent({
           serverId,
           forceWebEndpoint: webManagedServers,
           resourceUri,
@@ -223,21 +225,17 @@ export function McpAppsModal({
     const iframe = modalSandboxRef.current?.getIframeElement();
     if (!iframe?.contentWindow) return;
 
-    // Match the inline renderer: ChatGPT-like templates override this
-    // via mcpProfile.apps.uiInitialize.hostInfo. Backend soft-validates
-    // name+version when set, so the cast below is safe.
-    const resolvedHostInfo = (resolveHostInfo(activeMcpProfile) ?? {
-      name: "mcpjam-inspector",
-      version: __APP_VERSION__,
-    }) as { name: string; version: string };
     // Vendor-trait HostCapabilities come from the inline renderer's
     // resolver (matrix-derived + user override). Sandbox is composed
     // here from the widget-level resource CSP / permissions per
     // SEP-1865 (sandbox is per-resource, not a vendor trait — see
-    // HostMcpProfile.mcpAppsCapabilities doc).
+    // HostMcpProfile.mcpAppsCapabilities doc). `hostInfo` is the same
+    // resolved blob the inline renderer hands its bridge (ChatGPT-like
+    // templates may override it via mcpProfile.apps.uiInitialize.hostInfo);
+    // passing it down keeps inline + modal in lockstep.
     const bridge = new AppBridge(
       null,
-      resolvedHostInfo,
+      hostInfo,
       {
         ...effectiveHostCapabilities,
         sandbox: {
@@ -407,7 +405,7 @@ export function McpAppsModal({
     hostContextRef,
     toolInputRef,
     toolOutputRef,
-    activeMcpProfile,
+    hostInfo,
     effectiveHostCapabilities,
   ]);
 
@@ -421,37 +419,38 @@ export function McpAppsModal({
     }
   };
 
+  // Modal chrome is host-injected (the inspector's design-system <Dialog>). A
+  // host that doesn't supply `components.Modal` opts out of the modal surface.
+  if (!Modal) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        <div className="flex-1 w-full h-full min-h-0 overflow-auto">
-          {modalHtml && (
-            <SandboxedIframe
-              ref={modalSandboxRef}
-              html={modalHtml}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-              csp={widgetCsp}
-              permissions={widgetPermissions}
-              permissive={widgetPermissive}
-              sandboxAttrs={widgetSandboxAttrs}
-              allowFeatures={widgetAllowFeatures}
-              cspDirectives={widgetCspDirectives}
-              colorScheme={modalColorScheme}
-              onMessage={handleModalMessage}
-              title={`MCP App Modal: ${title}`}
-              className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
-              style={{
-                height: "100%",
-                minHeight: "400px",
-                backgroundColor: "transparent",
-              }}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <Modal open={open} onClose={() => onOpenChange(false)} title={title}>
+      <div className="flex-1 w-full h-full min-h-0 overflow-auto">
+        {modalHtml && (
+          <SandboxedIframe
+            ref={modalSandboxRef}
+            html={modalHtml}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            csp={widgetCsp}
+            permissions={widgetPermissions}
+            permissive={widgetPermissive}
+            sandboxAttrs={widgetSandboxAttrs}
+            allowFeatures={widgetAllowFeatures}
+            cspDirectives={widgetCspDirectives}
+            colorScheme={modalColorScheme}
+            onMessage={handleModalMessage}
+            title={`MCP App Modal: ${title}`}
+            hostedMode={host.surface.hostedMode}
+            sandboxOrigin={host.surface.sandboxOrigin}
+            className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
+            style={{
+              height: "100%",
+              minHeight: "400px",
+              backgroundColor: "transparent",
+            }}
+          />
+        )}
+      </div>
+    </Modal>
   );
 }
