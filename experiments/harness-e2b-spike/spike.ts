@@ -123,48 +123,57 @@ const agent = new HarnessAgent({
 async function main() {
   console.log("[spike] creating session (proves bridge reachable via getHost)…");
   const session = await agent.createSession();
-  console.log(`[spike] ✅ TEST 1 PASS — session ${session.sessionId} started; ` +
-    `the Claude Code bridge connected over E2B getHost/getPortUrl.`);
+  try {
+    console.log(`[spike] ✅ TEST 1 PASS — session ${session.sessionId} started; ` +
+      `the Claude Code bridge connected over E2B getHost/getPortUrl.`);
 
-  const res = await agent.stream({
-    session,
-    prompt: "What's the weather in Paris right now? Use your tools.",
-  });
+    const res = await agent.stream({
+      session,
+      prompt: "What's the weather in Paris right now? Use your tools.",
+    });
 
-  const toolCalls: Array<{ name: string; input: unknown }> = [];
-  const toolResults: string[] = [];
-  // The harness fullStream part union is broad; read it loosely at this
-  // boundary (spike-only) and classify by `type`.
-  for await (const part of res.fullStream as AsyncIterable<any>) {
-    if (typeof part?.type !== "string") continue;
-    if (part.type === "tool-call" || part.type === "tool-input-available") {
-      toolCalls.push({ name: part.toolName, input: part.input ?? part.args });
-      console.log(`[spike] tool-call: ${part.toolName}`, JSON.stringify(part.input ?? part.args));
-    } else if (part.type === "tool-result" || part.type === "tool-output-available") {
-      const text = JSON.stringify(part.output ?? part.result ?? "");
-      toolResults.push(text);
-      console.log(`[spike] tool-result: ${part.toolName} → ${text}`);
+    const toolCalls: Array<{ name: string; input: unknown }> = [];
+    const toolResults: string[] = [];
+    // The harness fullStream part union is broad; read it loosely at this
+    // boundary (spike-only) and classify by `type`.
+    for await (const part of res.fullStream as AsyncIterable<any>) {
+      if (typeof part?.type !== "string") continue;
+      if (part.type === "tool-call" || part.type === "tool-input-available") {
+        toolCalls.push({ name: part.toolName, input: part.input ?? part.args });
+        console.log(`[spike] tool-call: ${part.toolName}`, JSON.stringify(part.input ?? part.args));
+      } else if (part.type === "tool-result" || part.type === "tool-output-available") {
+        const text = JSON.stringify(part.output ?? part.result ?? "");
+        toolResults.push(text);
+        console.log(`[spike] tool-result: ${part.toolName} → ${text}`);
+      }
     }
-  }
-  const finalText = await res.text;
-  console.log("[spike] final text:", finalText);
+    const finalText = await res.text;
+    console.log("[spike] final text:", finalText);
 
-  // TEST 2: the MCP tool was actually called, with args + result detail.
-  const calledWeather = toolCalls.some((c) => c.name === "get_weather");
-  const sawSentinel =
-    toolResults.some((r) => r.includes("SPIKE_SENTINEL")) ||
-    finalText.includes("19C") ||
-    finalText.toLowerCase().includes("sunny");
-  if (calledWeather && sawSentinel) {
+    // TEST 2: the MCP tool was actually called, with args + result detail.
+    // Claude Code namespaces MCP tools as `mcp__<server>__<tool>` (here
+    // `mcp__weather__get_weather`), so match by substring, not exact name.
+    const calledWeather = toolCalls.some(
+      (c) => typeof c.name === "string" && c.name.includes("get_weather"),
+    );
+    const sawSentinel =
+      toolResults.some((r) => r.includes("SPIKE_SENTINEL")) ||
+      finalText.includes("19C") ||
+      finalText.toLowerCase().includes("sunny");
+    if (!calledWeather || !sawSentinel) {
+      // Throw → non-zero exit (via main().catch) so CI/automation gates on it.
+      throw new Error(
+        `TEST 2 FAIL — calledWeather=${calledWeather} sawSentinel=${sawSentinel}. ` +
+          `Tool-call detail insufficient to grade; inspect the raw parts above ` +
+          `(fallback: drive @anthropic-ai/claude-agent-sdk directly).`,
+      );
+    }
     console.log("[spike] ✅ TEST 2 PASS — Claude Code called the MCP tool and its " +
       "result (name + args + output) was observable for grading.");
-  } else {
-    console.log(`[spike] ❌ TEST 2 FAIL — calledWeather=${calledWeather} ` +
-      `sawSentinel=${sawSentinel}. Tool-call detail insufficient to grade; ` +
-      `inspect the raw parts above (fallback: drive @anthropic-ai/claude-agent-sdk directly).`);
+  } finally {
+    // Guarantee teardown even if streaming or the assertion throws.
+    await session.destroy();
   }
-
-  await session.destroy();
   console.log("[spike] done.");
 }
 

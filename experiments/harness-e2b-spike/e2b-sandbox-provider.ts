@@ -17,7 +17,7 @@
  * NOT run in this environment (no E2B_API_KEY) — written against the real
  * canary `@ai-sdk/harness` types and validated with `tsc`.
  */
-import { Sandbox } from "e2b";
+import { Sandbox, FileNotFoundError, CommandExitError } from "e2b";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -37,6 +37,14 @@ export interface E2BSandboxProviderOptions {
 }
 
 const enc = new TextEncoder();
+
+/** E2B throws FileNotFoundError for a missing path; the SandboxSession contract
+ *  wants `null` there, but real failures (transport / permission / sandbox-gone)
+ *  must propagate rather than masquerade as "file absent". */
+function nullIfMissing(err: unknown): null {
+  if (err instanceof FileNotFoundError) return null;
+  throw err;
+}
 
 /** E2B's files.write `data` accepts string | ArrayBuffer | Blob | ReadableStream
  *  (not a Uint8Array view), so hand it a clean, exactly-sized ArrayBuffer. */
@@ -109,23 +117,23 @@ export function createE2BSandboxProvider(
         readTextFile: async ({ path }) => {
           try {
             return await sandbox.files.read(path);
-          } catch {
-            return null; // contract: null when the file is absent
+          } catch (err) {
+            return nullIfMissing(err); // null only for a genuinely missing file
           }
         },
         readBinaryFile: async ({ path }) => {
           try {
             return await sandbox.files.read(path, { format: "bytes" });
-          } catch {
-            return null;
+          } catch (err) {
+            return nullIfMissing(err);
           }
         },
         readFile: async ({ path }) => {
           try {
             const bytes = await sandbox.files.read(path, { format: "bytes" });
             return bytesToStream(bytes);
-          } catch {
-            return null;
+          } catch (err) {
+            return nullIfMissing(err);
           }
         },
         writeTextFile: async ({ path, content }) => {
@@ -141,11 +149,20 @@ export function createE2BSandboxProvider(
 
         // ── exec ──────────────────────────────────────────────────────────
         run: async ({ command, workingDirectory, env }) => {
-          const res = await sandbox.commands.run(command, {
-            cwd: workingDirectory ?? cwd,
-            envs: env,
-          });
-          return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
+          try {
+            const res = await sandbox.commands.run(command, {
+              cwd: workingDirectory ?? cwd,
+              envs: env,
+            });
+            return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
+          } catch (err) {
+            // E2B throws on non-zero exit; the contract wants the result
+            // (exitCode + streams) surfaced, not a rejection.
+            if (err instanceof CommandExitError) {
+              return { exitCode: err.exitCode, stdout: err.stdout, stderr: err.stderr };
+            }
+            throw err;
+          }
         },
 
         // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
@@ -177,18 +194,35 @@ export function createE2BSandboxProvider(
               if (!streamsClosed) errCtl.enqueue(enc.encode(d));
             },
           });
+          // Observe exit exactly once; normalize E2B's throw-on-nonzero into an
+          // exit code so wait() resolves (contract) instead of rejecting.
+          const exitPromise: Promise<{ exitCode: number }> = handle
+            .wait()
+            .then((r) => ({ exitCode: r.exitCode }))
+            .catch((err) => {
+              if (err instanceof CommandExitError) return { exitCode: err.exitCode };
+              throw err;
+            });
+          // Close streams when the process ends on its OWN — not only via
+          // wait()/kill() — so a consumer reading to EOF never hangs.
+          void exitPromise.then(closeStreams, closeStreams);
           return {
             pid: handle.pid,
             stdout,
             stderr,
             wait: async () => {
-              const res = await handle.wait();
-              closeStreams();
-              return { exitCode: res.exitCode };
+              try {
+                return await exitPromise;
+              } finally {
+                closeStreams();
+              }
             },
             kill: async () => {
-              await handle.kill();
-              closeStreams(); // close so consumers don't hang (parity with wait)
+              try {
+                await handle.kill();
+              } finally {
+                closeStreams(); // parity with wait; never leave readers hanging
+              }
             },
           };
         },
