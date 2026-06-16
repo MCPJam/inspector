@@ -40,6 +40,11 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+// Tier B Phase 3c: @mcpjam/widget-react publishes from dist, but a clean
+// checkout has no widget-react/dist until it is built. Resolve from source so
+// the inspector's dev/build/typecheck/test never depend on a widget-react build
+// (mirrors the chat-ui / sdk source aliases above).
+const widgetReactEntry = path.resolve(rootDir, "../widget-react/src/index.ts");
 // Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
 // directly to the installed ESM entrypoints.
 const mcpSdkClientAuthEntry = path.resolve(
@@ -87,6 +92,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
+        "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,

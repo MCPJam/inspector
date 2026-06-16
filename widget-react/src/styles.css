@@ -1,0 +1,11 @@
+/*
+ * @mcpjam/widget-react base styles.
+ *
+ * Phase 3c: a placeholder that proves the CSS export pipeline (tsup bundles the
+ * JS/d.ts; scripts/copy-css.mjs ships this stylesheet to dist so consumers can
+ * `import "@mcpjam/widget-react/styles.css"`). The widget renderer's styles
+ * move here in 3d.
+ */
+.mcpjam-widget-host {
+  display: contents;
+}

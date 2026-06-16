@@ -209,6 +209,7 @@
     "@eslint/eslintrc": "^3",
     "@mcpjam/chat-ui": "*",
     "@mcpjam/design-system": "*",
+    "@mcpjam/widget-react": "*",
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4.1.11",
     "@tailwindcss/vite": "^4.1.13",

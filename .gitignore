@@ -10,3 +10,4 @@ mcpjam-inspector/server/utils/browser-harness/*.generated.ts
 cli/dist/
 sdk/dist/
 chat-ui/dist/
+widget-react/dist/
