@@ -245,8 +245,12 @@ export async function runHarnessTurn(
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
-        // Assistant content parts in STREAM ORDER (text interleaved with
-        // tool-calls) so the persisted transcript matches the real turn order.
+        // Reconstruct the transcript INCREMENTALLY so persisted history keeps
+        // the required assistant → tool → assistant ordering across steps:
+        // assistantParts holds the in-progress assistant message (text
+        // interleaved with tool-calls in stream order); pendingResults holds the
+        // current step's tool results. New assistant content after results means
+        // the next step has begun, so the prior segment is flushed first.
         const assistantParts: Array<
           | { type: "text"; text: string }
           | {
@@ -256,11 +260,45 @@ export async function runHarnessTurn(
               input: unknown;
             }
         > = [];
-        const turnToolResults: Array<{
+        const pendingResults: Array<{
           toolCallId: string;
           toolName: string | undefined;
           output: unknown;
+          isError: boolean;
         }> = [];
+        const flushSegment = () => {
+          if (assistantParts.length > 0) {
+            messageHistory.push({
+              role: "assistant",
+              content: [...assistantParts],
+            } as unknown as ModelMessage);
+            assistantParts.length = 0;
+          }
+          for (const tr of pendingResults) {
+            messageHistory.push({
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: tr.toolCallId,
+                  toolName: tr.toolName ?? "tool",
+                  // Failures use error-text (matches the emulated engine) so
+                  // eval/trace consumers distinguish errors from success.
+                  output: tr.isError
+                    ? {
+                        type: "error-text",
+                        value:
+                          typeof tr.output === "string"
+                            ? tr.output
+                            : JSON.stringify(tr.output),
+                      }
+                    : { type: "json", value: tr.output },
+                },
+              ],
+            } as unknown as ModelMessage);
+          }
+          pendingResults.length = 0;
+        };
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
@@ -276,6 +314,8 @@ export async function runHarnessTurn(
                 "",
             );
             if (!delta) continue;
+            // Assistant text after tool results begins the next step.
+            if (pendingResults.length > 0) flushSegment();
             if (textId === undefined) {
               textId = crypto.randomUUID();
               writer.write({ type: "text-start", id: textId });
@@ -291,6 +331,8 @@ export async function runHarnessTurn(
             writer.write({ type: "text-delta", id: textId, delta });
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
+            // A tool-call after tool results begins the next step.
+            if (pendingResults.length > 0) flushSegment();
             // Flush any open text block before the tool so the UI stream stays
             // balanced (matches the emulated engine's flush-before-tool order);
             // later text opens a fresh block with a new id.
@@ -348,10 +390,11 @@ export async function runHarnessTurn(
               promptIndex: 0,
               serverId: undefined,
             });
-            turnToolResults.push({
+            pendingResults.push({
               toolCallId,
               toolName: (part as { toolName?: string }).toolName,
               output,
+              isError,
             });
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
@@ -383,31 +426,10 @@ export async function runHarnessTurn(
         // Settle usage/finish on res.
         await res.text;
 
-        // Reconstruct the turn transcript so runAssistantTurn can derive
-        // toolCalls/toolResults and onConversationComplete persists a complete
-        // history — not just assistant prose. assistantParts is already in
-        // stream order; shapes mirror the emulated engine, built from
-        // loosely-read parts, so cast at the boundary. (Full multi-step
-        // interleaving of tool results awaits a live-box pass.)
-        if (assistantParts.length > 0) {
-          messageHistory.push({
-            role: "assistant",
-            content: assistantParts,
-          } as unknown as ModelMessage);
-        }
-        for (const tr of turnToolResults) {
-          messageHistory.push({
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: tr.toolCallId,
-                toolName: tr.toolName ?? "tool",
-                output: { type: "json", value: tr.output },
-              },
-            ],
-          } as unknown as ModelMessage);
-        }
+        // Flush the final step's assistant message + its tool results. Earlier
+        // steps were flushed as new assistant content arrived after results, so
+        // the persisted history preserves assistant → tool → assistant ordering.
+        flushSegment();
         writer.write({
           type: "finish",
           finishReason: turnFinishReason,
