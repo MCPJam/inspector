@@ -32,6 +32,8 @@ describe("HostCompareSelector", () => {
         onToggleHost={onToggleHost}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
       />,
     );
 
@@ -61,6 +63,8 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
       />,
     );
 
