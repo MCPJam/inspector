@@ -38,6 +38,7 @@ export function HostConfigCompareView({
   >({});
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
+  const [showDescriptions, setShowDescriptions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // Tracks whether the initial URL-driven selection has been applied.
   // After the first resolve, subsequent URL changes are ignored — Compare
@@ -199,6 +200,8 @@ export function HostConfigCompareView({
               onToggleHost={handleToggleHost}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
+              showDescriptions={showDescriptions}
+              onShowDescriptionsChange={setShowDescriptions}
               disabled={listLoading}
             />
 
@@ -220,6 +223,7 @@ export function HostConfigCompareView({
                 <HostConfigComparisonMatrix
                   subjects={orderedSubjects}
                   divergingOnly={divergingOnly}
+                  showDescriptions={showDescriptions}
                   onRemoveHost={
                     selectedHostIdSet.size > 1 ? handleToggleHost : undefined
                   }
