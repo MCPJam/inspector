@@ -268,11 +268,14 @@ export function ToolsTab({
   // Live per-tool quality lint for the loaded tools. Pure backend compute over
   // a snapshot of the current tool definitions; the sidebar renders a small
   // badge per flagged tool. The snapshot intentionally carries no version (the
-  // backend owns it) and no timestamp — keeping the query args purely a
-  // function of the tool set lets the subscription dedupe across renders and
-  // identical refetches instead of churning.
+  // backend owns it) and no timestamp, and the tools are sorted by name —
+  // keeping the query args a canonical function of the tool set (independent of
+  // load order) lets the subscription dedupe across renders and incremental
+  // refetches instead of churning.
   const toolQualitySnapshot = useMemo(() => {
-    const toolList = Object.values(tools);
+    const toolList = Object.values(tools).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
     if (!serverName || toolList.length === 0) return null;
     return { servers: [{ serverId: serverName, tools: toolList }] };
   }, [tools, serverName]);
