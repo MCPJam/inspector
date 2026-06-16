@@ -5,6 +5,7 @@ import {
   forceRefreshGuestSession,
   getCachedGuestSession,
   getOrCreateGuestSession,
+  markGuestActivated,
 } from "@/lib/guest-session";
 
 /**
@@ -89,6 +90,14 @@ export function useUnifiedConvexAuth() {
           session ||
           attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length
         ) {
+          // This guest is now driving Convex auth as a guest (no WorkOS user),
+          // so it is genuinely *activated* — record a persistent marker keyed
+          // by guestId so the promotion path can distinguish it from an
+          // incidental document bootstrap. Skipped for the empty placeholder
+          // guestId a bootstrap-seeded session may carry.
+          if (session?.guestId) {
+            markGuestActivated(session.guestId);
+          }
           setGuestToken(session?.token ?? null);
           setGuestLoading(false);
           return;

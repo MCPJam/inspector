@@ -14,6 +14,8 @@ const mockState = vi.hoisted(() => ({
   ensureUser: vi.fn().mockResolvedValue(undefined),
   getGuestPromotionProof: vi.fn().mockResolvedValue(null),
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
+  getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
+  isGuestActivated: vi.fn().mockReturnValue(false),
   sentrySetUser: vi.fn(),
 }));
 
@@ -33,6 +35,8 @@ vi.mock("@/hooks/use-actor-key", () => ({
 vi.mock("@/lib/guest-session", () => ({
   getGuestPromotionProof: mockState.getGuestPromotionProof,
   revokeGuestSessionAndCookie: mockState.revokeGuestSessionAndCookie,
+  getExistingGuestId: mockState.getExistingGuestId,
+  isGuestActivated: mockState.isGuestActivated,
 }));
 
 vi.mock("@sentry/react", () => ({
@@ -45,6 +49,8 @@ describe("useEnsureDbUser", () => {
     mockState.ensureUser.mockResolvedValue(undefined);
     mockState.getGuestPromotionProof.mockResolvedValue(null);
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
+    mockState.getExistingGuestId.mockResolvedValue(null);
+    mockState.isGuestActivated.mockReturnValue(false);
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
@@ -226,6 +232,70 @@ describe("useEnsureDbUser", () => {
     });
 
     expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("revokes an incidental (unactivated) guest cookie on WorkOS auth without promoting", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    // A guest cookie exists (incidental document bootstrap) but was never
+    // activated as a guest.
+    mockState.getExistingGuestId.mockResolvedValue("guest-incidental");
+    mockState.isGuestActivated.mockReturnValue(false);
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+
+    // No promotion proof requested.
+    expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
+    // ensureUser called WITHOUT guestProofJwt.
+    expect(mockState.ensureUser).toHaveBeenCalledWith({});
+    // Incidental cookie revoked.
+    await waitFor(() => {
+      expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("promotes an activated guest on WorkOS auth", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getExistingGuestId.mockResolvedValue("guest-activated");
+    mockState.isGuestActivated.mockReturnValue(true);
+    mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.getGuestPromotionProof).toHaveBeenCalledTimes(1);
+    });
+    // ensureUser called WITH the proof.
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({
+        guestProofJwt: "proof-jwt",
+      });
+    });
+    // Activated guests still revoke their cookie after a successful promote.
+    await waitFor(() => {
+      expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not request a promotion proof or revoke when no guest cookie exists", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getExistingGuestId.mockResolvedValue(null);
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
+    expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+    expect(mockState.ensureUser).toHaveBeenCalledWith({});
   });
 
   it("does not retry unrelated ensureUser errors", async () => {
