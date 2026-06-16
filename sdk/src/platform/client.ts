@@ -68,7 +68,10 @@ export class PlatformApiClient {
       ""
     );
     this.getAuth = options.getAuth;
-    this.fetchFn = options.fetch ?? fetch;
+    // Native fetch must run with `this` bound to the global scope. Storing the
+    // bare reference and calling it as `this.fetchFn(...)` rebinds `this` to the
+    // client instance, which throws "Illegal invocation" in Workers/browsers.
+    this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
   }
