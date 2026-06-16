@@ -58,6 +58,23 @@ test("parseBrowserActionSpec builds specs and validates flags", () => {
       parseBrowserActionSpec({ action: "scroll", scrollDirection: "sideways" }),
     (e) => e instanceof CliError && /Invalid --scroll-direction/.test(e.message),
   );
+  // Numeric action flags are bounded — negative/zero values are nonsensical.
+  assert.throws(
+    () =>
+      parseBrowserActionSpec({
+        action: "scroll",
+        scrollDirection: "down",
+        scrollAmount: "0",
+      }),
+    (e) =>
+      e instanceof CliError && /--scroll-amount must be greater than 0/.test(e.message),
+  );
+  assert.throws(
+    () => parseBrowserActionSpec({ action: "wait", duration: "-1" }),
+    (e) =>
+      e instanceof CliError &&
+      /--duration must be greater than or equal to 0/.test(e.message),
+  );
 });
 
 test("buildWidgetSessionStartOutput carries session metadata and keeps base64 opt-in", () => {
@@ -192,7 +209,9 @@ async function readJsonBody(
   return body ? (JSON.parse(body) as Record<string, unknown>) : {};
 }
 
-async function startMockInspector() {
+async function startMockInspector(
+  options: { startResponse?: Record<string, unknown> } = {},
+) {
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
 
   const server = http.createServer(async (request, response) => {
@@ -217,18 +236,20 @@ async function startMockInspector() {
       requests.push({ method: "POST", url, body: await readJsonBody(request) });
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
-        JSON.stringify({
-          sessionId: "sess-abc",
-          status: "rendered",
-          mountedWidgetId: "widget-abc",
-          viewport: { width: 1280, height: 800 },
-          expiresAt: Date.now() + 300000,
-          idleTimeoutMs: 300000,
-          resourceUri: "ui://widget/seats",
-          bridgeInitialized: true,
-          screenshotBase64: PNG_B64,
-          elapsedMs: 11,
-        }),
+        JSON.stringify(
+          options.startResponse ?? {
+            sessionId: "sess-abc",
+            status: "rendered",
+            mountedWidgetId: "widget-abc",
+            viewport: { width: 1280, height: 800 },
+            expiresAt: Date.now() + 300000,
+            idleTimeoutMs: 300000,
+            resourceUri: "ui://widget/seats",
+            bridgeInitialized: true,
+            screenshotBase64: PNG_B64,
+            elapsedMs: 11,
+          },
+        ),
       );
       return;
     }
@@ -320,6 +341,40 @@ test("apps session start renders, writes the frame, and returns a sessionId", as
   }
 });
 
+test("apps session start rejects a rendered response with no sessionId", async () => {
+  // A rendered verdict with no session id is unusable — the agent has nothing
+  // to step — so the CLI must fail rather than exit 0.
+  const server = await startMockInspector({
+    startResponse: { status: "rendered" },
+  });
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "apps",
+      "session",
+      "start",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "show_seats",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 1, result.stderr);
+    assert.match(
+      (JSON.parse(lastJsonLine(result.stderr)) as { error?: { message?: string } })
+        .error?.message ?? "",
+      /rendered but missing a sessionId/,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
 test("apps session action forwards the action spec and returns tool calls", async () => {
   const server = await startMockInspector();
 
@@ -381,7 +436,7 @@ test("apps session close disposes the session", async () => {
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), { closed: true });
+    assert.deepEqual(JSON.parse(lastJsonLine(result.stdout)), { closed: true });
     const del = server.requests.find((r) => r.method === "DELETE");
     assert.equal(del?.url, "/api/mcp/widget-session/sess-abc");
   } finally {

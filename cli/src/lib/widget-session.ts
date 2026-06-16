@@ -237,10 +237,21 @@ export function parseBrowserActionSpec(options: {
     spec.scrollDirection = dir as BrowserActionSpec["scrollDirection"];
   }
   if (options.scrollAmount !== undefined) {
-    spec.scrollAmount = parseFiniteNumber(options.scrollAmount, "--scroll-amount");
+    const scrollAmount = parseFiniteNumber(
+      options.scrollAmount,
+      "--scroll-amount",
+    );
+    if (scrollAmount <= 0) {
+      throw usageError("--scroll-amount must be greater than 0.");
+    }
+    spec.scrollAmount = scrollAmount;
   }
   if (options.duration !== undefined) {
-    spec.duration = parseFiniteNumber(options.duration, "--duration");
+    const duration = parseFiniteNumber(options.duration, "--duration");
+    if (duration < 0) {
+      throw usageError("--duration must be greater than or equal to 0.");
+    }
+    spec.duration = duration;
   }
   return spec;
 }
@@ -269,6 +280,14 @@ function normalizeStartResponse(value: unknown): WidgetSessionStartResponse {
   if (typeof r.status !== "string") {
     throw operationalError(
       "Inspector widget-session response was missing a status.",
+      value,
+    );
+  }
+  // A `rendered` verdict without a sessionId is unusable — the agent has nothing
+  // to step. Fail rather than let `--require-render` exit 0 on it.
+  if (r.status === "rendered" && typeof r.sessionId !== "string") {
+    throw operationalError(
+      "Inspector widget-session response was rendered but missing a sessionId.",
       value,
     );
   }

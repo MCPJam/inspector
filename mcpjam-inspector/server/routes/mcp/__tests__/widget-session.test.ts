@@ -168,6 +168,9 @@ describe("widget-session route", () => {
       expect(data.status).toBe("no_ui_resource");
       expect(data.sessionId).toBeUndefined();
       expect(widgetRenderSessions.size()).toBe(0);
+      // Gate-first: a non-widget tool must NOT be executed just to learn it has
+      // no UI (guards against a gate-order regression).
+      expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
     });
 
     it("disposes and returns no session on a non-rendered verdict", async () => {

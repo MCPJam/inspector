@@ -204,6 +204,26 @@ describe("WidgetRenderSessionRegistry", () => {
     expect(() => registry.reserve()).not.toThrow();
   });
 
+  it("ignores forged reservations so the cap can't be bypassed", () => {
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 1,
+      sweepIntervalMs: 0,
+    });
+    const real = registry.reserve(); // fills the only slot
+    // A structurally-valid but un-issued reservation must not free a slot or
+    // drive reservedCount negative.
+    registry.release({ id: "forged", active: true });
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+    // Registering with a forged reservation falls back to the real cap check.
+    expect(() => register2(registry, { id: "forged", active: true })).toThrow(
+      WidgetSessionCapacityError,
+    );
+
+    // The genuine reservation still frees its slot exactly once.
+    registry.release(real);
+    expect(() => registry.reserve()).not.toThrow();
+  });
+
   it("reclaims idle sessions on sweep and frees capacity", async () => {
     let now = 0;
     const registry = new WidgetRenderSessionRegistry({

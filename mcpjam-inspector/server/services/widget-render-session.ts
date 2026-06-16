@@ -107,8 +107,12 @@ export interface RegisterSessionInput {
  * A held capacity slot. `reserve()` returns one synchronously before the
  * (async) render so concurrent starts can't all pass a point-in-time cap check
  * and launch a burst of browsers; `register` consumes it, `release` frees it.
+ * The `id` is an unguessable token validated against the registry's live set, so
+ * a forged `{ active: true }` can't drive `reservedCount` below zero.
  */
 export interface WidgetSessionReservation {
+  /** @internal — registry-issued token; only a tracked id frees a slot. */
+  readonly id: string;
   /** @internal — still holding a slot. */
   active: boolean;
 }
@@ -128,6 +132,10 @@ export class WidgetRenderSessionRegistry {
    *  `register`/`release`), so concurrent starts respect the cap before a
    *  browser is launched. */
   private reservedCount = 0;
+  /** Ids of live reservations — a slot is only freed once, by a genuine
+   *  registry-issued reservation (guards against forged/double-consumed
+   *  handles corrupting `reservedCount`). */
+  private readonly reservationIds = new Set<string>();
   /** Set once a permanent (shutdown) disposeAll runs; new reserves/registers
    *  are refused so an in-flight start can't register a survivor after SIGTERM. */
   private shuttingDown = false;
@@ -181,15 +189,21 @@ export class WidgetRenderSessionRegistry {
     if (this.activeCount() >= this.maxSessions) {
       throw this.capacityError();
     }
+    const reservation: WidgetSessionReservation = {
+      id: randomUUID(),
+      active: true,
+    };
+    this.reservationIds.add(reservation.id);
     this.reservedCount += 1;
     this.ensureSweeping();
-    return { active: true };
+    return reservation;
   }
 
   /** Release a reserved slot without registering a session (render failed /
-   *  yielded no widget). Idempotent. */
+   *  yielded no widget). Idempotent — only a genuine, still-held reservation
+   *  frees a slot. */
   release(reservation: WidgetSessionReservation): void {
-    if (!reservation.active) return;
+    if (!this.reservationIds.delete(reservation.id)) return;
     reservation.active = false;
     this.reservedCount -= 1;
     if (this.sessions.size === 0 && this.disposingCount === 0 && this.reservedCount === 0) {
@@ -215,9 +229,10 @@ export class WidgetRenderSessionRegistry {
         "Widget session registry is shutting down.",
       );
     }
-    if (reservation?.active) {
+    if (reservation && this.reservationIds.delete(reservation.id)) {
       // Convert the held slot into a live session (no re-check — it was
-      // reserved up front).
+      // reserved up front). Consuming the tracked id prevents a forged or
+      // already-consumed reservation from slipping past the cap.
       reservation.active = false;
       this.reservedCount -= 1;
     } else {
