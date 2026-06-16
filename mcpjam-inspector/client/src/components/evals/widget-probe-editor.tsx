@@ -174,11 +174,11 @@ export function WidgetProbeEditor({
         probeConfig: draftProbeConfig,
         predicates: { mode: "replace", list: checks },
       });
-      toast.success("Widget probe saved");
+      toast.success("Render check saved");
     } catch (error) {
-      console.error("Failed to save widget probe:", error);
+      console.error("Failed to save render check:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to save widget probe",
+        error instanceof Error ? error.message : "Failed to save render check",
       );
     } finally {
       setIsSaving(false);
@@ -203,14 +203,14 @@ export function WidgetProbeEditor({
               ) : null}
               <div className="flex items-center gap-2">
                 <span className="rounded-md border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Widget probe
+                  Render check
                 </span>
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className="h-9 max-w-md text-sm font-medium"
-                  placeholder="Probe name"
-                  aria-label="Probe name"
+                  placeholder="Render check name"
+                  aria-label="Render check name"
                 />
               </div>
               <p className="text-xs text-muted-foreground">
@@ -306,7 +306,7 @@ export function WidgetProbeEditor({
                   setArgsError(null);
                 }}
                 spellCheck={false}
-                aria-label="Probe arguments JSON"
+                aria-label="Arguments (JSON)"
               />
               {"error" in parsedArgs ? (
                 <div className="text-[11px] text-red-600 dark:text-red-400">
@@ -365,7 +365,7 @@ export function WidgetProbeEditor({
           <section className="space-y-3 rounded-lg border bg-muted/20 p-4">
             <ChecksSection
               title="Checks"
-              description="Render checks gating this probe. Add widget checks (rendered / latency / console errors) or any other deterministic check."
+              description="Checks gating this render check. Add widget checks (rendered / latency / console errors) or any other deterministic check."
               value={checks}
               onChange={setChecks}
               availableTools={toolNames}

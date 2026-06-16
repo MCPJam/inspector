@@ -693,7 +693,7 @@ export function TestCasesOverview({
                             sideOffset={8}
                             className="max-w-[16rem]"
                           >
-                            Widget probes run with the full suite or on its
+                            Render checks run with the full suite or on its
                             schedule.
                           </TooltipContent>
                         </Tooltip>

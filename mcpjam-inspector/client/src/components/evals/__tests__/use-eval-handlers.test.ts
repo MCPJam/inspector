@@ -834,7 +834,7 @@ describe("useEvalHandlers", () => {
 
       expect(runResult).toBeNull();
       expect(toast.info).toHaveBeenCalledWith(
-        "Widget probes run with the full suite or on its schedule.",
+        "Render checks run with the full suite or on its schedule.",
       );
       expect(toast.error).not.toHaveBeenCalled();
       expect(mockAuthFetch).not.toHaveBeenCalled();

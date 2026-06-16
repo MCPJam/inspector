@@ -384,7 +384,7 @@ export function useEvalHandlers({
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
           toast.error(
-            "No tests to run. The suite's widget probes are missing their probe configuration."
+            "No tests to run. The suite's render checks are missing their configuration."
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
@@ -859,7 +859,7 @@ export function useEvalHandlers({
       // intentionally carry no models. Without this branch the model guard
       // below would surface a misleading "Add a model first".
       if (testCase.caseType === "widget_probe") {
-        toast.info("Widget probes run with the full suite or on its schedule.");
+        toast.info("Render checks run with the full suite or on its schedule.");
         return null;
       }
 
@@ -1345,7 +1345,7 @@ export function useEvalHandlers({
 
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId,
-          title: "Untitled widget probe",
+          title: "Untitled render check",
           query: "",
           models: [],
           caseType: "widget_probe",
@@ -1360,7 +1360,7 @@ export function useEvalHandlers({
           },
         });
 
-        toast.success("Widget probe created");
+        toast.success("Render check created");
 
         posthog.capture("eval_test_case_created", {
           location: "evals_tab",
@@ -1379,9 +1379,9 @@ export function useEvalHandlers({
 
         return testCaseId;
       } catch (error) {
-        console.error("Failed to create widget probe:", error);
+        console.error("Failed to create render check:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to create widget probe")
+          getBillingErrorMessage(error, "Failed to create render check")
         );
         return null;
       } finally {
