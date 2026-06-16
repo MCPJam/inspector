@@ -209,6 +209,9 @@ export async function runHarnessTurn(
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         const res = await agent.stream({
           messages,
+          // Hand the harness the abort signal so a cancel propagates into the
+          // in-sandbox run rather than only stopping our forwarding.
+          ...(abortSignal ? { abortSignal } : {}),
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
@@ -270,12 +273,17 @@ export async function runHarnessTurn(
             const output =
               (part as { output?: unknown }).output ??
               (part as { result?: unknown }).result;
+            // Surface tool failures the harness reports so eval/trace consumers
+            // that key off isError classify them correctly.
+            const isError =
+              (part as { isError?: unknown }).isError === true ||
+              (part as { error?: unknown }).error != null;
             writer.write({ type: "tool-output-available", toolCallId, output });
             await onToolResult?.({
               toolCallId,
               toolName: (part as { toolName?: string }).toolName,
               output,
-              isError: false,
+              isError,
               stepIndex: 0,
               promptIndex: 0,
               serverId: undefined,
@@ -299,27 +307,26 @@ export async function runHarnessTurn(
             }
           }
         }
+        // Cancelled mid-stream: do NOT drain res.text (it would block until the
+        // full harness run finishes). The finally below destroys the harness
+        // session, stopping the in-sandbox Claude Code run.
+        if (aborted) return;
         if (textId !== undefined) writer.write({ type: "text-end", id: textId });
 
-        // Ensure the stream is fully drained (settles usage/finish on res).
+        // Settle usage/finish on res.
         await res.text;
 
-        if (!aborted) {
-          // First-cut transcript: append the assistant's final text. Full
-          // tool-call/result message-part reconstruction is the remaining
-          // piece, pending live-box verification of the harness part shapes.
-          if (assistantText) {
-            messageHistory.push({
-              role: "assistant",
-              content: assistantText,
-            });
-          }
-          writer.write({
-            type: "finish",
-            ...(usage ? { messageMetadata: usage } : {}),
-          });
-          runSucceeded = true;
+        // First-cut transcript: append the assistant's final text. Full
+        // tool-call/result message-part reconstruction is the remaining piece,
+        // pending live-box verification of the harness part shapes.
+        if (assistantText) {
+          messageHistory.push({ role: "assistant", content: assistantText });
         }
+        writer.write({
+          type: "finish",
+          ...(usage ? { messageMetadata: usage } : {}),
+        });
+        runSucceeded = true;
       } finally {
         try {
           await session.destroy();
