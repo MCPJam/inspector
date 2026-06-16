@@ -14,7 +14,14 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   minify: false,
-  // React is a peer dep — never bundle it. (No `ai`/`@ai-sdk/react`: the widget
-  // runtime does not import them — audited in Phase 3c.)
-  external: ["react", "react-dom", "react/jsx-runtime"],
+  // React is a peer dep — never bundle it. @mcpjam/sdk + @modelcontextprotocol/*
+  // are runtime/type deps resolved at the consumer; keep them external so tsup
+  // (JS + dts) references them rather than inlining/resolving at build time.
+  external: [
+    "react",
+    "react-dom",
+    "react/jsx-runtime",
+    /^@mcpjam\/sdk/,
+    /^@modelcontextprotocol\//,
+  ],
 });

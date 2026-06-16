@@ -11,7 +11,10 @@ function SurfaceProbe() {
   return <span data-testid="kind">{host.surface.kind}</span>;
 }
 
-const host: WidgetHost = {
+// Minimal host for the provider/hook plumbing test (the probe reads only
+// `surface.kind`). The FULL WidgetHost contract is type-checked where it matters
+// — the inspector's use-widget-host adapter conforming to it (typecheck:client).
+const host = {
   surface: {
     kind: "playground",
     persistentSurfaceHost: false,
@@ -19,7 +22,7 @@ const host: WidgetHost = {
     sandboxOrigin: "",
     playgroundCspMode: "widget-declared",
   },
-};
+} as unknown as WidgetHost;
 
 describe("WidgetHostProvider / useWidgetHost", () => {
   it("provides the injected host to consumers", () => {
