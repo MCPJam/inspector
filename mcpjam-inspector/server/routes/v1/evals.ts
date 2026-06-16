@@ -17,6 +17,7 @@
  */
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -27,8 +28,15 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   RunEvalsRequestSchema,
   prepareEvalRun,
+  authorEvalSuite,
+  createConvexClients,
+  resolveServerIdsOrThrow,
+  promptTurnSchema,
   type PreparedEvalRun,
+  type RunEvalsRequest,
 } from "../shared/evals.js";
+import { matchOptionsSchema, casePredicatesSchema } from "@/shared/eval-matching";
+import { probeConfigSchema, TEST_CASE_TYPES } from "@/shared/probe-config";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
@@ -71,6 +79,128 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .refine((body) => body.suiteId || (body.serverIds?.length ?? 0) > 0, {
     message: "serverIds are required when creating a new suite",
   });
+
+// ── Author-only suite-create schema ──────────────────────────────────
+
+// An expected tool call may be given as a bare tool name or a {toolName,
+// arguments} object — the ergonomic authoring shape. `normalizeCreateTests…`
+// expands both into the wire `{ toolName, arguments }` the run schema expects.
+const expectedToolCallEntrySchema = z.union([
+  z.string().min(1),
+  z.object({
+    toolName: z.string().min(1),
+    arguments: z.record(z.string(), z.any()).optional(),
+  }),
+]);
+
+// Ergonomic body for author-only suite creation. NOT `RunEvalsRequestSchema`:
+// per-test `runs`/`model`/`provider`/`expectedToolCalls` are optional here and
+// filled from suite-level defaults by `normalizeCreateTestsToRunTests` before
+// the strict run schema validates them.
+const createEvalSuiteSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  serverIds: z.array(z.string()).min(1),
+  serverNames: z.array(z.string()).optional(),
+  model: z.string().min(1),
+  provider: z.string().optional(),
+  passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+  // Accepted for forward-compat; the current Convex suite/case mutations do
+  // not persist tags, so this is a no-op today (documented as such).
+  tags: z.array(z.string()).optional(),
+  tests: z
+    .array(
+      z.object({
+        title: z.string().min(1),
+        query: z.string().min(1),
+        runs: z.number().int().min(1).max(10).optional(),
+        model: z.string().optional(),
+        provider: z.string().optional(),
+        expectedToolCalls: z.array(expectedToolCallEntrySchema).optional(),
+        expectedOutput: z.string().optional(),
+        isNegativeTest: z.boolean().optional(),
+        scenario: z.string().optional(),
+        promptTurns: z.array(promptTurnSchema).optional(),
+        advancedConfig: z
+          .object({
+            system: z.string().optional(),
+            temperature: z.number().optional(),
+            toolChoice: z.any().optional(),
+          })
+          .passthrough()
+          .optional(),
+        matchOptions: matchOptionsSchema.optional(),
+        predicates: casePredicatesSchema.optional(),
+        caseType: z.enum(TEST_CASE_TYPES).optional(),
+        probeConfig: probeConfigSchema.optional(),
+      }),
+    )
+    .min(1)
+    .max(MAX_V1_TESTS),
+});
+
+type CreateEvalSuiteBody = z.infer<typeof createEvalSuiteSchema>;
+
+/**
+ * Expand the ergonomic authoring tests into the full
+ * `RunEvalsRequestSchema.shape.tests` element shape: fill `runs`, resolve
+ * model/provider from suite defaults (deriving provider from a `provider/model`
+ * id when neither is given), and normalize `expectedToolCalls` entries.
+ */
+function normalizeCreateTestsToRunTests(
+  tests: CreateEvalSuiteBody["tests"],
+  suite: { model: string; provider?: string },
+): RunEvalsRequest["tests"] {
+  return tests.map((test) => {
+    const runs = test.runs ?? 1;
+    const model = test.model ?? suite.model;
+    let provider = test.provider ?? suite.provider;
+    if (!provider) {
+      provider = model.includes("/") ? model.split("/")[0] : undefined;
+    }
+    if (!provider) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `Cannot derive a provider for test "${test.title}". Pass a suite-level "provider", a per-test "provider", or a "provider/model" id.`,
+      );
+    }
+    const expectedToolCalls = (test.expectedToolCalls ?? []).map((el) =>
+      typeof el === "string"
+        ? { toolName: el, arguments: {} }
+        : { toolName: el.toolName, arguments: el.arguments ?? {} },
+    );
+    return {
+      title: test.title,
+      query: test.query,
+      runs,
+      model,
+      provider,
+      expectedToolCalls,
+      ...(test.expectedOutput !== undefined
+        ? { expectedOutput: test.expectedOutput }
+        : {}),
+      ...(test.isNegativeTest !== undefined
+        ? { isNegativeTest: test.isNegativeTest }
+        : {}),
+      ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+      ...(test.promptTurns !== undefined
+        ? { promptTurns: test.promptTurns }
+        : {}),
+      ...(test.advancedConfig !== undefined
+        ? { advancedConfig: test.advancedConfig }
+        : {}),
+      ...(test.matchOptions !== undefined
+        ? { matchOptions: test.matchOptions }
+        : {}),
+      ...(test.predicates !== undefined ? { predicates: test.predicates } : {}),
+      ...(test.caseType !== undefined ? { caseType: test.caseType } : {}),
+      ...(test.probeConfig !== undefined
+        ? { probeConfig: test.probeConfig }
+        : {}),
+    };
+  });
+}
 
 // ── Model validation ─────────────────────────────────────────────────
 
@@ -506,6 +636,83 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   } catch (error) {
     releaseSlotOnce();
     throw error;
+  }
+});
+
+// POST /v1/projects/:projectId/eval-suites
+// Author-only: CREATE a runnable eval suite (suite + test cases) WITHOUT
+// running it. Synchronous — validation/persistence errors surface here.
+// Responds 201 with the suiteId. Distinct from POST /eval-runs (which creates
+// AND detaches execution, responding 202 with a runId). No concurrency slot,
+// no recorder, no execution.
+evals.post("/projects/:projectId/eval-suites", async (c) => {
+  const projectId = c.req.param("projectId");
+  const rawBody = await synthesizeServerBody(c);
+  const body = parseWithSchema(createEvalSuiteSchema, rawBody);
+
+  // Expand ergonomic tests into the strict run-schema element shape, then
+  // re-validate against the source-of-truth schema (re-checks the
+  // widget_probe ↔ probeConfig invariant the run path also enforces).
+  const normalizedTests = RunEvalsRequestSchema.shape.tests.parse(
+    normalizeCreateTestsToRunTests(body.tests, {
+      model: body.model,
+      provider: body.provider,
+    }),
+  );
+
+  // Reject unrunnable models up front, with a pointer to valid ids — same
+  // gate the async run path applies.
+  assertInlineTestModelsValid(normalizedTests, undefined);
+
+  const convexAuthToken = await getConvexBearerForRequest(c);
+  const serverIds = body.serverIds;
+  const serverNames = body.serverNames;
+
+  const { manager } = await createAuthorizedManager(
+    callerContextFromHono(c),
+    convexAuthToken,
+    projectId,
+    serverIds,
+    WEB_CALL_TIMEOUT_MS,
+    undefined,
+    undefined,
+    { serverNames },
+  );
+
+  // Author-only is fully synchronous: the manager is only needed to resolve
+  // and validate the server selection, so disconnect it before responding.
+  try {
+    const resolvedServerIds = resolveServerIdsOrThrow(serverIds, manager);
+    const { convexClient } = createConvexClients(convexAuthToken);
+    const { suiteId, caseUpsert } = await authorEvalSuite({
+      convexClient,
+      tests: normalizedTests,
+      resolvedServerIds,
+      persistedServerRefs: resolvedServerIds,
+      serverNames,
+      projectId,
+      suiteId: null,
+      suiteName: body.name,
+      suiteDescription: body.description,
+      passCriteria: body.passCriteria,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    return v1Resource(
+      c,
+      {
+        suiteId,
+        name: body.name,
+        servers: serverIds.map((id, index) => ({
+          id,
+          ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
+        })),
+        caseUpsert,
+      },
+      201,
+    );
+  } finally {
+    await manager.disconnectAllServers().catch(() => {});
   }
 });
 

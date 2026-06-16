@@ -215,6 +215,32 @@ describe("v1 live-op routes", () => {
     expect(runServerDoctorMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a guest POST on /eval-suites even though GET is allowlisted", async () => {
+    // The eval-suites path is guest-allowed for GET (catalog read) but the
+    // method-aware gate denies POST (suite authoring is a write) before the
+    // handler runs — guests can browse suites but not create them.
+    validateGuestTokenMock.mockResolvedValue({
+      valid: true,
+      guestId: "guest_abc",
+    });
+    const res = await post(
+      makeApp(),
+      "/api/v1/projects/p1/eval-suites",
+      {
+        name: "Guest suite",
+        serverIds: ["s1"],
+        model: "anthropic/claude-haiku-4.5",
+        tests: [{ title: "t", query: "q" }],
+      },
+      "guest_bearer"
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      code: "UNAUTHORIZED",
+      message: expect.stringMatching(/guest/i),
+    });
+  });
+
   it("reaches v1 through sessionAuthMiddleware with only Authorization: Bearer", async () => {
     // No X-MCP-Session-Auth header. Without the /api/v1 bypass in
     // sessionAuthMiddleware this 401s with "Session token required" before the

@@ -812,6 +812,52 @@
           "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" }
         }
+      },
+      "post": {
+        "operationId": "createEvalSuite",
+        "tags": ["Eval runs"],
+        "summary": "Create an eval suite (author-only, does not run)",
+        "description": "Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. `expectedToolCalls` entries may be a bare tool-name string or a `{ toolName, arguments }` object.\n\nGuest callers are denied (suite creation is a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteCreateRequest"
+              },
+              "example": {
+                "name": "smoke",
+                "serverIds": ["srv_abc123"],
+                "model": "anthropic/claude-haiku-4.5",
+                "tests": [
+                  {
+                    "title": "lists files",
+                    "query": "List the files in the project root.",
+                    "expectedToolCalls": ["list_files"]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The suite was created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalSuiteCreated" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
       }
     },
     "/chat-sessions": {
@@ -1472,6 +1518,160 @@
           }
         },
         "additionalProperties": true
+      },
+      "EvalSuiteCreateRequest": {
+        "type": "object",
+        "description": "Author-only suite-create body. A suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it.",
+        "required": ["name", "serverIds", "model", "tests"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Suite name."
+          },
+          "description": { "type": "string" },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Servers (by canonical project ID) the suite's cases run against.",
+            "items": { "type": "string" }
+          },
+          "serverNames": {
+            "type": "array",
+            "description": "Optional display names, parallel to `serverIds`.",
+            "items": { "type": "string" }
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Suite-level default model id (e.g. `anthropic/claude-haiku-4.5`). Used for any test that omits `model`."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional suite-level default provider. When omitted, the provider is derived from a `provider/model` id."
+          },
+          "passCriteria": {
+            "type": "object",
+            "properties": { "minimumPassRate": { "type": "number" } }
+          },
+          "tags": {
+            "type": "array",
+            "description": "Accepted for forward-compat; not persisted today (no-op).",
+            "items": { "type": "string" }
+          },
+          "tests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Test cases to create in the suite.",
+            "items": {
+              "type": "object",
+              "required": ["title", "query"],
+              "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The user prompt the model is given."
+                },
+                "runs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "description": "Iterations to execute for this case. Defaults to 1."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Per-case model override. Defaults to the suite-level `model`."
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Per-case provider override."
+                },
+                "expectedToolCalls": {
+                  "type": "array",
+                  "description": "Expected tool calls. Each entry is a bare tool-name string or a `{ toolName, arguments }` object. Defaults to `[]`.",
+                  "items": {
+                    "oneOf": [
+                      { "type": "string", "minLength": 1 },
+                      {
+                        "type": "object",
+                        "required": ["toolName"],
+                        "properties": {
+                          "toolName": { "type": "string", "minLength": 1 },
+                          "arguments": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "expectedOutput": { "type": "string" },
+                "isNegativeTest": {
+                  "type": "boolean",
+                  "description": "When `true`, the case passes if NO tools are called."
+                },
+                "scenario": { "type": "string" },
+                "advancedConfig": {
+                  "type": "object",
+                  "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvalSuiteCreated": {
+        "type": "object",
+        "required": ["suiteId", "name", "caseUpsert"],
+        "properties": {
+          "suiteId": { "type": "string" },
+          "name": { "type": "string" },
+          "servers": {
+            "type": "array",
+            "description": "The servers attached to the suite. `name` is present when supplied.",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" }
+              }
+            }
+          },
+          "caseUpsert": {
+            "type": "object",
+            "description": "Per-case create outcomes. Partial failures don't abort the suite; an all-failed new suite is rejected with VALIDATION_ERROR.",
+            "properties": {
+              "committed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              },
+              "failed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "EvalRunCreateRequest": {
         "type": "object",

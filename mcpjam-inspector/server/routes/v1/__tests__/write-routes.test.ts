@@ -8,6 +8,7 @@ import { Hono } from "hono";
 const {
   validateGuestTokenMock,
   prepareEvalRunMock,
+  authorEvalSuiteMock,
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
@@ -22,6 +23,7 @@ const {
   return {
     validateGuestTokenMock: vi.fn(),
     prepareEvalRunMock: vi.fn(),
+    authorEvalSuiteMock: vi.fn(),
     createAuthorizedManagerMock: vi.fn(),
     convexQueryMock: vi.fn(),
     convexActionMock: vi.fn(),
@@ -56,7 +58,11 @@ vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
     "../../shared/evals.js"
   );
-  return { ...actual, prepareEvalRun: prepareEvalRunMock };
+  return {
+    ...actual,
+    prepareEvalRun: prepareEvalRunMock,
+    authorEvalSuite: authorEvalSuiteMock,
+  };
 });
 
 vi.mock("../../web/auth.js", async () => {
@@ -731,6 +737,106 @@ describe("v1 write routes", () => {
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(1)
       );
+    });
+  });
+
+  describe("POST /eval-suites (author-only)", () => {
+    const VALID_CASE = {
+      title: "echo works",
+      query: "Use the echo tool",
+      expectedToolCalls: ["echo"],
+    };
+
+    it("rejects a body with no cases (400) before any side effect", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown model before connecting any server", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/not-a-real-model",
+          tests: [VALID_CASE],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("Unknown model");
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+    });
+
+    it("authors the suite and disconnects the manager (no run started)", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: {
+          listServers: () => ["s1"],
+          disconnectAllServers,
+        },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suite_new",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        suiteId?: string;
+        name?: string;
+        servers?: unknown;
+      };
+      expect(body.suiteId).toBe("suite_new");
+      expect(body.name).toBe("Fresh suite");
+
+      // The run engine is never invoked — this is author-only.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).toHaveBeenCalledTimes(1);
+      const authoredArgs = authorEvalSuiteMock.mock.calls[0][0];
+      expect(authoredArgs.suiteId).toBeNull();
+      expect(authoredArgs.suiteName).toBe("Fresh suite");
+      expect(authoredArgs.resolvedServerIds).toEqual(["s1"]);
+      // The case's ergonomic string tool call is normalized to the run shape.
+      expect(authoredArgs.tests[0].expectedToolCalls).toEqual([
+        { toolName: "echo", arguments: {} },
+      ]);
+      expect(authoredArgs.tests[0].runs).toBe(1);
+      expect(authoredArgs.tests[0].provider).toBe("anthropic");
+      expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
   });
 

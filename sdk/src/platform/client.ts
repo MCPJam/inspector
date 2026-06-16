@@ -8,6 +8,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
+  PlatformEvalSuiteCreated,
   PlatformMe,
   PlatformPage,
   PlatformProject,
@@ -177,6 +178,24 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-suites` — author a runnable suite from test-case
+   * definitions and return the new suite id. Synchronous (does NOT run the
+   * suite; execute it with `createEvalRun`). The same path serves `GET` for
+   * `listEvalSuites`.
+   */
+  createEvalSuite(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       { body: params.body },
       options
     );
