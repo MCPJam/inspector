@@ -38,7 +38,8 @@
     "@mcp-ui/client": "^5.9.0",
     "@mcpjam/sdk": "^1.17.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-    "@modelcontextprotocol/ext-apps": "^1.7.2"
+    "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "zustand": "^5.0.6"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.1",
