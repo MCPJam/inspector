@@ -58,6 +58,14 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn().mockReturnValue("web"),
 }));
 
+// Stub the tool-quality lint subscription so it resolves to "pending"
+// (undefined) without a ConvexProvider in the test tree. Other convex/react
+// exports are preserved for any child that relies on them.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("convex/react")>();
+  return { ...actual, useQuery: () => undefined };
+});
+
 // Mock task tracker
 vi.mock("@/lib/task-tracker", () => ({
   trackTask: vi.fn(),
@@ -81,14 +89,14 @@ vi.mock("../logger-view", () => ({
 
 describe("ToolsTab", () => {
   const createServerConfig = (
-    overrides: Partial<MCPServerConfig> = {},
+    overrides: Partial<MCPServerConfig> = {}
   ): MCPServerConfig =>
     ({
       transportType: "stdio",
       command: "node",
       args: ["server.js"],
       ...overrides,
-    }) as MCPServerConfig;
+    } as MCPServerConfig);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -107,8 +115,8 @@ describe("ToolsTab", () => {
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Connect to an MCP server to explore and test its available tools.",
-        ),
+          "Connect to an MCP server to explore and test its available tools."
+        )
       ).toBeInTheDocument();
     });
 
@@ -151,13 +159,13 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       expect(mockListTools).not.toHaveBeenCalled();
       expect(mockGetTaskCapabilities).not.toHaveBeenCalled();
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
     });
 
@@ -173,7 +181,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -186,14 +194,14 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       await waitFor(() => {
         expect(screen.queryByText("test-tool")).not.toBeInTheDocument();
       });
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
       expect(mockListTools).toHaveBeenCalledTimes(1);
     });
@@ -206,7 +214,7 @@ describe("ToolsTab", () => {
       mockListTools.mockReturnValue(
         new Promise((resolve) => {
           resolveTools = resolve;
-        }),
+        })
       );
 
       const { rerender } = render(
@@ -214,7 +222,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -226,7 +234,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       await act(async () => {
@@ -237,7 +245,7 @@ describe("ToolsTab", () => {
 
       expect(screen.queryByText("late-tool")).not.toBeInTheDocument();
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
     });
 
@@ -264,7 +272,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -384,7 +392,7 @@ describe("ToolsTab", () => {
       // After selection, the execute button should be visible
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /^run/i }),
+          screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
     });
@@ -496,7 +504,7 @@ describe("ToolsTab", () => {
       // Wait for execute button to be available
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /^run/i }),
+          screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
 
@@ -509,7 +517,7 @@ describe("ToolsTab", () => {
           "test-server",
           "greet",
           expect.any(Object),
-          undefined,
+          undefined
         );
       });
     });
@@ -536,7 +544,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="test-server" />,
+        <ToolsTab serverConfig={serverConfig} serverName="test-server" />
       );
 
       await waitFor(() => {
@@ -559,7 +567,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="server-1" />,
+        <ToolsTab serverConfig={serverConfig} serverName="server-1" />
       );
 
       await waitFor(() => {
