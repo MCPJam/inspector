@@ -35,6 +35,10 @@ export interface E2BSandboxProviderOptions {
   secure?: boolean;
   /** Keep the box alive long enough for the harness run. */
   timeoutMs?: number;
+  /** Per-command exec timeout for `run`. E2B foreground commands default to
+   *  ~60s — too short for the harness bootstrap (`pnpm install`). Defaults to
+   *  the sandbox lifetime (`timeoutMs`) or 10 min. */
+  commandTimeoutMs?: number;
   /** Port the in-sandbox bridge binds to; declared via session.ports so the
    *  claude-code adapter picks it up. */
   bridgePort?: number;
@@ -92,6 +96,12 @@ export function createE2BSandboxProvider(
 ): HarnessV1SandboxProvider {
   const bridgePort = opts.bridgePort ?? 39271;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
+  // E2B foreground `commands.run` defaults to a ~60s command timeout, separate
+  // from the sandbox's own lifetime — too short for the harness bootstrap
+  // (`pnpm install` of the claude-agent-sdk). Cap commands at the sandbox
+  // lifetime (or 10 min) instead, so a long install isn't killed while the box
+  // is still alive. (spawn/background commands aren't subject to this.)
+  const commandTimeoutMs = opts.commandTimeoutMs ?? opts.timeoutMs ?? 10 * 60_000;
 
   return {
     specificationVersion: "harness-sandbox-v1",
@@ -137,7 +147,9 @@ export function createE2BSandboxProvider(
       // before rethrowing. A reused (shared) box is the control plane's to
       // manage, so never kill it here.
       try {
-        await sandbox.commands.run("command -v pnpm || npm install -g pnpm");
+        await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+          timeoutMs: commandTimeoutMs,
+        });
       } catch (err) {
         if (ownsSandbox) {
           try {
@@ -196,6 +208,7 @@ export function createE2BSandboxProvider(
             const res = await sandbox.commands.run(command, {
               cwd: workingDirectory ?? cwd,
               envs: env,
+              timeoutMs: commandTimeoutMs,
             });
             return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
           } catch (err) {
