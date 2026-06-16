@@ -1,0 +1,125 @@
+import { describe, it, expect } from "vitest";
+import type { MCPServerConfig } from "@mcpjam/sdk";
+import {
+  buildHarnessMcpJson,
+  harnessServerInputFromConfig,
+  serializeHarnessMcpJson,
+  HarnessMcpConfigError,
+} from "../mcp-config.js";
+
+describe("buildHarnessMcpJson", () => {
+  it("maps a remote http server to a direct http entry", () => {
+    const out = buildHarnessMcpJson([
+      {
+        name: "weather",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { Authorization: "Bearer t" },
+      },
+    ]);
+    expect(out.mcpServers.weather).toEqual({
+      type: "http",
+      url: "https://api.example.com/mcp",
+      headers: { Authorization: "Bearer t" },
+    });
+  });
+
+  it("maps a local stdio server to its tunnel url as an http entry", () => {
+    const tunnelUrl =
+      "https://slug.tunnels.mcpjam.com/api/mcp/adapter-http/srv?k=secret";
+    const out = buildHarnessMcpJson([
+      { name: "files", transport: "stdio", tunnelUrl },
+    ]);
+    expect(out.mcpServers.files).toEqual({ type: "http", url: tunnelUrl });
+  });
+
+  it("omits empty headers", () => {
+    const out = buildHarnessMcpJson([
+      { name: "x", transport: "http", url: "https://x", headers: {} },
+    ]);
+    expect(out.mcpServers.x.headers).toBeUndefined();
+  });
+
+  it("sanitizes names and de-duplicates collisions", () => {
+    const out = buildHarnessMcpJson([
+      { name: "My Server!", transport: "http", url: "https://a" },
+      { name: "My/Server?", transport: "http", url: "https://b" },
+    ]);
+    const keys = Object.keys(out.mcpServers);
+    expect(keys).toContain("My_Server");
+    expect(keys).toContain("My_Server_2");
+    expect(keys).toHaveLength(2);
+  });
+
+  it("falls back to 'server' for an all-symbol name", () => {
+    const out = buildHarnessMcpJson([
+      { name: "!!!", transport: "http", url: "https://a" },
+    ]);
+    expect(Object.keys(out.mcpServers)).toEqual(["server"]);
+  });
+
+  it("returns an empty mcpServers map for no servers", () => {
+    expect(buildHarnessMcpJson([])).toEqual({ mcpServers: {} });
+  });
+});
+
+describe("harnessServerInputFromConfig", () => {
+  it("normalizes an http config (url + headers)", () => {
+    const cfg = {
+      url: "https://api/mcp",
+      requestInit: { headers: { "X-Foo": "bar" } },
+    } as unknown as MCPServerConfig;
+    expect(harnessServerInputFromConfig("remote", cfg)).toEqual({
+      name: "remote",
+      transport: "http",
+      url: "https://api/mcp",
+      headers: { "X-Foo": "bar" },
+    });
+  });
+
+  it("adds Authorization from a bare accessToken", () => {
+    const cfg = {
+      url: "https://api/mcp",
+      accessToken: "tok",
+    } as unknown as MCPServerConfig;
+    const input = harnessServerInputFromConfig("remote", cfg);
+    expect(input.transport).toBe("http");
+    expect(input.headers).toEqual({ Authorization: "Bearer tok" });
+  });
+
+  it("does not clobber an existing Authorization header", () => {
+    const cfg = {
+      url: "https://api/mcp",
+      accessToken: "tok",
+      requestInit: { headers: { Authorization: "Bearer existing" } },
+    } as unknown as MCPServerConfig;
+    const input = harnessServerInputFromConfig("remote", cfg);
+    expect(input.headers).toEqual({ Authorization: "Bearer existing" });
+  });
+
+  it("normalizes a stdio config to its tunnel url", () => {
+    const cfg = {
+      command: "node",
+      args: ["x.js"],
+    } as unknown as MCPServerConfig;
+    expect(
+      harnessServerInputFromConfig("local", cfg, { tunnelUrl: "https://t/u?k=s" }),
+    ).toEqual({ name: "local", transport: "stdio", tunnelUrl: "https://t/u?k=s" });
+  });
+
+  it("throws for a stdio config without a tunnel url", () => {
+    const cfg = { command: "node" } as unknown as MCPServerConfig;
+    expect(() => harnessServerInputFromConfig("local", cfg)).toThrow(
+      HarnessMcpConfigError,
+    );
+  });
+});
+
+describe("serializeHarnessMcpJson", () => {
+  it("produces parseable JSON round-tripping the object", () => {
+    const json = buildHarnessMcpJson([
+      { name: "w", transport: "http", url: "https://x" },
+    ]);
+    expect(JSON.parse(serializeHarnessMcpJson(json))).toEqual(json);
+  });
+});
