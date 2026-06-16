@@ -23,5 +23,6 @@ export default defineConfig({
     "react/jsx-runtime",
     /^@mcpjam\/sdk/,
     /^@modelcontextprotocol\//,
+    /^@mcp-ui\//,
   ],
 });
