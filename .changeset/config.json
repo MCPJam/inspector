@@ -10,7 +10,6 @@
   "ignore": [
     "@mcpjam/soundcheck",
     "@mcpjam/mcp",
-    "@mcpjam/design-system",
-    "@mcpjam/widget-react"
+    "@mcpjam/design-system"
   ]
 }

@@ -3,8 +3,6 @@
   "version": "0.0.0",
   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
   "license": "MIT",
-  "//private": "Phase 3c scaffolds the package boundary (WidgetHost context/hook). It is consumed inside the monorepo via a source alias and is NOT published until the renderer relocates here (3d) and the publish-ready surface pass lands. Flip `private` off then.",
-  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

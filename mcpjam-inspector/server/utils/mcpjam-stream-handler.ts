@@ -1237,7 +1237,19 @@ async function emitToolResults(
             typeof (part as any).serverId === "string"
               ? ((part as any).serverId as string)
               : undefined;
-          const rawOutput = part.output ?? (part as any).result;
+          // MCP App tools scrub structuredContent from the model-facing
+          // `output`; their widgets need the raw result, which
+          // `executeToolCallsFromMessages` stamps on `result` when it carries
+          // structuredContent. Prefer it so the widget receives
+          // structuredContent. All other tools keep the existing
+          // `output`-first behavior.
+          const rawResult = (part as any).result;
+          const rawOutput =
+            rawResult &&
+            typeof rawResult === "object" &&
+            "structuredContent" in rawResult
+              ? rawResult
+              : part.output ?? rawResult;
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
