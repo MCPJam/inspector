@@ -133,6 +133,29 @@ describe("POST /api/mcp/widget-render", () => {
       expect(res.status).toBe(400);
     });
 
+    it("returns 400 when parameters is not a plain object", async () => {
+      for (const parameters of [[1, 2, 3], "nope", 42, true]) {
+        const res = await postRender(app, {
+          serverId: SERVER_ID,
+          toolName: TOOL_NAME,
+          parameters,
+        });
+        expect(res.status, JSON.stringify(parameters)).toBe(400);
+        expect((await res.json()).error).toBe("parameters must be a JSON object");
+      }
+      // Missing parameters defaults to {} (no error).
+      const ok = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect(ok.status).toBe(200);
+      expect(mcpClientManager.executeTool).toHaveBeenLastCalledWith(
+        SERVER_ID,
+        TOOL_NAME,
+        {},
+      );
+    });
+
     it("returns 400 when viewport is malformed", async () => {
       for (const viewport of [
         { width: 0, height: 600 },

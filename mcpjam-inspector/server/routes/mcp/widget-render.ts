@@ -9,6 +9,7 @@ import {
   renderMcpAppToolResult,
   isRenderableMcpAppTool,
 } from "../../utils/mcp-app-render-observation";
+import { logger } from "../../utils/logger";
 
 /**
  * widget-render.ts — `POST /api/mcp/widget-render`: a one-shot, headless render
@@ -82,10 +83,17 @@ widgetRender.post("/", async (c) => {
   if (!serverId) return c.json({ error: "serverId is required" }, 400);
   if (!toolName) return c.json({ error: "toolName is required" }, 400);
 
-  const parameters =
-    body.parameters && typeof body.parameters === "object"
-      ? (body.parameters as Record<string, unknown>)
-      : {};
+  // Tool arguments must be a plain JSON object. Missing/null defaults to {};
+  // anything else provided (array, string, number) is a client error — mirror
+  // the viewport strictness below rather than silently forwarding e.g. an
+  // array to executeTool.
+  let parameters: Record<string, unknown> = {};
+  if (body.parameters !== undefined && body.parameters !== null) {
+    if (typeof body.parameters !== "object" || Array.isArray(body.parameters)) {
+      return c.json({ error: "parameters must be a JSON object" }, 400);
+    }
+    parameters = body.parameters as Record<string, unknown>;
+  }
 
   const viewportResult = parseViewport(body.viewport);
   if (!viewportResult.ok) {
@@ -202,7 +210,16 @@ widgetRender.post("/", async (c) => {
       500,
     );
   } finally {
-    await harness.dispose().catch(() => {});
+    // Best-effort cleanup (the response is already committed), but log a
+    // disposal failure so a leaked browser context is observable rather than
+    // silent.
+    await harness.dispose().catch((error) => {
+      logger.warn(
+        `[widget-render] harness disposal failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
   }
 });
 
