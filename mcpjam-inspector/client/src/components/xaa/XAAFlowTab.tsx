@@ -14,6 +14,7 @@ import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
+import { XAAServerModal } from "./XAAServerModal";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { XAARunChips } from "./XAARunChips";
@@ -128,8 +129,11 @@ export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
   organizationId,
+  onSelectServer,
+  onSaveServerConfig,
 }: XAAFlowTabProps) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
 
@@ -421,7 +425,7 @@ export function XAAFlowTab({
 
   const handleAdvance = useCallback(async () => {
     if (!hasTarget) {
-      setIsConfigModalOpen(true);
+      setIsServerModalOpen(true);
       return;
     }
 
@@ -433,7 +437,7 @@ export function XAAFlowTab({
 
   const handleRunAll = useCallback(async () => {
     if (!hasTarget) {
-      setIsConfigModalOpen(true);
+      setIsServerModalOpen(true);
       return;
     }
 
@@ -543,7 +547,7 @@ export function XAAFlowTab({
               flowState={flowState}
               focusedStep={focusedStep}
               hasProfile={hasTarget}
-              onConfigure={() => setIsConfigModalOpen(true)}
+              onConfigure={() => setIsServerModalOpen(true)}
             />
           </ResizablePanel>
 
@@ -556,7 +560,7 @@ export function XAAFlowTab({
               activeStep={focusedStep ?? flowState.currentStep}
               onFocusStep={setFocusedStep}
               actions={{
-                onConfigure: () => setIsConfigModalOpen(true),
+                onConfigure: () => setIsServerModalOpen(true),
                 onReset: hasTarget ? () => resetFlow() : undefined,
                 onContinue: continueDisabled ? undefined : handleAdvance,
                 onChangeNegativeTestMode: handleChangeNegativeTestMode,
@@ -604,6 +608,17 @@ export function XAAFlowTab({
           );
           setFocusedStep(null);
           setIsConfigModalOpen(false);
+        }}
+      />
+
+      <XAAServerModal
+        open={isServerModalOpen}
+        onOpenChange={setIsServerModalOpen}
+        server={activeServer}
+        existingServerNames={Object.keys(serverConfigs)}
+        onSave={({ formData }) => {
+          void onSaveServerConfig?.(formData);
+          onSelectServer?.(formData.name);
         }}
       />
     </div>
