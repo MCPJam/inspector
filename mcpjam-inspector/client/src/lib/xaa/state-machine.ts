@@ -383,6 +383,8 @@ export function createXAAStateMachine(
     scope,
     authzServerIssuer,
     registrationId,
+    serverId,
+    projectId,
   } = config;
 
   const state: Partial<XAAFlowState> = initialState ?? {};
@@ -921,14 +923,22 @@ export function createXAAStateMachine(
       return;
     }
 
-    // Registration-backed runs send only the registration id: the server
-    // resolves the stored secret and forces the outbound URL to the
-    // registration's stored token endpoint, so neither ever rides in from
-    // the browser. Manual runs may carry a profile-configured secret —
-    // confidential-client servers reject the jwt-bearer grant without one.
+    // Registration- and server-target runs send only an opaque id: the server
+    // resolves the stored secret and forces the outbound URL server-side, so
+    // neither the secret nor the destination ever rides in from the browser.
+    // Manual runs may carry a profile-configured secret — confidential-client
+    // servers reject the jwt-bearer grant without one.
     const tokenRequestBody = registrationId
       ? {
           registrationId,
+          assertion: state.idJag,
+          scope: state.scope,
+          resource: state.resourceUrl || state.serverUrl,
+        }
+      : serverId
+      ? {
+          serverId,
+          ...(projectId ? { projectId } : {}),
           assertion: state.idJag,
           scope: state.scope,
           resource: state.resourceUrl || state.serverUrl,
