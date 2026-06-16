@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/chat-ui",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
   "license": "MIT",
   "type": "module",
