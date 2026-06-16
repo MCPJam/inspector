@@ -158,6 +158,10 @@ export async function runHarnessTurn(
       return;
     }
 
+    // Hoisted so the catch can close an open text block if the turn fails
+    // after emitting text-start.
+    let textId: string | undefined;
+
     try {
       if (!projectId) {
         throw new Error("harness turn requires a projectId to resolve the computer");
@@ -215,7 +219,6 @@ export async function runHarnessTurn(
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
-        let textId: string | undefined;
         let assistantText = "";
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
@@ -324,6 +327,7 @@ export async function runHarnessTurn(
         }
         writer.write({
           type: "finish",
+          finishReason: "stop",
           ...(usage ? { messageMetadata: usage } : {}),
         });
         runSucceeded = true;
@@ -341,6 +345,8 @@ export async function runHarnessTurn(
       }
       const errorText = err instanceof Error ? err.message : String(err);
       logger.error("[harness] turn failed", err);
+      // Close any open text block so the UI stream stays balanced.
+      if (textId !== undefined) writer.write({ type: "text-end", id: textId });
       writer.write({ type: "error", errorText });
       onEngineError?.({
         message: errorText,
