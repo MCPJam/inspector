@@ -875,6 +875,42 @@ const evalCaseInput = z.object({
     .min(1)
     .optional()
     .describe("Optional scenario/context note for the case."),
+  // Advanced authoring fields. Typed permissively here and validated
+  // authoritatively by the backend route — but declared so they are forwarded
+  // verbatim instead of being stripped as unknown keys.
+  promptTurns: z
+    .array(z.record(z.string(), z.any()))
+    .optional()
+    .describe("Multi-turn prompt sequence for the case (advanced)."),
+  advancedConfig: z
+    .object({
+      system: z.string().optional(),
+      temperature: z.number().optional(),
+      toolChoice: z.any().optional(),
+    })
+    .passthrough()
+    .optional()
+    .describe("Per-case system prompt / temperature / tool-choice overrides."),
+  matchOptions: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case matcher options (advanced)."),
+  predicates: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case success-predicate gate (advanced)."),
+  caseType: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Case type: "prompt" (default) or "widget_probe".'),
+  probeConfig: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      "Widget-probe pinned tool call; required when caseType is widget_probe."
+    ),
   model: z
     .string()
     .trim()

@@ -643,6 +643,36 @@ describe("createEvalSuiteOperation", () => {
     expect(createCalls).toHaveLength(0);
   });
 
+  it("forwards advanced case fields instead of stripping them", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.parse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        {
+          title: "t",
+          query: "q",
+          advancedConfig: { system: "be terse", temperature: 0.2 },
+          matchOptions: { caseSensitive: false },
+          predicates: { mode: "replace", list: [] },
+          caseType: "prompt",
+          promptTurns: [{ role: "user", content: "hi" }],
+        },
+      ],
+    }) as {
+      cases: Array<Record<string, unknown>>;
+    };
+    const authored = parsed.cases[0]!;
+    expect(authored.advancedConfig).toEqual({
+      system: "be terse",
+      temperature: 0.2,
+    });
+    expect(authored.matchOptions).toEqual({ caseSensitive: false });
+    expect(authored.predicates).toEqual({ mode: "replace", list: [] });
+    expect(authored.caseType).toBe("prompt");
+    expect(authored.promptTurns).toEqual([{ role: "user", content: "hi" }]);
+  });
+
   it("requires a name, at least one server, and at least one case", () => {
     expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
       false

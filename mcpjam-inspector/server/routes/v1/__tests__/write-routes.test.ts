@@ -787,6 +787,29 @@ describe("v1 write routes", () => {
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
     });
 
+    it("maps a second-stage validation failure to 400, not 500", async () => {
+      // A widget_probe case without probeConfig passes the create-schema but
+      // fails the run-schema superRefine. parseWithSchema must turn that into a
+      // 400 VALIDATION_ERROR rather than letting a raw ZodError become a 500.
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [{ ...VALID_CASE, caseType: "widget_probe" }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+    });
+
     it("authors the suite and disconnects the manager (no run started)", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({

@@ -182,6 +182,7 @@ test("eval create posts an authored suite and echoes the new suite id", async ()
           title: "echo works",
           query: "say hi",
           expectedToolCalls: ["echo"],
+          advancedConfig: { system: "be terse", temperature: 0.1 },
         },
       ],
     };
@@ -210,6 +211,11 @@ test("eval create posts an authored suite and echoes the new suite id", async ()
     assert.equal(body.model, "anthropic/claude-haiku-4.5");
     assert.equal(body.tests.length, 1);
     assert.equal(body.tests[0].title, "echo works");
+    // Advanced authoring fields forward instead of being stripped.
+    assert.deepEqual(body.tests[0].advancedConfig, {
+      system: "be terse",
+      temperature: 0.1,
+    });
 
     assert.ok(fixture.authHeaders.includes("Bearer sk_test"));
     const payload = JSON.parse(run.stdout);
@@ -247,6 +253,40 @@ test("eval create lets --server override the file's servers", async () => {
     assert.equal(run.result.exitCode, 0);
     const body = fixture.createBodies[0] as Record<string, any>;
     assert.deepEqual(body.serverIds, ["srv-ready"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval create forwards a --provider override for bare model ids", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--project",
+          "proj-alpha",
+          "--name",
+          "Bare model",
+          "--model",
+          "my-local-model",
+          "--provider",
+          "custom",
+          "--server",
+          "Ready Server",
+          "--json",
+          JSON.stringify({ cases: [{ title: "t", query: "q" }] }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const body = fixture.createBodies[0] as Record<string, any>;
+    assert.equal(body.model, "my-local-model");
+    assert.equal(body.provider, "custom");
   } finally {
     await fixture.close();
   }

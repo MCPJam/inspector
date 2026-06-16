@@ -653,7 +653,11 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   // Expand ergonomic tests into the strict run-schema element shape, then
   // re-validate against the source-of-truth schema (re-checks the
   // widget_probe ↔ probeConfig invariant the run path also enforces).
-  const normalizedTests = RunEvalsRequestSchema.shape.tests.parse(
+  // Use parseWithSchema so a second-stage failure (e.g. widget_probe without
+  // probeConfig, or an invalid advancedConfig.toolChoice) surfaces as a 400
+  // VALIDATION_ERROR rather than an uncaught ZodError → 500.
+  const normalizedTests = parseWithSchema(
+    RunEvalsRequestSchema.shape.tests,
     normalizeCreateTestsToRunTests(body.tests, {
       model: body.model,
       provider: body.provider,

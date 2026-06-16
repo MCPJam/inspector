@@ -168,6 +168,10 @@ export function registerEvalCommands(program: Command): void {
       .option("--name <name>", "Suite name (overrides the file)")
       .option("--model <model>", "Suite-level default model (overrides the file)")
       .option(
+        "--provider <provider>",
+        "Suite-level default provider (overrides the file; needed for bare/custom model ids)",
+      )
+      .option(
         "--server <name...>",
         "Project HTTP server names or IDs (overrides the file)",
       ),
