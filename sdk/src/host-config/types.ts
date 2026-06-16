@@ -47,14 +47,13 @@ export type ServerId = string;
 export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
 
 /**
- * Execution engine for a host config. Absent ⇒ the MCPJam **emulated** loop —
- * the only historical behavior, so pre-feature rows hash byte-identically
- * (the key is simply never written). `"harness:claude-code"` runs the turn
- * inside a real Claude Code runtime via the AI SDK harness. Namespaced
- * (`harness:<runtime>`) so additional real runtimes can be added later
- * without a schema migration.
+ * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
+ * **emulated** loop — the only historical behavior, so pre-feature rows hash
+ * byte-identically (the key is simply never written). `"claude-code"` runs the
+ * turn inside a real Claude Code runtime via the AI SDK harness. Extensible to
+ * additional runtimes (e.g. `"codex"`, `"pi"`) later without a schema migration.
  */
-export type HostEngine = "harness:claude-code";
+export type Harness = "claude-code";
 
 /**
  * Permissions Policy feature tokens corresponding to the four
@@ -265,12 +264,13 @@ export type HostConfigInputV2 = {
   // canonicalizer collapses it to undefined so "cleared" and "never set"
   // hash identically. Legacy `toolset` input is accepted and dropped.
   computer?: HostConfigComputerInput | null;
-  // Execution engine. Absent ⇒ emulated loop; `"harness:claude-code"` runs the
-  // real Claude Code runtime. Optional + pure pass-through (like
-  // progressiveToolDiscovery) so absent hashes byte-identically to pre-feature
-  // rows. Emulated has exactly one canonical form (the key absent), so all
-  // emulated hosts dedupe together.
-  engine?: HostEngine;
+  // Which real agent harness runs the turn. Absent ⇒ emulated loop;
+  // `"claude-code"` runs the real Claude Code runtime. Optional + near
+  // pass-through (like progressiveToolDiscovery) so absent hashes
+  // byte-identically to pre-feature rows. Emulated has exactly one canonical
+  // form (the key absent), so all emulated hosts dedupe together. The
+  // canonicalizer rejects any value other than the known harness ids.
+  harness?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); chatbox/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -327,9 +327,9 @@ export type CanonicalHostConfigV2 = {
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.
   computer?: HostConfigComputer;
-  // Mirrors HostConfigInputV2.engine (pure pass-through). Optional so absent
-  // rows hash byte-identically to pre-feature rows.
-  engine?: HostEngine;
+  // Mirrors HostConfigInputV2.harness (validated pass-through). Optional so
+  // absent rows hash byte-identically to pre-feature rows.
+  harness?: Harness;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or

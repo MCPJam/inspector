@@ -205,11 +205,11 @@ const inputs = [
     },
   },
   {
-    // Optional engine selector. Absent ⇒ emulated (base-minimal proves that
-    // hash is unchanged); an explicit "harness:claude-code" writes the key and
-    // hashes distinctly. Pure pass-through, like progressiveToolDiscovery.
-    label: "engine-harness-claude-code",
-    input: { ...base(), engine: "harness:claude-code" },
+    // Optional harness selector. Absent ⇒ emulated (base-minimal proves that
+    // hash is unchanged); an explicit "claude-code" writes the key and hashes
+    // distinctly. Validated pass-through, like progressiveToolDiscovery.
+    label: "harness-claude-code",
+    input: { ...base(), harness: "claude-code" },
   },
   {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,

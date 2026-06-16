@@ -18,7 +18,7 @@ import type {
   HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
-  HostEngine,
+  Harness,
   HostStyleId,
   McpAppsCapabilities,
   McpProtocolVersion,
@@ -30,7 +30,7 @@ export type {
   McpProtocolVersion,
   ServerId,
   HostStyleId,
-  HostEngine,
+  Harness,
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
@@ -91,9 +91,9 @@ export interface HostJson {
   /** Personal computer attached to this host; absent ⇒ none. Normalized:
    * `null` input never survives to `HostJson`. */
   computer?: HostComputer;
-  /** Execution engine; absent ⇒ emulated. `"harness:claude-code"` runs the
+  /** Which harness runs the turn; absent ⇒ emulated. `"claude-code"` runs the
    * turn in a real Claude Code runtime (requires an attached `computer`). */
-  engine?: HostEngine;
+  harness?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
   connectionDefaults: HostConnectionDefaults;
@@ -147,12 +147,12 @@ export interface HostInit {
    */
   computer?: HostComputer | null;
   /**
-   * Execution engine; absent ⇒ emulated (MCPJam's own loop). Set to
-   * `"harness:claude-code"` to run the turn inside a real Claude Code runtime
-   * via the AI SDK harness. The harness runs in the host's attached
-   * `computer` (E2B), so a computer is required when this is set.
+   * Which harness runs the turn; absent ⇒ emulated (MCPJam's own loop). Set to
+   * `"claude-code"` to run the turn inside a real Claude Code runtime via the
+   * AI SDK harness. The harness runs in the host's attached `computer` (E2B),
+   * so a computer is required when this is set.
    */
-  engine?: HostEngine;
+  harness?: Harness;
   /** Required servers this host connects to. */
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */

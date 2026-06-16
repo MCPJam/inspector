@@ -1,5 +1,5 @@
 {
-  "__inputHash": "5ca3f799cd440755877a1657217861099289b67e26356a93a990ea01ccb5c261",
+  "__inputHash": "c0318c3797442aaffff93f5cab1b855d536adb3b8dcb4245d4d66506cbdd9d21",
   "rows": [
     {
       "label": "base-minimal",
@@ -398,7 +398,7 @@
       "sha256": "b97b0b565bf8deb5ceaa0c97597c433959a02f3cdec0833b848e01df4879476a"
     },
     {
-      "label": "engine-harness-claude-code",
+      "label": "harness-claude-code",
       "input": {
         "hostStyle": "claude",
         "modelId": "anthropic/claude-sonnet-4-6",
@@ -411,10 +411,10 @@
         },
         "clientCapabilities": {},
         "hostContext": {},
-        "engine": "harness:claude-code"
+        "harness": "claude-code"
       },
-      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"engine\":\"harness:claude-code\",\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
-      "sha256": "23a9e0679b2320eacbd44910b23cf503ab1f61fc6b570c266884c654afcd7a06"
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"harness\":\"claude-code\",\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "c444a57c5e3d89c4b78a8c877aa221eb14e1645355674acf0eed077aafc7b110"
     },
     {
       "label": "builtin-tool-ids-empty-omitted",

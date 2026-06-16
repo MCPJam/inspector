@@ -593,7 +593,7 @@ export type {
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
-  HostEngine,
+  Harness,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
