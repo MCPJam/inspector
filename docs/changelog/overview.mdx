@@ -28,6 +28,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Added
 
+- **MCPJam CLI as an MCP server (`mcpjam mcp`)**
+  - New `mcpjam mcp` command runs MCPJam itself as a stdio MCP server, so MCP clients without shell access (Claude Desktop, Claude Code, Cursor, custom agents) can use the testing engine as tools
+  - Connect to, exercise, and debug other MCP servers: connection management, tool/resource/prompt calls, and stateless `server doctor` / `probe` diagnostics
+  - Connections stay open across tool calls, so agents can observe notifications and session behavior that one-shot commands can't
+  - See [MCPJam as an MCP server](/cli/mcp-server)
+
 - **OAuth Protocol 2025-03-26 Support**
   - Added support for original MCP OAuth specification (2025-03-26)
   - Direct RFC8414 discovery from MCP server base URL with fallback endpoints
