@@ -24,7 +24,8 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
@@ -289,6 +290,9 @@ export interface MCPJamHandlerOptions {
   sourceType?: string;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
+   *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
+  harness?: Harness;
   requireToolApproval?: boolean;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
@@ -3000,7 +3004,12 @@ export async function runChatEngineLoop(
 export async function handleMCPJamFreeChatModel(
   options: MCPJamHandlerOptions
 ): Promise<Response> {
-  const result = await runChatEngineLoop(options, "ui");
+  // A host with harness: "claude-code" runs the real Claude Code runtime via
+  // runHarnessTurn; otherwise the emulated engine. Both satisfy the same
+  // ChatEngineLoopResult contract (streamSink "ui" → a Response).
+  const result = await (options.harness === "claude-code"
+    ? runHarnessTurn(options, "ui")
+    : runChatEngineLoop(options, "ui"));
   if (!result.response) {
     throw new Error(
       "runChatEngineLoop(streamSink: 'ui') returned no Response — internal invariant violated"
