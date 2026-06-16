@@ -147,6 +147,13 @@ function normalizeWidgetRenderResponse(value: unknown): WidgetRenderResponse {
 }
 
 /**
+ * Upper bound for a viewport edge (px). Mirrors the server's
+ * `widget-render` cap so an obviously-invalid size (e.g. `999999x999999`)
+ * fails client-side before connecting to the Inspector.
+ */
+const MAX_VIEWPORT_EDGE = 8192;
+
+/**
  * Parse a `--viewport <WxH>` string (e.g. `1280x800`) into pixel dimensions.
  * Returns undefined when unset; throws a usage error on a malformed value.
  */
@@ -171,9 +178,14 @@ export function parseWidgetRenderViewport(
 
   const width = Number(match[1]);
   const height = Number(match[2]);
-  if (width <= 0 || height <= 0) {
+  if (
+    width <= 0 ||
+    height <= 0 ||
+    width > MAX_VIEWPORT_EDGE ||
+    height > MAX_VIEWPORT_EDGE
+  ) {
     throw usageError(
-      `Invalid viewport "${value}". Width and height must be positive.`,
+      `Invalid viewport "${value}". Width and height must be between 1 and ${MAX_VIEWPORT_EDGE}.`,
     );
   }
 
@@ -204,6 +216,8 @@ export function resolveWidgetRenderInjectOpenAiCompat(
 
 export interface WidgetRenderOutput {
   status: WidgetRenderStatus;
+  toolName?: string;
+  serverName?: string;
   observation: {
     consoleErrors?: string[];
     blockedRequests?: string[];
@@ -219,14 +233,21 @@ export interface WidgetRenderOutput {
 }
 
 /**
- * Shape the render observation into the command's JSON envelope. The screenshot
- * is delivered out-of-band by default: a file path when `--screenshot-out` was
- * written, and the inline base64 only when `--screenshot-base64` is set, so
- * normal stdout stays free of large image blobs.
+ * Shape the render observation into the command's JSON envelope. `toolName` and
+ * `serverName` echo the request so the result is self-describing in agent logs.
+ * The screenshot is delivered out-of-band by default: a file path when
+ * `--screenshot-out` was written, and the inline base64 only when
+ * `--screenshot-base64` is set, so normal stdout stays free of large image
+ * blobs.
  */
 export function buildWidgetRenderOutput(
   response: WidgetRenderResponse,
-  options: { screenshotPath?: string; includeBase64?: boolean } = {},
+  options: {
+    screenshotPath?: string;
+    includeBase64?: boolean;
+    toolName?: string;
+    serverName?: string;
+  } = {},
 ): WidgetRenderOutput {
   const screenshotCaptured =
     typeof response.screenshotBase64 === "string" &&
@@ -234,6 +255,8 @@ export function buildWidgetRenderOutput(
 
   return {
     status: response.status,
+    ...(options.toolName ? { toolName: options.toolName } : {}),
+    ...(options.serverName ? { serverName: options.serverName } : {}),
     observation: {
       ...(response.consoleErrors
         ? { consoleErrors: response.consoleErrors }

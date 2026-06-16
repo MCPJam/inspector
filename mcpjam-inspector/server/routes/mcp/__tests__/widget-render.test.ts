@@ -190,10 +190,25 @@ describe("POST /api/mcp/widget-render", () => {
       // No widget to render -> harness never constructed.
       expect(harnessState.constructorOpts).toHaveLength(0);
     });
+
+    it("returns 500 when listing tools fails", async () => {
+      mcpClientManager.listTools.mockRejectedValueOnce(
+        new Error("server disconnected"),
+      );
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe("server disconnected");
+      // Can't determine renderability -> tool not executed, harness not built.
+      expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+      expect(harnessState.constructorOpts).toHaveLength(0);
+    });
   });
 
   describe("renderability gate", () => {
-    it("returns no_ui_resource without launching the harness", async () => {
+    it("returns no_ui_resource WITHOUT executing the tool (gate-first)", async () => {
       mcpClientManager.getAllToolsMetadata.mockReturnValue({
         [TOOL_NAME]: { description: "plain tool" },
       });
@@ -206,12 +221,33 @@ describe("POST /api/mcp/widget-render", () => {
       expect(data.status).toBe("no_ui_resource");
       expect(data.screenshotBase64).toBeUndefined();
       expect(harnessState.constructorOpts).toHaveLength(0);
-      // The tool is still called (its result feeds the gate decision).
-      expect(mcpClientManager.executeTool).toHaveBeenCalledWith(
-        SERVER_ID,
-        TOOL_NAME,
-        {},
+      // Gate-first: a non-widget tool must NOT be run just to learn it has no
+      // UI. Tools are listed (to populate metadata); the tool itself is not
+      // executed.
+      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID);
+      expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    });
+
+    it("lists tools to populate metadata before gating", async () => {
+      // Metadata only becomes available AFTER listTools — proves the route
+      // doesn't rely on a pre-warmed cache (connect doesn't list tools, and
+      // executeTool doesn't cache metadata).
+      let listed = false;
+      mcpClientManager.listTools.mockImplementation(async () => {
+        listed = true;
+        return { tools: [] };
+      });
+      mcpClientManager.getAllToolsMetadata.mockImplementation(() =>
+        listed ? { [TOOL_NAME]: MCP_APP_META } : {},
       );
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("rendered");
+      expect(mcpClientManager.listTools).toHaveBeenCalledWith(SERVER_ID);
+      expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
     });
   });
 

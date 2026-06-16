@@ -22,10 +22,12 @@ import { logger } from "../../utils/logger";
  * always comes from the local Inspector install (Playwright postinstall /
  * on-demand `ensureLocalChromiumInstalled`), never the hosted image.
  *
- * Mirrors the eval probe's render path (services/evals/probe-iteration.ts):
- * executeTool -> getAllToolsMetadata gate -> harness render -> dispose. The CLI
- * (`mcpjam apps render`) is the primary caller; it stays thin (no Playwright)
- * because the harness runs server-side where local Chromium lives.
+ * Flow: listTools (populate the metadata cache) -> renderability gate -> (only
+ * if renderable) executeTool -> harness render -> dispose. Gating BEFORE
+ * execution means a non-widget, side-effectful tool isn't run just to discover
+ * it has no UI. The CLI (`mcpjam apps render`) is the primary caller; it stays
+ * thin (no Playwright) because the harness runs server-side where local
+ * Chromium lives.
  */
 
 const widgetRender = new Hono();
@@ -109,12 +111,42 @@ widgetRender.post("/", async (c) => {
 
   const startedAt = Date.now();
 
+  // ── renderability gate (BEFORE executing the tool) ─────────────────────
+  // Populate the tool-metadata cache first: connecting a server does NOT list
+  // its tools, and executeTool doesn't cache metadata, so without this the gate
+  // would always see empty metadata (=> always no_ui_resource). Then gate on
+  // the declared UI resource — a non-MCP-App / resource-less tool has no widget
+  // to mount, so report `no_ui_resource` WITHOUT running a possibly
+  // side-effectful tool.
+  let toolMetadata: Record<string, unknown>;
+  try {
+    await c.mcpClientManager.listTools(serverId);
+    toolMetadata =
+      c.mcpClientManager.getAllToolsMetadata(serverId)?.[toolName] ?? {};
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to list server tools",
+      },
+      500,
+    );
+  }
+  if (!isRenderableMcpAppTool(toolMetadata)) {
+    return c.json(
+      { status: "no_ui_resource", elapsedMs: Date.now() - startedAt },
+      200,
+    );
+  }
+
   // ── pinned tool call ───────────────────────────────────────────────────
-  // The widget renders THIS result. A protocol-level failure (unknown tool,
-  // invalid params, server disconnected) means there's nothing to render, so
-  // surface it as a 500 like the rest of the MCP route surface. A tool that
-  // merely returns `isError: true` is still a result — the widget may render
-  // its error state — so it flows through to the harness unchanged.
+  // The widget renders THIS result. A protocol-level failure (invalid params,
+  // server disconnected) means there's nothing to render, so surface it as a
+  // 500 like the rest of the MCP route surface. A tool that merely returns
+  // `isError: true` is still a result — the widget may render its error state —
+  // so it flows through to the harness unchanged.
   let rawResult: unknown;
   try {
     rawResult = await c.mcpClientManager.executeTool(
@@ -128,19 +160,6 @@ widgetRender.post("/", async (c) => {
         error: error instanceof Error ? error.message : "Tool execution failed",
       },
       500,
-    );
-  }
-
-  // ── renderability gate ─────────────────────────────────────────────────
-  // Not an MCP App tool / no declared UI resource => no widget to mount. Report
-  // it as an explicit observation (matching the probe's `no_ui_resource`)
-  // instead of launching the browser.
-  const toolMetadata =
-    c.mcpClientManager.getAllToolsMetadata(serverId)?.[toolName] ?? {};
-  if (!isRenderableMcpAppTool(toolMetadata)) {
-    return c.json(
-      { status: "no_ui_resource", elapsedMs: Date.now() - startedAt },
-      200,
     );
   }
 

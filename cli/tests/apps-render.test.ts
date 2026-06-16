@@ -38,6 +38,20 @@ test("parseWidgetRenderViewport parses WxH and rejects malformed values", () => 
       bad,
     );
   }
+
+  // Shares the server's max-edge cap so absurd sizes fail before connecting.
+  assert.deepEqual(parseWidgetRenderViewport("8192x8192"), {
+    width: 8192,
+    height: 8192,
+  });
+  for (const tooBig of ["8193x100", "100x99999", "999999x999999"]) {
+    assert.throws(
+      () => parseWidgetRenderViewport(tooBig),
+      (error) =>
+        error instanceof CliError && /between 1 and 8192/.test(error.message),
+      tooBig,
+    );
+  }
 });
 
 test("resolveWidgetRenderInjectOpenAiCompat maps protocol to the shim flag", () => {
@@ -81,6 +95,16 @@ test("buildWidgetRenderOutput keeps base64 opt-in and folds the observation", ()
     includeBase64: true,
   });
   assert.equal(withBase64.screenshotBase64, "aGVsbG8=");
+
+  // toolName/serverName echo the request for self-describing agent logs.
+  assert.equal(fileOnly.toolName, undefined);
+  assert.equal(fileOnly.serverName, undefined);
+  const labeled = buildWidgetRenderOutput(response, {
+    toolName: "show_seats",
+    serverName: "flights",
+  });
+  assert.equal(labeled.toolName, "show_seats");
+  assert.equal(labeled.serverName, "flights");
 });
 
 test("buildWidgetRenderOutput surfaces the install hint and no screenshot", () => {
@@ -289,6 +313,8 @@ test("apps render writes the screenshot to a file and keeps stdout clean", async
       any
     >;
     assert.equal(payload.status, "rendered");
+    assert.equal(payload.toolName, "show_seats");
+    assert.equal(payload.serverName, `127-0-0-1-${server.port}-mcp`);
     assert.equal(payload.screenshotPath, screenshotOut);
     assert.equal(payload.screenshotCaptured, true);
     assert.equal(payload.screenshotBase64, undefined);

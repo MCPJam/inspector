@@ -258,6 +258,8 @@ export function registerAppsCommands(program: Command): void {
       buildWidgetRenderOutput(response, {
         screenshotPath,
         includeBase64: options.screenshotBase64 === true,
+        toolName,
+        serverName,
       }),
       globalOptions.format,
     );
