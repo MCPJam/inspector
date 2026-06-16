@@ -107,6 +107,8 @@ export interface ResolvedExecutionContext {
   respectToolVisibility: boolean | undefined;
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
+  /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
+  harness: "claude-code" | undefined;
   selectedServerIds: string[] | undefined;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
@@ -220,6 +222,14 @@ function pickField<T>(
   return drift ? { value: winner, drift } : { value: winner };
 }
 
+/** Read the host-level `harness` selector. Only the known value is surfaced;
+ *  anything else (or absent) ⇒ undefined (emulated). */
+function readHarness(
+  hostConfig: Record<string, unknown>,
+): "claude-code" | undefined {
+  return hostConfig.harness === "claude-code" ? "claude-code" : undefined;
+}
+
 export function resolveExecutionContext(args: {
   hostConfig: Record<string, unknown> | null;
   overrides?: ExecutionOverrides;
@@ -240,6 +250,7 @@ export function resolveExecutionContext(args: {
       respectToolVisibility: overrides.respectToolVisibility,
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
+      harness: undefined,
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
       hostPolicy,
@@ -330,6 +341,7 @@ export function resolveExecutionContext(args: {
     respectToolVisibility: respectToolVisibility.value,
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
+    harness: readHarness(hostConfig),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
     hostPolicy,
