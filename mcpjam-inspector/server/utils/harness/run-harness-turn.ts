@@ -27,6 +27,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
+  type FinishReason,
   type UIMessageChunk,
 } from "ai";
 import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
@@ -164,6 +165,7 @@ export async function runHarnessTurn(
   let aborted = false;
   let runSucceeded = false;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
@@ -333,6 +335,8 @@ export async function runHarnessTurn(
               output,
             });
           } else if (type === "finish") {
+            const fr = (part as { finishReason?: unknown }).finishReason;
+            if (typeof fr === "string" && fr) turnFinishReason = fr as FinishReason;
             const u = (part as { totalUsage?: unknown; usage?: unknown })
               .totalUsage ?? (part as { usage?: unknown }).usage;
             if (u && typeof u === "object") {
@@ -398,7 +402,7 @@ export async function runHarnessTurn(
         }
         writer.write({
           type: "finish",
-          finishReason: "stop",
+          finishReason: turnFinishReason,
           ...(usage ? { messageMetadata: usage } : {}),
         });
         runSucceeded = true;
@@ -436,7 +440,7 @@ export async function runHarnessTurn(
         endedAt: Date.now(),
         spans: [],
         ...(usage ? { usage } : {}),
-        finishReason: "stop",
+        finishReason: turnFinishReason,
         modelId,
       };
       capturedTurnTrace = trace;
