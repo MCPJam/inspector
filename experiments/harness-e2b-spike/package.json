@@ -1,0 +1,24 @@
+{
+  "name": "harness-e2b-spike",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 de-risking spike: run the AI SDK Claude Code harness on E2B (reuse MCPJam's E2B), prove port exposure + MCP tool-call fidelity.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "spike": "tsx spike.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "^1.0.0-canary.13",
+    "@ai-sdk/harness-claude-code": "^1.0.0-canary.9",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.178",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ai": "^7.0.0-canary.176",
+    "e2b": "^2.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
