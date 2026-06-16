@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -58,6 +59,9 @@ const KIND_LABELS: Record<Kind, string> = {
   noToolErrors: "No tool errors",
   finalAssistantMessageNonEmpty: "Final message non-empty",
   tokenBudgetUnder: "Token budget under N",
+  widgetRendered: "Widget rendered",
+  widgetRenderLatencyUnder: "Widget rendered under N ms",
+  widgetNoConsoleErrors: "No widget console errors",
 };
 
 // Order chosen so tool-call checks cluster first, then response checks, then
@@ -72,7 +76,19 @@ const KIND_ORDER: Kind[] = [
   "noToolErrors",
   "finalAssistantMessageNonEmpty",
   "tokenBudgetUnder",
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
 ];
+
+// Widget render checks ship behind the synthetic-monitors rollout. Existing
+// rows of these kinds always render (deleting another team member's check by
+// hiding it would be worse); only the Add-check menu is gated.
+const SYNTHETIC_MONITOR_KINDS: ReadonlySet<Kind> = new Set([
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+]);
 
 /** Build a fresh, valid-by-default predicate skeleton for a newly-added row. */
 export function blankPredicate(kind: Predicate["type"]): Predicate {
@@ -95,6 +111,12 @@ export function blankPredicate(kind: Predicate["type"]): Predicate {
       return { type: "finalAssistantMessageNonEmpty" };
     case "tokenBudgetUnder":
       return { type: "tokenBudgetUnder", tokens: 1000 };
+    case "widgetRendered":
+      return { type: "widgetRendered" };
+    case "widgetRenderLatencyUnder":
+      return { type: "widgetRenderLatencyUnder", ms: 3000 };
+    case "widgetNoConsoleErrors":
+      return { type: "widgetNoConsoleErrors" };
   }
 }
 
@@ -189,6 +211,10 @@ export function AddCheckMenu({
   // the placeholder — simpler than a popover menu and reuses design-system
   // primitives that already render correctly inside dialogs/sheets.
   const [open, setOpen] = useState(false);
+  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
+  const kinds = syntheticMonitorsEnabled
+    ? KIND_ORDER
+    : KIND_ORDER.filter((kind) => !SYNTHETIC_MONITOR_KINDS.has(kind));
   return (
     <div className="flex items-center gap-2">
       <Select
@@ -206,7 +232,7 @@ export function AddCheckMenu({
           <SelectValue placeholder="Add check…" />
         </SelectTrigger>
         <SelectContent>
-          {KIND_ORDER.map((kind) => (
+          {kinds.map((kind) => (
             <SelectItem key={kind} value={kind} className="text-xs">
               {KIND_LABELS[kind]}
             </SelectItem>
@@ -357,6 +383,57 @@ function CheckFields({
           onChange={onChange}
           readOnly={readOnly}
         />
+      );
+    case "widgetRendered":
+      return (
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">
+            Passes when at least one MCP App widget rendered during the
+            iteration. Fails when the run recorded no widget renders.
+          </div>
+          <WidgetToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) =>
+              onChange(
+                toolName === undefined
+                  ? { type: "widgetRendered" }
+                  : { type: "widgetRendered", toolName },
+              )
+            }
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+        </div>
+      );
+    case "widgetRenderLatencyUnder":
+      return (
+        <WidgetLatencyFields
+          predicate={predicate}
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "widgetNoConsoleErrors":
+      return (
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">
+            Passes when no rendered widget logged console errors. Fails when
+            the run recorded no widget renders.
+          </div>
+          <WidgetToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) =>
+              onChange(
+                toolName === undefined
+                  ? { type: "widgetNoConsoleErrors" }
+                  : { type: "widgetNoConsoleErrors", toolName },
+              )
+            }
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+        </div>
       );
   }
 }
@@ -970,6 +1047,113 @@ function ResponseMatchesFields({
           {regexError}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Optional tool-scope filter shared by the widget render checks. Empty means
+ * "all widgets in the iteration"; the Zod schema rejects an empty string, so
+ * clearing the field must drop the key entirely (`onChange(undefined)`).
+ */
+function WidgetToolFilterField({
+  value,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  value: string | undefined;
+  onChange: (next: string | undefined) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  const ALL = "__all__";
+  const useDropdown = availableTools && availableTools.length > 0;
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-[11px]">
+        Limit to tool (optional)
+      </Label>
+      {useDropdown && !readOnly ? (
+        <Select
+          value={value ?? ALL}
+          onValueChange={(next) => onChange(next === ALL ? undefined : next)}
+        >
+          <SelectTrigger id={id} className="h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL} className="text-xs">
+              All widgets
+            </SelectItem>
+            {availableTools!.map((t) => (
+              <SelectItem key={t} value={t} className="text-xs">
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          id={id}
+          value={value ?? ""}
+          onChange={(e) =>
+            onChange(e.target.value === "" ? undefined : e.target.value)
+          }
+          placeholder="All widgets"
+          className="h-8 text-xs"
+          disabled={readOnly}
+        />
+      )}
+    </div>
+  );
+}
+
+function WidgetLatencyFields({
+  predicate,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "widgetRenderLatencyUnder" }>;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-[11px]">
+          Max render time in ms (strictly under)
+        </Label>
+        <Input
+          id={id}
+          type="number"
+          min={1}
+          step={1}
+          value={predicate.ms}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n)) return;
+            onChange({ ...predicate, ms: Math.floor(n) });
+          }}
+          className="h-8 w-32 text-xs"
+          disabled={readOnly}
+        />
+      </div>
+      <WidgetToolFilterField
+        value={predicate.toolName}
+        onChange={(toolName) => {
+          const next = { ...predicate };
+          if (toolName === undefined) delete next.toolName;
+          else next.toolName = toolName;
+          onChange(next);
+        }}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
     </div>
   );
 }

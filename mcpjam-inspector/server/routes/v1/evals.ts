@@ -19,7 +19,10 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
-import { createAuthorizedManager } from "../web/auth.js";
+import {
+  createAuthorizedManager,
+  callerContextFromHono,
+} from "../web/auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   RunEvalsRequestSchema,
@@ -219,7 +222,7 @@ function requireProjectMatch(
  * environment bindings); the backend query owns that logic so this surface
  * can never drift from what the run actually references.
  */
-async function fetchSuiteRunServerSelection(
+export async function fetchSuiteRunServerSelection(
   convexAuthToken: string,
   suiteId: string,
   namedHostId: string | undefined
@@ -425,7 +428,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
 
   try {
     const { manager } = await createAuthorizedManager(
-      c,
+      callerContextFromHono(c),
       convexAuthToken,
       projectId,
       serverIds,

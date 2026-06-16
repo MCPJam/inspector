@@ -35,6 +35,7 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -109,6 +110,11 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
+import {
+  isScheduledEvalsWorkerEnabled,
+  startScheduledEvalsWorker,
+  type ScheduledEvalsWorkerHandle,
+} from "./services/scheduled-evals-worker";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -218,6 +224,7 @@ generateSessionToken();
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
+startLocalBrowserRenderingSetupInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -587,6 +594,13 @@ const server = serve({
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
+// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
+// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
+let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
+if (isScheduledEvalsWorkerEnabled()) {
+  scheduledEvalsWorker = startScheduledEvalsWorker();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -616,6 +630,7 @@ async function shutdown() {
   }
 
   shuttingDown = true;
+  await scheduledEvalsWorker?.stop();
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;

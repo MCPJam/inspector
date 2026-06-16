@@ -5,10 +5,12 @@ import {
   resolveCasePredicates,
   resolveCaseSuccessPredicates,
   resolveExtrasCap,
+  summarizeRenderObservations,
   type ToolCall,
   type Predicate,
   type CasePredicates,
 } from "../eval-matching.js";
+import type { RunnerWidgetRenderObservation } from "../eval-trace.js";
 
 describe("argumentsMatch", () => {
   it("returns true for empty expected args", () => {
@@ -393,5 +395,53 @@ describe("resolveExtrasCap", () => {
     expect(
       resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
     ).toBeNull();
+  });
+});
+
+describe("summarizeRenderObservations", () => {
+  const observation = (
+    over: Partial<RunnerWidgetRenderObservation> = {},
+  ): RunnerWidgetRenderObservation => ({
+    toolCallId: "call-1",
+    toolName: "show_map",
+    serverId: "maps",
+    status: "rendered",
+    elapsedMs: 850,
+    ts: 1700000000000,
+    promptIndex: 0,
+    ...over,
+  });
+
+  it("returns an empty array for absent/empty input", () => {
+    expect(summarizeRenderObservations(undefined)).toEqual([]);
+    expect(summarizeRenderObservations([])).toEqual([]);
+  });
+
+  it("keeps only the predicate-relevant fields and drops the screenshot", () => {
+    const summaries = summarizeRenderObservations([
+      observation({
+        screenshotBase64: "aaaa",
+        blockedRequests: ["https://blocked.example"],
+        resourceUri: "ui://widget",
+        consoleErrors: ["TypeError: boom"],
+      }),
+    ]);
+    expect(summaries).toEqual([
+      {
+        toolCallId: "call-1",
+        toolName: "show_map",
+        serverId: "maps",
+        status: "rendered",
+        elapsedMs: 850,
+        consoleErrors: ["TypeError: boom"],
+      },
+    ]);
+  });
+
+  it("omits consoleErrors when empty so absence stays meaningful", () => {
+    const [summary] = summarizeRenderObservations([
+      observation({ consoleErrors: [] }),
+    ]);
+    expect(summary).not.toHaveProperty("consoleErrors");
   });
 });

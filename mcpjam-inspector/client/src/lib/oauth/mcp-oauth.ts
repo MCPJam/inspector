@@ -808,6 +808,12 @@ async function persistOAuthStateArtifacts(
     await provider.saveCodeVerifier(state.codeVerifier);
   }
 
+  // Persist discovery (incl. authorizationServerUrl) BEFORE saveTokens: the
+  // hosted-OAuth import inside saveTokens reads the AS URL from discoveryState()
+  // (localStorage), so it must already be written or the import omits it and a
+  // later hosted refresh can't reach localhost servers to rediscover it.
+  await saveDiscoveryStateFromFlowState(provider, state);
+
   if (state.accessToken) {
     await provider.saveTokens({
       access_token: state.accessToken,
@@ -818,8 +824,6 @@ async function persistOAuthStateArtifacts(
         : {}),
     });
   }
-
-  await saveDiscoveryStateFromFlowState(provider, state);
 }
 
 function buildOAuthTraceFromFlowState(input: {
@@ -2056,6 +2060,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       }
       const clientSecret =
         (stored?.client_secret as string | undefined) ?? this.customClientSecret;
+      // Forward the AS URL we discovered locally so the hosted backend can
+      // persist a refresh fallback for servers it can't reach (e.g. localhost);
+      // without it, the backend re-discovers against an unreachable resource on
+      // refresh and the credential becomes unusable.
+      const authorizationServerUrl =
+        this.discoveryState()?.authorizationServerUrl;
       const importPayload: ImportHostedOAuthTokensRequest = {
         projectId: this.convexBinding.projectId,
         serverId: this.convexBinding.serverId,
@@ -2063,6 +2073,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         ...(this.convexBinding.oauthResourceUrl
           ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
           : {}),
+        ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
         kind: this.convexBinding.kind,
         ...(this.convexBinding.registryServerId
           ? { registryServerId: this.convexBinding.registryServerId }

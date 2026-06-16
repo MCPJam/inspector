@@ -5,6 +5,7 @@ import {
   ChromiumNotInstalledError,
   cspSourceMatchesUrl,
   injectCspMeta,
+  isChromiumInstalled,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -118,6 +119,12 @@ afterEach(async () => {
   }
 });
 
+// Render/interaction/CSP suites below launch a real Chromium; run them only
+// where one is installed (CI + the hosted image), skip in browser-less envs.
+// The "Chromium gating" suite is intentionally NOT gated — it mocks the
+// missing-binary path and must always run.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+
 describe("McpAppBrowserHarness — Chromium gating", () => {
   it("records browser_unavailable when Chromium is not installed", async () => {
     // Force the binary-missing path by overriding the launcher loader.
@@ -146,7 +153,7 @@ describe("McpAppBrowserHarness — Chromium gating", () => {
   });
 });
 
-describe("McpAppBrowserHarness — render classification", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — render classification", () => {
   it("classifies a handshaking, painting widget as rendered", async () => {
     const h = makeHarness();
     const obs = await h.renderWidget({
@@ -284,7 +291,7 @@ describe("McpAppBrowserHarness — render classification", () => {
   }, 30_000);
 });
 
-describe("McpAppBrowserHarness — interaction", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — interaction", () => {
   it("dispatches a widget-initiated tools/call from a click", async () => {
     const h = makeHarness();
     const render = await h.renderWidget({
@@ -404,7 +411,7 @@ describe("McpAppBrowserHarness — interaction", () => {
   }, 30_000);
 });
 
-describe("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
   const sourcesOf = (h: McpAppBrowserHarness) =>
     (h as unknown as { widgetCspSources: string[] }).widgetCspSources;
 
@@ -584,7 +591,7 @@ describe("injectCspMeta", () => {
   });
 });
 
-describe("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
   // Guest that probes three origins via fetch (a connect-src concern) the
   // instant it parses — before the bridge — so the injected <meta> CSP (first
   // in <head>) governs them. `.invalid` is a reserved TLD (RFC 2606): a

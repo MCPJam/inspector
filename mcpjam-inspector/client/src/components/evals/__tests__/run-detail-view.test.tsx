@@ -197,7 +197,9 @@ describe("RunDetailView", () => {
     expect(kpi.getByText("Failed")).toBeInTheDocument();
     expect(kpi.getByText("Total")).toBeInTheDocument();
     expect(kpi.getByText("Duration")).toBeInTheDocument();
-    expect(screen.getByText(/^100$/)).toBeInTheDocument();
+    // Scope to the KPI strip: the run hero also renders "100" (accuracy 100%),
+    // so a global query is ambiguous.
+    expect(kpi.getByText(/^100$/)).toBeInTheDocument();
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
     const panelGroup = screen.getByTestId("run-detail-resizable-group");

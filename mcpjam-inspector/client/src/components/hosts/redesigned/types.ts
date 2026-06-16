@@ -1,5 +1,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { HostConfigInputV2, HostStyleId } from "@/lib/client-config-v2";
+import type { ComputerStatus, ComputerView } from "@/hooks/useProjectComputer";
+import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
 
 /**
  * Identifiers for the focus-overlay tabs. Mirrors the header tab order in
@@ -8,6 +10,8 @@ import type { HostConfigInputV2, HostStyleId } from "@/lib/client-config-v2";
  */
 export type HostFocusTabId =
   | "behavior"
+  | "tools"
+  | "computer"
   | "protocol"
   | "apps"
   | "servers"
@@ -357,23 +361,63 @@ export interface AddServerPillNodeData extends Record<string, unknown> {
   label: string;
 }
 
+/**
+ * Built-in tools island, fanned to the LEFT of the host matrix. Lists the
+ * host's attached `builtInToolIds` resolved through the catalog. Purely a
+ * visualization of state the Agent (Behavior) tab owns — clicking it opens
+ * that tab; the node itself isn't interactive beyond that. Only emitted
+ * when the builder context has `computersEnabled === true`.
+ */
+export interface BuiltinToolsNodeData extends Record<string, unknown> {
+  kind: "builtin-tools";
+  tools: Array<{ id: string; label: string; requiresComputer: boolean }>;
+}
+
+/**
+ * Computer island, fanned to the RIGHT of the host matrix. Reflects the
+ * host's personal-computer attachment intent plus the caller's live
+ * provisioning status. `attached` (config intent, from `draft.computer`)
+ * and `status` (backend lifecycle) are orthogonal — a host can be attached
+ * before any machine is reserved. Only emitted when the builder context
+ * has `computersEnabled === true`.
+ *
+ * `status`:
+ *   - `undefined` — caller status still loading
+ *   - `null` — attached in config, but no machine reserved yet
+ *   - `ComputerStatus` — live provider lifecycle (ready / waking / …)
+ */
+export interface ComputerNodeData extends Record<string, unknown> {
+  kind: "computer";
+  attached: boolean;
+  status: ComputerStatus | null | undefined;
+  workdir?: string;
+  /** Labels of attached built-in tools whose catalog row is computer-backed (e.g. "Bash"). */
+  backedToolLabels: string[];
+}
+
 export type HostRedesignNodeData =
   | HostMatrixNodeData
   | ServersHubNodeData
   | ServerCardNodeData
-  | AddServerPillNodeData;
+  | AddServerPillNodeData
+  | BuiltinToolsNodeData
+  | ComputerNodeData;
 
 export type HostRedesignNodeType =
   | "redesignHostMatrix"
   | "redesignServersHub"
   | "redesignServerCard"
-  | "redesignAddServer";
+  | "redesignAddServer"
+  | "redesignBuiltinTools"
+  | "redesignComputer";
 
 export type HostRedesignFlowNode =
   | Node<HostMatrixNodeData, "redesignHostMatrix">
   | Node<ServersHubNodeData, "redesignServersHub">
   | Node<ServerCardNodeData, "redesignServerCard">
-  | Node<AddServerPillNodeData, "redesignAddServer">;
+  | Node<AddServerPillNodeData, "redesignAddServer">
+  | Node<BuiltinToolsNodeData, "redesignBuiltinTools">
+  | Node<ComputerNodeData, "redesignComputer">;
 
 export interface HostRedesignViewModel {
   hostName: string;
@@ -411,6 +455,18 @@ export interface HostRedesignContext {
     hostName: string;
     draft: HostConfigInputV2;
   };
+  /**
+   * Project Computers visualization inputs. All optional so the builder
+   * stays pure and callers that don't surface the islands (e.g. the
+   * chatbox read-only canvas) can omit them. When `computersEnabled` is
+   * not exactly `true`, the builder emits NO island nodes/edges, so the
+   * GA canvas is byte-for-byte unchanged.
+   */
+  computersEnabled?: boolean;
+  /** Caller's live computer for the project (`null` none, `undefined` loading). */
+  computerStatus?: ComputerView | null;
+  /** Enabled built-in tool catalog (id → label / requiresComputer). */
+  builtInToolCatalog?: ReadonlyArray<BuiltInToolCatalogEntry>;
 }
 
 /** Stable ids for the canvas-level nodes. */
@@ -428,6 +484,9 @@ export const APPS_HUB_NODE_ID = "host-matrix:apps";
 export const SANDBOX_HUB_NODE_ID = "host-matrix:sandbox";
 export const SERVERS_HUB_NODE_ID = "servers-hub";
 export const ADD_SERVER_NODE_ID = "add-server";
+/** Project Computers islands (gated behind `computers-enabled`). */
+export const BUILTIN_TOOLS_NODE_ID = "builtin-tools";
+export const COMPUTER_NODE_ID = "computer";
 
 /** Leaf id constructors — stable across hosts so RF can morph in place. */
 export function protocolLeafNodeId(key: ProtocolLeafKey): string {
@@ -464,15 +523,24 @@ export function focusTabForNodeId(nodeId: string): {
   if (nodeId === AGENT_IDENTITY_NODE_ID) {
     return { tab: "behavior", selectedServerId: null };
   }
+  if (nodeId === BUILTIN_TOOLS_NODE_ID) {
+    // The Built-in tools island opens its own dedicated Tools tab (the
+    // built-in tool checkbox list). The island only visualizes that
+    // state; the tab owns editing it.
+    return { tab: "tools", selectedServerId: null };
+  }
+  if (nodeId === COMPUTER_NODE_ID) {
+    // The Computer island opens the dedicated Computer tab (the
+    // personal-computer attach/detach toggle). Flag-gated, same as the
+    // island itself.
+    return { tab: "computer", selectedServerId: null };
+  }
   // hostContext is a protocol-leaf-shaped node but lives under the
   // apps hub, so route it to the apps tab.
   if (nodeId === protocolLeafNodeId("hostContext")) {
     return { tab: "apps", selectedServerId: null };
   }
-  if (
-    nodeId === PROTOCOL_HUB_NODE_ID ||
-    nodeId.startsWith("protocol-leaf:")
-  ) {
+  if (nodeId === PROTOCOL_HUB_NODE_ID || nodeId.startsWith("protocol-leaf:")) {
     return { tab: "protocol", selectedServerId: null };
   }
   if (
@@ -495,10 +563,7 @@ export function focusTabForNodeId(nodeId: string): {
       ...(focusSubKey ? { focusSubKey } : {}),
     };
   }
-  if (
-    nodeId === SERVERS_HUB_NODE_ID ||
-    nodeId.startsWith("server-card:")
-  ) {
+  if (nodeId === SERVERS_HUB_NODE_ID || nodeId.startsWith("server-card:")) {
     // Server-related canvas clicks intentionally do NOT open the focus
     // panel anymore. The per-host Servers tab was removed when project-
     // scoped server config shipped; the project Servers tab header now

@@ -23,16 +23,6 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
-import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
-import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
-import {
-  attachComputerPatch,
-  catalogHasComputerBackedTool,
-  detachComputerPatch,
-  shouldShowComputerToggle,
-  visibleBuiltInToolCatalog,
-} from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -43,14 +33,14 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
 function progressiveValueToTri(
-  value: boolean | undefined
+  value: boolean | undefined,
 ): ProgressiveTriState {
   if (value === true) return "on";
   if (value === false) return "off";
   return "auto";
 }
 function triToProgressiveValue(
-  value: ProgressiveTriState
+  value: ProgressiveTriState,
 ): boolean | undefined {
   if (value === "on") return true;
   if (value === "off") return false;
@@ -60,7 +50,7 @@ function triToProgressiveValue(
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -99,31 +89,6 @@ export function BehaviorTab({
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
-
-  // Built-in tools catalog. `undefined` while loading or if the backend isn't
-  // deployed; `[]` on populated deployments with no enabled rows. Hide the
-  // FocusBlock entirely in both cases so empty installs don't render a dead card.
-  const builtInToolCatalog = useBuiltInToolCatalog();
-  const computersEnabled = useComputersEnabled();
-  // Render only the rows this user may see: with `computers-enabled` off,
-  // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
-  // already-selected id, which must remain visible to stay removable.
-  const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
-    computersEnabled,
-    selectedIds: draft.builtInToolIds,
-  });
-  const showBuiltInTools = (visibleBuiltInTools?.length ?? 0) > 0;
-  // The personal-computer toggle appears once the deployment exposes a
-  // computer-backed tool (the `bash` row ships disabled until launch) OR when
-  // the host already has a computer attached, so an existing attachment is
-  // always detachable even if no computer-backed tool is in the catalog.
-  const showComputerToggle =
-    computersEnabled &&
-    shouldShowComputerToggle({
-      catalogHasComputerBackedTool:
-        catalogHasComputerBackedTool(builtInToolCatalog),
-      computerAttached: draft.computer !== undefined,
-    });
 
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
@@ -261,7 +226,7 @@ export function BehaviorTab({
                 if (!value) return;
                 update({
                   progressiveToolDiscovery: triToProgressiveValue(
-                    value as ProgressiveTriState
+                    value as ProgressiveTriState,
                   ),
                 });
               }}
@@ -281,41 +246,6 @@ export function BehaviorTab({
           }
         />
       </FocusBlock>
-
-      {showBuiltInTools || showComputerToggle ? (
-        <FocusBlock title="Built-in tools">
-          {showComputerToggle ? (
-            <FieldRow
-              label="Personal computer"
-              description="Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash."
-              control={
-                <Switch
-                  checked={draft.computer !== undefined}
-                  onCheckedChange={(checked) =>
-                    update(
-                      checked
-                        ? attachComputerPatch()
-                        : detachComputerPatch(draft, builtInToolCatalog)
-                    )
-                  }
-                  aria-label="Personal computer"
-                  disabled={readOnly}
-                />
-              }
-            />
-          ) : null}
-          {showBuiltInTools ? (
-            <BuiltInToolCheckboxList
-              label="Attached"
-              selected={draft.builtInToolIds}
-              available={visibleBuiltInTools ?? []}
-              computerAttached={draft.computer !== undefined}
-              readOnly={readOnly}
-              onChange={(builtInToolIds) => update({ builtInToolIds })}
-            />
-          ) : null}
-        </FocusBlock>
-      ) : null}
 
       <FocusBlock title={fSystemPrompt.label}>
         <Textarea

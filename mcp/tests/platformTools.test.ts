@@ -65,6 +65,9 @@ function fakeAgent(
 ): McpJamMcpServer {
   return {
     bearerToken: overrides.bearerToken,
+    // runPlatformOperation resolves the bearer via getBearerToken() (async, so
+    // anonymous sessions can mint lazily). The stub just returns the override.
+    getBearerToken: async () => overrides.bearerToken,
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
@@ -363,5 +366,29 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+  });
+
+  it("carries the error code in structuredContent so the widget can branch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "NOT_FOUND", message: "No accessible MCPJam projects were found." },
+          { status: 404 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeAgent({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.error).toEqual({
+      code: "NOT_FOUND",
+      message: "No accessible MCPJam projects were found.",
+    });
   });
 });

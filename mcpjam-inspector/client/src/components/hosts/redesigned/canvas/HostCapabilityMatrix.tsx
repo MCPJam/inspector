@@ -1,10 +1,13 @@
 import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import claudeLogo from "/claude_logo.png";
+import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
+import bedrockLogo from "/bedrock_logo.svg";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -28,10 +31,24 @@ function getClientLogo(
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam")) return mcpjamLogo;
+  if (haystack.includes("claude-code") || haystack.includes("claude code"))
+    return claudeCodeLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
+  // VS Code's clientInfo.name is "Visual Studio Code"; the host name is
+  // "VS Code". Match both spellings (the editor, not Cursor which forks it).
+  if (
+    haystack.includes("vscode") ||
+    haystack.includes("vs code") ||
+    haystack.includes("visual studio")
+  )
+    return vscodeLogo;
+  // AWS Bedrock AgentCore: clientInfo.name "bedrock-agentcore", host
+  // "AgentCore". Reuses the Bedrock mark (no dedicated AgentCore asset).
+  if (haystack.includes("agentcore") || haystack.includes("bedrock"))
+    return bedrockLogo;
   if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
     return openaiLogo;
   return null;

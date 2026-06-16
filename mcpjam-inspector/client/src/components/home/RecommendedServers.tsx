@@ -52,7 +52,12 @@ export function RecommendedServers({
   servers,
   projectId,
 }: RecommendedServersProps) {
-  const createServer = useMutation("servers:createServer" as any);
+  // create-if-missing makes a repeat click on an already-connected server
+  // idempotent (returns the existing server) instead of throwing
+  // "already exists", which was being logged server-side.
+  const createServerIfMissing = useMutation(
+    "servers:createServerIfMissing" as any,
+  );
   const navigate = useAppNavigate();
   const [connectingUrl, setConnectingUrl] = useState<string | null>(null);
 
@@ -63,7 +68,7 @@ export function RecommendedServers({
     }
     setConnectingUrl(server.url);
     try {
-      await createServer({
+      await createServerIfMissing({
         projectId,
         name: slugifyName(server.name),
         enabled: true,
@@ -74,12 +79,7 @@ export function RecommendedServers({
       navigate(routePaths.servers);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("already exists")) {
-        toast.info(`${server.name} is already connected.`);
-        navigate(routePaths.servers);
-      } else {
-        toast.error(`Failed to connect ${server.name}: ${message}`);
-      }
+      toast.error(`Failed to connect ${server.name}: ${message}`);
     } finally {
       setConnectingUrl(null);
     }

@@ -41,6 +41,7 @@ import type {
 import type {
   HostComputerInput,
   HostConnectionDefaults,
+  Harness,
   HostInit,
   HostJson,
   HostMcp,
@@ -177,6 +178,9 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.computer !== undefined) {
     out.computer = c.computer;
   }
+  if (c.harness !== undefined) {
+    out.harness = c.harness;
+  }
   if (c.hostCapabilitiesOverride !== undefined) {
     out.hostCapabilitiesOverride = c.hostCapabilitiesOverride;
   }
@@ -252,6 +256,13 @@ export class Host {
    * the same as one never set.
    */
   computer?: HostComputerInput | null;
+
+  /**
+   * Which harness runs the turn. `undefined` ⇒ emulated (MCPJam's own loop);
+   * `"claude-code"` runs the turn in a real Claude Code runtime via the AI SDK
+   * harness, which executes inside the host's attached `computer`.
+   */
+  harness?: Harness;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -333,6 +344,7 @@ export class Host {
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
     this.computer = cfg.computer;
+    this.harness = cfg.harness;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
@@ -491,6 +503,7 @@ export class Host {
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
       computer: this.computer,
+      harness: this.harness,
       servers: this.servers,
       optionalServers: this.optionalServers,
       connectionDefaults: this.connectionDefaults,
@@ -524,6 +537,9 @@ export class Host {
     // undefined so it hashes identically to "never set".
     if (snap.computer !== undefined) {
       input.computer = snap.computer;
+    }
+    if (snap.harness !== undefined) {
+      input.harness = snap.harness;
     }
     if (snap.hostCapabilitiesOverride !== undefined) {
       input.hostCapabilitiesOverride = snap.hostCapabilitiesOverride;
