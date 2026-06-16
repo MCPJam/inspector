@@ -1712,21 +1712,8 @@ export default function App() {
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
     workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteProjects,
   });
-  const hostedChatShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    nonProdLockdown: NON_PROD_LOCKDOWN,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteProjects: false,
-  });
-  const baseHostedShellGateState = isHostedChatRoute
-    ? hostedChatShellGateState
-    : hostedShellGateState;
+  const baseHostedShellGateState = hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
     ? projectServers[pendingDashboardOAuth.serverName]
     : null;
