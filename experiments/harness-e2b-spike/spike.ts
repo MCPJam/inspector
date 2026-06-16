@@ -156,15 +156,19 @@ async function main() {
     const calledWeather = toolCalls.some(
       (c) => typeof c.name === "string" && c.name.includes("get_weather"),
     );
-    const sawSentinel =
-      toolResults.some((r) => r.includes("SPIKE_SENTINEL")) ||
-      finalText.includes("19C") ||
-      finalText.toLowerCase().includes("sunny");
-    if (!calledWeather || !sawSentinel) {
+    // Strict: the sentinel must appear in a fullStream tool-RESULT chunk. The
+    // point of TEST 2 is gradeable tool-result fidelity *in the stream* — the
+    // model merely paraphrasing "sunny/19C" in its prose does NOT count, since
+    // that wouldn't give us the structured result an eval grader needs.
+    const sawSentinelInStream = toolResults.some((r) =>
+      r.includes("SPIKE_SENTINEL"),
+    );
+    if (!calledWeather || !sawSentinelInStream) {
       // Throw → non-zero exit (via main().catch) so CI/automation gates on it.
       throw new Error(
-        `TEST 2 FAIL — calledWeather=${calledWeather} sawSentinel=${sawSentinel}. ` +
-          `Tool-call detail insufficient to grade; inspect the raw parts above ` +
+        `TEST 2 FAIL — calledWeather=${calledWeather} ` +
+          `sawSentinelInStream=${sawSentinelInStream}. Tool-result detail not ` +
+          `observable in fullStream for grading; inspect the raw parts above ` +
           `(fallback: drive @anthropic-ai/claude-agent-sdk directly).`,
       );
     }
