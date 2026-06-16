@@ -17,7 +17,14 @@ describe("MistralSpinnerIndicator", () => {
     ).toBeInTheDocument();
     const mark = screen.getByTestId("loading-indicator-mistral-mark");
     expect(mark.tagName).toBe("DIV");
-    expect(mark).toHaveClass("bg-brand-500");
+    expect(mark).toHaveStyle({ borderRadius: "25%" });
+    expect(mark.querySelector('[data-slot="avatar"]')).toHaveClass(
+      "h-7",
+      "w-7",
+      "overflow-hidden",
+      "rounded-md"
+    );
+    expect(mark.querySelector(".bg-brand-500")).toBeInTheDocument();
     expect(
       screen.getByTestId("loading-indicator-mistral-mark").querySelector("svg")
     ).toHaveClass("text-white-default");

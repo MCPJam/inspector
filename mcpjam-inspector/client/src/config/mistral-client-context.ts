@@ -24,7 +24,7 @@ export const MISTRAL_STYLE_VARIABLES: Record<string, string> = {
   "--color-border-tertiary": "#ffffff3f",
   "--bg-badge-orange": "#53330f",
   "--bg-basic-orange-strong": "#ff8a00",
-  "--bg-brand-500": "#ff8a00",
+  "--bg-brand-500": "#fa500f",
   "--text-white-default": "#fff",
 };
 
