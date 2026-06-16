@@ -86,6 +86,16 @@ export interface RegisterSessionInput {
   viewport: { width: number; height: number };
 }
 
+/**
+ * A held capacity slot. `reserve()` returns one synchronously before the
+ * (async) render so concurrent starts can't all pass a point-in-time cap check
+ * and launch a burst of browsers; `register` consumes it, `release` frees it.
+ */
+export interface WidgetSessionReservation {
+  /** @internal — still holding a slot. */
+  active: boolean;
+}
+
 export class WidgetRenderSessionRegistry {
   private readonly sessions = new Map<string, RegisteredSession>();
   private readonly maxSessions: number;
@@ -97,6 +107,10 @@ export class WidgetRenderSessionRegistry {
    *  `harness.dispose()`) hasn't finished — they still hold a real Chromium, so
    *  they count against the cap until disposal resolves. */
   private disposingCount = 0;
+  /** Slots reserved for in-flight `start` renders (held from `reserve()` until
+   *  `register`/`release`), so concurrent starts respect the cap before a
+   *  browser is launched. */
+  private reservedCount = 0;
 
   constructor(options: WidgetRenderSessionRegistryOptions = {}) {
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
@@ -114,40 +128,70 @@ export class WidgetRenderSessionRegistry {
   }
 
   /**
-   * Sessions counting against the cap: live sessions plus any whose browser is
+   * Sessions counting against the cap: live sessions, any whose browser is
    * still being torn down (`dispose()` is async — the map entry is gone the
-   * instant we delete it, but the Chromium process isn't).
+   * instant we delete it, but the Chromium process isn't), and slots reserved
+   * for in-flight starts.
    */
   private activeCount(): number {
-    return this.sessions.size + this.disposingCount;
+    return this.sessions.size + this.disposingCount + this.reservedCount;
+  }
+
+  private capacityError(): WidgetSessionCapacityError {
+    return new WidgetSessionCapacityError(
+      `Widget session limit reached (${this.maxSessions} active). Close a session and retry.`,
+    );
   }
 
   /**
-   * Throw `WidgetSessionCapacityError` if at capacity (after reclaiming idle
-   * sessions first). Call BEFORE the expensive render so a full registry
-   * doesn't launch a browser only to reject it.
+   * Reserve a capacity slot for an in-flight start, throwing
+   * `WidgetSessionCapacityError` if full (after reclaiming idle sessions). Held
+   * synchronously and counted against the cap until `register`/`release`, so a
+   * burst of concurrent starts can't each pass a point-in-time check and launch
+   * more browsers than the cap allows. The caller MUST `register` (on a
+   * successful render) or `release` (otherwise) the returned reservation.
    */
-  assertCapacity(): void {
+  reserve(): WidgetSessionReservation {
     this.sweepExpired();
     if (this.activeCount() >= this.maxSessions) {
-      throw new WidgetSessionCapacityError(
-        `Widget session limit reached (${this.maxSessions} active). Close a session and retry.`,
-      );
+      throw this.capacityError();
+    }
+    this.reservedCount += 1;
+    this.ensureSweeping();
+    return { active: true };
+  }
+
+  /** Release a reserved slot without registering a session (render failed /
+   *  yielded no widget). Idempotent. */
+  release(reservation: WidgetSessionReservation): void {
+    if (!reservation.active) return;
+    reservation.active = false;
+    this.reservedCount -= 1;
+    if (this.sessions.size === 0 && this.disposingCount === 0 && this.reservedCount === 0) {
+      this.stopSweeping();
     }
   }
 
   /**
-   * Register an already-rendered, keepMounted harness as a live session.
-   * Re-checks the cap (authoritative; the pre-render `assertCapacity` is an
-   * optimization that can race), so the caller must dispose the harness if this
-   * throws.
+   * Register an already-rendered, keepMounted harness as a live session. When a
+   * `reservation` is passed it consumes that held slot (no cap re-check); the
+   * unreserved path re-checks the cap and throws if full, so the caller must
+   * dispose the harness on throw.
    */
-  register(input: RegisterSessionInput): WidgetRenderSession {
-    this.sweepExpired();
-    if (this.activeCount() >= this.maxSessions) {
-      throw new WidgetSessionCapacityError(
-        `Widget session limit reached (${this.maxSessions} active). Close a session and retry.`,
-      );
+  register(
+    input: RegisterSessionInput,
+    reservation?: WidgetSessionReservation,
+  ): WidgetRenderSession {
+    if (reservation?.active) {
+      // Convert the held slot into a live session (no re-check — it was
+      // reserved up front).
+      reservation.active = false;
+      this.reservedCount -= 1;
+    } else {
+      this.sweepExpired();
+      if (this.activeCount() >= this.maxSessions) {
+        throw this.capacityError();
+      }
     }
 
     const createdAt = this.now();

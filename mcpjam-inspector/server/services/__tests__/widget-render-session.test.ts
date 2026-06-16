@@ -83,6 +83,23 @@ function register(
   });
 }
 
+/** Register a session that consumes a held reservation. */
+function register2(
+  registry: WidgetRenderSessionRegistry,
+  reservation: import("../widget-render-session").WidgetSessionReservation,
+  widgetId = "widget-r",
+) {
+  return registry.register(
+    {
+      harness: makeFakeHarness(),
+      serverId: "srv",
+      mountedWidgetId: widgetId,
+      viewport: { width: 800, height: 600 },
+    },
+    reservation,
+  );
+}
+
 describe("WidgetRenderSessionRegistry", () => {
   it("registers a session and exposes a public (harness-free) view", () => {
     let now = 1_000;
@@ -149,11 +166,40 @@ describe("WidgetRenderSessionRegistry", () => {
     register(registry, makeFakeHarness());
     register(registry, makeFakeHarness());
 
-    expect(() => registry.assertCapacity()).toThrow(WidgetSessionCapacityError);
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
     expect(() => register(registry, makeFakeHarness())).toThrow(
       WidgetSessionCapacityError,
     );
     expect(registry.size()).toBe(2);
+  });
+
+  it("reserves slots so concurrent starts can't exceed the cap", () => {
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 2,
+      sweepIntervalMs: 0,
+    });
+    // Both slots held before ANY register — a third start is rejected up front,
+    // before a browser is launched (the real bug: parallel starts each passing
+    // a point-in-time check).
+    const r1 = registry.reserve();
+    const r2 = registry.reserve();
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+
+    // Releasing a held slot frees capacity.
+    registry.release(r1);
+    const r3 = registry.reserve();
+    expect(r3.active).toBe(true);
+
+    // Registering consumes a reservation without double-counting: cap is now
+    // 1 live session + 1 reserved (r3) = 2, so the next reserve is rejected.
+    register2(registry, r2);
+    expect(registry.size()).toBe(1);
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+
+    // release is idempotent.
+    registry.release(r3);
+    registry.release(r3);
+    expect(() => registry.reserve()).not.toThrow();
   });
 
   it("reclaims idle sessions on sweep and frees capacity", async () => {
@@ -182,7 +228,8 @@ describe("WidgetRenderSessionRegistry", () => {
     expect(registry.get(session.sessionId)).toBeUndefined();
 
     // Capacity freed.
-    expect(() => registry.assertCapacity()).not.toThrow();
+    registry.release(registry.reserve());
+    expect(registry.size()).toBe(0);
   });
 
   it("keeps a session alive when an action refreshes the TTL before expiry", async () => {
@@ -237,12 +284,13 @@ describe("WidgetRenderSessionRegistry", () => {
     const closePromise = registry.close(session.sessionId);
     expect(registry.size()).toBe(0);
     // Capacity is still consumed by the disposing browser.
-    expect(() => registry.assertCapacity()).toThrow(WidgetSessionCapacityError);
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
 
     // Teardown finishes -> capacity freed.
     resolveDispose();
     await closePromise;
-    expect(() => registry.assertCapacity()).not.toThrow();
+    registry.release(registry.reserve());
+    expect(registry.size()).toBe(0);
   });
 
   it("does not idle-sweep a session with an in-flight action, and refreshes its TTL", async () => {

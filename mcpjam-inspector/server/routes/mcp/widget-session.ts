@@ -136,10 +136,13 @@ widgetSession.post("/", async (c) => {
   const { serverId, toolName, parameters, injectOpenAiCompat, viewport } =
     parsed.value;
 
-  // Cap check BEFORE the expensive render so a full registry doesn't launch a
-  // browser only to reject it.
+  // Reserve a capacity slot BEFORE the expensive render. Held synchronously, it
+  // counts against the cap for the whole render window, so a burst of
+  // concurrent starts can't each pass a point-in-time check and launch more
+  // browsers than the cap allows.
+  let reservation;
   try {
-    widgetRenderSessions.assertCapacity();
+    reservation = widgetRenderSessions.reserve();
   } catch (error) {
     if (error instanceof WidgetSessionCapacityError) {
       return c.json({ error: error.message }, 429);
@@ -159,6 +162,7 @@ widgetSession.post("/", async (c) => {
       keepMounted: true,
     });
   } catch (error) {
+    widgetRenderSessions.release(reservation);
     return c.json(
       {
         error: error instanceof Error ? error.message : "Widget render failed",
@@ -168,9 +172,10 @@ widgetSession.post("/", async (c) => {
   }
 
   // Only a fully-rendered widget yields a steppable session; anything else
-  // (no_ui_resource, blank, bridge_timeout, browser_unavailable, …) tears down
-  // and returns the observation with no sessionId.
+  // (no_ui_resource, blank, bridge_timeout, browser_unavailable, …) tears down,
+  // frees the reserved slot, and returns the observation with no sessionId.
   if (result.observation.status !== "rendered") {
+    widgetRenderSessions.release(reservation);
     await result.harness?.dispose().catch((error) => {
       logger.warn(
         `[widget-session] harness disposal failed: ${
@@ -183,14 +188,18 @@ widgetSession.post("/", async (c) => {
 
   const resolvedViewport = viewport ?? { ...DEFAULT_VIEWPORT };
   try {
-    const session = widgetRenderSessions.register({
-      harness: result.harness!,
-      serverId,
-      // The render's toolCallId IS the mounted widget id (the harness mounted it
-      // under that id).
-      mountedWidgetId: result.observation.toolCallId,
-      viewport: resolvedViewport,
-    });
+    // Consume the reserved slot — won't reject, since the slot was held.
+    const session = widgetRenderSessions.register(
+      {
+        harness: result.harness!,
+        serverId,
+        // The render's toolCallId IS the mounted widget id (the harness mounted
+        // it under that id).
+        mountedWidgetId: result.observation.toolCallId,
+        viewport: resolvedViewport,
+      },
+      reservation,
+    );
     return c.json(
       {
         sessionId: session.sessionId,
@@ -203,11 +212,10 @@ widgetSession.post("/", async (c) => {
       200,
     );
   } catch (error) {
-    // Lost a capacity race after rendering — dispose the orphan harness.
+    // Defensive: registration shouldn't fail on a reserved slot, but never
+    // leak the browser or the reservation if it somehow does.
+    widgetRenderSessions.release(reservation);
     await result.harness?.dispose().catch(() => {});
-    if (error instanceof WidgetSessionCapacityError) {
-      return c.json({ error: error.message }, 429);
-    }
     throw error;
   }
 });
