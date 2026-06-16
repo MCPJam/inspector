@@ -87,11 +87,16 @@ export function createE2BSandboxProvider(
 
     createSession: async (createOpts) => {
       const abortSignal = createOpts?.abortSignal;
+      // Only sandboxes WE create are ours to tear down. A reused MCPJam
+      // computer (connectToSandboxId) is shared and lifecycle-managed by the
+      // control plane, so a harness session ending must never kill it.
+      const ownsSandbox = !opts.connectToSandboxId;
       const sandbox = opts.connectToSandboxId
         ? await Sandbox.connect(opts.connectToSandboxId, { apiKey: opts.apiKey })
         : await Sandbox.create(opts.template ?? "base", { apiKey: opts.apiKey });
 
-      let ports: number[] = [bridgePort];
+      // Mutated in place by setPorts so `session.ports` (same ref) stays live.
+      const ports: number[] = [bridgePort];
 
       const session: HarnessV1NetworkSandboxSession = {
         id: sandbox.sandboxId,
@@ -147,6 +152,13 @@ export function createE2BSandboxProvider(
         spawn: async ({ command, workingDirectory, env }) => {
           let outCtl!: ReadableStreamDefaultController<Uint8Array>;
           let errCtl!: ReadableStreamDefaultController<Uint8Array>;
+          let streamsClosed = false;
+          const closeStreams = () => {
+            if (streamsClosed) return;
+            streamsClosed = true;
+            try { outCtl.close(); } catch { /* already closed */ }
+            try { errCtl.close(); } catch { /* already closed */ }
+          };
           const stdout = new ReadableStream<Uint8Array>({
             start: (c) => (outCtl = c),
           });
@@ -157,8 +169,13 @@ export function createE2BSandboxProvider(
             background: true,
             cwd: workingDirectory ?? cwd,
             envs: env,
-            onStdout: (d: string) => outCtl.enqueue(enc.encode(d)),
-            onStderr: (d: string) => errCtl.enqueue(enc.encode(d)),
+            // Guard against enqueue-after-close once the process ends or is killed.
+            onStdout: (d: string) => {
+              if (!streamsClosed) outCtl.enqueue(enc.encode(d));
+            },
+            onStderr: (d: string) => {
+              if (!streamsClosed) errCtl.enqueue(enc.encode(d));
+            },
           });
           return {
             pid: handle.pid,
@@ -166,12 +183,12 @@ export function createE2BSandboxProvider(
             stderr,
             wait: async () => {
               const res = await handle.wait();
-              outCtl.close();
-              errCtl.close();
+              closeStreams();
               return { exitCode: res.exitCode };
             },
             kill: async () => {
               await handle.kill();
+              closeStreams(); // close so consumers don't hang (parity with wait)
             },
           };
         },
@@ -184,13 +201,17 @@ export function createE2BSandboxProvider(
           return `${scheme}://${host}`;
         },
         stop: async () => {
-          await sandbox.kill();
+          // Never tear down a reused (shared) computer; only one we created.
+          if (ownsSandbox) await sandbox.kill();
         },
-        destroy: async () => {
-          await sandbox.kill();
-        },
+        destroy: ownsSandbox
+          ? async () => {
+              await sandbox.kill();
+            }
+          : undefined,
         setPorts: async (next) => {
-          ports = [...next];
+          // Mutate in place so `session.ports` (same reference) reflects it.
+          ports.splice(0, ports.length, ...next);
         },
         // setNetworkPolicy omitted — E2B sets egress at create time; the
         // optional-call contract treats a missing impl as a no-op.
