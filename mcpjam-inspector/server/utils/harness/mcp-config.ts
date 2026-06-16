@@ -104,12 +104,12 @@ export function harnessServerInputFromConfig(
   if (isHttpServerConfig(config)) {
     const headers = coerceHeaders(config.requestInit?.headers) ?? {};
     // createAuthorizedManager already overlays OAuth into headers, but honor a
-    // bare accessToken too (an existing Authorization header wins).
-    if (
-      config.accessToken &&
-      !("Authorization" in headers) &&
-      !("authorization" in headers)
-    ) {
+    // bare accessToken too (any existing Authorization header wins, regardless
+    // of casing — header names are case-insensitive).
+    const hasAuthorizationHeader = Object.keys(headers).some(
+      (key) => key.toLowerCase() === "authorization",
+    );
+    if (config.accessToken && !hasAuthorizationHeader) {
       headers.Authorization = `Bearer ${config.accessToken}`;
     }
     return {

@@ -97,6 +97,16 @@ describe("harnessServerInputFromConfig", () => {
     expect(input.headers).toEqual({ Authorization: "Bearer existing" });
   });
 
+  it("treats Authorization header keys case-insensitively", () => {
+    const cfg = {
+      url: "https://api/mcp",
+      accessToken: "tok",
+      requestInit: { headers: { AUTHORIZATION: "Bearer existing" } },
+    } as unknown as MCPServerConfig;
+    const input = harnessServerInputFromConfig("remote", cfg);
+    expect(input.headers).toEqual({ AUTHORIZATION: "Bearer existing" });
+  });
+
   it("normalizes a stdio config to its tunnel url", () => {
     const cfg = {
       command: "node",
