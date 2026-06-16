@@ -62,8 +62,17 @@ export function CreateHostDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId]);
+    // Clamp the selection to a visible template. This enforces the
+    // flag at the selection source, not just in the grid render: a
+    // gated template (e.g. claude-code) can never become
+    // `selectedTemplateId`, so it can't flow into `seedFromHostTemplate`
+    // — even if a future caller passes it as `initialTemplateId` or the
+    // flag flips off after the dialog opened (claudeCodeEnabled is in
+    // the dep list so a flip-off re-clamps a stranded selection).
+    const requested = initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID;
+    const allowed = visibleTemplates.some((t) => t.id === requested);
+    setSelectedTemplateId(allowed ? requested : DEFAULT_HOST_TEMPLATE_ID);
+  }, [isOpen, initialTemplateId, claudeCodeEnabled]);
 
   useEffect(() => {
     if (!isOpen) return;
