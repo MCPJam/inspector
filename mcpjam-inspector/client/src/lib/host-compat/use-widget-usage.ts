@@ -78,25 +78,33 @@ export function useWidgetUsage(
       const add = (need: WidgetCapabilityNeed, tools: string[]) => {
         acc[need] = Array.from(new Set([...(acc[need] ?? []), ...tools]));
       };
-      await Promise.all(
+      // Track whether ANY widget was actually read. If every read fails we
+      // must NOT report `{}` (which reads as a conclusive "scanned, clean"
+      // and lets a host show Works) — return `undefined` so the engine keeps
+      // the capability dimension Unknown instead of guessing.
+      const readResults = await Promise.all(
         Array.from(toolsByUri.entries()).map(async ([uri, toolNames]) => {
           try {
             const result = (await readResource(serverName, uri)) as {
               contents?: Array<{ text?: string; blob?: string; _meta?: unknown }>;
             };
             const content = result?.contents?.[0];
-            if (!content) return;
-            const needs = new Set<WidgetCapabilityNeed>([
-              ...scanWidgetSource(htmlFromResource(content)),
-              ...scanWidgetMeta(content._meta),
-            ]);
-            for (const need of needs) add(need, toolNames);
+            if (content) {
+              const needs = new Set<WidgetCapabilityNeed>([
+                ...scanWidgetSource(htmlFromResource(content)),
+                ...scanWidgetMeta(content._meta),
+              ]);
+              for (const need of needs) add(need, toolNames);
+            }
+            return true; // the read itself succeeded
           } catch {
-            // A widget we can't read just contributes no needs — honest.
+            return false; // couldn't read this widget
           }
         }),
       );
-      if (!cancelled) setUsage(acc);
+      if (cancelled) return;
+      const anyRead = readResults.some(Boolean);
+      setUsage(anyRead ? acc : undefined);
     })();
 
     return () => {

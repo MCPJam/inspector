@@ -76,10 +76,21 @@ export function deriveServerRequirements(
     if (isWidget && isAppOnlyTool(meta)) appOnlyWidgets.push(tool.name);
   }
 
+  const hasWidgets =
+    mcpAppsOnly.length + openaiAppsOnly.length + dual.length > 0;
+
+  // A widget server whose widgets haven't been conclusively scanned (scan
+  // pending, or every `resources/read` failed) must read as Unknown, not a
+  // false Works — we can't claim "no capability gaps" without analyzing the
+  // HTML. `{}` IS conclusive (scanned, clean); `undefined` is not.
+  if (hasWidgets && !widgetUsage) {
+    unknownDimensions.push("widget capabilities (widget HTML not analyzed)");
+  }
+
   return {
     widgets: { mcpAppsOnly, openaiAppsOnly, dual },
     appOnlyWidgets,
-    hasWidgets: mcpAppsOnly.length + openaiAppsOnly.length + dual.length > 0,
+    hasWidgets,
     widgetUsage,
     unknownDimensions,
   };

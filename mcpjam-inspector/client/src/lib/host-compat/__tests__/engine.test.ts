@@ -96,6 +96,27 @@ describe("deriveServerRequirements", () => {
     );
     expect(r.appOnlyWidgets).toEqual([]);
   });
+
+  it("marks widget capabilities unknown when widgets aren't scanned", () => {
+    const r = deriveServerRequirements(toolsWith({ w: mcpAppsMeta() }), undefined);
+    expect(
+      r.unknownDimensions.some((d) => /widget capabilities/.test(d)),
+    ).toBe(true);
+  });
+
+  it("treats a clean scan ({}) as conclusive — no unknown dimension", () => {
+    const r = deriveServerRequirements(toolsWith({ w: mcpAppsMeta() }), {});
+    expect(
+      r.unknownDimensions.some((d) => /widget capabilities/.test(d)),
+    ).toBe(false);
+  });
+
+  it("does not mark widget capabilities unknown for a server with no widgets", () => {
+    const r = deriveServerRequirements(toolsWith({ plain: {} }), undefined);
+    expect(
+      r.unknownDimensions.some((d) => /widget capabilities/.test(d)),
+    ).toBe(false);
+  });
 });
 
 describe("evaluateHostCompat", () => {
@@ -151,12 +172,18 @@ describe("evaluateHostCompat", () => {
     expect(finding?.detail).toMatch(/`w`/);
   });
 
-  it("withholds capability findings until the widget is scanned (no widgetUsage)", () => {
+  it("reads Unknown (not Works) when a widget server hasn't been scanned", () => {
+    // Mirrors what deriveServerRequirements produces for an unscanned widget
+    // server: an unknown dimension and no capability findings.
     const report = evaluateHostCompat(
-      reqs({ widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] }, hasWidgets: true }),
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+        unknownDimensions: ["widget capabilities (widget HTML not analyzed)"],
+      }),
       profile({ capabilities: { ...FULL_CAPS, message: false } }),
     );
-    expect(report.verdict).toBe("works");
+    expect(report.verdict).toBe("unknown");
     expect(report.findings).toEqual([]);
   });
 
@@ -186,6 +213,7 @@ describe("evaluateAllHosts (real registry)", () => {
   it("a dual-bridge widget works in Claude but degrades in Codex (CLI)", () => {
     const { reports } = evaluateAllHosts(
       toolsWith({ w: { ...mcpAppsMeta(), ...openaiMeta } }),
+      {}, // conclusive clean scan — isolate the render verdict
     );
     const claude = reports.find((r) => r.hostId === "claude");
     const codex = reports.find((r) => r.hostId === "codex");
@@ -194,7 +222,7 @@ describe("evaluateAllHosts (real registry)", () => {
   });
 
   it("renders MCP Apps widgets in ChatGPT (does NOT fall back to text)", () => {
-    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }));
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
     const chatgpt = reports.find((r) => r.hostId === "chatgpt");
     // ChatGPT renders both bridges — an MCP Apps widget must render here.
     expect(
