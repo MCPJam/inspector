@@ -273,6 +273,66 @@ describe("guest-session-source", () => {
     expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
   });
 
+  it("uses the default 10_000ms fetch timeout when timeoutMs is omitted", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchConvexGuestSession();
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    timeoutSpy.mockRestore();
+  });
+
+  it("honors a shortened timeoutMs on the Convex fetch (defense-in-depth)", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchConvexGuestSession(undefined, 1500);
+    expect(timeoutSpy).toHaveBeenCalledWith(1500);
+    timeoutSpy.mockRestore();
+  });
+
+  it("honors a shortened timeoutMs on the remote fetch", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    const { fetchRemoteGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchRemoteGuestSession(undefined, 1500);
+    expect(timeoutSpy).toHaveBeenCalledWith(1500);
+    timeoutSpy.mockRestore();
+  });
+
   it("waits for provisioning before fetching Convex JWKS", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), {

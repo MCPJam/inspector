@@ -25,8 +25,16 @@ import {
   getSessionToken,
 } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import { mayServeSessionToken } from "./utils/localhost-check";
+import {
+  mayServeSessionToken,
+  mayServeGuestBootstrap,
+} from "./utils/localhost-check";
 import { getActiveTunnelDomains } from "./services/tunnel-registry";
+import {
+  appendGuestSessionSetCookie,
+  buildGuestBootstrapScript,
+  mintGuestSessionForDocument,
+} from "./routes/web/guest-session-shared";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -549,6 +557,52 @@ if (process.env.NODE_ENV === "production") {
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
+
+      // Guest bootstrap blob: mint a guest bearer server-side and inject it so
+      // a cold guest boots with a token already in hand (no render-blocking
+      // POST /api/web/guest-session). Gated on production + hosted + not
+      // locked-down + a host allowlist that includes the hosted app host(s)
+      // (mayServeGuestBootstrap), mirroring the session-token discipline.
+      //
+      // Wrapped in its OWN try/catch so a mint failure never 500s the
+      // document — we just serve without the blob and let the client fall
+      // back to its POST path.
+      if (
+        process.env.NODE_ENV === "production" &&
+        HOSTED_MODE &&
+        process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
+        mayServeGuestBootstrap({
+          host,
+          forwardedHost,
+          allowedHosts: ALLOWED_HOSTS,
+          hostedMode: HOSTED_MODE,
+          activeTunnelDomains: getActiveTunnelDomains(),
+        })
+      ) {
+        try {
+          const { session, setCookies } =
+            await mintGuestSessionForDocument(c);
+          if (session && session.expiresAt > Date.now()) {
+            const bootstrapScript = buildGuestBootstrapScript(session);
+            htmlContent = htmlContent.replace(
+              "</head>",
+              `${bootstrapScript}</head>`
+            );
+            for (const cookie of setCookies) {
+              appendGuestSessionSetCookie(c, cookie);
+            }
+          }
+        } catch (error) {
+          appLogger.warn(
+            "[guest-bootstrap] document mint failed; serving without blob",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
+
+      // The document may embed a per-guest bearer; never let a shared/browser
+      // cache replay one guest's blob to another.
+      c.header("Cache-Control", "no-store");
 
       return c.html(htmlContent);
     } catch (error) {
