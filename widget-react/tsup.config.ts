@@ -24,5 +24,6 @@ export default defineConfig({
     /^@mcpjam\/sdk/,
     /^@modelcontextprotocol\//,
     /^@mcp-ui\//,
+    /^zustand/,
   ],
 });
