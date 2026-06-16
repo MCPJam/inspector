@@ -163,25 +163,17 @@ test("isUpdateCacheFresh uses the 24 hour freshness window", () => {
   );
 });
 
-test("shouldSkipUpdateCheck respects CI, opt-out env vars, and non-TTY stderr", () => {
-  assert.equal(shouldSkipUpdateCheck({ env: {}, isStderrTTY: true }), false);
-  assert.equal(shouldSkipUpdateCheck({ env: {}, isStderrTTY: false }), true);
+test("shouldSkipUpdateCheck respects CI and opt-out env vars, not TTY", () => {
+  // Interactive humans and non-interactive agents both get the check; only CI
+  // and explicit opt-outs suppress it. (No TTY gate — agents read stderr too.)
+  assert.equal(shouldSkipUpdateCheck({ env: {} }), false);
+  assert.equal(shouldSkipUpdateCheck({ env: { CI: "true" } }), true);
   assert.equal(
-    shouldSkipUpdateCheck({ env: { CI: "true" }, isStderrTTY: true }),
+    shouldSkipUpdateCheck({ env: { NO_UPDATE_NOTIFIER: "1" } }),
     true,
   );
   assert.equal(
-    shouldSkipUpdateCheck({
-      env: { NO_UPDATE_NOTIFIER: "1" },
-      isStderrTTY: true,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldSkipUpdateCheck({
-      env: { MCPJAM_NO_UPDATE_CHECK: "1" },
-      isStderrTTY: true,
-    }),
+    shouldSkipUpdateCheck({ env: { MCPJAM_NO_UPDATE_CHECK: "1" } }),
     true,
   );
 });
@@ -199,7 +191,6 @@ test("checkForUpdates prints a fresh newer cached version to stderr", () => {
     checkForUpdates("3.0.0", {
       cachePath,
       env: {},
-      isStderrTTY: true,
       now: 1_000,
       stderr: {
         write(chunk) {
@@ -231,7 +222,6 @@ test("checkForUpdates stays quiet for fresh same or older cached versions", () =
     checkForUpdates("3.0.0", {
       cachePath,
       env: {},
-      isStderrTTY: true,
       now: 1_000,
       stderr: {
         write(chunk) {
@@ -266,7 +256,6 @@ test("checkForUpdates prints stale newer cache and refreshes in the background",
     checkForUpdates("3.0.0", {
       cachePath: staleCachePath,
       env: {},
-      isStderrTTY: true,
       now: 1_000 + UPDATE_CHECK_INTERVAL_MS,
       stderr: {
         write(chunk) {
@@ -300,7 +289,6 @@ test("checkForUpdates spawns a background fetch for stale same-version or missin
     checkForUpdates("3.0.0", {
       cachePath: staleCachePath,
       env: {},
-      isStderrTTY: true,
       now: 1_000 + UPDATE_CHECK_INTERVAL_MS,
       stderr: {
         write(chunk) {
@@ -313,7 +301,6 @@ test("checkForUpdates spawns a background fetch for stale same-version or missin
     checkForUpdates("3.0.0", {
       cachePath: missingCachePath,
       env: {},
-      isStderrTTY: true,
       now: 1_000,
       stderr: {
         write(chunk) {
@@ -344,7 +331,6 @@ test("checkForUpdates skips both notice and fetch when disabled", () => {
       env: {
         MCPJAM_NO_UPDATE_CHECK: "1",
       },
-      isStderrTTY: true,
       now: 1_000,
       stderr: {
         write(chunk) {
