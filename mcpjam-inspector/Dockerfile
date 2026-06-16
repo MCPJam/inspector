@@ -23,6 +23,7 @@ COPY sdk/package.json ./sdk/package.json
 COPY cli/package.json ./cli/package.json
 COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
+COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
 
 RUN npm ci --legacy-peer-deps
@@ -74,6 +75,12 @@ COPY design-system ./design-system
 # chat-ui workspace must be on disk before `build:client` runs. It is consumed
 # from source, not from a built dist, so no chat-ui build step is needed.
 COPY chat-ui ./chat-ui
+# The inspector client aliases `@mcpjam/widget-react` to
+# `../widget-react/src/index.ts` (see client/vite.config.ts), so — like chat-ui —
+# the widget-react workspace source must be on disk before `build:client` runs.
+# Consumed from source, not from a built dist, so no widget-react build step is
+# needed.
+COPY widget-react ./widget-react
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
