@@ -96,6 +96,16 @@ const DEFAULT_MAX_SESSIONS = 4;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 
+/** Action-result notes that mean the widget is gone — force-dismissed by the
+ *  per-widget step budget, or never rendered — so the session has nothing left
+ *  to step and should be disposed rather than kept alive. (A
+ *  `screenshot_budget_exceeded` note leaves the widget mounted, so it is NOT
+ *  terminal.) */
+const TERMINAL_ACTION_NOTES = new Set([
+  "no_rendered_widget",
+  "step_budget_exceeded",
+]);
+
 export interface RegisterSessionInput {
   harness: SessionHarness;
   serverId: string;
@@ -309,6 +319,16 @@ export class WidgetRenderSessionRegistry {
           `Widget session "${sessionId}" was closed during the action.`,
         );
       }
+      // A terminal note means the widget is gone (force-dismissed by the step
+      // budget, or never rendered) — there's nothing left to step, so dispose
+      // the session (freeing its slot + browser) instead of refreshing the TTL.
+      // Otherwise a client that keeps retrying actions on a dead widget would
+      // hold Chromium indefinitely. The result still carries the note + final
+      // frame for the caller; the next action then 404s.
+      if (result.note && TERMINAL_ACTION_NOTES.has(result.note)) {
+        void this.disposeSession(sessionId, "terminal");
+        return { result, expiresAt: session.expiresAt };
+      }
       session.expiresAt = this.now() + this.idleTimeoutMs;
       return { result, expiresAt: session.expiresAt };
     } finally {
@@ -357,7 +377,7 @@ export class WidgetRenderSessionRegistry {
 
   private async disposeSession(
     sessionId: string,
-    reason: "close" | "idle" | "shutdown",
+    reason: "close" | "idle" | "shutdown" | "terminal",
   ): Promise<boolean> {
     const session = this.sessions.get(sessionId);
     if (!session) return false;

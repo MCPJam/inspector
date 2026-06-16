@@ -388,6 +388,64 @@ describe("WidgetRenderSessionRegistry", () => {
     await first;
   });
 
+  it("disposes the session when an action returns a terminal note", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const { harness, resolveAction, resolveDispose } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "left_click",
+      coordinate: [1, 2],
+    });
+    // The per-widget step budget force-dismissed the widget — terminal.
+    resolveAction({
+      action: { action: "left_click", coordinate: [1, 2] },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+      note: "step_budget_exceeded",
+    });
+    resolveDispose();
+    const { result } = await actionPromise;
+    expect(result.note).toBe("step_budget_exceeded");
+
+    // A terminal note disposes the session — its slot + browser are freed rather
+    // than held alive (and TTL-refreshed) by retries.
+    expect(registry.size()).toBe(0);
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    await expect(
+      registry.executeAction(session.sessionId, { action: "screenshot" }),
+    ).rejects.toBeInstanceOf(WidgetSessionNotFoundError);
+  });
+
+  it("keeps the session on a non-terminal screenshot-budget note", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      sweepIntervalMs: 0,
+    });
+    const { harness, resolveAction } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "screenshot",
+    });
+    now = 500;
+    // The screenshot budget leaves the widget mounted — NOT terminal.
+    resolveAction({
+      action: { action: "screenshot" },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+      note: "screenshot_budget_exceeded",
+    });
+    const { result, expiresAt } = await actionPromise;
+
+    expect(result.note).toBe("screenshot_budget_exceeded");
+    expect(registry.size()).toBe(1);
+    expect(harness.dispose).not.toHaveBeenCalled();
+    expect(expiresAt).toBe(500 + 1_000); // TTL refreshed
+  });
+
   it("refuses new sessions once shutting down", async () => {
     const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
     const harness = makeFakeHarness();
