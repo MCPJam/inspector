@@ -58,6 +58,9 @@ export class WidgetSessionNotFoundError extends Error {
 
 interface RegisteredSession extends WidgetRenderSession {
   harness: SessionHarness;
+  /** Count of in-flight actions. A busy session is never idle-swept, and the
+   *  TTL effectively pauses until the action settles. */
+  inFlight: number;
 }
 
 export interface WidgetRenderSessionRegistryOptions {
@@ -90,6 +93,10 @@ export class WidgetRenderSessionRegistry {
   private readonly sweepIntervalMs: number;
   private readonly now: () => number;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  /** Sessions removed from the map but whose browser teardown (async
+   *  `harness.dispose()`) hasn't finished — they still hold a real Chromium, so
+   *  they count against the cap until disposal resolves. */
+  private disposingCount = 0;
 
   constructor(options: WidgetRenderSessionRegistryOptions = {}) {
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
@@ -107,13 +114,22 @@ export class WidgetRenderSessionRegistry {
   }
 
   /**
+   * Sessions counting against the cap: live sessions plus any whose browser is
+   * still being torn down (`dispose()` is async — the map entry is gone the
+   * instant we delete it, but the Chromium process isn't).
+   */
+  private activeCount(): number {
+    return this.sessions.size + this.disposingCount;
+  }
+
+  /**
    * Throw `WidgetSessionCapacityError` if at capacity (after reclaiming idle
    * sessions first). Call BEFORE the expensive render so a full registry
    * doesn't launch a browser only to reject it.
    */
   assertCapacity(): void {
     this.sweepExpired();
-    if (this.sessions.size >= this.maxSessions) {
+    if (this.activeCount() >= this.maxSessions) {
       throw new WidgetSessionCapacityError(
         `Widget session limit reached (${this.maxSessions} active). Close a session and retry.`,
       );
@@ -128,7 +144,7 @@ export class WidgetRenderSessionRegistry {
    */
   register(input: RegisterSessionInput): WidgetRenderSession {
     this.sweepExpired();
-    if (this.sessions.size >= this.maxSessions) {
+    if (this.activeCount() >= this.maxSessions) {
       throw new WidgetSessionCapacityError(
         `Widget session limit reached (${this.maxSessions} active). Close a session and retry.`,
       );
@@ -143,6 +159,7 @@ export class WidgetRenderSessionRegistry {
       createdAt,
       expiresAt: createdAt + this.idleTimeoutMs,
       harness: input.harness,
+      inFlight: 0,
     };
     this.sessions.set(session.sessionId, session);
     this.ensureSweeping();
@@ -153,7 +170,7 @@ export class WidgetRenderSessionRegistry {
   get(sessionId: string): WidgetRenderSession | undefined {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
-    if (this.isExpired(session)) {
+    if (this.isIdleExpired(session)) {
       void this.disposeSession(sessionId, "idle");
       return undefined;
     }
@@ -163,27 +180,41 @@ export class WidgetRenderSessionRegistry {
   /**
    * Drive a Computer-Use action on a session's mounted widget; refreshes the
    * session's idle TTL. Throws `WidgetSessionNotFoundError` if the session is
-   * unknown or expired.
+   * unknown, expired, or disposed mid-action.
    */
   async executeAction(
     sessionId: string,
     action: BrowserActionSpec,
   ): Promise<{ result: BrowserActionResult; expiresAt: number }> {
     const session = this.sessions.get(sessionId);
-    if (!session || this.isExpired(session)) {
+    if (!session || this.isIdleExpired(session)) {
       if (session) void this.disposeSession(sessionId, "idle");
       throw new WidgetSessionNotFoundError(
         `Widget session "${sessionId}" not found or expired.`,
       );
     }
 
-    const result = await session.harness.executeAction({
-      toolCallId: session.mountedWidgetId,
-      action,
-    });
-    // Touch the TTL after the action settles.
-    session.expiresAt = this.now() + this.idleTimeoutMs;
-    return { result, expiresAt: session.expiresAt };
+    // Mark busy so a concurrent idle sweep won't dispose the session (and its
+    // browser) out from under an in-flight action.
+    session.inFlight += 1;
+    try {
+      const result = await session.harness.executeAction({
+        toolCallId: session.mountedWidgetId,
+        action,
+      });
+      // A long action may have outlived an explicit close/shutdown; if the
+      // session is no longer the registered one, don't report success or
+      // refresh the TTL on a session that's gone.
+      if (this.sessions.get(sessionId) !== session) {
+        throw new WidgetSessionNotFoundError(
+          `Widget session "${sessionId}" was closed during the action.`,
+        );
+      }
+      session.expiresAt = this.now() + this.idleTimeoutMs;
+      return { result, expiresAt: session.expiresAt };
+    } finally {
+      session.inFlight -= 1;
+    }
   }
 
   /** Dispose + remove a session. Returns false if it didn't exist. */
@@ -198,17 +229,23 @@ export class WidgetRenderSessionRegistry {
     this.stopSweeping();
   }
 
-  /** Dispose every session whose idle TTL has elapsed. */
+  /** Dispose every idle-expired session (skipping any with an in-flight
+   *  action). Collect first, then dispose, so disposal doesn't mutate the map
+   *  mid-iteration. */
   sweepExpired(): void {
+    const expired: string[] = [];
     for (const [id, session] of this.sessions) {
-      if (this.isExpired(session)) {
-        void this.disposeSession(id, "idle");
-      }
+      if (this.isIdleExpired(session)) expired.push(id);
+    }
+    for (const id of expired) {
+      void this.disposeSession(id, "idle");
     }
   }
 
-  private isExpired(session: RegisteredSession): boolean {
-    return session.expiresAt <= this.now();
+  /** Expired by idle TTL AND not currently running an action. A busy session is
+   *  always treated as live. */
+  private isIdleExpired(session: RegisteredSession): boolean {
+    return session.inFlight === 0 && session.expiresAt <= this.now();
   }
 
   private async disposeSession(
@@ -218,6 +255,9 @@ export class WidgetRenderSessionRegistry {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
     this.sessions.delete(sessionId);
+    // The browser is still alive until dispose() resolves, so keep counting it
+    // against the cap for the duration of the (async) teardown.
+    this.disposingCount += 1;
     try {
       await session.harness.dispose();
     } catch (error) {
@@ -226,8 +266,10 @@ export class WidgetRenderSessionRegistry {
           error instanceof Error ? error.message : String(error)
         }`,
       );
+    } finally {
+      this.disposingCount -= 1;
     }
-    if (this.sessions.size === 0) {
+    if (this.sessions.size === 0 && this.disposingCount === 0) {
       this.stopSweeping();
     }
     return true;
