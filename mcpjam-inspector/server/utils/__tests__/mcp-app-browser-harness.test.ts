@@ -7,6 +7,9 @@ import {
   injectCspMeta,
   isBlockedEgressHost,
   isChromiumInstalled,
+  pushBoundedDiagnostic,
+  MAX_DIAGNOSTIC_ENTRIES,
+  MAX_DIAGNOSTIC_ENTRY_CHARS,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -748,4 +751,32 @@ const app = new App({ name: "fixture-csp1", version: "1.0.0" });
       /Connecting to 'https:\/\/anywhere\.invalid/
     );
   }, 45_000);
+});
+
+describe("pushBoundedDiagnostic", () => {
+  it("passes short entries through unchanged", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "console error");
+    expect(arr).toEqual(["console error"]);
+  });
+
+  it("truncates an over-long entry and marks it", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "x".repeat(MAX_DIAGNOSTIC_ENTRY_CHARS + 500));
+    expect(arr).toHaveLength(1);
+    expect(arr[0]).toHaveLength(MAX_DIAGNOSTIC_ENTRY_CHARS + 1); // + ellipsis
+    expect(arr[0].endsWith("…")).toBe(true);
+  });
+
+  it("caps the count with a single sentinel and drops the rest", () => {
+    const arr: string[] = [];
+    for (let i = 0; i < MAX_DIAGNOSTIC_ENTRIES + 25; i++) {
+      pushBoundedDiagnostic(arr, `e${i}`);
+    }
+    // MAX real entries + exactly one sentinel; everything past that dropped.
+    expect(arr).toHaveLength(MAX_DIAGNOSTIC_ENTRIES + 1);
+    expect(arr[MAX_DIAGNOSTIC_ENTRIES]).toMatch(/suppressed/);
+    expect(arr.filter((e) => /suppressed/.test(e))).toHaveLength(1);
+    expect(arr[0]).toBe("e0"); // earliest entries are the ones kept
+  });
 });

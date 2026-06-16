@@ -347,6 +347,32 @@ export function isBlockedEgressHost(
 }
 
 /**
+ * Per-render cap on collected diagnostics. `consoleErrors` and
+ * `blockedRequests` are WIDGET-controlled — a widget decides what it logs and
+ * how many blocked requests it triggers — so without a bound a buggy or hostile
+ * widget can grow them without limit: harness memory during the render, and,
+ * once persisted, the iteration's Convex document (overflowing its ~1MB limit
+ * would drop the whole record for that run). Entries past the cap are dropped
+ * after a single sentinel marker; each entry is length-truncated.
+ */
+export const MAX_DIAGNOSTIC_ENTRIES = 50;
+export const MAX_DIAGNOSTIC_ENTRY_CHARS = 2000;
+
+/** Append to a bounded diagnostics array (see {@link MAX_DIAGNOSTIC_ENTRIES}). */
+export function pushBoundedDiagnostic(arr: string[], value: string): void {
+  if (arr.length > MAX_DIAGNOSTIC_ENTRIES) return;
+  if (arr.length === MAX_DIAGNOSTIC_ENTRIES) {
+    arr.push("… additional entries suppressed (limit reached)");
+    return;
+  }
+  arr.push(
+    value.length > MAX_DIAGNOSTIC_ENTRY_CHARS
+      ? `${value.slice(0, MAX_DIAGNOSTIC_ENTRY_CHARS)}…`
+      : value
+  );
+}
+
+/**
  * Inject a `<meta http-equiv="Content-Security-Policy">` as the FIRST child of
  * `<head>` so the browser enforces the widget's declared policy at directive
  * granularity inside the iframe — the headless analog of the sandbox proxy's
@@ -563,7 +589,7 @@ export class McpAppBrowserHarness {
         // cloud metadata + link-local always, loopback/private ranges in hosted
         // mode. Recorded as blocked so the observation still reflects it.
         if (isBlockedEgressHost(host, this.blockPrivateNetworks)) {
-          this.blockedRequests.push(url);
+          pushBoundedDiagnostic(this.blockedRequests, url);
           return route.abort();
         }
         const isLoopback =
@@ -578,15 +604,18 @@ export class McpAppBrowserHarness {
       } catch {
         /* fall through to abort */
       }
-      this.blockedRequests.push(url);
+      pushBoundedDiagnostic(this.blockedRequests, url);
       return route.abort();
     });
 
     this.page = await this.context.newPage();
     this.page.on("console", (msg) => {
-      if (msg.type() === "error") this.consoleErrors.push(msg.text());
+      if (msg.type() === "error")
+        pushBoundedDiagnostic(this.consoleErrors, msg.text());
     });
-    this.page.on("pageerror", (err) => this.consoleErrors.push(String(err)));
+    this.page.on("pageerror", (err) =>
+      pushBoundedDiagnostic(this.consoleErrors, String(err))
+    );
 
     // One-tab limit: a widget must not pop a tab the model can't see. Attached
     // AFTER the main page exists so the main page's own "page" event (which
