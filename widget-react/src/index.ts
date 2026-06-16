@@ -18,6 +18,7 @@ export {
   getToolVisibility,
   isVisibleToModelOnly,
   isVisibleToAppOnly,
+  type ToolLike,
 } from "./mcp-apps-utils";
 export {
   readToolResultObject,

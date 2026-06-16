@@ -207,6 +207,12 @@ export function useWidgetHost(): WidgetHostImpl {
   const chatboxHostTheme = useChatboxHostTheme();
   const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
+  // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
+  // the inspector as a typed object. Read into a ref so the resolver fns keep a
+  // stable identity (never invalidating a renderer memo) while still resolving
+  // against the live profile; the renderer recomputes via `environment.profileKey`.
+  const activeMcpProfileRef = useRef(activeMcpProfile);
+  activeMcpProfileRef.current = activeMcpProfile;
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -225,7 +231,11 @@ export function useWidgetHost(): WidgetHostImpl {
       chatboxHostStyle,
       chatboxHostTheme,
       hostCapabilitiesOverride,
-      activeMcpProfile,
+      // Profile is bound in `resolvers`; expose only the reactivity hash + the
+      // minimal projections the renderer inspects (no `HostConfigMcpProfileV1`).
+      profileKey: stableStringifyJson(activeMcpProfile ?? null),
+      profileSandbox: activeMcpProfile?.apps?.sandbox,
+      profileHostInfo: activeMcpProfile?.apps?.uiInitialize?.hostInfo,
       draftHostContext,
       isPlaygroundActive,
       playgroundLocale,
@@ -254,14 +264,29 @@ export function useWidgetHost(): WidgetHostImpl {
   );
 
   // --- resolvers (Phase 1b bound util/resolver fns) --------------------------
-  // Module-level fns with stable identity; the object is frozen for the
-  // adapter's lifetime so it never invalidates a renderer memo/dep.
+  // Stable identity (frozen for the adapter's lifetime) so it never invalidates
+  // a renderer memo/dep. The profile-dependent resolvers BIND the active MCP
+  // profile here (read live via the ref) so `HostConfigMcpProfileV1` stays out
+  // of the public `WidgetHostResolvers` surface (3d-iii).
   const resolvers = useMemo<WidgetHostResolvers>(
     () => ({
-      resolveEffectiveCompatRuntime,
-      resolveEffectiveMcpAppsCapabilities,
-      resolveEffectiveHostCapabilities,
-      resolveHostInfo,
+      resolveEffectiveCompatRuntime: ({ hostStyle }) =>
+        resolveEffectiveCompatRuntime({
+          profile: activeMcpProfileRef.current,
+          hostStyle,
+        }),
+      resolveEffectiveMcpAppsCapabilities: ({ hostStyle }) =>
+        resolveEffectiveMcpAppsCapabilities({
+          profile: activeMcpProfileRef.current,
+          hostStyle,
+        }),
+      resolveEffectiveHostCapabilities: ({ hostStyle, hostCapabilitiesOverride }) =>
+        resolveEffectiveHostCapabilities({
+          hostStyle,
+          profile: activeMcpProfileRef.current,
+          hostCapabilitiesOverride,
+        }),
+      resolveHostInfo: () => resolveHostInfo(activeMcpProfileRef.current),
       getHostStyleOrDefault,
       DEFAULT_HOST_STYLE,
       extractHostTheme,
