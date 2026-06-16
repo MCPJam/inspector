@@ -79,7 +79,19 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
 }));
 
 vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
-  XAAResourceAppsSection: () => <div data-testid="xaa-resource-apps-section" />,
+  XAAResourceAppsSection: ({
+    onSelect,
+  }: {
+    onSelect: (app: { id: string }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="select-registration"
+      onClick={() => onSelect({ id: "app_1" })}
+    >
+      select registration
+    </button>
+  ),
 }));
 
 vi.mock("../xaa/NegativeTestScorecard", () => ({
@@ -90,16 +102,19 @@ vi.mock("../xaa/NegativeTestScorecard", () => ({
 
 const runAllMock = vi.fn();
 let capturedMachineConfig: any = null;
+let machineShouldComplete = true;
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: (config: any) => {
     capturedMachineConfig = config;
     return {
       proceedToNextStep: vi.fn(),
-      // A "successful" run marks the flow complete, which fires the success
-      // telemetry + unlocks this target's scorecard.
+      // A "successful" run marks the flow complete (fires success telemetry +
+      // unlocks the scorecard); an unsuccessful one leaves it mid-flow.
       runAll: vi.fn(async () => {
         runAllMock();
-        config.updateState({ currentStep: "complete", isBusy: false });
+        if (machineShouldComplete) {
+          config.updateState({ currentStep: "complete", isBusy: false });
+        }
       }),
     };
   },
@@ -131,6 +146,7 @@ describe("XAAFlowTab", () => {
     captureMock.mockClear();
     runAllMock.mockClear();
     capturedMachineConfig = null;
+    machineShouldComplete = true;
     resourceApps = [];
     localStorage.clear();
     currentTarget = makeTarget();
@@ -266,5 +282,91 @@ describe("XAAFlowTab", () => {
     expect(
       screen.queryByText(/Configure XAA Debugger/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the source-badged indicator for a bar server", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    expect(screen.getByText(/Target: staging/)).toBeInTheDocument();
+    expect(screen.getByText(/from server/)).toBeInTheDocument();
+  });
+
+  it("surfaces the registration override with a clear control", async () => {
+    const user = userEvent.setup();
+    resourceApps = [
+      {
+        id: "app_1",
+        name: "AcmeApp",
+        resourceType: "mcp",
+        resourceUrl: "https://acme.example.com/mcp",
+        authServerMode: "own",
+        issuer: "https://acme-as.example.com",
+        scopes: [],
+        hasSecret: true,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    currentTarget = makeTarget({
+      targetSource: "registration",
+      targetKey: "registration:app_1",
+      runInput: { ...makeTarget().runInput, mode: "hosted-registration" },
+    });
+
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
+    await user.click(screen.getByTestId("select-registration"));
+
+    expect(
+      screen.getByText(/Using registered app — overrides the bar selection/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /use bar server/i }),
+    ).toBeInTheDocument();
+    // The indicator badge reads "· registered app".
+    expect(screen.getByText(/· registered app/)).toBeInTheDocument();
+  });
+
+  it("xaa_flow_started carries a salted target_id (no raw name/url)", async () => {
+    const user = userEvent.setup();
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    const started = captureMock.mock.calls.find(
+      ([event]) => event === "xaa_flow_started",
+    );
+    expect(started?.[1].target_id).toMatch(/^[0-9a-f]{8}$/);
+    expect(started?.[1].target_id).not.toContain("staging");
+  });
+
+  it("fires xaa_flow_completed with target_source at both the success and failure sites", async () => {
+    const user = userEvent.setup();
+
+    // Success site: the run reaches complete (effect-driven event).
+    machineShouldComplete = true;
+    const { unmount } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+    );
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(captureMock).toHaveBeenCalledWith(
+        "xaa_flow_completed",
+        expect.objectContaining({ success: true, target_source: "bar_server" }),
+      ),
+    );
+    unmount();
+
+    // Failure site: the run stops mid-flow (callback-driven event).
+    captureMock.mockClear();
+    machineShouldComplete = false;
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(captureMock).toHaveBeenCalledWith(
+        "xaa_flow_completed",
+        expect.objectContaining({
+          success: false,
+          target_source: "bar_server",
+        }),
+      ),
+    );
   });
 });

@@ -43,6 +43,7 @@ import {
 } from "@/lib/xaa/types";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
 // Captured at module load: the XAA route returns null while the feature flag
 // bootstraps and other startup code rewrites location.search, so reading the
@@ -113,6 +114,18 @@ export function XAAFlowTab({
   const selectedRegistration =
     resourceApps.find((app) => app.id === selectedRegistrationId) ?? null;
 
+  // Selecting a bar chip clears an active registration so the bar server wins
+  // (one canonical active target). Guarded by a ref so the deep-link
+  // registration selection — which doesn't change the bar — isn't cleared.
+  const prevSelectedServerName = useRef(selectedServerName);
+  useEffect(() => {
+    if (prevSelectedServerName.current === selectedServerName) return;
+    prevSelectedServerName.current = selectedServerName;
+    if (selectedServerName !== "none") {
+      setSelectedRegistrationId(null);
+    }
+  }, [selectedServerName]);
+
   // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
   const target = useXaaTestTarget({
@@ -149,9 +162,12 @@ export function XAAFlowTab({
   const authServerModeForTelemetry =
     selectedRegistration?.authServerMode ?? "own";
   // Captured in a ref so the success effect (which can fire on a re-render
-  // after the run) reports the source the run actually used.
+  // after the run) reports the source the run actually used. Written in an
+  // effect, never during render (React 18 concurrent rule).
   const targetSourceRef = useRef(target.targetSource);
-  targetSourceRef.current = target.targetSource;
+  useEffect(() => {
+    targetSourceRef.current = target.targetSource;
+  }, [target.targetSource]);
 
   // In-memory: targets that have completed a successful flow this session,
   // keyed per target so a green run on one server can't unlock another's
@@ -165,11 +181,13 @@ export function XAAFlowTab({
     posthog.capture("xaa_flow_started", {
       mode: runInput.mode,
       target_source: target.targetSource,
+      // Salted one-way bucket id — never a server name/URL/hostname.
+      target_id: hashXaaTargetId(targetKey),
       auth_server_mode: authServerModeForTelemetry,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
-  }, [runInput.mode, target.targetSource, authServerModeForTelemetry]);
+  }, [runInput.mode, target.targetSource, targetKey, authServerModeForTelemetry]);
 
   useEffect(() => {
     if (flowState.currentStep === "complete" && !completedFired.current) {
@@ -456,11 +474,20 @@ export function XAAFlowTab({
 
   const runAllDisabled = !isTestable || flowState.isBusy || isRunningAll;
 
-  const targetLabel = selectedRegistration
-    ? `Target: ${selectedRegistration.name} · registered app`
+  const targetName = selectedRegistration
+    ? selectedRegistration.name
     : isTestable
-    ? `Target: ${runInput.serverUrl} · from server`
-    : "No server selected";
+    ? selectedServerName
+    : "";
+  const targetBadge = selectedRegistration ? "registered app" : "from server";
+
+  // Announce only the resolved target NAME (not badge flips), debounced so a
+  // quick succession of switches doesn't spam the live region.
+  const [announcedTarget, setAnnouncedTarget] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setAnnouncedTarget(targetName), 250);
+    return () => clearTimeout(id);
+  }, [targetName]);
 
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
   const showNotTestable =
@@ -504,9 +531,19 @@ export function XAAFlowTab({
         />
         <span
           className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground"
-          aria-live="polite"
+          aria-hidden="true"
         >
-          {targetLabel}
+          {targetName ? (
+            <>
+              Target: {targetName}{" "}
+              <span className="text-muted-foreground/70">· {targetBadge}</span>
+            </>
+          ) : (
+            "No server selected"
+          )}
+        </span>
+        <span className="sr-only" aria-live="polite">
+          {announcedTarget ? `Target: ${announcedTarget}` : "No server selected"}
         </span>
         <div className="ml-auto shrink-0">
           <XAASimulatedIdentity />
