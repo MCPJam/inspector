@@ -1037,7 +1037,13 @@ export function OAuthFlowRoute() {
 }
 
 export function XAAFlowRoute() {
-  const { xaaEnabled, appState, activeOrganizationId } = useAppRouteContext();
+  const {
+    xaaEnabled,
+    appState,
+    activeOrganizationId,
+    setSelectedServer,
+    saveServerConfigWithoutConnecting,
+  } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
   return (
@@ -1052,6 +1058,8 @@ export function XAAFlowRoute() {
         serverConfigs={appState.servers}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
+        onSelectServer={setSelectedServer}
+        onSaveServerConfig={saveServerConfigWithoutConnecting}
       />
     </ErrorBoundary>
   );

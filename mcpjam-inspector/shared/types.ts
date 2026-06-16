@@ -810,6 +810,8 @@ export interface ServerFormData {
   clientSecret?: string;
   hasClientSecret?: boolean;
   clearClientSecret?: boolean;
+  /** Optional issuer override for the cross-app authorization test target. */
+  xaaAuthzIssuer?: string;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
