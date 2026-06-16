@@ -9,6 +9,7 @@ import resources from "../../resources.js";
 import servers from "../../servers.js";
 import prompts from "../../prompts.js";
 import chatV2 from "../../chat-v2.js";
+import widgetRender from "../../widget-render.js";
 import { adapterHttp, managerHttp } from "../../http-adapters.js";
 
 // Import security middleware
@@ -27,6 +28,7 @@ export type RouteConfig =
   | "servers"
   | "prompts"
   | "chat-v2"
+  | "widget-render"
   | "adapter-http"
   | "manager-http";
 
@@ -37,6 +39,7 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   servers: { path: "/api/mcp/servers", handler: servers },
   prompts: { path: "/api/mcp/prompts", handler: prompts },
   "chat-v2": { path: "/api/mcp/chat-v2", handler: chatV2 },
+  "widget-render": { path: "/api/mcp/widget-render", handler: widgetRender },
   "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },
   "manager-http": { path: "/api/mcp/manager-http", handler: managerHttp },
 };

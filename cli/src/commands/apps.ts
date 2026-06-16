@@ -20,10 +20,21 @@ import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   addSharedServerOptions,
   describeTarget,
+  getGlobalOptions,
+  parseJsonRecord,
   parseServerConfig,
+  resolveAliasedStringOption,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { setProcessExitCode, usageError } from "../lib/output.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import { buildInspectorServerName } from "../lib/inspector-render.js";
+import { writeBinaryArtifact } from "../lib/debug-artifact.js";
+import {
+  buildWidgetRenderOutput,
+  parseWidgetRenderViewport,
+  resolveWidgetRenderInjectOpenAiCompat,
+  runWidgetRender,
+} from "../lib/widget-render.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,
@@ -45,6 +56,21 @@ const APPS_CHECK_IDS_BY_CATEGORY: Record<
 export interface AppsConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
+}
+
+export interface AppsRenderOptions extends SharedServerTargetOptions {
+  toolName?: string;
+  name?: string;
+  toolArgs?: string;
+  params?: string;
+  toolArgsStdin?: boolean;
+  screenshotOut?: string;
+  screenshotBase64?: boolean;
+  viewport?: string;
+  protocol?: string;
+  serverName?: string;
+  inspectorUrl?: string;
+  requireRender?: boolean;
 }
 
 function getConformanceGlobals(command: Command, reporter?: ReporterFormat): {
@@ -128,6 +154,115 @@ export function registerAppsCommands(program: Command): void {
       renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
     if (!result.passed) {
+      setProcessExitCode(1);
+    }
+  });
+
+  addSharedServerOptions(
+    apps
+      .command("render")
+      .description(
+        "Render an MCP App tool result headlessly via the local Inspector (screenshot + verdict)",
+      )
+      .option("--tool-name <tool>", "Tool name")
+      .option("--name <tool>", "Alias for --tool-name")
+      .option(
+        "--tool-args <json>",
+        "Tool parameter object as JSON, @path, or - for stdin",
+      )
+      .option("--params <json>", "Alias for --tool-args")
+      .option("--tool-args-stdin", "Read tool parameter JSON from stdin")
+      .option(
+        "--screenshot-out <path>",
+        "Write the render screenshot to a file (PNG)",
+      )
+      .option(
+        "--screenshot-base64",
+        "Include the screenshot inline as base64 in the JSON output",
+      )
+      .option("--viewport <WxH>", "Headless viewport size, e.g. 1280x800")
+      .option(
+        "--protocol <protocol>",
+        'Render protocol: "mcp-apps" (default) or "openai-sdk"',
+      )
+      .option("--server-name <name>", "Server name inside Inspector")
+      .option("--inspector-url <url>", "Local Inspector base URL")
+      .option(
+        "--require-render",
+        "Exit non-zero unless the widget renders (status !== rendered)",
+      ),
+  ).action(async (options: AppsRenderOptions, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const config = parseServerConfig({
+      ...options,
+      timeout: globalOptions.timeout,
+    });
+    const toolName = resolveAliasedStringOption(
+      options as Record<string, unknown>,
+      [
+        { key: "toolName", flag: "--tool-name" },
+        { key: "name", flag: "--name" },
+      ],
+      "Tool name",
+      { required: true },
+    ) as string;
+    const resolvedParamsInput = resolveAliasedStringOption(
+      options as Record<string, unknown>,
+      [
+        { key: "toolArgs", flag: "--tool-args" },
+        { key: "params", flag: "--params" },
+      ],
+      "Tool parameters",
+    );
+    if (options.toolArgsStdin && resolvedParamsInput !== undefined) {
+      throw usageError(
+        "--tool-args-stdin cannot be used together with --tool-args or --params.",
+      );
+    }
+    const paramsInput = options.toolArgsStdin ? "-" : resolvedParamsInput;
+    const parameters = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
+    const viewport = parseWidgetRenderViewport(options.viewport);
+    const injectOpenAiCompat = resolveWidgetRenderInjectOpenAiCompat(
+      options.protocol,
+    );
+    const serverName =
+      typeof options.serverName === "string" && options.serverName.trim()
+        ? options.serverName.trim()
+        : buildInspectorServerName(options);
+
+    const response = await runWidgetRender({
+      baseUrl: options.inspectorUrl,
+      config,
+      serverName,
+      toolName,
+      parameters,
+      injectOpenAiCompat,
+      viewport,
+      startIfNeeded: true,
+      timeoutMs: globalOptions.timeout,
+    });
+
+    // Screenshot delivery: file by default (--screenshot-out), inline base64
+    // only when explicitly requested, so normal stdout stays clean. A frame is
+    // written whenever the harness produced one — including a blank/timeout
+    // frame, which is useful diagnostic output.
+    let screenshotPath: string | undefined;
+    if (options.screenshotOut && response.screenshotBase64) {
+      screenshotPath = await writeBinaryArtifact(
+        options.screenshotOut,
+        Buffer.from(response.screenshotBase64, "base64"),
+      );
+    }
+
+    writeResult(
+      buildWidgetRenderOutput(response, {
+        screenshotPath,
+        includeBase64: options.screenshotBase64 === true,
+      }),
+      globalOptions.format,
+    );
+
+    if (response.status !== "rendered" && options.requireRender) {
       setProcessExitCode(1);
     }
   });

@@ -22,6 +22,7 @@ import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
 import subscribe from "./subscribe";
+import widgetRender from "./widget-render";
 
 const mcp = new Hono();
 
@@ -101,5 +102,10 @@ mcp.route("/skills", skills);
 
 // Conformance endpoints - Protocol, Apps, OAuth checks
 mcp.route("/conformance", conformance);
+
+// Headless widget render - one-shot MCP App tool-result render (screenshot +
+// verdict) via the eval browser harness. Local-mode only (mounted under
+// /api/mcp/*); backs the CLI's `mcpjam apps render`.
+mcp.route("/widget-render", widgetRender);
 
 export default mcp;
