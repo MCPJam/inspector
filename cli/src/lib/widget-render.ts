@@ -57,6 +57,21 @@ export interface RunWidgetRenderOptions {
 }
 
 /**
+ * Floor for the render POST timeout. The first render on a machine without
+ * Chromium triggers an on-demand Playwright install INSIDE that request, which
+ * routinely exceeds the default 30s op timeout. Give the render call a generous
+ * floor so the CLI waits for the install (and gets a real verdict, or a
+ * `browser_unavailable` hint) instead of aborting with a transport/timeout
+ * error. A larger explicit `--timeout` still wins.
+ */
+const RENDER_REQUEST_TIMEOUT_FLOOR_MS = 5 * 60_000;
+
+/** The render POST timeout: the larger of the caller's timeout and the floor. */
+export function resolveRenderRequestTimeoutMs(timeoutMs: number): number {
+  return Math.max(timeoutMs, RENDER_REQUEST_TIMEOUT_FLOOR_MS);
+}
+
+/**
  * Ensure the local Inspector is up (no browser client needed — the harness runs
  * server-side), connect the target server, and request a one-shot headless
  * render of `toolName`'s widget. Returns the parsed render observation.
@@ -88,7 +103,9 @@ export async function runWidgetRender(
       ...(options.injectOpenAiCompat ? { injectOpenAiCompat: true } : {}),
       ...(options.viewport ? { viewport: options.viewport } : {}),
     },
-    timeoutMs: options.timeoutMs,
+    // The render may install Chromium on first use — wait generously rather
+    // than abort on the default op timeout.
+    timeoutMs: resolveRenderRequestTimeoutMs(options.timeoutMs),
   });
 
   return normalizeWidgetRenderResponse(response);

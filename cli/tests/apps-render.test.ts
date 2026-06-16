@@ -10,7 +10,10 @@ import type { AddressInfo } from "node:net";
 import {
   buildWidgetRenderOutput,
   parseWidgetRenderViewport,
+  resolveRenderRequestTimeoutMs,
   resolveWidgetRenderInjectOpenAiCompat,
+  runWidgetRender,
+  type WidgetRenderClient,
   type WidgetRenderResponse,
 } from "../src/lib/widget-render.js";
 import { CliError } from "../src/lib/output.js";
@@ -105,6 +108,45 @@ test("buildWidgetRenderOutput keeps base64 opt-in and folds the observation", ()
   });
   assert.equal(labeled.toolName, "show_seats");
   assert.equal(labeled.serverName, "flights");
+});
+
+test("resolveRenderRequestTimeoutMs floors the render timeout for Chromium install", () => {
+  // The default 30s op timeout is too short for a first-run Chromium install.
+  assert.equal(resolveRenderRequestTimeoutMs(30_000), 5 * 60_000);
+  // A larger explicit timeout still wins.
+  assert.equal(resolveRenderRequestTimeoutMs(10 * 60_000), 10 * 60_000);
+});
+
+test("runWidgetRender sends the render POST with the floored timeout", async () => {
+  const calls: Array<{ path: string; timeoutMs?: number }> = [];
+  const client: WidgetRenderClient = {
+    ensureBackend: async () => ({
+      baseUrl: "http://127.0.0.1:6274",
+      hasActiveClient: false,
+      started: false,
+    }),
+    connectServer: async () => ({ success: true }),
+    request: async (path: string, init?: { timeoutMs?: number }) => {
+      calls.push({ path, timeoutMs: init?.timeoutMs });
+      return { status: "rendered", elapsedMs: 1 } satisfies WidgetRenderResponse;
+    },
+  };
+
+  const response = await runWidgetRender(
+    {
+      config: { url: "http://127.0.0.1:9/mcp" } as never,
+      serverName: "srv",
+      toolName: "show_seats",
+      parameters: {},
+      timeoutMs: 30_000,
+    },
+    { client },
+  );
+
+  assert.equal(response.status, "rendered");
+  const renderCall = calls.find((c) => c.path === "/api/mcp/widget-render");
+  assert.ok(renderCall, "render POST was issued");
+  assert.equal(renderCall?.timeoutMs, 5 * 60_000);
 });
 
 test("buildWidgetRenderOutput surfaces the install hint and no screenshot", () => {

@@ -233,10 +233,17 @@ describe("POST /api/mcp/widget-render", () => {
       // doesn't rely on a pre-warmed cache (connect doesn't list tools, and
       // executeTool doesn't cache metadata).
       let listed = false;
-      mcpClientManager.listTools.mockImplementation(async () => {
-        listed = true;
-        return { tools: [] };
-      });
+      // Flip `listed` on a microtask (not synchronously) so the test fails if
+      // the route ever stops awaiting listTools before reading metadata.
+      mcpClientManager.listTools.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            queueMicrotask(() => {
+              listed = true;
+              resolve({ tools: [] });
+            });
+          }),
+      );
       mcpClientManager.getAllToolsMetadata.mockImplementation(() =>
         listed ? { [TOOL_NAME]: MCP_APP_META } : {},
       );
