@@ -7,7 +7,7 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "relative inline-flex min-h-12 min-w-12 items-center justify-center leading-none",
+        "relative inline-flex size-12 items-center justify-center leading-none",
         className
       )}
       aria-live="polite"
@@ -28,11 +28,11 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
           r="9"
           strokeWidth="2.5"
           style={{
-            stroke: "var(--bg-badge-orange, rgba(255, 138, 0, 0.28))",
+            stroke: "var(--bg-badge-orange)",
           }}
         />
         <g
-          className="animate-spin motion-reduce:animate-none"
+          className="animate-spin"
           style={{
             transformOrigin: "center center",
             transformBox: "view-box",
@@ -48,13 +48,13 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
             strokeDashoffset={SPINNER_OFFSET}
             transform="rotate(-90, 12, 12)"
             style={{
-              stroke: "var(--bg-basic-orange-strong, #ff8a00)",
+              stroke: "var(--bg-basic-orange-strong)",
             }}
           />
         </g>
       </svg>
       <div
-        className="relative z-10 flex items-center justify-center bg-brand-500"
+        className="flex items-center justify-center bg-brand-500"
         aria-hidden="true"
         data-testid="loading-indicator-mistral-mark"
         style={{
