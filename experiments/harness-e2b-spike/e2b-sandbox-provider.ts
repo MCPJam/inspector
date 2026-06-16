@@ -126,6 +126,13 @@ export function createE2BSandboxProvider(
       // Mutated in place by setPorts so `session.ports` (same ref) stays live.
       const ports: number[] = [bridgePort];
 
+      // The @ai-sdk/harness-claude-code bootstrap shells `pnpm install` BEFORE
+      // onSandboxSession runs, and MCPJam's computer template ships Node + npm
+      // but not pnpm — provision it now (idempotent; the writable
+      // /opt/npm-global prefix means `-g` needs no sudo). Real fix: bake pnpm
+      // into templates/computer/e2b.Dockerfile so this no-ops.
+      await sandbox.commands.run("command -v pnpm || npm install -g pnpm");
+
       const session: HarnessV1NetworkSandboxSession = {
         id: sandbox.sandboxId,
         defaultWorkingDirectory: cwd,

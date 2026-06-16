@@ -34,12 +34,32 @@ and `e2b@^2`. That validates the biggest unknowns at compile time:
   | `id` / `stop` / `destroy` | `sandbox.sandboxId` / `.kill()` |
 - The adapter wiring compiles: `createClaudeCode({ auth: { anthropic | gateway }, model, thinking })`, `new HarnessAgent({ harness, sandbox, instructions, permissionMode, onSandboxSession })`, `agent.createSession()`, `agent.stream({ session, prompt })`.
 
-## What still needs a real run (creds required)
+## Runtime validation — ✅ both gates pass (ran on MCPJam's real E2B)
 
-1. **Port exposure** — confirm the CC bridge's WebSocket actually works over
-   E2B's `getHost` URL (`createSession()` resolving = bridge connected). TEST 1.
-2. **MCP tool-call fidelity** — confirm Claude Code calls the attached MCP tool
-   and the call (name + args) + result reach `fullStream` (sentinel check). TEST 2.
+Executed end-to-end against MCPJam's dev E2B (template `ciq83q75k6orlaznpxo7`,
+`SPIKE_MODEL=claude-sonnet-4-6`, a live Anthropic credential):
+
+- **TEST 1 — port exposure: PASS.** `createSession()` succeeded → the Claude Code
+  bridge WebSocket connected over E2B `getHost`/`getPortUrl`. The harness is not
+  Vercel-coupled; E2B port bridging works.
+- **TEST 2 — MCP tool-call fidelity: PASS.** Claude Code called
+  `mcp__weather__get_weather {"city":"Paris"}` and the result (`…19C and sunny.
+  [SPIKE_SENTINEL]`) reached `fullStream` as a structured tool-result part — not
+  just paraphrased prose. (Bonus: the harness resolves MCP tools via a
+  ToolSearch/deferred-tool step first, which round-trips correctly.)
+
+**Required template fix (found by the run):** the harness bootstrap shells
+`pnpm install` *before* `onSandboxSession`, and the computer template ships
+Node+npm but **no pnpm** (createSession died at `applyBootstrapRecipe`, exit 127).
+Fixed two ways: (1) the provider now provisions pnpm in `createSession`
+(idempotent), and (2) `mcpjam-backend templates/computer/e2b.Dockerfile` now
+bakes it in (needs a template rebuild to take effect).
+
+**Still unverified (Phase 2 runtime checks):**
+- the **reuse path** (`connectToSandboxId` / `Sandbox.connect`) against a
+  `secure: true` box — the create path works, the connect path is untested;
+- **wake-before-connect** + keepalive vs the ~30-min idle-hibernate cron (this
+  run created a fresh box rather than reusing a paused one).
 
 ## Run it
 
