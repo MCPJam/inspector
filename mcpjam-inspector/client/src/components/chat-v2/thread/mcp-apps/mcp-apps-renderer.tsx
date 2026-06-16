@@ -3810,6 +3810,12 @@ export function MCPAppsRendererSurface({
         // app.getHostCapabilities() returns the same record regardless
         // of which iframe the widget is mounted in.
         effectiveHostCapabilities={effectiveHostCapabilities}
+        // Resolved hostInfo + web-managed flag passed down (the modal no longer
+        // reads useActiveMcpProfile/useWebManagedServers/resolveHostInfo
+        // directly) so inline + modal stay in lockstep and the modal holds no
+        // inspector-app-state coupling.
+        hostInfo={resolvedBridgeHostInfo}
+        webManagedServers={webManagedServers}
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}
