@@ -23,8 +23,12 @@ import type {
   McpUiResourcePermissions,
   McpUiStyles,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { HostConfigMcpProfileV1 } from "@mcpjam/sdk/host-config/internal";
-import type { MCPPrompt, MCPResourceTemplate } from "@mcpjam/sdk/browser";
+import type {
+  MCPPrompt,
+  MCPResourceTemplate,
+  SandboxCspPolicy,
+  SandboxPermissionsPolicy,
+} from "@mcpjam/sdk/browser";
 
 // --- Primitives --------------------------------------------------------------
 
@@ -427,9 +431,28 @@ export interface WidgetHostEnvironment {
 }
 
 /**
+ * Minimal structural projection of `mcpProfile.apps.sandbox` (the host-policy
+ * sandbox overrides the renderer reads directly). The full `HostConfigMcpProfileV1`
+ * is bound inside the inspector adapter's resolvers and never enters the public
+ * surface; only these read-by-the-renderer fields are projected here. `csp` is
+ * the SDK `SandboxCspPolicy` plus the inspector-only `cspDirectives` escape hatch.
+ */
+export interface WidgetHostProfileSandbox {
+  csp?: SandboxCspPolicy & { cspDirectives?: Record<string, string[]> };
+  permissions?: SandboxPermissionsPolicy;
+  sandboxAttrs?: string[];
+  allowFeatures?: Record<string, string>;
+}
+
+/**
  * Raw ambient ENV inputs the renderer reads (Phase 1b). The inspector's
  * use-widget-host adapter supplies these from its stores/contexts; these are
  * structural mirrors of the inspector store/context shapes.
+ *
+ * The active MCP profile (`HostConfigMcpProfileV1`) is NOT exposed as a typed
+ * object — it is bound inside the adapter's resolvers (3d-iii). The renderer
+ * instead reads `profileKey` (a reactivity hash) plus the minimal structural
+ * projections it actually inspects (`profileSandbox`, `profileHostInfo`).
  */
 export interface WidgetHostEnvironmentInputs {
   themeMode: ThemeMode;
@@ -437,7 +460,16 @@ export interface WidgetHostEnvironmentInputs {
   chatboxHostStyle: ChatboxHostStyle | null;
   chatboxHostTheme: "light" | "dark" | null;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
-  activeMcpProfile: HostConfigMcpProfileV1 | undefined;
+  /**
+   * Stable hash of the active MCP profile. The profile object is bound in the
+   * adapter's resolvers; the renderer keys its capability memos on this so they
+   * recompute when the profile changes without the profile type leaking here.
+   */
+  profileKey: string;
+  /** `mcpProfile.apps.sandbox` projection (host-policy sandbox overrides). */
+  profileSandbox: WidgetHostProfileSandbox | undefined;
+  /** `mcpProfile.apps.uiInitialize.hostInfo` projection (AppBridge identity override). */
+  profileHostInfo: { name?: unknown; version?: unknown } | undefined;
   draftHostContext: ProjectHostContextDraft;
   isPlaygroundActive: boolean;
   playgroundLocale: string;
@@ -456,23 +488,22 @@ export interface WidgetHostEnvironmentInputs {
  * client-config implementations; typed structurally so the package owns no
  * inspector code. Drift is caught where the adapter assigns the real fns.
  */
+// The profile-dependent resolvers no longer take a `profile` argument — the
+// inspector adapter binds the active `HostConfigMcpProfileV1` into them, so the
+// profile type stays out of the public surface. `profileKey` drives the
+// renderer's recompute reactivity.
 export interface WidgetHostResolvers {
   resolveEffectiveCompatRuntime: (args: {
-    profile: HostConfigMcpProfileV1 | undefined;
     hostStyle: ChatboxHostStyle | string | null | undefined;
   }) => EffectiveCompatRuntime;
   resolveEffectiveMcpAppsCapabilities: (args: {
-    profile: HostConfigMcpProfileV1 | undefined;
     hostStyle: ChatboxHostStyle | string | null | undefined;
   }) => ResolvedMcpAppsCapabilities;
   resolveEffectiveHostCapabilities: (args: {
     hostStyle: string | null | undefined;
-    profile?: HostConfigMcpProfileV1;
     hostCapabilitiesOverride?: Record<string, unknown>;
   }) => ResolvedHostCapabilities;
-  resolveHostInfo: (
-    profile: HostConfigMcpProfileV1 | undefined,
-  ) => ResolvedHostInfo;
+  resolveHostInfo: () => ResolvedHostInfo;
   getHostStyleOrDefault: (id: string | null | undefined) => ResolvedHostStyle;
   DEFAULT_HOST_STYLE: ResolvedHostStyle;
   extractHostTheme: (
@@ -578,10 +609,11 @@ export interface WidgetHostServices {
 
 export interface WidgetHost {
   /**
-   * Resolved per-server environment — the deferred `resolveEnvironment` target.
-   * OPTIONAL: Phase 1b reads the raw `environment` inputs + `resolvers` instead.
-   * Folding into this (and dropping the raw inputs + the `HostConfigMcpProfileV1`
-   * surface) is the publish-ready pass (3d-iii).
+   * Resolved per-server environment — the deferred fully-pre-resolved target.
+   * OPTIONAL: the renderer reads the raw `environment` inputs + `resolvers`
+   * instead. 3d-iii already removed the `HostConfigMcpProfileV1` type from the
+   * public surface (the profile is bound inside the adapter's resolvers);
+   * collapsing `environment` + `resolvers` entirely into this is a later step.
    */
   resolveEnvironment?: (serverId: string | undefined) => WidgetHostEnvironment;
   /** Raw ambient ENV inputs (Phase 1b); supplied by the inspector adapter. */
