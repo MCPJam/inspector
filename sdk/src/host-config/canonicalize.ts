@@ -1048,6 +1048,13 @@ export function canonicalizeHostConfigV2(
   ) {
     throw new Error("hostConfigV2: chatUiOverride must be a plain object");
   }
+  // Closed enum: reject unknown harness ids so untyped (JS) callers can't
+  // persist a value the runtime can't honor. The "harness requires a computer"
+  // rule is enforced at the backend write-path (next to builtInTools'
+  // requiresComputer), not here — the canonicalizer stays a pure normalizer.
+  if (input.harness !== undefined && input.harness !== "claude-code") {
+    throw new Error('hostConfigV2: harness must be "claude-code" when set');
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   return {
@@ -1061,6 +1068,9 @@ export function canonicalizeHostConfigV2(
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
     respectToolVisibility: input.respectToolVisibility,
+    // Validated pass-through (value checked above). Absent ⇒ emulated;
+    // JSON.stringify drops undefined so pre-feature rows hash byte-identically.
+    harness: input.harness,
     // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
     computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output

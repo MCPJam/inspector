@@ -205,6 +205,13 @@ const inputs = [
     },
   },
   {
+    // Optional harness selector. Absent ⇒ emulated (base-minimal proves that
+    // hash is unchanged); an explicit "claude-code" writes the key and hashes
+    // distinctly. Validated pass-through, like progressiveToolDiscovery.
+    label: "harness-claude-code",
+    input: { ...base(), harness: "claude-code" },
+  },
+  {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
     // byte-identical to base-minimal for that dimension (hash-neutral default).
     label: "builtin-tool-ids-empty-omitted",

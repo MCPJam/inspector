@@ -81,9 +81,16 @@ describe("cross-matrix isolation", () => {
     // (SEP-1865 spec bridge). PR B will gate it on the MCP Apps
     // matrix; today it gates on nothing matrix-related. Either way,
     // it must never read OpenAI shim refs.
-    const body = await readSource("../useToolInputStreaming.ts");
+    //
+    // The implementation relocated to @mcpjam/widget-react in Phase
+    // 3d-ii-b (the inspector `../useToolInputStreaming.ts` is now only a
+    // re-export shim). Scan the REAL source in the package so this guard
+    // keeps defending the actual code, not the shim.
+    const body = await readSource(
+      "../../../../../../../../widget-react/src/useToolInputStreaming.ts",
+    );
     assertNoRefs(body, OPENAI_SHIM_RUNTIME_REFS, {
-      module: "useToolInputStreaming.ts",
+      module: "widget-react/src/useToolInputStreaming.ts",
       surface: "MCP Apps spec bridge (app.*)",
     });
   });

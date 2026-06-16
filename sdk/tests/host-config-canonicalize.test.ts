@@ -522,3 +522,32 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
     expect(await hash(withOverrides)).not.toBe(await hash(withoutOverrides));
   });
 });
+
+describe("canonicalizeHostConfigV2 — harness field", () => {
+  it("rejects an unknown harness id (closed-enum guard)", () => {
+    // Untyped (JS) callers must not persist a value the runtime can't honor.
+    expect(() =>
+      canonicalizeHostConfigV2(base({ harness: "codex" as never })),
+    ).toThrow(/harness must be "claude-code"/);
+  });
+
+  it('passes "claude-code" through to the canonical form', () => {
+    const canonical = canonicalizeHostConfigV2(base({ harness: "claude-code" }));
+    expect(canonical.harness).toBe("claude-code");
+  });
+
+  it("absent harness drops from canonical JSON and hashes distinctly from when set", async () => {
+    const without = base();
+    const withHarness = base({ harness: "claude-code" });
+    // Absent ⇒ no key in canonical JSON (JSON.stringify drops the undefined
+    // property), so pre-feature rows hash byte-identically.
+    expect(JSON.stringify(canonicalizeHostConfigV2(without))).not.toContain(
+      "harness",
+    );
+    // Setting it writes the key and changes the hash (distinct from emulated).
+    expect(JSON.stringify(canonicalizeHostConfigV2(withHarness))).toContain(
+      '"harness":"claude-code"',
+    );
+    expect(await hash(withHarness)).not.toBe(await hash(without));
+  });
+});

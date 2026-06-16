@@ -35,6 +35,9 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+// Tier B Phase 3c: resolve @mcpjam/widget-react from source (its published
+// exports point at dist, which a clean checkout hasn't built).
+const widgetReactEntry = path.resolve(rootDir, "../widget-react/src/index.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -118,6 +121,7 @@ export default defineConfig({
       },
       { find: "@mcpjam/chat-ui/trace", replacement: chatUiTraceEntry },
       { find: "@mcpjam/chat-ui", replacement: chatUiEntry },
+      { find: "@mcpjam/widget-react", replacement: widgetReactEntry },
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
