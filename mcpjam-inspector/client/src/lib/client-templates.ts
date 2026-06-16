@@ -868,8 +868,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "mistral",
-    label: "Mistral",
-    description: "Mistral web host. MCP Apps, no OpenAI shim.",
+    label: "Le Chat",
+    description: "Mistral Le Chat web host. MCP Apps, no OpenAI shim.",
     logoSrc: mistralLogo,
     seed: () => {
       const base = emptyHostConfigInputV2({
