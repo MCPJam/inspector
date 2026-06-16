@@ -11,6 +11,7 @@ const mockState = vi.hoisted(() => ({
   getCachedGuestSession: vi.fn(),
   getOrCreateGuestSession: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
+  markGuestActivated: vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -21,6 +22,7 @@ vi.mock("@/lib/guest-session", () => ({
   getCachedGuestSession: mockState.getCachedGuestSession,
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
   forceRefreshGuestSession: mockState.forceRefreshGuestSession,
+  markGuestActivated: mockState.markGuestActivated,
 }));
 
 describe("useUnifiedConvexAuth", () => {
