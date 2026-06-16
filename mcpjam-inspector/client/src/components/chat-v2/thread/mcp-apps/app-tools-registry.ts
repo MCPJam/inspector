@@ -23,7 +23,13 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { useTrafficLogStore } from "@/stores/traffic-log-store";
+// Traffic logging is injected by the caller (the inspector chat/playground
+// dispatch hooks) rather than reached for via `@/stores`, so this registry
+// carries no inspector telemetry into the widget package (Tier-B).
+import type { WidgetDebugSink } from "./widget-host";
+
+/** Injected traffic-log sink — `WidgetDebugSink["addTrafficLog"]`. */
+export type AddTrafficLog = WidgetDebugSink["addTrafficLog"];
 
 /** Per-AppBridge instance identifier (independent of parentToolCallId). */
 export type BridgeId = string;
@@ -593,21 +599,24 @@ export const useAppToolInvocationLog = create<AppToolInvocationLogState>(
 
 export function recordAppToolInvocation(
   args: Omit<AppToolInvocationRecord, "invokedAtMs">,
+  addTrafficLog?: AddTrafficLog,
 ): void {
   useAppToolInvocationLog.getState().append({
     ...args,
     invokedAtMs: Date.now(),
   });
-  // Mirror the invocation into the shared traffic-log store so it
-  // surfaces in `LoggerView` alongside the rest of the iframe ↔ host
+  // Mirror the invocation into the shared traffic-log via the injected sink so
+  // it surfaces in `LoggerView` alongside the rest of the iframe ↔ host
   // traffic. `direction: "host-to-ui"` because the host dispatched the
   // call into the iframe via `bridge.callTool`. `widgetId` matches the
   // parent host tool call so existing logger filters scope correctly.
   // Only the model-safe scrubbed payload is shipped here — the full
   // `CallToolResult` (including `structuredContent` and `_meta`) lives
-  // in `useAppToolInvocationLog` for richer debug UIs.
+  // in `useAppToolInvocationLog` for richer debug UIs. When no sink is
+  // injected (non-inspector host), the invocation log still records.
+  if (!addTrafficLog) return;
   try {
-    useTrafficLogStore.getState().addLog({
+    addTrafficLog({
       widgetId: args.parentToolCallId,
       serverId: args.serverId,
       direction: "host-to-ui",
@@ -625,7 +634,7 @@ export function recordAppToolInvocation(
       },
     });
   } catch {
-    // Defensive: the traffic-log store is best-effort observability;
+    // Defensive: the traffic-log sink is best-effort observability;
     // never let a logger failure bubble into the dispatch path.
   }
 }
