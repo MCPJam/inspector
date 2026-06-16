@@ -242,11 +242,14 @@ export function HostCompatContent({
                   <TooltipTrigger asChild>
                     <span
                       className={`inline-flex flex-shrink-0 items-center gap-1.5 text-xs ${verdict.text}`}
+                      aria-label={
+                        report.verdict === "works" ? verdict.label : undefined
+                      }
                     >
                       <span
                         className={`h-1.5 w-1.5 rounded-full ${verdict.dot}`}
                       />
-                      {verdict.label}
+                      {report.verdict !== "works" && verdict.label}
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" variant="muted">
@@ -254,17 +257,23 @@ export function HostCompatContent({
                   </TooltipContent>
                 </Tooltip>
 
-                {hasFindings && !isOpen && (
+                {hasFindings ? (
                   <button
                     type="button"
                     onClick={() => toggleExpanded(report.hostId)}
-                    className="hidden min-w-0 flex-1 truncate text-left text-xs text-muted-foreground hover:text-foreground sm:block"
+                    aria-expanded={isOpen}
+                    className="flex min-w-0 flex-1 items-center gap-1 rounded-md text-left text-xs text-muted-foreground hover:text-foreground"
                   >
-                    {summary}
+                    <span className="truncate">{summary}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                    />
                   </button>
+                ) : (
+                  <div className="min-w-0 flex-1" aria-hidden />
                 )}
 
-                <div className="ml-auto flex flex-shrink-0 items-center gap-0.5">
+                <div className="flex flex-shrink-0 items-center">
                   {canCreateHosts && isHostTemplateId(report.hostId) && (
                     <Button
                       size="sm"
@@ -285,19 +294,6 @@ export function HostCompatContent({
                         </>
                       )}
                     </Button>
-                  )}
-                  {hasFindings && (
-                    <button
-                      type="button"
-                      onClick={() => toggleExpanded(report.hostId)}
-                      aria-expanded={isOpen}
-                      aria-label={isOpen ? "Hide details" : "Show details"}
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                    >
-                      <ChevronDown
-                        className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
-                      />
-                    </button>
                   )}
                 </div>
               </div>

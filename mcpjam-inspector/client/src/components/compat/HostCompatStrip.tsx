@@ -62,7 +62,7 @@ export function HostCompatStripView({
   return (
     <div
       data-server-card-context-menu-exempt
-      className="mt-3 flex flex-wrap items-center gap-2"
+      className="flex min-w-0 flex-1 items-center gap-2"
       onClick={(e) => e.stopPropagation()}
     >
       <button
