@@ -45,21 +45,49 @@ and `e2b@^2`. That validates the biggest unknowns at compile time:
 
 ```bash
 npm install
-E2B_API_KEY=…  ANTHROPIC_API_KEY=…  npm run spike
+E2B_API_KEY=…  ANTHROPIC_API_KEY=…  \
+  SPIKE_E2B_TEMPLATE=ciq83q75k6orlaznpxo7  \
+  npm run spike
 # also honored: ANTHROPIC_AUTH_TOKEN, AI_GATEWAY_API_KEY/_BASE_URL, ANTHROPIC_BASE_URL
-# SPIKE_MODEL (default claude-sonnet-4-5), SPIKE_E2B_TEMPLATE
+# SPIKE_MODEL  (default claude-sonnet-4-6; current Claude ids: claude-sonnet-4-6 / claude-opus-4-8)
+# SPIKE_E2B_TEMPLATE  (MCPJam's computer template ciq83q75k6orlaznpxo7 ships Node 20)
+# SPIKE_E2B_SECURE=false  (provision a non-secure box to isolate harness vs secure-URL issues)
 ```
 
 This environment has only `ANTHROPIC_BASE_URL` set — no E2B or Anthropic key — so
 it has not been run here.
 
-## Open runtime requirements / risks
+## Confirmed by backend investigation
 
-- **E2B template needs Node** (for the harness bridge + the stdio MCP server).
-  Use a template with Node 20+ (ideally the `claude` CLI / agent SDK pre-baked so
-  cold starts aren't an `npm install`). Set `SPIKE_E2B_TEMPLATE`.
-- **Model id** — `SPIKE_MODEL` default is a guess; set the real current CC model.
-- **Fallback** if the harness proves Vercel-coupled at runtime: drive
-  `@anthropic-ai/claude-agent-sdk` directly inside the E2B sandbox (just needs the
-  provider's command/file/`getHost` primitives) — no dependence on the harness
-  sandbox abstraction.
+- **Reuse flow is exactly as guessed:** control plane `getOrReserveComputer`
+  (Convex, idempotent per project+owner, wakes a hibernated box) → data plane
+  `POST /computers/sandbox-info` (inspector server, gated by the
+  `x-computers-data-plane-secret` / `COMPUTERS_DATA_PLANE_SECRET` header) returns
+  `providerComputerId` = the E2B sandboxID = `connectToSandboxId`.
+- **Where this belongs (Phase 2):** the provider + harness driver are *data-plane*
+  code → live in the **inspector server**, authenticate with
+  `COMPUTERS_DATA_PLANE_SECRET`, and call `/computers/sandbox-info` for the
+  sandboxId. Convex stays control-plane only (no E2B SDK). `ownsSandbox=false` for
+  reused boxes already matches the control plane owning teardown.
+- **Template** `ciq83q75k6orlaznpxo7` ships Node 20 + a writable `/opt/npm-global`
+  prefix; it does **not** pre-bake the `claude` CLI / `@anthropic-ai/claude-agent-sdk`
+  (add to `templates/computer/e2b.Dockerfile` for cold-start, or `npm i -g` at session start).
+
+## Gotchas to verify at runtime
+
+1. **`secure: true` boxes.** Prod provisions every computer secure. The provider
+   relies on the SDK resolving the per-sandbox envd token from the org `apiKey` on
+   connect — TEST 1 (the getHost WebSocket) is exactly where a missing token would
+   surface. If it fails, retry with `SPIKE_E2B_SECURE=false` to confirm it's the
+   secure-URL path, then thread the envd token (and have `/computers/sandbox-info`
+   return it for the reuse path).
+2. **Hibernation racing the run.** Boxes auto-pause (~1h E2B timeout; idle cron
+   ~30m). Reuse must wake via `getOrReserveComputer` first (Sandbox.connect won't
+   resume), and keep `lastActiveAt` warm during a long run.
+3. **Egress denylist (SSRF guard).** RFC1918 outbound is blocked. getHost bridge +
+   remote MCP (public URLs) are fine; **local MCP servers must come in over the
+   tunnel relay**, never a private address.
+
+- **Fallback** if the harness proves Vercel-coupled or secure-URL handling is
+  awkward: drive `@anthropic-ai/claude-agent-sdk` directly inside the E2B sandbox
+  (only needs the provider's command/file/`getHost` primitives).

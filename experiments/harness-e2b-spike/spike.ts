@@ -68,7 +68,7 @@ rl.on("line", (line) => {
 `;
 
 const harness = createClaudeCode({
-  model: process.env.SPIKE_MODEL ?? "claude-sonnet-4-5",
+  model: process.env.SPIKE_MODEL ?? "claude-sonnet-4-6",
   thinking: "off",
   // Auth shape is { anthropic } | { gateway }. Prefer the gateway when present.
   auth: process.env.AI_GATEWAY_API_KEY
@@ -89,8 +89,11 @@ const harness = createClaudeCode({
 
 const sandbox = createE2BSandboxProvider({
   apiKey: e2bKey,
-  // Reuse MCPJam's computer by passing connectToSandboxId here instead.
-  template: process.env.SPIKE_E2B_TEMPLATE, // must have node (+ ideally claude CLI)
+  // Reuse MCPJam's computer by passing connectToSandboxId here instead (wake it
+  // via getOrReserveComputer first; Sandbox.connect won't resume a paused box).
+  template: process.env.SPIKE_E2B_TEMPLATE, // e.g. ciq83q75k6orlaznpxo7 (has Node)
+  secure: process.env.SPIKE_E2B_SECURE !== "false", // mirror prod (secure: true)
+  timeoutMs: 15 * 60 * 1000, // keep the box alive for the run
   bridgePort: 39271,
 });
 

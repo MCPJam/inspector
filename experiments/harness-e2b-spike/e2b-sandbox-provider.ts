@@ -24,10 +24,17 @@ import type {
 } from "@ai-sdk/harness";
 
 export interface E2BSandboxProviderOptions {
-  /** E2B template with Node + the claude-agent-sdk available (see README). */
+  /** E2B template with Node + the claude-agent-sdk available (see README).
+   *  MCPJam's computer template is `ciq83q75k6orlaznpxo7` (ships Node 20). */
   template?: string;
-  /** Reuse an existing E2B sandbox (MCPJam computer) instead of creating one. */
+  /** Reuse an existing E2B sandbox (MCPJam computer) instead of creating one.
+   *  The box must already be AWAKE — wake a hibernated computer via the control
+   *  plane (getOrReserveComputer) first; Sandbox.connect won't resume it. */
   connectToSandboxId?: string;
+  /** Mirror prod, which provisions every computer with `secure: true`. */
+  secure?: boolean;
+  /** Keep the box alive long enough for the harness run. */
+  timeoutMs?: number;
   /** Port the in-sandbox bridge binds to; declared via session.ports so the
    *  claude-code adapter picks it up. */
   bridgePort?: number;
@@ -100,8 +107,21 @@ export function createE2BSandboxProvider(
       // control plane, so a harness session ending must never kill it.
       const ownsSandbox = !opts.connectToSandboxId;
       const sandbox = opts.connectToSandboxId
-        ? await Sandbox.connect(opts.connectToSandboxId, { apiKey: opts.apiKey })
-        : await Sandbox.create(opts.template ?? "base", { apiKey: opts.apiKey });
+        ? // Reuse path: box must already be awake (control plane wakes it). For
+          // `secure: true` boxes the SDK resolves the per-sandbox envd token
+          // from the org apiKey on connect — TEST 1 confirms that holds.
+          await Sandbox.connect(opts.connectToSandboxId, {
+            apiKey: opts.apiKey,
+            timeoutMs: opts.timeoutMs,
+          })
+        : // Spike-owned box: mirror prod's `secure: true`. create() returns an
+          // already-tokened, connected instance, so getHost works without extra
+          // wiring. Flip SPIKE_E2B_SECURE=false to isolate harness vs secure-URL.
+          await Sandbox.create(opts.template ?? "base", {
+            apiKey: opts.apiKey,
+            secure: opts.secure ?? true,
+            timeoutMs: opts.timeoutMs,
+          });
 
       // Mutated in place by setPorts so `session.ports` (same ref) stays live.
       const ports: number[] = [bridgePort];
