@@ -164,6 +164,13 @@ export interface WidgetSurfaceInfo {
   persistentSurfaceHost: boolean;
   /** useWebManagedServers — route widget-content through /api/web. */
   webManagedServers: boolean;
+  /**
+   * HOSTED_MODE (the inspector's `@/lib/config` flag): the app runs against
+   * the hosted backend (web-managed servers, no local file APIs). The renderer
+   * + sandboxed iframe read this to pick hosted vs. local proxy/file paths and
+   * to gate upload/download/resource-template features.
+   */
+  hostedMode: boolean;
   /** SANDBOX_ORIGIN (VITE_MCPJAM_SANDBOX_ORIGIN); "" when unset. */
   sandboxOrigin: string;
   /**
@@ -372,8 +379,32 @@ export interface WidgetModalProps {
   children: ReactNode;
 }
 
+/**
+ * Checkout chrome injection (Agentic Commerce / ACP). The package owns the
+ * `requestCheckout` lifecycle but not the inspector's checkout UI; the inspector
+ * injects its `CheckoutDialogV2` via `components.Checkout`. `session` is the raw
+ * ACP checkout-session payload the widget supplied — opaque to the package, so
+ * it is typed `unknown` and the inspector adapter narrows it to its own
+ * `CheckoutSession` shape.
+ */
+export interface WidgetCheckoutProps {
+  session: unknown;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Resolve the widget's checkout promise with the successful result. */
+  onComplete: (result: unknown) => void;
+  /** Reject the widget's checkout promise with a non-UI error. */
+  onError: (error: string) => void;
+  onCancel: () => void;
+  onCallTool: (
+    toolName: string,
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
+}
+
 export interface WidgetHostComponents {
   Modal?: ComponentType<WidgetModalProps>;
+  Checkout?: ComponentType<WidgetCheckoutProps>;
 }
 
 // --- Environment -------------------------------------------------------------
@@ -534,6 +565,13 @@ export interface WidgetHostServices {
     opts?: { forceHosted?: boolean },
   ) => Promise<MCPPrompt[]>;
   listResourceTemplates: (serverId: string) => Promise<MCPResourceTemplate[]>;
+  /**
+   * Session-authenticated `fetch` (the inspector's `authFetch`): attaches the
+   * hosted bearer/session token for inspector API paths. Used by the widget
+   * file-upload bridge (`openai:uploadFile`); plain static/cached fetches use
+   * the global `fetch` directly.
+   */
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 // --- The seam ----------------------------------------------------------------
