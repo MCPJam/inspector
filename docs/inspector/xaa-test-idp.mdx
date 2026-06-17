@@ -1,28 +1,29 @@
 ---
-title: "Use MCPJam as a Test IdP"
+title: "MCPJam as your test IdP"
 description: "Register MCPJam's built-in identity provider with your authorization server to test Cross-App Access flows end to end"
 icon: "key-round"
 ---
 
-When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger plays the IdP for you — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
+When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger always uses MCPJam as the IdP — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
 
-To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the three endpoints you register to establish that trust.
+To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the two endpoints you register to establish that trust.
 
 ## Where to find the endpoints
 
-Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the **Use MCPJam as your test IdP** card. It lists three copy-able URLs and the active signing key id (`kid`).
+Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, the **"MCPJam is your identity provider"** bar shows the Issuer URL and JWKS URL inline, each with a copy button. Hover the info icon (ⓘ) next to the title for a full explanation of how MCPJam acts as the IdP and what it stamps into each ID-JAG.
 
-## The three endpoints
+## The two endpoints
 
 | Endpoint | What it is | Where it goes |
 | --- | --- | --- |
-| **Issuer URL** | The `iss` value MCPJam stamps on every assertion. | Register it as a trusted issuer at your authorization server. |
-| **OpenID configuration URL** | The `/.well-known/openid-configuration` document. Advertises the issuer, JWKS URI, and supported grant types. | Most authorization servers discover the JWKS automatically from here. |
-| **JWKS URL** | The public signing keys (`/.well-known/jwks.json`). | Register it directly if your authorization server doesn't auto-discover from the OpenID configuration. |
+| **Issuer URL** | The `iss` value MCPJam stamps on every assertion. | Register it as a trusted issuer at your authorization server. Most servers auto-discover the signing keys from this URL's OpenID metadata. |
+| **JWKS URL** | The public signing keys (`/.well-known/jwks.json`). | Register it directly if your authorization server doesn't auto-discover keys from the issuer URL. |
+
+You only need one of the two — use the Issuer URL if your server supports OpenID discovery; use the JWKS URL directly if it doesn't.
 
 ## Registering trust
 
-1. Copy the **Issuer URL** from the card. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
+1. Copy the **Issuer URL** from the bar. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
 2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's **issuer URL** as the trusted identity issuer. The issuer is the trust anchor; use the JWKS URL only when the server explicitly asks for the key-set endpoint.
 3. Set the ID-JAG `aud` claim to your authorization server's own issuer.
 4. Set the ID-JAG `resource` claim to your MCP server's resource identifier.
