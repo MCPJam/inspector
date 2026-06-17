@@ -47,6 +47,7 @@ import { WebApiError } from "@/lib/apis/web/base";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { useQuery } from "convex/react";
+import { stripConvexReservedKeys } from "@/lib/convex-args";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 
@@ -267,15 +268,16 @@ export function ToolsTab({
 
   // Live per-tool quality lint for the loaded tools. Pure backend compute over
   // a snapshot of the current tool definitions; the sidebar renders a small
-  // badge per flagged tool. The snapshot intentionally carries no version (the
-  // backend owns it) and no timestamp, and the tools are sorted by name —
-  // keeping the query args a canonical function of the tool set (independent of
-  // load order) lets the subscription dedupe across renders and incremental
-  // refetches instead of churning.
+  // badge per flagged tool. The snapshot carries no version (the backend owns
+  // it) and no timestamp, and the tools are sorted by name — keeping the query
+  // args a canonical function of the tool set (independent of load order) lets
+  // the subscription dedupe across renders and incremental refetches instead of
+  // churning. Convex-reserved keys ($-/_-prefixed: JSON Schema's $ref/$defs/
+  // $schema, MCP _meta) are stripped so the client can serialize the args at all.
   const toolQualitySnapshot = useMemo(() => {
-    const toolList = Object.values(tools).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
+    const toolList = Object.values(tools)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((tool) => stripConvexReservedKeys(tool));
     if (!serverName || toolList.length === 0) return null;
     return { servers: [{ serverId: serverName, tools: toolList }] };
   }, [tools, serverName]);
