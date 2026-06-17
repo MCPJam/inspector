@@ -787,6 +787,25 @@ describe("v1 write routes", () => {
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
     });
 
+    it("rejects a prompt case with no query (400), but not a widget_probe", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [{ title: "no query" }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
     it("maps a second-stage validation failure to 400, not 500", async () => {
       // A widget_probe case without probeConfig passes the create-schema but
       // fails the run-schema superRefine. parseWithSchema must turn that into a

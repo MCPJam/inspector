@@ -836,8 +836,10 @@ const evalCaseInput = z.object({
   query: z
     .string()
     .trim()
-    .min(1)
-    .describe("The user prompt the agent receives for this case."),
+    .optional()
+    .describe(
+      "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
+    ),
   runs: z
     .number()
     .int()
@@ -923,6 +925,19 @@ const evalCaseInput = z.object({
     .min(1)
     .optional()
     .describe("Per-case provider override; defaults to the suite-level provider."),
+}).superRefine((testCase, ctx) => {
+  // Prompt cases need a query; widget_probe cases run a pinned tool call and
+  // carry an empty query (the run schema normalizes to "").
+  if (
+    testCase.caseType !== "widget_probe" &&
+    (testCase.query === undefined || testCase.query.length === 0)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["query"],
+      message: "query is required for prompt cases",
+    });
+  }
 });
 
 const createEvalSuiteInput = z.object({
@@ -963,7 +978,10 @@ const createEvalSuiteInput = z.object({
   cases: z
     .array(evalCaseInput)
     .min(1)
-    .describe("Authored test cases. At least one is required."),
+    // Mirrors the backend MAX_V1_TESTS cap so a guaranteed-413 payload is
+    // rejected before the network call.
+    .max(100)
+    .describe("Authored test cases (1–100)."),
 });
 
 export type CreateEvalSuiteInput = z.infer<typeof createEvalSuiteInput>;

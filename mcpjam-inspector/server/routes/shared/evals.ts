@@ -1094,17 +1094,32 @@ export async function authorEvalSuite(args: {
     }
 
     // New-suite path only: if every case create failed, the freshly-made
-    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
-    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
-    // generic "No tests supplied for eval run" — masking the structured
-    // failure breakdown we just collected. Short-circuit with an
-    // actionable message instead.
+    // suite has zero cases. Leaving it would orphan an empty suite and (on the
+    // run path) snapshot nothing into an opaque "No tests supplied" failure.
+    // Roll the suite back (best-effort) and surface the structured breakdown
+    // as a client error — this is a bad request, not an internal fault.
     if (committedCases.length === 0 && failedCases.length > 0) {
       const firstError = failedCases[0]?.error ?? "unknown error";
-      throw new Error(
+      try {
+        await convexClient.mutation("testSuites:deleteTestSuite" as any, {
+          suiteId: resolvedSuiteId,
+        });
+      } catch (rollbackError) {
+        logger.warn("[evals] Failed to roll back empty suite after all cases failed", {
+          suiteId: resolvedSuiteId,
+          error:
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+        });
+      }
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
         `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
           `First failure: ${firstError}. ` +
-          `Run aborted because the suite would have zero cases to execute.`,
+          `Suite creation aborted because it would have zero cases.`,
+        { caseUpsert: { committed: committedCases, failed: failedCases } },
       );
     }
   }

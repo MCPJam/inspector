@@ -112,7 +112,10 @@ const createEvalSuiteSchema = z.object({
     .array(
       z.object({
         title: z.string().min(1),
-        query: z.string().min(1),
+        // Required for prompt cases; widget_probe rows carry an empty query
+        // (normalized to "" in normalizeCreateTestsToRunTests). Enforced by
+        // the superRefine below so a prompt case can't be authored query-less.
+        query: z.string().optional(),
         runs: z.number().int().min(1).max(10).optional(),
         model: z.string().optional(),
         provider: z.string().optional(),
@@ -133,6 +136,17 @@ const createEvalSuiteSchema = z.object({
         predicates: casePredicatesSchema.optional(),
         caseType: z.enum(TEST_CASE_TYPES).optional(),
         probeConfig: probeConfigSchema.optional(),
+      }).superRefine((testCase, ctx) => {
+        if (
+          testCase.caseType !== "widget_probe" &&
+          (testCase.query === undefined || testCase.query.length === 0)
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["query"],
+            message: "query is required for prompt cases",
+          });
+        }
       }),
     )
     .min(1)
@@ -172,7 +186,8 @@ function normalizeCreateTestsToRunTests(
     );
     return {
       title: test.title,
-      query: test.query,
+      // widget_probe rows are authored query-less; the run schema accepts "".
+      query: test.query ?? "",
       runs,
       model,
       provider,

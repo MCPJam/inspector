@@ -673,6 +673,44 @@ describe("createEvalSuiteOperation", () => {
     expect(authored.promptTurns).toEqual([{ role: "user", content: "hi" }]);
   });
 
+  it("caps cases at 100 and requires a query only for prompt cases", () => {
+    const base = {
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+    };
+    // Over the cap is rejected before any network call.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: Array.from({ length: 101 }, (_, i) => ({
+          title: `t${i}`,
+          query: "q",
+        })),
+      }).success
+    ).toBe(false);
+    // A prompt case without a query is rejected...
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [{ title: "t" }],
+      }).success
+    ).toBe(false);
+    // ...but a widget_probe case may omit the query.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [
+          {
+            title: "probe",
+            caseType: "widget_probe",
+            probeConfig: { serverName: "echo", toolName: "echo" },
+          },
+        ],
+      }).success
+    ).toBe(true);
+  });
+
   it("requires a name, at least one server, and at least one case", () => {
     expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
       false

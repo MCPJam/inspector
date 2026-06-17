@@ -1566,13 +1566,12 @@
             "description": "Test cases to create in the suite.",
             "items": {
               "type": "object",
-              "required": ["title", "query"],
+              "required": ["title"],
               "properties": {
                 "title": { "type": "string", "minLength": 1 },
                 "query": {
                   "type": "string",
-                  "minLength": 1,
-                  "description": "The user prompt the model is given."
+                  "description": "The user prompt the model is given. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
                 },
                 "runs": {
                   "type": "integer",
