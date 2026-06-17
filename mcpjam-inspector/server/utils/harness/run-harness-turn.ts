@@ -187,11 +187,21 @@ export async function runHarnessTurn(
         throw new Error("harness turn requires an auth bearer to resolve the computer");
       }
       // Tool approval isn't bridged into the harness yet (no
-      // tool-approval-request continuation handling). Fail closed rather than
-      // silently bypass the host's approval policy or hang on an approval
-      // prompt the loop can't answer: refuse approval-required turns. Until
-      // continuations land, run a Claude Code host with requireToolApproval
-      // off, or use the emulated engine.
+      // tool-approval-request continuation handling), and the harness runs
+      // allow-all — it can neither pause for interactive approval nor
+      // selectively deny one call. Fail closed on BOTH approval signals rather
+      // than risk silently bypassing the host's policy:
+      //   • requireToolApproval — the host explicitly wants approval gating.
+      //   • approvalMode "auto-deny" — the headless realization eval/synthetic
+      //     pass. It is intentionally refused (not treated as a no-op): those
+      //     callers don't forward the host's requireToolApproval into this turn,
+      //     so from here "auto-deny" is ambiguous — it could be a
+      //     requireToolApproval host whose tools must be denied, and allowing it
+      //     would bypass that policy. Distinguishing the two requires the
+      //     eval/synthetic callers to thread requireToolApproval through (the
+      //     eval-harness follow-up).
+      // Until then: run a Claude Code host with requireToolApproval off via
+      // chat/playground, or use the emulated engine.
       if (requireToolApproval || approvalMode === "auto-deny") {
         throw new Error(
           "harness (Claude Code) turns don't support tool approval yet — turn " +
@@ -200,14 +210,20 @@ export async function runHarnessTurn(
         );
       }
 
-      // 1. Resolve (and wake) the host's computer → sandbox id.
+      // 1. Resolve the model credential FIRST. It's a pure, fail-fast check —
+      // the env-credential gate throws when disabled/unset — so doing it before
+      // resolveHarnessSandbox keeps a misconfigured turn from waking/provisioning
+      // the user's computer (and bumping its activity) only to fail afterward.
+      const auth = resolveHarnessModelAuth();
+
+      // 2. Resolve (and wake) the host's computer → sandbox id.
       const { sandboxId } = await resolveHarnessSandbox({
         bearer: authHeader,
         projectId,
         signal: abortSignal,
       });
 
-      // 2. Build the .mcp.json from the selected servers.
+      // 3. Build the .mcp.json from the selected servers.
       //
       // Progressive tool discovery (progressivePlan / discoveryState) is
       // intentionally NOT applied here. It is an EMULATED-engine mechanism:
@@ -223,9 +239,6 @@ export async function runHarnessTurn(
         mcpClientManager,
         selectedServers ?? [],
       );
-
-      // 3. Resolve the model credential (env seam; Convex mint is the harden).
-      const auth = resolveHarnessModelAuth();
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
@@ -502,7 +515,14 @@ export async function runHarnessTurn(
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
     }
-    await onStreamComplete?.();
+    // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
+    // error must not reject stream finalization after an otherwise successful
+    // turn (the trace + onConversationComplete already ran above).
+    try {
+      await onStreamComplete?.();
+    } catch (cleanupError) {
+      logger.error("[harness] error while running stream cleanup", cleanupError);
+    }
   };
 
   if (streamSink === "ui") {
