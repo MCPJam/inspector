@@ -60,6 +60,9 @@ export function XAASimulatedIdentity({
             placeholder="user-12345"
             spellCheck={false}
             autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+            data-form-type="other"
           />
         </div>
         <div className="space-y-2">
@@ -71,6 +74,9 @@ export function XAASimulatedIdentity({
             placeholder="demo.user@example.com"
             spellCheck={false}
             autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+            data-form-type="other"
           />
         </div>
       </PopoverContent>
