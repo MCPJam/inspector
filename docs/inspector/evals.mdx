@@ -106,6 +106,10 @@ A run needs three things, all picked from the suite header:
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
 
+<Warning>
+  If a server in the snapshot is no longer connected when you rerun, the eval fails immediately with a message like **"Could not start eval because &quot;Server Name&quot; is not connected. Reconnect the server and try again."** Reconnect the server (or update the snapshot to remove it) before retrying.
+</Warning>
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
