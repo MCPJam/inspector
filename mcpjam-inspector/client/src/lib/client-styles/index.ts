@@ -15,6 +15,7 @@ export type {
 } from "./types";
 export {
   CHATGPT_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
   CODEX_HOST_STYLE,

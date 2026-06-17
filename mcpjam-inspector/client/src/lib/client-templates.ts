@@ -211,6 +211,7 @@ const CLAUDE_FONTS_CSS = `
 export type HostTemplateId =
   | "mcpjam"
   | "claude"
+  | "claude-desktop"
   | "claude-code"
   | "chatgpt"
   | "cursor"
@@ -624,6 +625,92 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // sandbox-proxy.html: inner gets spec-4 only), matching real
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    description: "Claude Electron app. Inline MCP Apps, no OpenAI shim.",
+    logoSrc: claudeLogo,
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "claude-desktop",
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+        clientCapabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // Captured from Claude Desktop 1.12603.1 / Electron 42.4.0 in the
+      // double-iframe MCP Apps renderer. Unlike ChatGPT/Copilot, Claude
+      // Desktop does NOT inject `window.openai`; the explicit compatRuntime
+      // false below makes that absence visible in the Apps editor JSON.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        downloadFile: {},
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
+        logging: {},
+        updateModelContext: { text: {}, image: {} },
+        message: { text: {} },
+      };
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 698.109375, maxHeight: 5000 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.12603.1 Chrome/148.0.7778.254 Electron/42.4.0 Safari/537.36",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: CLAUDE_HOST_STYLE_VARIABLES,
+          css: { fonts: CLAUDE_FONTS_CSS },
+        },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: { name: "claude-ai", version: "0.1.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "Claude", version: "1.0.0" },
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                resourceDomains: [
+                  "https://cdn.jsdelivr.net",
+                  "https://assets.claude.ai",
+                ],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            sandboxAttrs: ["allow-forms"],
           },
         },
       };
