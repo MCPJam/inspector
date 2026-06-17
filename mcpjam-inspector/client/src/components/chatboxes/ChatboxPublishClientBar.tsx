@@ -105,7 +105,7 @@ export function ChatboxPublishClientBar({
         value={matchedAttachmentId}
         onChange={(id, attachment) => void handleAttachmentChange(id, attachment)}
         emptyTriggerLabel={emptyTriggerLabel}
-        infoText="A server attachment is a named set of MCP servers this chatbox connects to. Reuse the same attachment across chatboxes and eval suites, or create one per scenario."
+        infoText="A server group is a named set of MCP servers this chatbox connects to."
         selectedDeleteHint="In use by this chatbox — pick another first"
       />
 
