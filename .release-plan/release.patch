@@ -1,85 +1,7 @@
-diff --git a/.changeset/chat-ui-shareusage-adoption.md b/.changeset/chat-ui-shareusage-adoption.md
+diff --git a/.changeset/cli-apps-session.md b/.changeset/cli-apps-session.md
 deleted file mode 100644
-index d1678cb98..000000000
---- a/.changeset/chat-ui-shareusage-adoption.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Render the read-only share-usage thread transcript via the new
--`@mcpjam/chat-ui` `ReadOnlyTranscript` — the first inspector adopter of the
--Tier A package — replacing the interactive `TranscriptThread` on that
--read-only surface. `@mcpjam/chat-ui` is resolved from source via vite/vitest/
--tsconfig aliases (mirroring the SDK pattern) so no chat-ui build is required.
-diff --git a/.changeset/chat-ui-thread-helpers-subpath.md b/.changeset/chat-ui-thread-helpers-subpath.md
-deleted file mode 100644
-index 2c9cfd1ca..000000000
---- a/.changeset/chat-ui-thread-helpers-subpath.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/chat-ui": minor
-----
--
--Add a `@mcpjam/chat-ui/thread-helpers` subpath export exposing the pure
--part/tool shape helpers (`AnyPart`, `ToolState`, `getToolInfo`,
--`groupAssistantPartsIntoSteps`, `getToolStateMeta`, …) without loading the React
--renderer / markdown graph. Lets hosts single-source these helpers cheaply.
-diff --git a/.changeset/chat-ui-tier-a.md b/.changeset/chat-ui-tier-a.md
-deleted file mode 100644
-index 6bb7eeee6..000000000
---- a/.changeset/chat-ui-tier-a.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/chat-ui": minor
-----
--
--Introduce `@mcpjam/chat-ui` — a reusable, read-only transcript renderer (Tier
--A) for AI SDK `UIMessage`s. Renders text, reasoning, files, sources, JSON/data
--parts, approvals-as-state, and tool call/result blocks. Widget-bearing tool
--calls render a deterministic placeholder; the package is provider-free (no
--Convex/PostHog/inspector/widget-runtime imports, enforced by a build-time
--guard). Hosts can inject interactive tool/widget rendering via the
--`renderTool`/`renderWidget` seams on `Transcript`.
-diff --git a/.changeset/chat-ui-trace-subpath.md b/.changeset/chat-ui-trace-subpath.md
-deleted file mode 100644
-index d3eeeb0ba..000000000
---- a/.changeset/chat-ui-trace-subpath.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/chat-ui": minor
-----
--
--Add a `@mcpjam/chat-ui/trace` subpath export: Tier-A-compatible trace/replay
--adaptation logic (`adaptTraceToUiMessages`, `snapshotsToTraceWidgetSnapshots`,
--`buildToolRenderOverridesFromSnapshots`, `buildPersistedExecutionReplay`, and
--the `TraceInput` / `TraceContentPart` / `TraceMessage` / `TraceWidgetSnapshot` /
--`AdaptedTraceResult` types). Provider-free and free of the React
--renderer/markdown graph; widget/CSP types are structural placeholders, so it
--carries no eval-domain or MCP-Apps SDK type dependencies.
-diff --git a/.changeset/chat-ui-wrap-without-stylesheet.md b/.changeset/chat-ui-wrap-without-stylesheet.md
-deleted file mode 100644
-index 8b76a3790..000000000
---- a/.changeset/chat-ui-wrap-without-stylesheet.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/chat-ui": patch
-----
--
--`JsonView` and the markdown wrapper now wrap long content via Tailwind
--utilities (`whitespace-pre-wrap` + `overflow-wrap`) instead of relying solely on
--the package stylesheet's `.mcpjam-chat-json` / `.mcpjam-chat-markdown` rules. Tool
--input/output and markdown no longer scroll horizontally when a consumer renders
--the transcript with Tailwind but hasn't imported `@mcpjam/chat-ui/styles.css`.
-diff --git a/.changeset/cli-apps-render.md b/.changeset/cli-apps-render.md
-deleted file mode 100644
-index bbb154ff1..000000000
---- a/.changeset/cli-apps-render.md
+index ca9715d94..000000000
+--- a/.changeset/cli-apps-session.md
 +++ /dev/null
 @@ -1,8 +0,0 @@
 ----
@@ -87,458 +9,67 @@ index bbb154ff1..000000000
 -"@mcpjam/cli": minor
 ----
 -
--New `mcpjam apps render` headlessly renders an MCP App tool result and returns a screenshot + render verdict, so agents and CI can see what a widget actually paints — not just its React state. It calls the tool, mounts the widget's UI resource in the eval browser harness (real headless Chromium running the production host bridge), and emits `{ status, observation, screenshotPath?, screenshotBase64? }`. The screenshot goes to a file by default (`--screenshot-out`); inline base64 is opt-in (`--screenshot-base64`) so stdout stays clean. Flags map to the harness: `--viewport <WxH>` and `--protocol <mcp-apps|openai-sdk>` (the OpenAI Apps SDK shim); `--require-render` makes a non-`rendered` verdict exit non-zero.
+-New `mcpjam apps session start|action|close` drives an MCP App widget interactively, headlessly: `start` renders a widget and keeps it mounted (a live Chromium tab), `action` steps it with a Computer-Use action (click/type/scroll/…) and reports the post-action frame plus any widget→host `tools/call`s it triggered, and `close` disposes it. The CLI exposes the session; the external agent drives the steps (no LLM is embedded).
 -
--This is a local-Inspector capability (local dev + CI): the render path is served by a new `POST /api/mcp/widget-render` route under `/api/mcp/*`, which is disabled in hosted mode, so Chromium always comes from the local Inspector's Playwright install. When Chromium is missing the render reports `browser_unavailable` with an install hint rather than failing hard. The CLI stays thin — no Playwright dependency — because the harness runs server-side where local Chromium lives.
-diff --git a/.changeset/cli-mcp-stdio-server.md b/.changeset/cli-mcp-stdio-server.md
+-Backed by a new local-only Inspector surface (`POST /api/mcp/widget-session`, `POST /api/mcp/widget-session/:id/action`, `DELETE /api/mcp/widget-session/:id`) over a session registry with strict browser lifecycle — max concurrent sessions cap, idle TTL refreshed on each action, a periodic sweep, and dispose-all on process shutdown — so a mounted tab can't leak. The gate-first render flow (listTools → renderability gate → executeTool → render) is shared with `apps render` via a common core. Same output conventions as `apps render`: screenshot to a file by default (`--screenshot-out`), inline base64 opt-in (`--screenshot-base64`).
+diff --git a/.changeset/create-eval-suite.md b/.changeset/create-eval-suite.md
 deleted file mode 100644
-index e98fb11b4..000000000
---- a/.changeset/cli-mcp-stdio-server.md
+index cb41b0a8b..000000000
+--- a/.changeset/create-eval-suite.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,21 +0,0 @@
 ----
+-"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
+-"@mcpjam/inspector": minor
 ----
 -
--New `mcpjam mcp` command runs MCPJam as an MCP server over stdio, so MCP clients without shell access (Claude Desktop, Claude Code, Cursor, custom agents) can use the local testing engine as tools. The server exposes 14 tools: persistent connection management against servers under test (`connect_server`, `disconnect_server`, `list_servers`, `server_info`, `ping_server`), target exercising (`list_tools`, `call_tool`, `list_resources`, `read_resource`, `list_prompts`, `get_prompt`), a per-connection notification buffer (`get_notifications`, covering log messages, progress, and list_changed events that one-shot CLI runs can't observe), and stateless diagnostics (`server_doctor`, `probe_server`). Connections stay open across tool calls; all status output goes to stderr so stdout stays clean JSON-RPC.
-diff --git a/.changeset/fix-cross-matrix-guard.md b/.changeset/fix-cross-matrix-guard.md
+-Add `create_eval_suite`: author runnable eval suites from the CLI and MCP.
+-
+-- **@mcpjam/sdk**: new `createEvalSuiteOperation` platform operation plus
+-  `PlatformApiClient.createEvalSuite` and the `PlatformEvalSuiteCreated` type.
+-  Resolves the project selector and HTTP-only servers like `run_eval_suite`,
+-  and forwards the full case shape (expected tool calls, expected output,
+-  advanced config, prompt turns, match options, predicates, widget probes).
+-- **@mcpjam/cli**: new `mcpjam eval` command group (`create` / `list` / `run` /
+-  `status`). `create` accepts a JSON suite definition via `--file`/`--json`
+-  with `--name`/`--model`/`--provider`/`--server`/`--project` overrides and
+-  authors a suite without running it.
+-- **@mcpjam/inspector**: new author-only `POST /api/v1/projects/:projectId/eval-suites`
+-  endpoint that creates a runnable suite from test-case definitions (extracted
+-  from the eval-run path, which is unchanged). The v1 guest gate is now
+-  method-aware: `GET /eval-suites` stays guest-allowed, `POST` is denied.
+diff --git a/.changeset/nux-signup-routing.md b/.changeset/nux-signup-routing.md
 deleted file mode 100644
-index 736179392..000000000
---- a/.changeset/fix-cross-matrix-guard.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Restore the cross-matrix-isolation guard's coverage after 3d-ii-b. The
--`useToolInputStreaming` source-text assertion was reading the inspector path,
--which became a re-export shim when the module relocated to `@mcpjam/widget-react`
--— so the guard no longer scanned the real implementation. Repointed it at
--`widget-react/src/useToolInputStreaming.ts` so the two-matrix architecture
--defense keeps inspecting the actual code. Test-only.
-diff --git a/.changeset/fix-mcpjam-agent-structured-content.md b/.changeset/fix-mcpjam-agent-structured-content.md
-deleted file mode 100644
-index 0b7d02f73..000000000
---- a/.changeset/fix-mcpjam-agent-structured-content.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Preserve `structuredContent` for MCP App widgets on the shared chat path used by
--both the Playground and the agent surface (`streamWebChatTurn` →
--`handleMCPJamFreeChatModel`). MCP App tools scrub `structuredContent` from their
--model-facing output via `toModelOutput`; the shared pipeline previously carried
--only that scrubbed copy, so widgets reading `toolResult.structuredContent`
--received nothing ("Missing structured content").
--
--`executeToolCallsFromMessages` now stamps the raw, unscrubbed `result` on the
--tool-result part whenever it carries `structuredContent` (UI hydration only —
--the model copy stays scrubbed), and `emitToolResults` prefers that raw `result`
--for the streamed UI output when present. The widget bridge receives a
--spec-correct `CallToolResult` (SEP-1865) from the same shared renderer the
--Playground already drives.
-diff --git a/.changeset/fix-stable-stringify-determinism.md b/.changeset/fix-stable-stringify-determinism.md
-deleted file mode 100644
-index ba2555be8..000000000
---- a/.changeset/fix-stable-stringify-determinism.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Fix `stableStringifyJson` determinism: sort object keys by code-unit order
--instead of `localeCompare()`, which is host-locale-dependent and can reorder
--non-ASCII keys across environments — undermining the function's stable-output
--guarantee. ASCII keys (the overwhelming majority) are unaffected.
-diff --git a/.changeset/inspector-dedup-thread-helpers.md b/.changeset/inspector-dedup-thread-helpers.md
-deleted file mode 100644
-index 7a7101173..000000000
---- a/.changeset/inspector-dedup-thread-helpers.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Internal: `chat-v2/thread/thread-helpers` is now single-sourced from
--`@mcpjam/chat-ui/thread-helpers` via a re-export shim instead of a duplicated
--local copy, removing drift between the inspector and the package. No behavior
--change.
-diff --git a/.changeset/inspector-dedup-trace-adapter.md b/.changeset/inspector-dedup-trace-adapter.md
-deleted file mode 100644
-index 5b427e306..000000000
---- a/.changeset/inspector-dedup-trace-adapter.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Internal: single-source the trace/replay adaptation logic
--(`evals/trace-viewer-adapter`, `chat-v2/thread/persisted-execution-replay`) from
--`@mcpjam/chat-ui/trace` instead of duplicated local copies, removing drift. The
--inspector keeps its eval-domain `TraceEnvelope` (spans / browser artifacts) and
--bridges the package's placeholder widget/CSP types back to the real MCP-Apps SDK
--types at the boundary. No behavior change.
-diff --git a/.changeset/release-sdk-cli-coordinated.md b/.changeset/release-sdk-cli-coordinated.md
-deleted file mode 100644
-index 1f363caf5..000000000
---- a/.changeset/release-sdk-cli-coordinated.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
-----
--
--Coordinated release: publish `@mcpjam/sdk` and `@mcpjam/cli` alongside
--`@mcpjam/inspector` so the trio ships together. No functional changes to the SDK
--or CLI on this branch beyond their already-queued changesets.
-diff --git a/.changeset/sdk-host-config-harness.md b/.changeset/sdk-host-config-harness.md
-deleted file mode 100644
-index 85596d24b..000000000
---- a/.changeset/sdk-host-config-harness.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Add an optional `harness` field to HostConfig v2 (new `Harness` type; value
--`"claude-code"`). It selects how a host config executes: absent ⇒ MCPJam's
--emulated loop (the only prior behavior, so pre-feature rows hash
--byte-identically), while `"claude-code"` marks the host to run on a real Claude
--Code runtime via the AI SDK harness (the runtime itself lands in later changes).
--The canonicalizer validates the value as a closed enum. Exported as `Harness`
--from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`.
-diff --git a/.changeset/sdk-widget-runtime-subpath.md b/.changeset/sdk-widget-runtime-subpath.md
-deleted file mode 100644
-index fcffcfb18..000000000
---- a/.changeset/sdk-widget-runtime-subpath.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Add a `@mcpjam/sdk/widget-runtime` subpath exposing the framework-free MCP-Apps
--widget building blocks: SEP-1865 tool-visibility helpers
--(`getToolVisibility` / `isVisibleToModelOnly` / `isVisibleToAppOnly`) and the
--diagnostic `LoggingTransport`. The inspector now sources these from the SDK via
--back-compat re-export shims at their original paths. No behavior change.
-diff --git a/.changeset/widget-cluster-di-3b.md b/.changeset/widget-cluster-di-3b.md
-deleted file mode 100644
-index 0a4fa2778..000000000
---- a/.changeset/widget-cluster-di-3b.md
-+++ /dev/null
-@@ -1,25 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3b (in-place DI): invert the last app-state islands in the widget
--renderer cluster and extend the Tier-B import guard cluster-wide.
--
--- `widget-replay.tsx` no longer reads `useActiveHostCapsResolver` /
--  `hostSupportsWidgetRendering`. The host-support gate is injected as a
--  `resolveHostSupportsWidget` prop by PartSwitch (which already computes the
--  identical gate), so WidgetReplay keeps its own `serverId` semantics with zero
--  `@/contexts` / `@/lib/host-capabilities` coupling.
--- `app-tools-registry.ts` no longer imports `@/stores/traffic-log-store`.
--  `recordAppToolInvocation` accepts an injected `addTrafficLog` sink that the
--  chat (`use-chat-session`) and playground (`useToolExecution`) dispatch hooks
--  supply — keeping inspector telemetry out of the soon-to-be-relocated registry
--  while preserving the LoggerView mirror. The invocation log still records when
--  no sink is injected.
--- `useToolInputStreaming.ts` / `widget-replay.tsx` source their type-only
--  imports (`ResolvedMcpAppsCapabilities`, `DisplayMode`) from the `WidgetHost`
--  contract module instead of `@/lib/client-styles` / `@/stores`.
--- The Tier-B guard now covers 7 cluster files (renderer, replay, app-tools
--  registry, tool-input streaming, surface store, file messages, mcp-apps utils).
--
--No behavior change.
-diff --git a/.changeset/widget-contract-fold-3d-i-b.md b/.changeset/widget-contract-fold-3d-i-b.md
-deleted file mode 100644
-index ec65668be..000000000
---- a/.changeset/widget-contract-fold-3d-i-b.md
-+++ /dev/null
-@@ -1,34 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3d-i-b: complete the `WidgetHost` contract fold-in into
--`@mcpjam/widget-react`, closing the temporary two-`WidgetHost` gap.
--
--The remaining slices — `environment` (raw ambient inputs), `resolvers` (bound
--config/style fns), `services` (widget-content fetch + MCP transport), and the
--result/profile shapes — now live in the package, and **`WidgetHost` itself** is
--package-owned. The inspector's `widget-host.ts` becomes a **pure re-export shim**
--(no local contract), keeping only the two inspector-sourced value re-exports
--(`extractMethod`, `stableStringifyJson`) until they relocate with the renderer in
--3d-ii.
--
--Typing follows the audited renderer usage rather than deep-replicating the
--inspector profile graph:
--- `ResolvedHostStyle` is a minimal structural surface (only the fields the
--  renderer reads); the real `HostStyleDefinition` is assignable to it.
--- ext-apps types (`McpUiHostContext`/`McpUiHostCapabilities`/`McpUiResourceCsp`/
--  `McpUiResourcePermissions`/`McpUiStyles`) are imported from
--  `@modelcontextprotocol/ext-apps`; `MCPPrompt`/`MCPResourceTemplate` from
--  `@mcpjam/sdk/browser`.
--- `HostConfigMcpProfileV1` is imported from `@mcpjam/sdk/host-config/internal`
--  (resolver↔adapter contravariance requires the real profile type). This is the
--  one intentional SDK-internal ref in the surface; hiding it behind the
--  `resolveEnvironment` fold is deferred to the publish-ready pass (3d-iii) while
--  the package is still private.
--
--`@mcpjam/widget-react` gains `@mcpjam/sdk` + `@modelcontextprotocol/ext-apps` as
--deps (externalized in tsup; the emitted `.d.ts` references them as external imports
--only — nothing inlined). Drift-safety holds: `use-widget-host.ts` builds the host
--from the real stores/resolvers and returns it typed as the package contract, so
--any drift fails typecheck. No behavior change.
-diff --git a/.changeset/widget-contract-slice-3d-i-a.md b/.changeset/widget-contract-slice-3d-i-a.md
-deleted file mode 100644
-index 5ad15ba38..000000000
---- a/.changeset/widget-contract-slice-3d-i-a.md
-+++ /dev/null
-@@ -1,23 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3d-i-a: relocate the data/chrome/instrumentation slices of the
--`WidgetHost` contract into `@mcpjam/widget-react`.
--
--The package now owns the `surface` (completed), `debug`, and `components` slices,
--the primitives (`CspMode`, `DisplayMode`, `UiProtocol`, `OpenAiAppsCapabilities`),
--and the debug data types (`WidgetDebugInfo`, `WidgetGlobals`, `WidgetSandboxInfo`,
--`WidgetSandboxApplied`, `WidgetLifecycleEvent`, `WidgetMount`, `CspViolation`,
--`UiLogEvent`) + `WidgetDebugSink` — defined structurally so the package stays
--free of inspector internals. The inspector's `widget-host.ts` re-exports them, so
--every existing `./widget-host` import site (the cluster + the `use-widget-host`
--adapter) is unchanged.
--
--Drift-safety is preserved: `use-widget-host.ts` builds the host from the real
--stores and returns it typed as the package contract, so any source-shape drift
--fails typecheck there (replacing the old `typeof import(...)` pins for these
--slices).
--
--The fn-heavy / profile-derived slices (`environment`, `resolvers`, `services`)
--and the final `WidgetHost` move follow in 3d-i-b. No behavior change.
-diff --git a/.changeset/widget-modal-di-inversion.md b/.changeset/widget-modal-di-inversion.md
-deleted file mode 100644
-index 8ebbddf7f..000000000
---- a/.changeset/widget-modal-di-inversion.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3a (in-place DI): invert the MCP Apps widget modal's remaining
--inspector app-state reads. `mcp-apps-modal.tsx` no longer calls
--`useActiveMcpProfile` / `useWebManagedServers` / `resolveHostInfo` or reaches
--into `@/stores` — the resolved `hostInfo` and `webManagedServers` flow down as
--props from the renderer (which already computes them via `useWidgetHost()`), and
--the pure `extractMethod` parser + `CspMode` type come from the `WidgetHost`
--contract module. This removes the last app-state island in the widget renderer
--cluster ahead of the React relocation. No behavior change.
-diff --git a/.changeset/widget-react-initial-release.md b/.changeset/widget-react-initial-release.md
-deleted file mode 100644
-index 19d3462c4..000000000
---- a/.changeset/widget-react-initial-release.md
+index 6e1991183..000000000
+--- a/.changeset/nux-signup-routing.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
--"@mcpjam/widget-react": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Initial public release of `@mcpjam/widget-react` — the framework-free interactive MCP-Apps / OpenAI-Apps widget runtime (the renderer that satisfies `@mcpjam/chat-ui`'s `renderWidget` seam). It exposes the `WidgetHost` dependency-inversion contract (`WidgetHostProvider` / `useWidgetHost`), the `MCPAppsRenderer` / `WidgetSurfaceHost` renderer surfaces, the `SandboxedIframe` double-iframe sandbox, and UI-type detection helpers. The published type surface depends only on stable subpaths (`@mcpjam/sdk/browser`, `@mcpjam/sdk/widget-runtime`, `@modelcontextprotocol/*`); no inspector internals leak.
-diff --git a/.changeset/widget-react-scaffold-3c.md b/.changeset/widget-react-scaffold-3c.md
+-Route brand-new signups to the Playground on first load while keeping returning users on Home. Onboarding state now distinguishes a first-ever session from a returning one so the initial destination matches the user's intent.
+diff --git a/.changeset/sidebar-auth-flash.md b/.changeset/sidebar-auth-flash.md
 deleted file mode 100644
-index 3d29c76c3..000000000
---- a/.changeset/widget-react-scaffold-3c.md
+index 0859f5391..000000000
+--- a/.changeset/sidebar-auth-flash.md
 +++ /dev/null
-@@ -1,26 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Tier B Phase 3c: scaffold the `@mcpjam/widget-react` package and prove the
--integration contract the renderer relocation (3d) will use.
--
--The new package owns the `WidgetHost` React context + `useWidgetHost()` hook
--contract; the inspector keeps its concrete `use-widget-host` adapter and will
--feed it through `<WidgetHostProvider>`. This slice wires the boundary end to end
--without moving the renderer:
--
--- New workspace `@mcpjam/widget-react` (ESM/tsup, `moduleResolution: bundler`,
--  **react/react-dom-only peers** — audited: the widget cluster imports no
--  `ai`/`@ai-sdk/react`), with its own Tier-B import guard and a `styles.css`
--  export pipeline. Marked `private` until the renderer lands and a publish-ready
--  surface pass is done.
--- Build order (`sdk → chat-ui → widget-react → inspector`), root typecheck/test
--  wiring, and inspector source aliases (client tsconfig paths + vite + vitest),
--  mirroring the chat-ui/sdk pattern so a clean checkout never needs a
--  widget-react build.
--- A package-consumer **smoke test** in the inspector that imports through the
--  same `@mcpjam/widget-react` alias and renders under the provider — catching
--  cross-boundary wiring breakage before 3d.
--
--No runtime/behavior change to the inspector.
-diff --git a/.changeset/widget-relocate-json-utils-3d-ii-c1.md b/.changeset/widget-relocate-json-utils-3d-ii-c1.md
-deleted file mode 100644
-index 26c0762de..000000000
---- a/.changeset/widget-relocate-json-utils-3d-ii-c1.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3d-ii (value relocation): move the pure `extractMethod` +
--`stableStringifyJson` helpers into `@mcpjam/sdk/widget-runtime` so the
--(relocating) widget renderer and the inspector share one framework-free impl
--instead of duplicating it across the package boundary.
--
--The inspector's `@/stores/traffic-log-store` and `@/lib/client-config` now import
--the helpers from the SDK and re-export them for back-compat, so every existing
--import site is unchanged. No behavior change.
-diff --git a/.changeset/widget-relocate-registry-streaming-3d-ii-b.md b/.changeset/widget-relocate-registry-streaming-3d-ii-b.md
-deleted file mode 100644
-index 0444332a9..000000000
---- a/.changeset/widget-relocate-registry-streaming-3d-ii-b.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3d-ii-b: relocate the app-tools registry + tool-input streaming
--into `@mcpjam/widget-react`.
--
--`app-tools-registry` (SEP-1865 App-Provided Tools registry — `useAppToolsRegistry`,
--`recordAppToolInvocation`, the invocation log, attribution resolvers) and
--`useToolInputStreaming` move into the package (they were already `@/`-free after
--3b — only ext-apps/client/react/zustand + the `./widget-host` contract). The
--inspector modules become re-export shims, so every import site is unchanged
--(`use-chat-session`, `useToolExecution`, the modal/renderer, and the tests); the
--registry's zustand store singleton lives in the package and is shared via the
--re-export. Package gains `zustand` as a dep (externalized in tsup).
--
--Second step of the renderer/cluster relocation (3d-ii). No behavior change.
-diff --git a/.changeset/widget-relocate-utils-3d-ii-a.md b/.changeset/widget-relocate-utils-3d-ii-a.md
-deleted file mode 100644
-index 446dfd7cd..000000000
---- a/.changeset/widget-relocate-utils-3d-ii-a.md
-+++ /dev/null
-@@ -1,19 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Tier B Phase 3d-ii-a: relocate the pure detection/parsing utilities into
--`@mcpjam/widget-react`.
--
--`tool-result-utils` (result `_meta`/`_serverId` readers) and the `mcp-apps-utils`
--UI-type detection core (`UIType`, `detectUIType`, `detectUiTypeFromTool`,
--`getUIResourceUri`, + the SEP-1865 tool-visibility re-exports) now live in the
--package. The inspector modules become re-export shims so every existing
--`@/lib/tool-result-utils` / `@/lib/mcp-ui/mcp-apps-utils` import site is
--unchanged; the `ListToolsResultWithMetadata`-typed `isMCPApp`/`isOpenAIApp`/
--`isOpenAIAppAndMCPApp` helpers stay in the inspector (they need an inspector api
--type).
--
--The package gains `@mcp-ui/client` + `@modelcontextprotocol/client` deps
--(externalized in tsup; dts references them as external imports only). First step
--of the renderer/cluster relocation (3d-ii). No behavior change.
-diff --git a/.changeset/widget-runtime-host-app-bridge.md b/.changeset/widget-runtime-host-app-bridge.md
-deleted file mode 100644
-index 692dcc648..000000000
---- a/.changeset/widget-runtime-host-app-bridge.md
-+++ /dev/null
-@@ -1,29 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Move the framework-free MCP Apps host bridge surface into the
--`@mcpjam/sdk/widget-runtime` subpath (Tier B Phase 2). `createHostAppBridge`,
--`registerHostBridgeHandlers` (the SEP-1865 correctness surface — capability
--gating, model-only visibility, matrix-gated `sendToolCancelled`, and the
--app-tool invocation lifecycle), and the app-tool invocation lifecycle types
--(`AppToolInvocation`, `AppToolInvocationStatus`, `AppToolInvocationUpdate`) now
--live in the SDK so the production renderer and the eval browser harness share
--one source of truth.
--
--This slice introduces a real `@modelcontextprotocol/ext-apps` dependency because
--the host bridge needs `AppBridge` as a runtime value. To keep the SDK on
--NodeNext and the published `.d.ts` clean for external NodeNext consumers, the
--module imports only the `AppBridge` value and derives the ext-apps host types
--(`McpUiHostCapabilities`, `McpUiResourceCsp`, `McpUiResourcePermissions`,
--`McpUiHostContext`) from the `AppBridge` constructor signature — importing those
--types by name is impossible under NodeNext because
--`@modelcontextprotocol/ext-apps/app-bridge` re-exports them through an
--extensionless `export * from "./types"` the resolver cannot follow. This mirrors
--the existing derivation of the bridge-handler param/result types.
--
--The inspector's `host-app-bridge.ts` and `app-tool-invocations.ts` are now thin
--back-compat re-export shims, so existing import paths (and the convenience
--re-exports of the tool-visibility + iframe-sandbox helpers) are unchanged. No
--behavior change.
-diff --git a/.changeset/widget-runtime-iframe-sandbox-policy.md b/.changeset/widget-runtime-iframe-sandbox-policy.md
-deleted file mode 100644
-index 08a773f57..000000000
---- a/.changeset/widget-runtime-iframe-sandbox-policy.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Move the framework-free `iframe-sandbox-policy` module into the
--`@mcpjam/sdk/widget-runtime` subpath (Tier B Phase 2). The deterministic outer
--iframe `sandbox=` / `allow=` attribute builders (`DEFAULT_IFRAME_SANDBOX`,
--`buildOuterAllowAttribute`, `buildOuterSandboxAttribute`,
--`resolveIframeSandboxPolicy`) now live in the SDK so the production renderer and
--the eval browser harness share one source of truth. The permissions input uses a
--local structural `IframeSandboxPermissions` type (the real
--`McpUiResourcePermissions` is structurally assignable), so the module stays
--dependency-free and the published `.d.ts` resolves cleanly for NodeNext
--consumers. The inspector's `client/src/lib/mcp-ui/iframe-sandbox-policy.ts` is
--now a thin back-compat re-export shim, so existing import paths are unchanged. No
--behavior change.
-diff --git a/chat-ui/package.json b/chat-ui/package.json
-index 6fab86185..8b210b1f9 100644
---- a/chat-ui/package.json
-+++ b/chat-ui/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/chat-ui",
--  "version": "0.0.0",
-+  "version": "0.1.0",
-   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
-   "license": "MIT",
-   "type": "module",
+-Fix the sidebar flashing a signed-out layout while authentication is still resolving. The sidebar and user section now hold their rendering until auth state settles, avoiding a brief flicker on load.
 diff --git a/cli/package.json b/cli/package.json
-index 19bafe2df..fa23a15f9 100644
+index fa23a15f9..d563cba8d 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.6.0",
-+  "version": "3.7.0",
+-  "version": "3.7.0",
++  "version": "3.8.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -546,21 +77,21 @@ index 19bafe2df..fa23a15f9 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^1.17.0",
-+    "@mcpjam/sdk": "^1.18.0",
+-    "@mcpjam/sdk": "^1.18.0",
++    "@mcpjam/sdk": "^1.19.0",
      "@modelcontextprotocol/server": "^2.0.0-alpha.2",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 6966026f8..ac4a51cbc 100644
+index ac4a51cbc..d73da8ce7 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.12.0",
-+  "version": "2.13.0",
+-  "version": "2.13.0",
++  "version": "2.14.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -568,33 +99,24 @@ index 6966026f8..ac4a51cbc 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.17.0",
-+    "@mcpjam/sdk": "^1.18.0",
+-    "@mcpjam/sdk": "^1.18.0",
++    "@mcpjam/sdk": "^1.19.0",
      "@modelcontextprotocol/client": "^2.0.0-alpha.2",
      "@modelcontextprotocol/ext-apps": "^1.7.2",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 855d8194f..9bef76c35 100644
+index 9bef76c35..8cdb3330e 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -27,7 +27,7 @@
-     },
-     "chat-ui": {
-       "name": "@mcpjam/chat-ui",
--      "version": "0.0.0",
-+      "version": "0.1.0",
-       "license": "MIT",
-       "dependencies": {
-         "clsx": "^2.1.1",
 @@ -58,9 +58,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.6.0",
-+      "version": "3.7.0",
+-      "version": "3.7.0",
++      "version": "3.8.0",
        "dependencies": {
--        "@mcpjam/sdk": "^1.17.0",
-+        "@mcpjam/sdk": "^1.18.0",
+-        "@mcpjam/sdk": "^1.18.0",
++        "@mcpjam/sdk": "^1.19.0",
          "@modelcontextprotocol/server": "^2.0.0-alpha.2",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -602,8 +124,8 @@ index 855d8194f..9bef76c35 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.12.0",
-+      "version": "2.13.0",
+-      "version": "2.13.0",
++      "version": "2.14.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -611,8 +133,8 @@ index 855d8194f..9bef76c35 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.17.0",
-+        "@mcpjam/sdk": "^1.18.0",
+-        "@mcpjam/sdk": "^1.18.0",
++        "@mcpjam/sdk": "^1.19.0",
          "@modelcontextprotocol/client": "^2.0.0-alpha.2",
          "@modelcontextprotocol/ext-apps": "^1.7.2",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -620,55 +142,20 @@ index 855d8194f..9bef76c35 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.17.0",
-+      "version": "1.18.0",
+-      "version": "1.18.0",
++      "version": "1.19.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -36902,11 +36902,11 @@
-     },
-     "widget-react": {
-       "name": "@mcpjam/widget-react",
--      "version": "0.0.0",
-+      "version": "0.1.0",
-       "license": "MIT",
-       "dependencies": {
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.17.0",
-+        "@mcpjam/sdk": "^1.18.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index e7ba434c3..4b9bca356 100644
+index 4b9bca356..7fafd3546 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.17.0",
-+  "version": "1.18.0",
+-  "version": "1.18.0",
++  "version": "1.19.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/widget-react/package.json b/widget-react/package.json
-index f0c9a7a2f..12fd85e8a 100644
---- a/widget-react/package.json
-+++ b/widget-react/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/widget-react",
--  "version": "0.0.0",
-+  "version": "0.1.0",
-   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
-   "license": "MIT",
-   "type": "module",
-@@ -34,7 +34,7 @@
-   },
-   "dependencies": {
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.17.0",
-+    "@mcpjam/sdk": "^1.18.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "lucide-react": "^0.525.0",
