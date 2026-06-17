@@ -379,6 +379,68 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `eval` commands
+
+Author and run eval suites in your hosted MCPJam projects. All `eval` subcommands require an MCPJam API key (`--api-key` or `MCPJAM_API_KEY`).
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `eval create`
+
+Create a runnable eval suite from authored test cases. The suite is persisted and returned with a `suiteId`; it is **not** run. Execute it afterward with `eval run`.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | Path to a suite definition JSON file (or `-` for stdin) |
+| `--json <json>` | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | Suite name (overrides the file) |
+| `--model <model>` | Suite-level default model, e.g. `anthropic/claude-haiku-4.5` (overrides the file) |
+| `--provider <provider>` | Suite-level default provider (overrides the file; needed for bare or custom model ids) |
+| `--server <name...>` | Project HTTP server names or IDs (overrides the file; repeatable) |
+
+Provide the suite definition via `--file` or `--json` (not both). The definition is a JSON object with at minimum `name`, `model`, `servers`, and `cases`. Servers must be HTTP; stdio servers are rejected before any write.
+
+```bash
+mcpjam eval create \
+  --json '{"name":"smoke","model":"anthropic/claude-haiku-4.5","servers":["My Server"],"cases":[{"title":"echo works","query":"Use the echo tool to say hi","expectedToolCalls":["echo"]}]}' \
+  --api-key $MCPJAM_API_KEY
+```
+
+### `eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `eval run`
+
+Start an asynchronous eval run of an existing suite. Responds immediately with a `runId`; poll status with `eval status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
+
+### `eval status`
+
+Get the status and summary of an eval run.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project name or ID |
+
+---
+
 ## `tunnel`
 
 Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and chatboxes can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
