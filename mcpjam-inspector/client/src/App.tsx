@@ -233,6 +233,11 @@ import type {
 } from "@/shared/inspector-command.js";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+// Accounts created on/after this ship date are treated as "new" for the
+// first-run Playground redirect. Older accounts (created before the cutoff)
+// are never redirected, regardless of their onboarding flag, so returning
+// users always keep the Home landing.
+const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -1753,6 +1758,15 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
+  // A signed-in user counts as "new" (and thus gets the first-run Playground
+  // redirect) only when their account was created on/after the rollout cutoff.
+  // This keeps every pre-existing account on Home even if its onboarding flag
+  // was never set, while still sending brand-new signups to Playground.
+  const isNewSignedInAccount =
+    !!workOsUser &&
+    currentUser?.isAnonymous !== true &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= FIRST_RUN_PLAYGROUND_ROLLOUT_MS;
   const isHostedDefaultRoute =
     activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
@@ -2356,7 +2370,8 @@ export default function App() {
         hasAnyFirstRunBlockingProjectServers,
         activeTab,
         !!workOsUser,
-        remoteFirstRunOnboardingShown
+        remoteFirstRunOnboardingShown,
+        isNewSignedInAccount
       )
     ) {
       navigateApp(routePaths.playground);
@@ -2371,6 +2386,7 @@ export default function App() {
     isAuthenticated,
     isHostedChatRoute,
     isLoadingRemoteProjects,
+    isNewSignedInAccount,
     isWorkOsLoading,
     remoteFirstRunOnboardingShown,
     workOsUser,
