@@ -57,6 +57,17 @@ interface WidgetProbeEditorProps {
     testCaseId: string;
     [key: string]: unknown;
   }) => Promise<unknown>;
+  /**
+   * When set, this probe is an unsaved draft: Save calls this to insert it
+   * (instead of `updateTestCase`, which needs an existing record). The parent
+   * persists the new case, shows the toast, and navigates to it.
+   */
+  onCreateDraft?: (payload: {
+    title: string;
+    runs: number;
+    probeConfig: ProbeConfig;
+    predicates: { mode: string; list: Predicate[] };
+  }) => Promise<void>;
 }
 
 export function WidgetProbeEditor({
@@ -66,6 +77,7 @@ export function WidgetProbeEditor({
   projectServers,
   onBackToList,
   updateTestCase,
+  onCreateDraft,
 }: WidgetProbeEditorProps) {
   const [title, setTitle] = useState(testCase.title);
   const [runs, setRuns] = useState(testCase.runs ?? 1);
@@ -167,14 +179,19 @@ export function WidgetProbeEditor({
     if (!draftProbeConfig || !canSave) return;
     setIsSaving(true);
     try {
-      await updateTestCase({
-        testCaseId: testCase._id,
+      const payload = {
         title: title.trim(),
         runs: Math.max(1, Math.min(10, Math.floor(runs || 1))),
         probeConfig: draftProbeConfig,
         predicates: { mode: "replace", list: checks },
-      });
-      toast.success("Widget probe saved");
+      };
+      if (onCreateDraft) {
+        // Draft: the parent inserts the case, toasts, and navigates.
+        await onCreateDraft(payload);
+      } else {
+        await updateTestCase({ testCaseId: testCase._id, ...payload });
+        toast.success("Widget probe saved");
+      }
     } catch (error) {
       console.error("Failed to save widget probe:", error);
       toast.error(

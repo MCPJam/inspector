@@ -43,6 +43,7 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { isDraftTestCaseId } from "./evals/draft-test-case";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { EvalsSuiteListSidebar } from "./evals/evals-suite-list-sidebar";
 import {
@@ -657,9 +658,13 @@ function EvalsTabContent({
               <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0">
                 <BreadcrumbPage
                   className="truncate font-medium"
-                  title={selectedTestCase?.title ?? "Case"}
+                  title={
+                    selectedTestCase?.title ??
+                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")
+                  }
                 >
-                  {selectedTestCase?.title ?? "Case"}
+                  {selectedTestCase?.title ??
+                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")}
                 </BreadcrumbPage>
               </BreadcrumbItem>
             </>

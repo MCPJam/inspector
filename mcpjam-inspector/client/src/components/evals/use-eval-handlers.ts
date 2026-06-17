@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
-import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
+import { draftTestCaseId } from "./draft-test-case";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -32,7 +32,6 @@ import {
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
-import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
@@ -227,7 +226,6 @@ export function useEvalHandlers({
   );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
-  const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
     null
   );
@@ -1259,141 +1257,31 @@ export function useEvalHandlers({
     }
   }, [runToDelete, deletingRunId, mutations.deleteRunMutation]);
 
-  // Handle create test case - creates directly without modal
+  // New cases are NOT written to Convex on click. Doing so polluted suites
+  // with "Untitled" cases every time the New case menu was opened. Instead we
+  // open the editor on a client-side draft (testId sentinel `draft:<kind>`);
+  // the editor persists via `createTestCase` only when the user presses Save.
+  // See ./draft-test-case.ts and test-template-editor's draft handling.
   const handleCreateTestCase = useCallback(
-    async (suiteId: string) => {
-      if (isCreatingTestCase) return;
-
-      setIsCreatingTestCase(true);
-
-      try {
-        const testCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          {
-            suiteId,
-          }
-        );
-
-        const collectedModels = collectUniqueModelsFromTestCases(testCases);
-        const modelsToUse =
-          collectedModels.length > 0
-            ? collectedModels
-            : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
-
-        const testCaseId = await mutations.createTestCaseMutation({
-          suiteId: suiteId,
-          title: "Untitled test case",
-          query: "",
-          models: modelsToUse, // Copy models from suite configuration
-        });
-
-        toast.success("Test case created");
-
-        // Track test case created
-        posthog.capture("eval_test_case_created", {
-          location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suiteId,
-          test_case_id: testCaseId,
-          num_models: modelsToUse.length,
-        });
-
-        // Open the editor so the new case is configurable (test-detail is iterations-only).
-        navigateAfterTestCaseMutation({
-          type: "test-edit",
-          suiteId,
-          testId: testCaseId,
-        });
-
-        return testCaseId;
-      } catch (error) {
-        console.error("Failed to create test case:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to create test case")
-        );
-        return null;
-      } finally {
-        setIsCreatingTestCase(false);
-      }
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("prompt"),
+      });
     },
-    [
-      isCreatingTestCase,
-      mutations.createTestCaseMutation,
-      convex,
-      navigateAfterTestCaseMutation,
-    ]
+    [navigateAfterTestCaseMutation]
   );
 
-  // Create a widget probe case (synthetic monitor): no LLM/prompt — a pinned
-  // tool call rendered in the browser harness, gated by widget render checks.
-  // Created with placeholder probeConfig values the probe editor immediately
-  // prompts the user to fix; seeded with a widgetRendered check so an
-  // unedited probe still asserts something meaningful.
   const handleCreateWidgetProbe = useCallback(
-    async (suiteId: string) => {
-      if (isCreatingTestCase) return;
-
-      setIsCreatingTestCase(true);
-
-      try {
-        const suite = await convex.query("testSuites:getTestSuite" as any, {
-          suiteId,
-        });
-        const firstServer: string =
-          (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
-
-        const testCaseId = await mutations.createTestCaseMutation({
-          suiteId,
-          title: "Untitled widget probe",
-          query: "",
-          models: [],
-          caseType: "widget_probe",
-          probeConfig: {
-            serverName: firstServer,
-            toolName: PROBE_TOOL_NAME_PLACEHOLDER,
-            arguments: {},
-          },
-          predicates: {
-            mode: "replace",
-            list: [{ type: "widgetRendered" }],
-          },
-        });
-
-        toast.success("Widget probe created");
-
-        posthog.capture("eval_test_case_created", {
-          location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suiteId,
-          test_case_id: testCaseId,
-          case_type: "widget_probe",
-        });
-
-        navigateAfterTestCaseMutation({
-          type: "test-edit",
-          suiteId,
-          testId: testCaseId,
-        });
-
-        return testCaseId;
-      } catch (error) {
-        console.error("Failed to create widget probe:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to create widget probe")
-        );
-        return null;
-      } finally {
-        setIsCreatingTestCase(false);
-      }
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("widget_probe"),
+      });
     },
-    [
-      isCreatingTestCase,
-      mutations.createTestCaseMutation,
-      convex,
-      navigateAfterTestCaseMutation,
-    ]
+    [navigateAfterTestCaseMutation]
   );
 
   // Handle delete test case - opens confirmation modal
@@ -1745,7 +1633,6 @@ export function useEvalHandlers({
     deletingRunId,
     runToDelete,
     setRunToDelete,
-    isCreatingTestCase,
     deletingTestCaseId,
     duplicatingTestCaseId,
     testCaseToDelete,

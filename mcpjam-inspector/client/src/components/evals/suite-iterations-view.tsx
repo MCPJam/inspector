@@ -785,6 +785,11 @@ export function SuiteIterationsView({
                       replace: true,
                     })
                   }
+                  onDraftSaved={(newTestCaseId) =>
+                    navigation.toTestEdit(suite._id, newTestCaseId, {
+                      replace: true,
+                    })
+                  }
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
