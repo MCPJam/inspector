@@ -59,7 +59,7 @@ const toolChoiceSchema = z.union([
   }),
 ]);
 
-const promptTurnSchema = z.object({
+export const promptTurnSchema = z.object({
   id: z.string(),
   prompt: z.string(),
   expectedToolCalls: z.array(
@@ -548,7 +548,7 @@ async function loadSuiteDefaultPredicates(
   }
 }
 
-function createConvexClients(convexAuthToken: string) {
+export function createConvexClients(convexAuthToken: string) {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_URL is not set");
@@ -722,102 +722,55 @@ export function buildUpsertCaseKey(test: {
 }
 
 /**
- * Prepare phase of a suite run: validate, upsert suite + cases, create the
- * run record (status 'running'), store replay configs, and resolve model
- * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
- * callers choose whether to await execution inline (`runEvalsWithManager`,
- * the /api/web path) or detach it and respond immediately with the runId
- * (the async public /api/v1 path). All request/quota validation errors
- * surface here, synchronously, before any caller responds.
+ * Author phase of a suite run: persist the suite + its test cases (create or
+ * upsert), WITHOUT creating a run record or executing anything. Extracted from
+ * `prepareEvalRun` so the author-only public surface
+ * (`POST /api/v1/projects/:projectId/eval-suites`) can reuse the exact same
+ * suite/case persistence the run path uses — same probe/widget handling,
+ * partial-failure visibility, and rerun snapshot rules — and `prepareEvalRun`
+ * stays the single run engine that calls this then starts the recorder.
  */
-export async function prepareEvalRun(
-  clientManager: MCPClientManager,
-  request: RunEvalsWithManagerRequest,
-): Promise<PreparedEvalRun> {
+export async function authorEvalSuite(args: {
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"];
+  tests: RunEvalsRequest["tests"];
+  resolvedServerIds: string[];
+  persistedServerRefs: string[];
+  serverNames: string[] | undefined;
+  projectId: string | undefined;
+  suiteId: string | null;
+  suiteName: string | undefined;
+  suiteDescription: string | undefined;
+  passCriteria: RunEvalsRequest["passCriteria"];
+  suiteRerun: boolean | undefined;
+  refreshSnapshot: boolean | undefined;
+}): Promise<{
+  suiteId: string;
+  suiteName: string | undefined;
+  caseUpsert: {
+    committed: Array<{ id?: string; name: string }>;
+    failed: Array<{ id?: string; name: string; error: string }>;
+  };
+}> {
   const {
-    suiteId,
+    convexClient,
+    tests,
+    resolvedServerIds,
+    persistedServerRefs,
+    serverNames,
     projectId,
+    suiteId,
     suiteName,
     suiteDescription,
-    tests,
-    serverIds,
-    serverNames,
-    chatboxId,
-    accessVersion,
-    storageServerIds,
-    modelApiKeys,
-    orgModelConfig,
-    convexAuthToken,
-    notes,
     passCriteria,
     suiteRerun,
-    iterationOverride,
-    matchOptionsOverride,
-    namedHostId,
     refreshSnapshot,
-    runGroupId,
-    source,
-    idempotencyKey,
-  } = request;
+  } = args;
 
-  if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Provide suiteId or suiteName",
-    );
-  }
-  if (!suiteId && !projectId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "projectId is required when creating a new eval suite",
-    );
-  }
-
-  // Bare suite reruns (scheduled worker, /api/v1 suiteId-only) carry no wire
-  // tests — cap-math over the empty list would let unattended runs bypass
-  // MAX_TOTAL_LLM_CALLS. Assert over the persisted cases instead; the wired
-  // path below re-derives the same cases for execution.
-  if (suiteId && tests.length === 0) {
-    const { convexClient: capClient } = createConvexClients(convexAuthToken);
-    const persistedCases = (await capClient.query(
-      "testSuites:listTestCases" as any,
-      { suiteId },
-    )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
-    // No client substituted the suite default model onto these cases, so a
-    // model-less prompt case would be silently dropped from execution. Reject
-    // before cap-math so the error names the real cause, not the cap.
-    assertBareRerunCasesRunnable(
-      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0],
-    );
-    assertSuiteRunWithinCap({
-      ...request,
-      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
-    });
-  } else {
-    assertSuiteRunWithinCap(request);
-  }
-
-  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
-  const persistedServerRefs =
-    storageServerIds && storageServerIds.length > 0
-      ? storageServerIds
-      : resolvedServerIds;
   const persistedEnvironment = buildPersistedSuiteEnvironment({
     resolvedServerIds,
     persistedServerRefs,
     serverNames,
   });
-  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
-  const { toolSnapshot, toolSnapshotDebug } =
-    await captureToolSnapshotForEvalAuthoring(
-      clientManager,
-      resolvedServerIds,
-      {
-        logPrefix: "evals",
-      },
-    );
 
   let resolvedSuiteId = suiteId ?? null;
 
@@ -1141,20 +1094,160 @@ export async function prepareEvalRun(
     }
 
     // New-suite path only: if every case create failed, the freshly-made
-    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
-    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
-    // generic "No tests supplied for eval run" — masking the structured
-    // failure breakdown we just collected. Short-circuit with an
-    // actionable message instead.
+    // suite has zero cases. Leaving it would orphan an empty suite and (on the
+    // run path) snapshot nothing into an opaque "No tests supplied" failure.
+    // Roll the suite back (best-effort) and surface the structured breakdown
+    // as a client error — this is a bad request, not an internal fault.
     if (committedCases.length === 0 && failedCases.length > 0) {
       const firstError = failedCases[0]?.error ?? "unknown error";
-      throw new Error(
+      try {
+        await convexClient.mutation("testSuites:deleteTestSuite" as any, {
+          suiteId: resolvedSuiteId,
+        });
+      } catch (rollbackError) {
+        logger.warn("[evals] Failed to roll back empty suite after all cases failed", {
+          suiteId: resolvedSuiteId,
+          error:
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+        });
+      }
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
         `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
           `First failure: ${firstError}. ` +
-          `Run aborted because the suite would have zero cases to execute.`,
+          `Suite creation aborted because it would have zero cases.`,
+        { caseUpsert: { committed: committedCases, failed: failedCases } },
       );
     }
   }
+
+  return {
+    suiteId: resolvedSuiteId,
+    suiteName,
+    caseUpsert: {
+      committed: committedCases,
+      failed: failedCases,
+    },
+  };
+}
+
+/**
+ * Prepare phase of a suite run: validate, upsert suite + cases, create the
+ * run record (status 'running'), store replay configs, and resolve model
+ * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
+ * callers choose whether to await execution inline (`runEvalsWithManager`,
+ * the /api/web path) or detach it and respond immediately with the runId
+ * (the async public /api/v1 path). All request/quota validation errors
+ * surface here, synchronously, before any caller responds.
+ */
+export async function prepareEvalRun(
+  clientManager: MCPClientManager,
+  request: RunEvalsWithManagerRequest,
+): Promise<PreparedEvalRun> {
+  const {
+    suiteId,
+    projectId,
+    suiteName,
+    suiteDescription,
+    tests,
+    serverIds,
+    serverNames,
+    chatboxId,
+    accessVersion,
+    storageServerIds,
+    modelApiKeys,
+    orgModelConfig,
+    convexAuthToken,
+    notes,
+    passCriteria,
+    suiteRerun,
+    iterationOverride,
+    matchOptionsOverride,
+    namedHostId,
+    refreshSnapshot,
+    runGroupId,
+    source,
+    idempotencyKey,
+  } = request;
+
+  if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Provide suiteId or suiteName",
+    );
+  }
+  if (!suiteId && !projectId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "projectId is required when creating a new eval suite",
+    );
+  }
+
+  // Bare suite reruns (scheduled worker, /api/v1 suiteId-only) carry no wire
+  // tests — cap-math over the empty list would let unattended runs bypass
+  // MAX_TOTAL_LLM_CALLS. Assert over the persisted cases instead; the wired
+  // path below re-derives the same cases for execution.
+  if (suiteId && tests.length === 0) {
+    const { convexClient: capClient } = createConvexClients(convexAuthToken);
+    const persistedCases = (await capClient.query(
+      "testSuites:listTestCases" as any,
+      { suiteId },
+    )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
+    // No client substituted the suite default model onto these cases, so a
+    // model-less prompt case would be silently dropped from execution. Reject
+    // before cap-math so the error names the real cause, not the cap.
+    assertBareRerunCasesRunnable(
+      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0],
+    );
+    assertSuiteRunWithinCap({
+      ...request,
+      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
+    });
+  } else {
+    assertSuiteRunWithinCap(request);
+  }
+
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const persistedServerRefs =
+    storageServerIds && storageServerIds.length > 0
+      ? storageServerIds
+      : resolvedServerIds;
+  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+  const { toolSnapshot, toolSnapshotDebug } =
+    await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      {
+        logPrefix: "evals",
+      },
+    );
+
+  // Persist suite + cases (create or upsert). The suite/case persistence is
+  // shared with the author-only public surface; `prepareEvalRun` then starts
+  // the recorder below. `resolvedSuiteId`/`committedCases`/`failedCases` keep
+  // their names so the run record + return below still reference them.
+  const { suiteId: resolvedSuiteId, caseUpsert: authoredCaseUpsert } =
+    await authorEvalSuite({
+      convexClient,
+      tests,
+      resolvedServerIds,
+      persistedServerRefs,
+      serverNames,
+      projectId,
+      suiteId: suiteId ?? null,
+      suiteName,
+      suiteDescription,
+      passCriteria,
+      suiteRerun,
+      refreshSnapshot,
+    });
+  const committedCases = authoredCaseUpsert.committed;
+  const failedCases = authoredCaseUpsert.failed;
 
   const {
     runId,

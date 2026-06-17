@@ -10,6 +10,7 @@
  */
 import {
   callServerToolOperation,
+  createEvalSuiteOperation,
   diagnoseServerOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -57,6 +58,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
+  createEvalSuiteOperation,
   getEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
@@ -69,9 +71,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
  * Catalog operations that render as MCP Apps widgets, mapped to their view
  * in the shared UI bundle. The rest stay plain: list_projects and
  * list_project_servers defer to the richer show_servers widget,
- * run_eval_suite returns a receipt the run widgets supersede, and
- * get_eval_iteration_trace / list_chat_sessions are agent-oriented payloads
- * with no visual form. `show_servers` itself registers in `showServers.ts`.
+ * run_eval_suite / create_eval_suite return receipts the run/suite widgets
+ * supersede, and get_eval_iteration_trace / list_chat_sessions are
+ * agent-oriented payloads with no visual form. `show_servers` itself
+ * registers in `showServers.ts`.
  */
 export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   Partial<Record<string, PlatformWidgetView>>
@@ -144,8 +147,8 @@ export function operationAnnotations(
   if (operation.mayBeDestructive) {
     return { readOnlyHint: false };
   }
-  // Remaining non-read operations (run_eval_suite) create resources but
-  // never destroy or overwrite them.
+  // Remaining non-read operations (run_eval_suite, create_eval_suite) create
+  // resources but never destroy or overwrite them.
   return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 

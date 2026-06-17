@@ -97,6 +97,7 @@ const PLAIN_TOOLS = [
   "list_server_resources",
   "read_server_resource",
   "run_eval_suite",
+  "create_eval_suite",
   "get_eval_iteration_trace",
   "list_chat_sessions",
 ];
@@ -163,6 +164,7 @@ describe("platform tool registration", () => {
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_suite",
+      "create_eval_suite",
       "get_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
@@ -205,7 +207,10 @@ describe("platform tool registration", () => {
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
     for (const registration of registrations) {
-      if (registration.name === "run_eval_suite") {
+      if (
+        registration.name === "run_eval_suite" ||
+        registration.name === "create_eval_suite"
+      ) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
