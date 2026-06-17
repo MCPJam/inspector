@@ -221,6 +221,13 @@ describe("evaluateAllHosts (real registry)", () => {
     expect(codex?.verdict).toBe("degraded");
   });
 
+  it("treats n8n as a headless tools-only client", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const n8n = reports.find((r) => r.hostId === "n8n");
+    expect(n8n?.verdict).toBe("degraded");
+    expect(n8n?.findings[0].title).toMatch(/fall back to text/);
+  });
+
   it("renders MCP Apps widgets in ChatGPT (does NOT fall back to text)", () => {
     const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
     const chatgpt = reports.find((r) => r.hostId === "chatgpt");

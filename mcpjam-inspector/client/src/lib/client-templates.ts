@@ -17,6 +17,7 @@ import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
+import n8nLogo from "/n8n_logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -217,7 +218,8 @@ export type HostTemplateId =
   | "codex"
   | "copilot"
   | "vscode"
-  | "agentcore";
+  | "agentcore"
+  | "n8n";
 
 export interface SeedHostTemplateOptions {
   /**
@@ -1306,6 +1308,41 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             version: "1.0.0",
             description: "AWS Bedrock AgentCore agent runtime",
             websiteUrl: "https://aws.amazon.com/bedrock/agentcore/",
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "n8n",
+    label: "n8n",
+    description:
+      "n8n MCP Client Tool. Tools-only client, no widget rendering.",
+    logoSrc: n8nLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "n8n",
+        // n8n's MCP Client Tool is model-provider agnostic; this hosted
+        // default only keeps MCPJam's simulated chat runnable out-of-the-box.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Captured from a real @n8n/n8n-nodes-langchain.mcpClientTool probe:
+      // it sends an empty capabilities object and no MCP UI extension. Replace
+      // the SDK default entirely so the template remains tools-only.
+      base.clientCapabilities = {};
+      // n8n does not render MCP Apps views, so there is no ui/initialize host
+      // capability negotiation, no hostContext, and no OpenAI compat runtime.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "@n8n/n8n-nodes-langchain.mcpClientTool",
+            version: "1.3",
           },
         },
       };

@@ -7,6 +7,7 @@ import {
   COPILOT_HOST_STYLE,
   DEFAULT_HOST_STYLE,
   MCPJAM_HOST_STYLE,
+  N8N_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
   getHostCapabilitiesForStyle,
@@ -18,13 +19,14 @@ import {
 } from "..";
 
 describe("host-styles registry", () => {
-  it("registers built-in mcpjam, claude, chatgpt, copilot, and codex hosts by id", () => {
+  it("registers built-in host styles by id", () => {
     expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
     expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
+    expect(findHostStyle("n8n")).toBe(N8N_HOST_STYLE);
   });
 
   it("returns undefined for unknown ids", () => {
@@ -47,6 +49,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
     expect(isKnownHostStyleId("claude-code")).toBe(true);
+    expect(isKnownHostStyleId("n8n")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
     expect(isKnownHostStyleId(42)).toBe(false);
     expect(isKnownHostStyleId(null)).toBe(false);
@@ -60,6 +63,7 @@ describe("host-styles registry", () => {
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
     expect(ids).toContain("claude-code");
+    expect(ids).toContain("n8n");
     // MCPJam ships first so the default-fallback host appears at the top
     // of pickers.
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
@@ -67,8 +71,9 @@ describe("host-styles registry", () => {
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
-    // Claude Code ships last (registered after Codex in BUILT_IN_HOST_STYLES).
+    // Later headless/runtime presets ship after the core chat-style hosts.
     expect(ids.indexOf("codex")).toBeLessThan(ids.indexOf("claude-code"));
+    expect(ids.indexOf("agentcore")).toBeLessThan(ids.indexOf("n8n"));
   });
 
   it("registers custom host styles for project-defined hosts", () => {
@@ -144,6 +149,10 @@ describe("host-styles registry", () => {
     expect(getHostCapabilitiesForStyle("claude")).not.toEqual(
       getHostCapabilitiesForStyle("chatgpt"),
     );
+  });
+
+  it("advertises no MCP Apps host capabilities for n8n", () => {
+    expect(getHostCapabilitiesForStyle("n8n")).toEqual({});
   });
 
   it("rejects duplicate host style ids", async () => {
