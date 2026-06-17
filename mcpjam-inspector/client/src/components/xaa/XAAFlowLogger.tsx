@@ -571,40 +571,42 @@ export function XAAFlowLogger({
 
   return (
     <div className="h-full border-l border-border flex flex-col">
-      <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
-        <div className="flex items-center gap-2">
+      <div className="@container/xaa-run-bar bg-muted/30 border-b border-border px-4 py-3 space-y-3">
+        <div className="flex flex-col gap-2 @min-[384px]/xaa-run-bar:flex-row @min-[384px]/xaa-run-bar:items-center">
           <button
             onClick={actions.onConfigure}
-            className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer group"
+            className="flex w-full min-w-0 items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer group @min-[384px]/xaa-run-bar:flex-1"
           >
-            <p className="text-sm font-medium text-foreground break-all flex-1">
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
               {summary.serverUrl || "Configure an MCP server URL to start."}
             </p>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
               <Pencil className="h-3 w-3" />
               Edit
             </span>
           </button>
-          <div className="flex items-center gap-1 shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={actions.onReset}
-              disabled={actions.resetDisabled || !actions.onReset}
-              className="h-7"
-            >
-              <RotateCcw className="h-3 w-3 mr-1" />
-              Reset
-            </Button>
-            <Button
-              size="sm"
-              onClick={actions.onContinue}
-              disabled={actions.continueDisabled || !actions.onContinue}
-              className="h-7"
-            >
-              {actions.continueLabel}
-            </Button>
-          </div>
+          {hasProfile && (
+            <div className="flex shrink-0 items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={actions.onReset}
+                disabled={actions.resetDisabled || !actions.onReset}
+                className="h-7"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Reset
+              </Button>
+              <Button
+                size="sm"
+                onClick={actions.onContinue}
+                disabled={actions.continueDisabled || !actions.onContinue}
+                className="h-7"
+              >
+                {actions.continueLabel}
+              </Button>
+            </div>
+          )}
         </div>
 
         {hasProfile && (
@@ -751,10 +753,6 @@ export function XAAFlowLogger({
                 authorization server accepts the ID-JAG MCPJam mints.
               </li>
             </ol>
-
-            <Button onClick={actions.onConfigure}>
-              Configure Server to Test
-            </Button>
           </div>
         ) : groups.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">
