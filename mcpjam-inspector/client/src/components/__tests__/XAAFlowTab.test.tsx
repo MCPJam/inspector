@@ -126,6 +126,8 @@ function makeTarget(overrides: Partial<XaaTestTarget> = {}): XaaTestTarget {
     targetKey: "bar_server:staging",
     isTestable: true,
     usesServerSideSecret: false,
+    secretUnavailable: false,
+    serversLoading: false,
     runInput: {
       mode: "local-profile",
       serverUrl: "https://staging.mcp.example.com",
@@ -280,6 +282,36 @@ describe("XAAFlowTab", () => {
       "data-unlocked",
       "false",
     );
+  });
+
+  it("blocks Run (no empty-secret request) when a confidential secret can't be resolved", () => {
+    currentTarget = makeTarget({
+      usesServerSideSecret: true,
+      secretUnavailable: true,
+      serversLoading: false,
+      serverId: undefined,
+    });
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    expect(
+      screen.getByRole("button", { name: /run all/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/couldn't resolve this server's saved secret/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a transient resolving message while project servers load", () => {
+    currentTarget = makeTarget({
+      usesServerSideSecret: true,
+      secretUnavailable: true,
+      serversLoading: true,
+      serverId: undefined,
+    });
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    expect(
+      screen.getByText(/resolving this server's saved secret/i),
+    ).toBeInTheDocument();
   });
 
   it("passes serverId/projectId to the machine for a confidential server", () => {

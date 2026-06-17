@@ -90,7 +90,30 @@ describe("useXaaTestTarget", () => {
     expect(result.current.usesServerSideSecret).toBe(true);
     expect(result.current.serverId).toBe("srv_1");
     expect(result.current.projectId).toBe("proj_1");
+    expect(result.current.secretUnavailable).toBe(false);
     // The secret is never in the browser-facing run input.
+    expect(result.current.runInput.clientSecret).toBe("");
+  });
+
+  it("marks the secret unavailable for a confidential server whose id can't resolve", () => {
+    // The server has a stored secret, but it isn't in the project's Convex
+    // server list — so its id (and vault secret) can't be resolved.
+    remoteServers = [];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({ hasClientSecret: true }),
+        selectedServerName: "staging-mcp",
+        selectedRegistration: null,
+        runSettings,
+        projectId: "proj_1",
+      }),
+    );
+
+    // Still confidential — must NOT degrade to a public run with an empty
+    // secret — but the secret can't be sent, so the run is blocked.
+    expect(result.current.usesServerSideSecret).toBe(true);
+    expect(result.current.serverId).toBeUndefined();
+    expect(result.current.secretUnavailable).toBe(true);
     expect(result.current.runInput.clientSecret).toBe("");
   });
 
