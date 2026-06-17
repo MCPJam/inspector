@@ -11,10 +11,12 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
+import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
 import { XAAServerModal } from "./XAAServerModal";
+import { XAASimulatedIdentity } from "./XAASimulatedIdentity";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { XAARunChips } from "./XAARunChips";
@@ -198,13 +200,28 @@ export function XAAFlowTab({
   const selectedRegistration =
     resourceApps.find((app) => app.id === selectedRegistrationId) ?? null;
 
-  const flowInput = useMemo(
-    () =>
-      selectedRegistration
-        ? inputFromRegistration(selectedRegistration, profile)
-        : inputFromProfile(profile),
-    [selectedRegistration, profile]
-  );
+  // Global run settings: simulated identity (sub/email) + negative-test Mode
+  // are the same across every target, so they override the per-target base
+  // input rather than living on the singleton profile.
+  const runSettings = useXaaRunSettings();
+
+  const flowInput = useMemo(() => {
+    const base = selectedRegistration
+      ? inputFromRegistration(selectedRegistration, profile)
+      : inputFromProfile(profile);
+    return {
+      ...base,
+      userId: runSettings.userId,
+      email: runSettings.email,
+      negativeTestMode: runSettings.negativeTestMode,
+    };
+  }, [
+    selectedRegistration,
+    profile,
+    runSettings.userId,
+    runSettings.email,
+    runSettings.negativeTestMode,
+  ]);
 
   // Target identity for the positive-run gate; "local-profile" is its own
   // session-scoped key.
@@ -368,25 +385,23 @@ export function XAAFlowTab({
     [flowInput, selectedRegistration, applyFlowState]
   );
 
-  const handleChangeNegativeTestMode = useCallback((mode: NegativeTestMode) => {
-    setProfile((current) => {
-      const next = { ...current, negativeTestMode: mode };
-      saveStoredXAADebugProfile(next);
-      return next;
-    });
-    setFocusedStep(null);
-  }, []);
+  const handleChangeNegativeTestMode = useCallback(
+    (mode: NegativeTestMode) => {
+      runSettings.setNegativeTestMode(mode);
+      setFocusedStep(null);
+    },
+    [runSettings]
+  );
 
-  // Rebuild the flow when the negative-test mode changes (profile-sourced in
-  // both modes).
-  const lastNegativeTestMode = useRef(profile.negativeTestMode);
+  // Rebuild the flow when the global negative-test mode changes.
+  const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
   useEffect(() => {
-    if (lastNegativeTestMode.current === profile.negativeTestMode) {
+    if (lastNegativeTestMode.current === runSettings.negativeTestMode) {
       return;
     }
-    lastNegativeTestMode.current = profile.negativeTestMode;
+    lastNegativeTestMode.current = runSettings.negativeTestMode;
     applyFlowState(buildFlowStateFromInput(flowInput));
-  }, [profile.negativeTestMode, flowInput, applyFlowState]);
+  }, [runSettings.negativeTestMode, flowInput, applyFlowState]);
 
   const hasTarget = Boolean(flowInput.serverUrl.trim());
 
@@ -539,6 +554,9 @@ export function XAAFlowTab({
             ? `Target: ${flowInput.serverUrl}`
             : "No target configured"}
         </span>
+        <div className="ml-auto shrink-0">
+          <XAASimulatedIdentity />
+        </div>
       </div>
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
