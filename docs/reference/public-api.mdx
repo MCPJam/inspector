@@ -44,7 +44,8 @@ What you can do with it today:
 - **List a project's chatboxes** — name, access mode, attached servers, and
   share link — and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
-- **Run eval suites asynchronously** — create a run, get a `202` + `runId`
+- **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+- **Run eval suites asynchronously** — create a run from a saved suite, get a `202` + `runId`
   immediately, then poll status, per-iteration results (tool calls, token
   usage, latency), and full traces. Runs appear live in the hosted UI,
   tagged `source: "api"`
