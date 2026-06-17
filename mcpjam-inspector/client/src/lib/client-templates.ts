@@ -18,6 +18,7 @@ import copilotLogo from "/copilot_logo.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -219,7 +220,8 @@ export type HostTemplateId =
   | "copilot"
   | "vscode"
   | "agentcore"
-  | "n8n";
+  | "n8n"
+  | "perplexity";
 
 export interface SeedHostTemplateOptions {
   /**
@@ -1344,6 +1346,36 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             name: "@n8n/n8n-nodes-langchain.mcpClientTool",
             version: "1.3",
           },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    description:
+      "Perplexity MCP client. Tools-only client, no widget rendering.",
+    logoSrc: perplexityLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "perplexity",
+        // The probe only identifies Perplexity's MCP client, not a reusable
+        // model id; keep MCPJam's simulated chat runnable with a hosted model.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Captured from the Perplexity host probe: protocol 2025-06-18,
+      // clientInfo mcp@0.1.0, and an empty clientCapabilities object.
+      base.clientCapabilities = {};
+      // No snapshot/UI support in the probe, so keep this template headless.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: { name: "mcp", version: "0.1.0" },
         },
       };
       return base;

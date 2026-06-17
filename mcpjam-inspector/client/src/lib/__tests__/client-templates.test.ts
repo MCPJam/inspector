@@ -21,4 +21,23 @@ describe("client templates", () => {
       },
     });
   });
+
+  it("seeds Perplexity as a tools-only MCP client", () => {
+    const seed = seedFromHostTemplate("perplexity");
+
+    expect(
+      HOST_TEMPLATES.some((template) => template.id === "perplexity"),
+    ).toBe(true);
+    expect(seed.hostStyle).toBe("perplexity");
+    expect(seed.clientCapabilities).toEqual({});
+    expect(seed.hostCapabilitiesOverride).toEqual({});
+    expect(seed.hostContext).toEqual({});
+    expect(seed.mcpProfile).toEqual({
+      profileVersion: 1,
+      initialize: {
+        supportedProtocolVersions: ["2025-06-18"],
+        clientInfo: { name: "mcp", version: "0.1.0" },
+      },
+    });
+  });
 });

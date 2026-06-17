@@ -9,6 +9,7 @@ import copilotLogo from "/copilot_logo.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -51,6 +52,7 @@ function getClientLogo(
   if (haystack.includes("agentcore") || haystack.includes("bedrock"))
     return bedrockLogo;
   if (haystack.includes("n8n")) return n8nLogo;
+  if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
     return openaiLogo;
   return null;

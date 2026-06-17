@@ -12,9 +12,10 @@ import type { CompatProvenance, HostCompatProfile } from "./types";
  * Each entry carries the facts the registry can't give us:
  *   - identity (label/logo) and `provenance` (how much to trust the matrix).
  *   - `rendersMcpApps`: does this host render MCP Apps (`ui://`) widgets at
- *     all? Headless clients such as Codex and n8n carry capability matrices
- *     for protocol-bucket reasons but have no rendering surface. That "is it
- *     headless?" fact isn't in the registry, so it's explicit here.
+ *     all? Headless clients such as Codex, n8n, and Perplexity carry
+ *     capability matrices for protocol-bucket reasons but have no rendering
+ *     surface. That "is it headless?" fact isn't in the registry, so it's
+ *     explicit here.
  *     (ChatGPT/Copilot render BOTH MCP Apps and the OpenAI bridge —
  *     `rendersOpenAiApps` is resolved separately below.)
  *
@@ -42,6 +43,13 @@ const MARKET_HOSTS: readonly MarketHost[] = [
   // Codex is a CLI — it renders no widgets, of either flavor.
   { id: "codex", label: "Codex", logoSrc: "/codex-logo.svg", provenance: "assumed", rendersMcpApps: false },
   { id: "n8n", label: "n8n", logoSrc: "/n8n_logo.svg", provenance: "probe", rendersMcpApps: false },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    logoSrc: "/perplexity_logo.svg",
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
 ];
 
 /**

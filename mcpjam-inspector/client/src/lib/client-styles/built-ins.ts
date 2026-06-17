@@ -7,6 +7,7 @@ import codexLogo from "/codex-logo.svg";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -572,6 +573,31 @@ export const N8N_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Perplexity MCP client host style. The captured Perplexity probe exposes
+ * only the base MCP initialize layer (`mcp@0.1.0`) with no capabilities and
+ * no snapshot, so this preset mirrors a headless tool-calling client.
+ */
+export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
+  id: "perplexity",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Perplexity",
+    shortLabel: "Perplexity-style host",
+    pickerDescription: "Perplexity MCP client (tools-only)",
+    logoSrc: perplexityLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
+/**
  * MCPJam's own house chrome. Used as the inspector's default host style so
  * "no host selected" doesn't silently render as Claude. Capability blob is
  * the inspector's actual MCP Apps renderer support — same baseline as
@@ -624,4 +650,5 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,
+  PERPLEXITY_HOST_STYLE,
 ];
