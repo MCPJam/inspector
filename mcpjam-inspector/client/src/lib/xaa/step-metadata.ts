@@ -36,31 +36,31 @@ export const XAA_PHASE_ORDER: XAAPhaseKey[] = [
 // first use; RFC numbers stay as secondary parentheticals, never the lead.
 export const XAA_PHASES: Record<XAAPhaseKey, XAAPhaseInfo> = {
   bootstrap: {
-    title: "Setup — find the MCP server's authorization server",
+    title: "Find the MCP Server's Authorization Server",
     specStep: null,
     blurb:
       "Setup that runs before XAA proper. The Agent asks the MCP Server which Authorization Server protects it, then looks up where that server hands out tokens. The XAA spec assumes the Agent already knows this, so it's numbered Phase 0 — and skipped entirely when you've pre-configured the Authorization Server. The Authorization Server's issuer found here is reused later so the grant is addressed to the right server. (Uses the standard OAuth discovery specs, RFC 9728 and 8414.)",
   },
   sso: {
-    title: "Sign in — the user logs in at the IdP",
+    title: "Sign in and get an ID token",
     specStep: 1,
     blurb:
       "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an ID token: proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
   },
   token_exchange: {
-    title: "Exchange — swap the login for a cross-app grant",
+    title: "Exchange the ID token for an ID-JAG",
     specStep: 2,
     blurb:
       "The Agent hands the ID token back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The ID token itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
   },
   jwt_bearer: {
-    title: "Redeem — trade the grant for an access token",
+    title: "Exchange the ID-JAG for an access token",
     specStep: 3,
     blurb:
       "The Agent presents the ID-JAG to the MCP server's Authorization Server. That server checks the grant came from an IdP it trusts, is addressed to itself, and names the right MCP Server — then issues an access token the Agent can actually use. (On the wire this is an RFC 7523 JWT-bearer grant.)",
   },
   mcp_request: {
-    title: "Call — use the access token on the MCP server",
+    title: "Call the MCP Server with the access token",
     specStep: 4,
     blurb:
       "The final step: the Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees. The ID token and ID-JAG stay behind. To the MCP Server this looks like an ordinary authenticated request.",
@@ -188,7 +188,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   jwt_bearer_request: {
-    title: "Redeem the ID-JAG for an Access Token",
+    title: "Exchange the ID-JAG for an Access Token",
     summary:
       "The Agent presents the ID-JAG to the MCP Server's Authorization Server, which validates it and returns an access token. (RFC 7523 JWT-bearer grant.)",
     phase: "jwt_bearer",
