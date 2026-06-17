@@ -1017,6 +1017,11 @@ export function SuiteIterationsView({
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
+                      onGenerateTestCases={onGenerateTestCases}
+                      canGenerateTestCases={canGenerateTestCases}
+                      isGeneratingTestCases={isGeneratingTestCases}
+                      onCreateTestCase={onCreateTestCase}
+                      onCreateWidgetProbe={onCreateWidgetProbe}
                     />
                   )}
                 </motion.div>

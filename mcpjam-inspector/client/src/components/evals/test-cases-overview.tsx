@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { Loader2, Play, Puzzle, Trash2 } from "lucide-react";
+import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
@@ -97,6 +104,16 @@ interface TestCasesOverviewProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** When true, the surrounding view is the direct-guest eval playground. */
   isDirectGuest?: boolean;
+  /**
+   * Empty-state CTAs (Playground). When provided, the "No test cases yet" empty
+   * state shows Generate / New case buttons above the message — the same actions
+   * as the suite header, surfaced where the user is looking.
+   */
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
+  isGeneratingTestCases?: boolean;
+  onCreateTestCase?: () => void;
+  onCreateWidgetProbe?: () => void;
 }
 
 export function TestCasesOverview({
@@ -117,8 +134,14 @@ export function TestCasesOverview({
   runTestCaseDisabledReason = null,
   connectedServerNames,
   isDirectGuest = false,
+  onGenerateTestCases,
+  canGenerateTestCases = false,
+  isGeneratingTestCases = false,
+  onCreateTestCase,
+  onCreateWidgetProbe,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
+  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
@@ -481,12 +504,88 @@ export function TestCasesOverview({
                 showDisconnectedPlaygroundEmptyState ? (
                   <EmptyState
                     icon={Puzzle}
-                    title={`Start ${disconnectedPlaygroundServerName} to generate tests`}
+                    title={`Connect "${disconnectedPlaygroundServerName}" to generate tests`}
                     description="Playground can automatically generate test cases once a server is connected."
                     className="h-auto min-h-[240px]"
                   />
                 ) : hideViewModeSelect ? (
-                  <div className="flex min-h-[200px] items-center justify-center px-4 py-12">
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-4 px-4 py-12">
+                    {onGenerateTestCases || onCreateTestCase ? (
+                      <div className="flex items-center gap-2">
+                        {onGenerateTestCases ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5"
+                            onClick={onGenerateTestCases}
+                            disabled={
+                              !canGenerateTestCases || isGeneratingTestCases
+                            }
+                            aria-busy={isGeneratingTestCases}
+                          >
+                            {isGeneratingTestCases ? (
+                              <Loader2
+                                className="h-3.5 w-3.5 shrink-0 animate-spin"
+                                aria-hidden
+                              />
+                            ) : (
+                              <Sparkles
+                                className="h-3.5 w-3.5 shrink-0"
+                                aria-hidden
+                              />
+                            )}
+                            Generate
+                          </Button>
+                        ) : null}
+                        {onCreateTestCase ? (
+                          syntheticMonitorsEnabled && onCreateWidgetProbe ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 gap-1.5"
+                                >
+                                  <Plus
+                                    className="h-3.5 w-3.5 shrink-0"
+                                    aria-hidden
+                                  />
+                                  New case
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="center">
+                                <DropdownMenuItem
+                                  onSelect={() => onCreateTestCase()}
+                                >
+                                  Prompt test
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => onCreateWidgetProbe()}
+                                >
+                                  Widget probe
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-1.5"
+                              onClick={onCreateTestCase}
+                            >
+                              <Plus
+                                className="h-3.5 w-3.5 shrink-0"
+                                aria-hidden
+                              />
+                              New case
+                            </Button>
+                          )
+                        ) : null}
+                      </div>
+                    ) : null}
                     <p className="text-sm text-muted-foreground">
                       No test cases yet — click{" "}
                       <span className="text-foreground">Generate</span> or{" "}

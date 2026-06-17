@@ -418,7 +418,7 @@ describe("TestCasesOverview", () => {
     );
 
     expect(
-      screen.getByText("Start playground-server to generate tests"),
+      screen.getByText('Connect "playground-server" to generate tests'),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
