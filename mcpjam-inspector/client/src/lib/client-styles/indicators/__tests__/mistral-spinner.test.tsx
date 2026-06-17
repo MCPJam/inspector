@@ -1,58 +1,77 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MistralSpinnerIndicator } from "../mistral-spinner";
+import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
 
 describe("MistralSpinnerIndicator", () => {
-  it("renders Le Chat's spinner and centered mark", () => {
+  it("renders Le Chat's five-square loader and shimmering 'Thinking' label", () => {
+    render(<MistralSpinnerIndicator />);
+
+    const wrapper = screen.getByTestId("loading-indicator-mistral");
+    expect(wrapper).toHaveTextContent("Thinking");
+
+    // The morphing loader: a 200×200 SVG holding five animated squares.
+    const loader = screen.getByTestId("loading-indicator-mistral-loader");
+    expect(loader.tagName.toLowerCase()).toBe("svg");
+    expect(loader).toHaveAttribute("viewBox", "0 0 200 200");
+    expect(loader.querySelectorAll("rect")).toHaveLength(5);
+    expect(loader.querySelectorAll("animateTransform")).toHaveLength(5);
+    // Mistral's orange→amber ramp, verbatim from the capture.
+    const fills = Array.from(loader.querySelectorAll("rect")).map((r) =>
+      r.getAttribute("fill")
+    );
+    expect(fills).toEqual([
+      "#fa500f",
+      "#ff8205",
+      "#ffaf01",
+      "#ff8205",
+      "#fa500f",
+    ]);
+  });
+
+  it("binds the mistral-shimmer-text animation hook via class", () => {
+    // Animation resolves from CSS in `index.css` — assert the class wiring
+    // so a refactor can't silently drop the keyframe binding.
+    render(<MistralSpinnerIndicator />);
+    expect(
+      screen
+        .getByTestId("loading-indicator-mistral-label")
+        .classList.contains("mistral-shimmer-text")
+    ).toBe(true);
+  });
+
+  it("forwards className to the outer wrapper", () => {
+    const { container } = render(
+      <MistralSpinnerIndicator className="custom-test-class" />
+    );
+    const wrapper = container.firstChild as HTMLElement;
+    expect(wrapper.classList.contains("custom-test-class")).toBe(true);
+  });
+
+  it("declares an aria-live region and mirrors the verb sr-only", () => {
     const { container } = render(<MistralSpinnerIndicator />);
+    const live = container.querySelector("[aria-live='polite']");
+    expect(live).not.toBeNull();
+    // The visible label is masked transparent by the shimmer, so the verb
+    // is also mirrored sr-only for screen readers.
+    expect(container.textContent).toContain("Thinking");
+  });
 
-    expect(screen.getByTestId("loading-indicator-mistral")).toHaveTextContent(
-      "Thinking"
-    );
-    expect(screen.getByTestId("loading-indicator-mistral")).toHaveClass(
-      "mistral-spinner-indicator"
-    );
+  it("defaults the label to data-theme='dark' when no chatbox host theme is mounted", () => {
+    render(<MistralSpinnerIndicator />);
     expect(
-      screen.getByRole("progressbar", { name: "Loading" })
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("loading-indicator-mistral-spinner")).toHaveClass(
-      "absolute",
-      "inset-0",
-      "size-12"
-    );
-    expect(
-      screen.getByTestId("loading-indicator-mistral-mark")
-    ).toBeInTheDocument();
-    const mark = screen.getByTestId("loading-indicator-mistral-mark");
-    expect(mark.tagName).toBe("DIV");
-    expect(mark).toHaveClass("relative", "size-12");
-    expect(mark).toHaveStyle({ borderRadius: "50%" });
-    expect(mark.querySelector('[data-slot="avatar"]')).toHaveClass(
-      "h-7",
-      "w-7",
-      "overflow-hidden",
-      "rounded-full"
-    );
-    expect(mark.querySelector(".bg-brand-500")).toBeInTheDocument();
-    expect(mark.querySelector(".bg-brand-500")).toHaveStyle({
-      backgroundColor: "var(--bg-brand-500, var(--mistral-spinner-brand))",
-    });
-    expect(
-      screen.getByTestId("loading-indicator-mistral-mark").querySelector("svg")
-    ).toHaveClass("text-white-default");
-    expect(
-      screen.getByTestId("loading-indicator-mistral-mark").querySelector("svg")
-    ).toHaveStyle({
-      color: "var(--text-white-default, var(--mistral-spinner-white))",
-    });
-    expect(mark.lastElementChild).toBe(
-      screen.getByTestId("loading-indicator-mistral-spinner")
-    );
+      screen.getByTestId("loading-indicator-mistral-label").dataset.theme
+    ).toBe("dark");
+  });
 
-    const spinningGroup = container.querySelector("g");
-    expect(spinningGroup).toHaveClass("animate-spin");
+  it("switches the label to data-theme='light' under a light chatbox host theme", () => {
+    render(
+      <ChatboxHostThemeProvider value="light">
+        <MistralSpinnerIndicator />
+      </ChatboxHostThemeProvider>
+    );
     expect(
-      container.querySelector("[stroke-dasharray='56.548667764616276']")
-    ).toBeInTheDocument();
+      screen.getByTestId("loading-indicator-mistral-label").dataset.theme
+    ).toBe("light");
   });
 });

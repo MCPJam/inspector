@@ -47,6 +47,8 @@ import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
+import { VSCodeShimmerIndicator } from "./indicators/vscode-shimmer";
+import { AgentCoreShineIndicator } from "./indicators/agentcore-shine";
 import type {
   HostStyleDefinition,
   ResolvedMcpAppsCapabilities,
@@ -507,8 +509,11 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
  * literally "cursor-vscode" and its chat panel mirrors "VS Code / Cursor's
  * standard editor surface" (see cursor-client-context.ts). So VS Code
  * reuses Cursor's chrome base verbatim (platform, font, style variables,
- * chat background, shine indicator); only the label, picker description,
- * and logo are VS Code-specific.
+ * chat background); the label, picker description, and logo are
+ * VS Code-specific. The thinking indicator is VS Code's OWN shimmer
+ * (`indicators/vscode-shimmer.tsx`) — same shimmer family as Cursor but
+ * captured verbatim from Copilot Chat (pure-white highlight, 400% gradient
+ * field, 120% → -120% sweep), not Cursor's dimmer 200% variant.
  *
  * Capability surface mirrors Cursor's MCP Apps subset — VS Code renders
  * MCP UI resources (`text/html;profile=mcp-app`) inline in the chat panel
@@ -548,7 +553,7 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
     // Flat, dark, IDE-like surface — same visual family as Cursor/ChatGPT.
     family: "chatgpt",
     resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
-    loadingIndicator: CursorShineIndicator,
+    loadingIndicator: VSCodeShimmerIndicator,
   },
 };
 
@@ -562,9 +567,13 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
  *
  * Chrome reuses MCPJam's neutral house tokens — AgentCore has no published
  * chat UI of its own to copy, and the neutral surface is the honest choice
- * (don't invent AWS-branded chrome). The capability surface is the
- * spec-default "no claims" set because AgentCore renders nothing; the `mcp`
- * blob is unread in practice (no iframe is ever created).
+ * (don't invent AWS-branded chrome). The thinking indicator follows the
+ * same logic: it reuses the generic Cursor/Codex shimmer over "Thinking"
+ * (`indicators/agentcore-shine.tsx`) — a design-free busy state for a host
+ * that renders nothing, rather than borrowing MCPJam's branded mark. The
+ * capability surface is the spec-default "no claims" set because AgentCore
+ * renders nothing; the `mcp` blob is unread in practice (no iframe is ever
+ * created).
  */
 export const AGENTCORE_HOST_STYLE: HostStyleDefinition = {
   id: "agentcore",
@@ -586,7 +595,7 @@ export const AGENTCORE_HOST_STYLE: HostStyleDefinition = {
     // MCPJam, whose neutral tokens AgentCore borrows.
     family: "claude",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    loadingIndicator: MCPJamMarkIndicator,
+    loadingIndicator: AgentCoreShineIndicator,
   },
 };
 

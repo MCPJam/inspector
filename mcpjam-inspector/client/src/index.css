@@ -100,22 +100,20 @@
     color: var(--text-white-default, #ffffff);
   }
 
-  .mistral-mark-colors,
-  .mistral-spinner-indicator {
-    --mistral-spinner-badge: #faeee7;
-    --mistral-spinner-strong: #c4290a;
+  /* Mistral "M" mark colors — consumed by MistralStaticAvatar
+     (`mistral-avatar.tsx`) via `--mistral-spinner-{brand,white}`. The old
+     `.mistral-spinner-indicator` selector and `--mistral-spinner-{badge,strong}`
+     vars fed the retired avatar-ring spinner; the thinking indicator is now
+     Le Chat's SMIL five-square loader (`mistral-spinner.tsx`), which carries
+     its own brand hex, so those are dropped. */
+  .mistral-mark-colors {
     --mistral-spinner-brand: #fa500e;
     --mistral-spinner-white: #ffffff;
   }
 
-  .dark .mistral-spinner-indicator,
   .dark .mistral-mark-colors,
-  .app-theme-scope.dark .mistral-spinner-indicator,
   .app-theme-scope.dark .mistral-mark-colors,
-  [data-thread-theme="dark"] .mistral-mark-colors,
-  [data-thread-theme="dark"] .mistral-spinner-indicator {
-    --mistral-spinner-badge: #53330f;
-    --mistral-spinner-strong: #ff8a00;
+  [data-thread-theme="dark"] .mistral-mark-colors {
     --mistral-spinner-brand: #fa500f;
     --mistral-spinner-white: #ffffff;
   }
@@ -141,8 +139,7 @@
   .trace-waterfall-bar-tool,
   .trace-waterfall-bar-step,
   .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28),
       0 1px 3px rgb(15 23 42 / 0.08);
   }
   .dark .trace-waterfall-bar-prompt,
@@ -155,8 +152,7 @@
   .app-theme-scope.dark .trace-waterfall-bar-tool,
   .app-theme-scope.dark .trace-waterfall-bar-step,
   .app-theme-scope.dark .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12),
       0 1px 4px rgb(0 0 0 / 0.26);
   }
   .trace-waterfall-row-selected {
@@ -407,14 +403,12 @@
 }
 
 .claude-loading-indicator__strip--900 {
-  animation:
-    claude-strip-900-position 1.7s linear infinite,
+  animation: claude-strip-900-position 1.7s linear infinite,
     claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
-  animation:
-    claude-strip-800-position 1.7s linear infinite,
+  animation: claude-strip-800-position 1.7s linear infinite,
     claude-strip-800-visibility 1.7s step-end infinite;
 }
 
@@ -666,7 +660,8 @@
    their Cursor-flavored names because they're stylesheet-internal;
    renaming them isn't worth churning Cursor's tests. */
 .cursor-shine-indicator,
-.codex-shine-indicator {
+.codex-shine-indicator,
+.agentcore-shine-indicator {
   /* `--cursor-shine-base` is what Cursor calls `--base` — a single
      foreground tone the gradient stops derive from. The 48% and 94%
      mixes are verbatim from Cursor's resolved `--text-tertiary` /
@@ -698,7 +693,8 @@
    light-mode foreground and gives the same 48%/94% contrast on white
    that #E4E4E4 gives on Cursor's #181818 editor background. */
 .cursor-shine-indicator[data-theme="light"],
-.codex-shine-indicator[data-theme="light"] {
+.codex-shine-indicator[data-theme="light"],
+.agentcore-shine-indicator[data-theme="light"] {
   --cursor-shine-base: #1a1a1a;
 }
 
@@ -713,7 +709,120 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cursor-shine-indicator,
-  .codex-shine-indicator {
+  .codex-shine-indicator,
+  .agentcore-shine-indicator {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* VS Code (GitHub Copilot Chat) "shimmer" thinking indicator — verbatim
+   port of Copilot's own `p.chat-thinking-shimmer` rule (captured from VS
+   Code DevTools). Same shimmer family as Cursor above but distinct: the
+   highlight is pure white (not a dimmed foreground tone), the gradient
+   field is 400% wide with a tighter bright band, and the sweep travels
+   120% → -120% (Cursor runs a 200% field 100% → -100%). The keyframe is
+   namespaced `vscode-shimmer` to keep it independent of `cursor-shine`.
+
+   `--vscode-shimmer-{base,highlight}` derive the two gradient tones so
+   `data-theme` can swap them. Dark mode is the verbatim capture
+   (#8C8C8C base, #FFFFFF highlight); the light override sits in
+   `.vscode-shimmer-indicator[data-theme="light"]` below. */
+.vscode-shimmer-indicator {
+  --vscode-shimmer-base: #8c8c8c;
+  --vscode-shimmer-highlight: #ffffff;
+  background-image: linear-gradient(
+    90deg,
+    var(--vscode-shimmer-base) 0%,
+    var(--vscode-shimmer-base) 30%,
+    var(--vscode-shimmer-highlight) 50%,
+    var(--vscode-shimmer-base) 70%,
+    var(--vscode-shimmer-base) 100%
+  );
+  background-size: 400% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: vscode-shimmer 2s linear infinite;
+  will-change: background-position;
+}
+
+/* Light mode: VS Code has no captured light-theme dump yet, so this is a
+   best-effort mirror — a mid-grey base with a near-black highlight gives
+   the same "brighter stripe gliding through a dimmer base" read on a
+   light surface that the #8C8C8C/#FFF pair gives on Copilot's dark panel.
+   Replace with a verbatim capture if a light VS Code probe lands. */
+.vscode-shimmer-indicator[data-theme="light"] {
+  --vscode-shimmer-base: #8c8c8c;
+  --vscode-shimmer-highlight: #1a1a1a;
+}
+
+@keyframes vscode-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vscode-shimmer-indicator {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* Mistral Le Chat "Thinking" shimmer label — verbatim port of Le Chat's
+   `animate-shimmer-text` rule (captured from chat.mistral.ai DevTools). A
+   200%-wide gradient clips to the glyphs and a bright stripe sweeps
+   150% → -50% over 2s ease-in-out infinite. Pairs with the SMIL five-square
+   loader in `indicators/mistral-spinner.tsx`.
+
+   `--mistral-shimmer-{base,highlight}` derive the two tones so `data-theme`
+   can swap them. Dark mode is the verbatim capture (base
+   rgba(255,255,255,.498), highlight #fff); the light override inverts to a
+   dark base/highlight below. */
+.mistral-shimmer-text {
+  --mistral-shimmer-base: rgba(255, 255, 255, 0.498);
+  --mistral-shimmer-highlight: #ffffff;
+  background-image: linear-gradient(
+    90deg,
+    var(--mistral-shimmer-base) 0%,
+    var(--mistral-shimmer-base) 40%,
+    var(--mistral-shimmer-highlight) 50%,
+    var(--mistral-shimmer-base) 60%,
+    var(--mistral-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mistral-shimmer-text 2s ease-in-out infinite;
+  will-change: background-position;
+}
+
+/* Light mode: Le Chat's capture was dark-theme; mirror it on light with a
+   dark base + near-black highlight so the bright stripe still reads. */
+.mistral-shimmer-text[data-theme="light"] {
+  --mistral-shimmer-base: rgba(0, 0, 0, 0.498);
+  --mistral-shimmer-highlight: #000000;
+}
+
+@keyframes mistral-shimmer-text {
+  0%,
+  20% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mistral-shimmer-text {
     animation: none;
     background: none;
     -webkit-text-fill-color: currentColor;
@@ -1098,7 +1207,6 @@
  * utility. Falls back to the system mono stack offline.
  */
 @theme {
-  --font-metric:
-    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }
