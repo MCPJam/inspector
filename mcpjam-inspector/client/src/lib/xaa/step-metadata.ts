@@ -102,7 +102,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     summary:
       "Ready to walk the XAA flow step by step. XAA lets the Agent call an MCP Server on the user's behalf without making the user log in again.",
     teachableMoments: [
-      "The whole flow hinges on three values lining up: the IdP must be trusted by the Authorization Server, the grant must be addressed to that Authorization Server, and it must name the right MCP Server.",
+      "For this to work, the Authorization Server has to trust the IdP, and the grant has to name both that Authorization Server and the right MCP Server.",
     ],
   },
   discover_resource_metadata: {
@@ -111,7 +111,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent asks the MCP Server which Authorization Server protects it. (RFC 9728 protected-resource metadata.)",
     phase: "bootstrap",
     teachableMoments: [
-      "This is how the Agent learns which Authorization Server can issue access tokens for the MCP Server — the MCP equivalent of already knowing your auth server.",
+      "This is how the Agent learns which Authorization Server can issue tokens for the MCP Server.",
     ],
   },
   received_resource_metadata: {
@@ -120,7 +120,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The MCP Server replies with its resource identifier and the Authorization Server that guards it.",
     phase: "bootstrap",
     teachableMoments: [
-      "Remember the Authorization Server named here: the ID-JAG minted in Phase 2 is addressed to it, and the ID-JAG's `resource` should match this MCP Server.",
+      "Both values get reused later: the grant is addressed to this Authorization Server and tagged for this MCP Server.",
     ],
   },
   discover_authz_metadata: {
@@ -129,7 +129,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent looks up where the Authorization Server hands out tokens. (RFC 8414 / OpenID Connect discovery.)",
     phase: "bootstrap",
     teachableMoments: [
-      "The `issuer` in this metadata is what the ID-JAG must carry as its `aud` (audience). The audience is the Authorization Server's issuer URL — not its `token_endpoint`.",
+      "A common XAA mistake: the grant must be addressed to this server's issuer URL, not its token endpoint.",
     ],
   },
   received_authz_metadata: {
@@ -138,7 +138,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent now knows the Authorization Server's issuer and token endpoint — where the ID-JAG gets redeemed in Phase 3.",
     phase: "bootstrap",
     teachableMoments: [
-      "If discovery fails, the Authorization Server's issuer or its well-known metadata URL is usually misconfigured.",
+      "If discovery fails, the Authorization Server's issuer or its metadata URL is usually misconfigured.",
     ],
   },
   user_authentication: {
@@ -147,7 +147,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The user signs in at the IdP and the Agent receives an ID token — proof of who the user is. MCPJam fakes the IdP here.",
     phase: "sso",
     teachableMoments: [
-      "XAA step 1: the user authenticates at the IdP and the Agent receives an ID token (an OpenID Connect identity assertion).",
+      "This login just proves who the user is — it isn't tied to any MCP server yet.",
     ],
   },
   received_identity_assertion: {
@@ -156,8 +156,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent holds the ID token, ready to trade it for an ID-JAG. The ID token itself never leaves the IdP.",
     phase: "sso",
     teachableMoments: [
-      "The ID token is only an input to the next step — it is never sent to the Authorization Server or the MCP Server.",
-      'Naming note: here "identity assertion" means the OpenID Connect ID token. Some IdPs (e.g. Okta) call the ID-JAG itself the "identity assertion" — in this debugger the ID-JAG is the grant minted in Phase 2.',
+      "The ID token is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
     ],
   },
   token_exchange_request: {
@@ -166,9 +165,8 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. A test mode can deliberately break it here.",
     phase: "token_exchange",
     teachableMoments: [
-      "XAA step 2: the `audience` the Agent sends names the MCP Server's Authorization Server — the issuer discovered (or pre-configured) in Phase 0.",
-      "This is where the debugger can forge broken grants to test how the Authorization Server reacts: wrong audience, bad signature, expired, and so on.",
-      "On the wire this exchange uses `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`.",
+      "The Agent tells the IdP which Authorization Server the grant is for — that becomes the grant's audience.",
+      "This is the step where a test mode can forge a broken grant to see how your Authorization Server reacts.",
     ],
   },
   received_id_jag: {
@@ -176,7 +174,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     summary: "The IdP returns a signed ID-JAG — the cross-app grant.",
     phase: "token_exchange",
     teachableMoments: [
-      "A valid ID-JAG carries `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, `iat`, and `exp`.",
+      "An ID-JAG is a signed token saying who the user is, which Authorization Server it's for, and which MCP Server it unlocks.",
       "ID-JAG stands for Identity Assertion JWT Authorization Grant — the grant type defined by the XAA spec.",
     ],
   },
@@ -186,8 +184,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "Decode the ID-JAG locally to check its claims before sending it to the Authorization Server.",
     phase: "token_exchange",
     teachableMoments: [
-      "`aud` must exactly match the Authorization Server's issuer, and `resource` must match the MCP Server's resource identifier.",
-      "Use this step to confirm which field a test mode is intentionally breaking.",
+      "Check the grant is addressed to the right Authorization Server and names the right MCP Server before sending it.",
     ],
   },
   jwt_bearer_request: {
@@ -196,9 +193,8 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent presents the ID-JAG to the MCP Server's Authorization Server, which validates it and returns an access token. (RFC 7523 JWT-bearer grant.)",
     phase: "jwt_bearer",
     teachableMoments: [
-      "XAA step 3: the Authorization Server checks the ID-JAG's `iss` (a trusted IdP?), `aud` (addressed to me?), and `resource` (the right MCP Server?) before issuing a token.",
-      "If this fails, check that the Authorization Server trusts the IdP's signing keys (its JWKS) and supports the JWT-bearer grant.",
-      "On the wire this is `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` — match it against your Authorization Server's request logs.",
+      "The Authorization Server checks the grant came from a trusted IdP, is addressed to itself, and names the right MCP Server before issuing a token.",
+      "If this fails, the Authorization Server probably doesn't trust the IdP's signing keys yet, or doesn't support this grant type.",
     ],
   },
   received_access_token: {
@@ -207,7 +203,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Authorization Server accepted the ID-JAG and issued an access token for the MCP Server.",
     phase: "jwt_bearer",
     teachableMoments: [
-      "Getting a token here proves the Authorization Server accepted the ID-JAG and its policy checks passed.",
+      "Getting a token here means the Authorization Server accepted the grant and its checks passed.",
     ],
   },
   authenticated_mcp_request: {
@@ -216,7 +212,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees.",
     phase: "mcp_request",
     teachableMoments: [
-      "XAA step 4: this closes the loop — the access token has to work on the real MCP Server, not just at the token endpoint.",
+      "This proves the token actually works on the MCP Server — not just at the Authorization Server.",
     ],
   },
   complete: {
@@ -225,7 +221,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "The MCP Server accepted the access token. The full cross-app flow worked end to end.",
     phase: "mcp_request",
     teachableMoments: [
-      "Switch test modes to probe specific Authorization Server validation paths: wrong audience, bad signature, expired grant, and more.",
+      "Try the test modes to see how your Authorization Server handles broken grants: wrong audience, bad signature, expired, and more.",
     ],
   },
 };
