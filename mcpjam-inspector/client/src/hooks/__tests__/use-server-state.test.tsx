@@ -1043,7 +1043,7 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.hash).toBe("");
   });
 
-  it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {
+  it("preserves existing HTTP config without keeping the callback bearer token", async () => {
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
     readStoredOAuthConfigMock.mockReturnValue({
@@ -1102,7 +1102,6 @@ describe("useServerState OAuth callback failures", () => {
         url: "https://example.com/mcp",
         requestInit: expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: "Bearer access-token",
             "x-existing-header": "present",
           }),
         }),
@@ -1117,6 +1116,11 @@ describe("useServerState OAuth callback failures", () => {
             listChanged: true,
           },
         },
+      })
+    );
+    expect(testConnectionMock.mock.calls.at(-1)?.[0]?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
       })
     );
 
@@ -1172,15 +1176,15 @@ describe("useServerState OAuth callback failures", () => {
     expect(testConnectionMock.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({
         url: "https://example.com/mcp",
-        requestInit: expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer access-token",
-          }),
-        }),
       })
     );
 
     const connectConfig = testConnectionMock.mock.calls.at(-1)?.[0];
+    expect(connectConfig?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
+      })
+    );
     expect(connectConfig).not.toHaveProperty("command");
     expect(connectConfig).not.toHaveProperty("args");
   });
@@ -1409,6 +1413,10 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("resolves preregistered registry OAuth config before initiating Asana connect", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockResolvedValueOnce({
       clientId: "asana-client-id",
       scopes: ["default"],
@@ -1446,6 +1454,10 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockResolvedValueOnce({
       scopes: ["read", "write"],
     });
@@ -1478,6 +1490,10 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("fails registry OAuth initiation when the dedicated OAuth config query fails", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockRejectedValueOnce(new Error("registry lookup failed"));
 
     const dispatch = vi.fn();
