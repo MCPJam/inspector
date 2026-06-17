@@ -53,13 +53,14 @@ import {
   buildIterationTranscript,
   evaluatePredicates,
   summarizeRenderObservations,
+  type ToolErrorRecord,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
-import { runProbeTestCase } from "./evals/probe-iteration";
+import { runPinnedTurn } from "./evals/pinned-turn";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -76,8 +77,13 @@ import type {
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   deriveLegacyPromptFields,
+  isPinnedOnly,
+  isPinnedTurn,
+  legacyProbeToPinnedTurn,
+  needsModel,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
+  type PinnedToolCall,
   type PromptTurn,
 } from "@/shared/prompt-turns";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
@@ -398,6 +404,58 @@ function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
     expectedOutput: legacy.expectedOutput,
     advancedConfig: stripPromptTurnsFromAdvancedConfig(test.advancedConfig),
   };
+}
+
+/**
+ * Represent a legacy `widget_probe` row as a single model-free pinned turn so
+ * the unified engine sees ONE shape (routing, server resolution, the iteration
+ * loop). Post-migration rows already carry the pinned turn, so this is a no-op
+ * for them. Idempotent.
+ */
+function normalizeTestForPinnedTurns(test: EvalTestCase): EvalTestCase {
+  if (
+    test.caseType === "widget_probe" &&
+    test.probeConfig &&
+    !resolvePromptTurns(test).some(isPinnedTurn)
+  ) {
+    return {
+      ...test,
+      promptTurns: [legacyProbeToPinnedTurn(test.probeConfig as PinnedToolCall)],
+    };
+  }
+  return test;
+}
+
+/**
+ * Resolve a pinned turn's server reference (stable id first, display-name
+ * fallback) to a connected manager key, through the same binding maps the LLM
+ * path uses. `undefined` ⇒ not connected in this run (the iteration records a
+ * not-connected failure instead of throwing the whole run away). Lifted from
+ * the former `widget_probe` fork.
+ */
+function resolvePinnedServerKey(
+  pinned: PinnedToolCall,
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
+  selectedServers: string[],
+  mcpClientManager: MCPClientManager,
+): string | undefined {
+  const connected = new Set(selectedServers);
+  const candidates = [pinned.serverId, pinned.serverName].filter(
+    (ref): ref is string => !!ref,
+  );
+  for (const candidate of candidates) {
+    const [resolved] = resolveConfiguredServerIds({
+      environment: {
+        servers: [candidate],
+        serverBindings: environment?.serverBindings,
+      },
+      mcpClientManager,
+    });
+    if (resolved && connected.has(resolved)) {
+      return resolved;
+    }
+  }
+  return undefined;
 }
 
 function buildPromptTraceSummaries(
@@ -738,6 +796,13 @@ type RunIterationBaseParams = {
    * use overrides as-is."
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  /**
+   * Run environment snapshot (servers + serverBindings). Consulted to resolve
+   * a pinned-tool-call turn's server reference (id first, display-name
+   * fallback) to a manager key — the same binding maps the LLM path uses for
+   * its environment. Absent on quick-run paths that pre-resolve servers.
+   */
+  environment?: RunEvalSuiteOptions["config"]["environment"];
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -921,6 +986,7 @@ const runIterationWithAiSdk = async ({
   hostPolicy,
   toolSignals,
   suiteHostConfig,
+  environment,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1008,12 +1074,29 @@ const runIterationWithAiSdk = async ({
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  const modelRuntime = resolveEvalModelRuntime({
-    test,
-    modelDefinition,
-    modelApiKeys,
-    orgModelConfig,
+  // A case whose turns are ALL pinned tool calls is model-free: every
+  // model/BYOK setup step below is skipped (a pinned-only case carries
+  // display-only model sentinels that must never reach the runtime resolver,
+  // which throws on a missing API key). Hybrid cases keep full model setup;
+  // their pinned turns run via runPinnedTurn inside the loop.
+  const caseNeedsModel = needsModel({
+    caseType: test.caseType,
+    promptTurns,
   });
+  // First pinned turn's render-budget override; applied to the shared harness.
+  const pinnedRenderTimeoutMs = promptTurns.find(
+    (t) =>
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+  )?.pinnedToolCall?.renderTimeoutMs;
+
+  const modelRuntime = caseNeedsModel
+    ? resolveEvalModelRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+      })
+    : null;
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -1056,6 +1139,10 @@ const runIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Tool errors from pinned (model-free) turns. No trace exists for a direct
+  // tool call, so these are threaded into the transcript explicitly (the
+  // `toolErrors` input to buildIterationTranscript) so `noToolErrors` gates.
+  const pinnedToolErrors: ToolErrorRecord[] = [];
   let accumulatedUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -1101,9 +1188,12 @@ const runIterationWithAiSdk = async ({
   // cheap and Chromium launches lazily on the first widget render, so
   // prompt-only / no-widget iterations pay nothing.
   const browser = await createBrowserSessionContext({
-    model: test.model,
+    // Model-free (pinned-only) iterations pass no model: no Computer Use, but
+    // the harness still renders pinned widgets and records observations.
+    ...(caseNeedsModel ? { model: test.model } : {}),
     mcpClientManager,
     injectOpenAiCompat,
+    ...(pinnedRenderTimeoutMs ? { renderTimeoutMs: pinnedRenderTimeoutMs } : {}),
   });
 
   try {
@@ -1118,55 +1208,63 @@ const runIterationWithAiSdk = async ({
     // credits, and BYOK iterations carry no Convex auth — advertising a tool
     // whose execute can only fail is worse than omitting it. The null-ctx
     // helper call debug-logs when the suite hostConfig requested ids anyway.
-    resolveHostTools(
-      { builtInToolIds: resolvedExecution.builtInToolIds },
-      null
-    );
-    const prepared = await prepareChatV2({
-      mcpClientManager,
-      selectedServers,
-      modelDefinition,
-      systemPrompt: system,
-      temperature,
-      respectToolVisibility: hostPolicy?.respectToolVisibility,
-      customProviders: modelRuntime.customProviders,
-      priorMessages: [],
-    });
-    // PR 4d of the engine consolidation: drop the PR 4b
-    // `systemPrompt: ""` quirk. Pre-4d, eval pushed
-    // `prepared.enhancedSystemPrompt` as a `role: "system"` message into
-    // `conversationMessages` and passed `systemPrompt: ""` to the
-    // helper — `normalizeSystemPromptForProvider("")` resolved to
-    // `undefined` so streamText received the system via messages, not
-    // the dedicated `system:` field. That worked but was a latent
-    // footgun: any refactor of `normalizeSystemPromptForProvider` to
-    // emit `""` would have double-sent the system. Match chat's shape —
-    // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
-    // `systemPrompt:` argument below; `conversationMessages` no longer
-    // carries a system message entry. PR 4d review fix (Codex P2):
-    // hoist the resolved value so it can be prepended to the messages
-    // array at persistence time, since eval's wire shape to Convex
-    // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
-    enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
-
-    const llmModel = createLlmModel(
-      modelDefinition,
-      modelRuntime.apiKey,
-      modelRuntime.baseUrls,
-      modelRuntime.customProviders
-    );
-
-    if (
-      toolChoice &&
-      typeof toolChoice === "object" &&
-      !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
-      // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on computer-capable drivers.
-      !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
-    ) {
-      throw new Error(
-        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+    // Model-free (pinned-only) iterations skip tool/system/model prep: there
+    // is no LLM to advertise tools to or instantiate. `prepared`/`llmModel`
+    // stay null and are only read inside the model-turn branch, unreachable
+    // when `caseNeedsModel` is false.
+    let prepared: PrepareChatV2Result | null = null;
+    let llmModel: ReturnType<typeof createLlmModel> | null = null;
+    if (caseNeedsModel) {
+      resolveHostTools(
+        { builtInToolIds: resolvedExecution.builtInToolIds },
+        null
       );
+      prepared = await prepareChatV2({
+        mcpClientManager,
+        selectedServers,
+        modelDefinition,
+        systemPrompt: system,
+        temperature,
+        respectToolVisibility: hostPolicy?.respectToolVisibility,
+        customProviders: modelRuntime!.customProviders,
+        priorMessages: [],
+      });
+      // PR 4d of the engine consolidation: drop the PR 4b
+      // `systemPrompt: ""` quirk. Pre-4d, eval pushed
+      // `prepared.enhancedSystemPrompt` as a `role: "system"` message into
+      // `conversationMessages` and passed `systemPrompt: ""` to the
+      // helper — `normalizeSystemPromptForProvider("")` resolved to
+      // `undefined` so streamText received the system via messages, not
+      // the dedicated `system:` field. That worked but was a latent
+      // footgun: any refactor of `normalizeSystemPromptForProvider` to
+      // emit `""` would have double-sent the system. Match chat's shape —
+      // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
+      // `systemPrompt:` argument below; `conversationMessages` no longer
+      // carries a system message entry. PR 4d review fix (Codex P2):
+      // hoist the resolved value so it can be prepended to the messages
+      // array at persistence time, since eval's wire shape to Convex
+      // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
+      enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+
+      llmModel = createLlmModel(
+        modelDefinition,
+        modelRuntime!.apiKey,
+        modelRuntime!.baseUrls,
+        modelRuntime!.customProviders
+      );
+
+      if (
+        toolChoice &&
+        typeof toolChoice === "object" &&
+        !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
+        // `computer` / `finish_widget` are merged into the tool map below, so a
+        // forced tool choice naming one of them is valid on computer-capable drivers.
+        !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
+      ) {
+        throw new Error(
+          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+        );
+      }
     }
 
     // PR 4b helper: abort happened during the cleanup window between the
@@ -1189,6 +1287,57 @@ const runIterationWithAiSdk = async ({
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
       browser.setActivePromptIndex(promptIndex);
+
+      // Model-free pinned turn: execute the fixed tool call and render its
+      // widget through the SAME browser harness the model turns use — no LLM.
+      // The pinned call is fixture input, not model behavior, so it is excluded
+      // from tool-call matching (see evaluateMultiTurnResults) but still flows
+      // into the transcript's toolCalls for predicate visibility.
+      if (isPinnedTurn(promptTurn) && promptTurn.pinnedToolCall) {
+        await browser.dismissCarriedWidget();
+        const pinned = promptTurn.pinnedToolCall;
+        const serverKey = resolvePinnedServerKey(
+          pinned,
+          environment,
+          selectedServers,
+          mcpClientManager
+        );
+        const pinnedResult = await runPinnedTurn({
+          pinned,
+          resolvedServerKey: serverKey,
+          mcpClientManager,
+          browser,
+          promptIndex,
+        });
+        conversationMessages.push({
+          role: "user",
+          content: `Pinned tool call: ${pinned.toolName} on "${pinned.serverName}"`,
+        });
+        conversationMessages.push({
+          role: "assistant",
+          content: pinnedResult.summary,
+        });
+        toolsCalledByPrompt.push(
+          pinnedResult.toolCall ? [pinnedResult.toolCall] : []
+        );
+        if (pinnedResult.toolError) {
+          pinnedToolErrors.push(pinnedResult.toolError);
+        }
+        if (pinnedResult.iterationError && !iterationError) {
+          iterationError = pinnedResult.iterationError;
+        }
+        continue;
+      }
+
+      // A non-pinned turn implies the case needs the model, which means the
+      // gated setup above ran. Narrow the nullable handles for the rest of the
+      // loop body (and fail loudly if that invariant is ever violated).
+      if (!llmModel || !prepared) {
+        throw new Error(
+          "eval: model-driven turn reached without model setup (caseNeedsModel invariant violated)"
+        );
+      }
+
       // Browser-rendered MCP App eval (PR 5): start each prompt turn with a
       // clean widget surface. A widget kept mounted by a previous turn must not
       // bleed into this one — otherwise Computer Use could be advertised (and
@@ -1446,7 +1595,19 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    const predicateResults = test.successPredicates?.length
+    // A pinned-only case (today's render check) with no authored predicates
+    // defaults to "the widget rendered" — the model-free equivalent of the
+    // legacy probe verdict (`toolCallOk && rendered`). An errored/non-renderable
+    // pinned call produces no `rendered` observation, so this fails closed.
+    // Hybrid/model cases keep the normal match-driven verdict when unauthored.
+    const effectivePredicates = test.successPredicates?.length
+      ? test.successPredicates
+      : isPinnedOnly({ caseType: test.caseType, promptTurns })
+        ? ([{ type: "widgetRendered" }] as NonNullable<
+            typeof test.successPredicates
+          >)
+        : undefined;
+    const predicateResults = effectivePredicates?.length
       ? evaluatePredicates(
           buildIterationTranscript({
             trace: traceForGate,
@@ -1457,8 +1618,10 @@ const runIterationWithAiSdk = async ({
             renderObservations: summarizeRenderObservations(
               browser.widgetRenderObservations,
             ),
+            // Pinned turns have no trace; thread their tool errors explicitly.
+            toolErrors: pinnedToolErrors,
           }),
-          test.successPredicates
+          effectivePredicates
         )
       : [];
     const passed = finalizePassedForEval({
@@ -2223,45 +2386,66 @@ const runTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
 
-  // Widget probes skip the LLM entirely — fork before any model/BYOK
-  // resolution (probe entries carry display-only model sentinels that must
-  // never reach buildModelDefinition). The probe's server reference (stable
-  // id first, display name fallback) resolves through the same binding maps
-  // the LLM path uses for its environment.
-  if (test.caseType === "widget_probe" && test.probeConfig) {
-    // Run-scoped allow-list: only environment-selected servers are probe
-    // targets, even if the process happens to be connected to more.
-    const connected = new Set(selectedServers);
-    const candidates = [
-      test.probeConfig.serverId,
-      test.probeConfig.serverName,
-    ].filter((ref): ref is string => !!ref);
-    let resolvedServerKey: string | undefined;
-    for (const candidate of candidates) {
-      const [resolved] = resolveConfiguredServerIds({
-        environment: {
-          servers: [candidate],
-          serverBindings: environment?.serverBindings,
-        },
-        mcpClientManager,
-      });
-      if (resolved && connected.has(resolved)) {
-        resolvedServerKey = resolved;
-        break;
-      }
+  // Normalize legacy `widget_probe` rows into a single model-free pinned turn
+  // so the unified engine sees one shape. No-op for already-pinned / prompt
+  // cases.
+  const normalizedTest = normalizeTestForPinnedTurns(test);
+
+  // Pinned-only case (today's render check): no model turns at all. Run it
+  // through the same `runIterationWithAiSdk` engine, model-free — it skips all
+  // model/BYOK setup and executes each pinned turn via runPinnedTurn. Never
+  // routes to a hosted backend (there is no model to bill / drive).
+  if (
+    !needsModel({
+      caseType: normalizedTest.caseType,
+      promptTurns: normalizedTest.promptTurns,
+    })
+  ) {
+    const outcomes: EvalIterationOutcome[] = [];
+    const pinnedRuns = Math.max(1, Math.floor(normalizedTest.runs || 1));
+    for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
+      if (abortSignal?.aborted) break;
+      outcomes.push(
+        await runIterationWithAiSdk({
+          test: normalizedTest,
+          runIndex,
+          tools,
+          selectedServers,
+          mcpClientManager,
+          recorder,
+          testCaseId,
+          suiteId,
+          // Unused when the case is model-free (caseNeedsModel === false), but
+          // the param is required. A real id is never resolved.
+          modelDefinition: {
+            id: "pinned-only",
+            provider: "none",
+          } as unknown as ModelDefinition,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+          convexClient,
+          runId,
+          abortSignal,
+          ...(compareRunId ? { compareRunId } : {}),
+          injectOpenAiCompat,
+          hostPolicy,
+          toolSignals,
+          suiteHostConfig,
+          environment,
+        })
+      );
     }
-    return runProbeTestCase({
-      test,
-      resolvedServerKey,
-      mcpClientManager,
-      recorder,
-      convexClient,
-      testCaseId,
-      runId,
-      abortSignal,
-      injectOpenAiCompat,
-    });
+    return outcomes;
   }
+
+  // Hybrid (model turns + pinned turns) on a hosted model is not yet wired:
+  // the backend engine drives turns server-side and cannot interleave a
+  // locally-executed pinned turn. Local BYOK hybrids work (the pinned branch
+  // lives in runIterationWithAiSdk). Fail loudly rather than silently send a
+  // pinned turn's empty prompt to the model.
+  const caseHasPinnedTurn = normalizedTest.promptTurns?.some(isPinnedTurn) ||
+    resolveEvalTestCase(normalizedTest).promptTurns.some(isPinnedTurn);
 
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
@@ -2287,6 +2471,12 @@ const runTestCase = async (params: {
   const jamBillingTarget = isJamModel
     ? resolveOrgTargetForEval(test, orgModelConfigTarget)
     : undefined;
+
+  if (caseHasPinnedTurn && (isJamModel || orgByokRuntime?.kind === "cloud")) {
+    throw new Error(
+      "Pinned tool-call turns are not yet supported with hosted models. Use a BYOK (local) model for cases that pin a tool call."
+    );
+  }
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -2432,6 +2622,7 @@ const runTestCase = async (params: {
       hostPolicy,
       toolSignals,
       suiteHostConfig,
+      environment,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2825,12 +3016,29 @@ const streamIterationWithAiSdk = async ({
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  const modelRuntime = resolveEvalModelRuntime({
-    test,
-    modelDefinition,
-    modelApiKeys,
-    orgModelConfig,
+  // A case whose turns are ALL pinned tool calls is model-free: every
+  // model/BYOK setup step below is skipped (a pinned-only case carries
+  // display-only model sentinels that must never reach the runtime resolver,
+  // which throws on a missing API key). Hybrid cases keep full model setup;
+  // their pinned turns run via runPinnedTurn inside the loop.
+  const caseNeedsModel = needsModel({
+    caseType: test.caseType,
+    promptTurns,
   });
+  // First pinned turn's render-budget override; applied to the shared harness.
+  const pinnedRenderTimeoutMs = promptTurns.find(
+    (t) =>
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+  )?.pinnedToolCall?.renderTimeoutMs;
+
+  const modelRuntime = caseNeedsModel
+    ? resolveEvalModelRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+      })
+    : null;
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -2924,9 +3132,12 @@ const streamIterationWithAiSdk = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
-    model: test.model,
+    // Model-free (pinned-only) iterations pass no model: no Computer Use, but
+    // the harness still renders pinned widgets and records observations.
+    ...(caseNeedsModel ? { model: test.model } : {}),
     mcpClientManager,
     injectOpenAiCompat,
+    ...(pinnedRenderTimeoutMs ? { renderTimeoutMs: pinnedRenderTimeoutMs } : {}),
   });
 
   try {
@@ -2934,50 +3145,57 @@ const streamIterationWithAiSdk = async ({
     // so prep failures become a recorded failed iteration. Like that runner,
     // `builtInTools` stays absent on the local BYOK path (no Convex auth to
     // bill web_search against) — the null-ctx call just debug-logs requests.
-    resolveHostTools(
-      { builtInToolIds: resolvedExecution.builtInToolIds },
-      null
-    );
-    const prepared = await prepareChatV2({
-      mcpClientManager,
-      selectedServers,
-      modelDefinition,
-      systemPrompt: system,
-      temperature,
-      respectToolVisibility: hostPolicy?.respectToolVisibility,
-      customProviders: modelRuntime.customProviders,
-      priorMessages: [],
-    });
-    // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
-    // streamIterationWithAiSdk"): align the streaming local-BYOK runner
-    // with the non-stream variant's chat-aligned shape. Pre-fix this
-    // runner pushed the system into `conversationMessages` AND omitted
-    // `system:` on the `streamText({...})` call below, so a streamed
-    // eval and a non-stream eval of the same case produced different
-    // transcript shapes. Now the system flows via the dedicated
-    // `system:` field, the runner-side `conversationMessages` stays
-    // system-free, and persistence prepends the resolved value at write
-    // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
-    streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
-
-    const llmModel = createLlmModel(
-      modelDefinition,
-      modelRuntime.apiKey,
-      modelRuntime.baseUrls,
-      modelRuntime.customProviders
-    );
-
-    if (
-      toolChoice &&
-      typeof toolChoice === "object" &&
-      !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
-      // `computer` / `finish_widget` are merged into the tool map below, so a
-      // forced tool choice naming one of them is valid on computer-capable drivers.
-      !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
-    ) {
-      throw new Error(
-        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+    // Model-free (pinned-only) iterations skip tool/system/model prep — see
+    // `runIterationWithAiSdk`. `prepared`/`llmModel` stay null and are only
+    // read inside the model-turn branch, unreachable when caseNeedsModel false.
+    let prepared: PrepareChatV2Result | null = null;
+    let llmModel: ReturnType<typeof createLlmModel> | null = null;
+    if (caseNeedsModel) {
+      resolveHostTools(
+        { builtInToolIds: resolvedExecution.builtInToolIds },
+        null
       );
+      prepared = await prepareChatV2({
+        mcpClientManager,
+        selectedServers,
+        modelDefinition,
+        systemPrompt: system,
+        temperature,
+        respectToolVisibility: hostPolicy?.respectToolVisibility,
+        customProviders: modelRuntime!.customProviders,
+        priorMessages: [],
+      });
+      // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
+      // streamIterationWithAiSdk"): align the streaming local-BYOK runner
+      // with the non-stream variant's chat-aligned shape. Pre-fix this
+      // runner pushed the system into `conversationMessages` AND omitted
+      // `system:` on the `streamText({...})` call below, so a streamed
+      // eval and a non-stream eval of the same case produced different
+      // transcript shapes. Now the system flows via the dedicated
+      // `system:` field, the runner-side `conversationMessages` stays
+      // system-free, and persistence prepends the resolved value at write
+      // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
+      streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+
+      llmModel = createLlmModel(
+        modelDefinition,
+        modelRuntime!.apiKey,
+        modelRuntime!.baseUrls,
+        modelRuntime!.customProviders
+      );
+
+      if (
+        toolChoice &&
+        typeof toolChoice === "object" &&
+        !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
+        // `computer` / `finish_widget` are merged into the tool map below, so a
+        // forced tool choice naming one of them is valid on computer-capable drivers.
+        !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
+      ) {
+        throw new Error(
+          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+        );
+      }
     }
 
     // PR 5a abort helpers — mirror the non-stream runner's pattern so
@@ -2999,6 +3217,14 @@ const streamIterationWithAiSdk = async ({
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
       browser.setActivePromptIndex(promptIndex);
+      // Streaming quick-run does not execute pinned turns (a case carrying one
+      // is rejected up front in `streamTestCase`), so the model always exists
+      // here. Narrow the nullable handles for the model-driven body below.
+      if (!llmModel || !prepared) {
+        throw new Error(
+          "eval: model-driven turn reached without model setup (caseNeedsModel invariant violated)"
+        );
+      }
       // PR 9 (mirror PR 5): start each turn with a clean widget surface so a
       // widget kept mounted by a previous turn can't be advertised/targeted
       // before this turn's own MCP App tool runs.
@@ -4403,6 +4629,15 @@ export const streamTestCase = async (params: {
     suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
+  // Streaming quick-run does not yet execute pinned (model-free) turns: the
+  // SSE loop has no pinned branch and builds the model eagerly. Pinned-only
+  // render checks run via the suite path (`runTestCase`); reject a pinned case
+  // here rather than send an empty prompt to the model.
+  if (resolveEvalTestCase(test).promptTurns.some(isPinnedTurn)) {
+    throw new Error(
+      "Pinned tool-call turns are not yet supported in streaming quick-run. Run the case as part of a suite."
+    );
+  }
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
