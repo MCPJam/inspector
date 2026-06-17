@@ -1124,6 +1124,40 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
   }
 ): Promise<T> {
+  const { manager, body } = await createManualHostedConnection(
+    c,
+    rawBody,
+    schema,
+    options
+  );
+
+  try {
+    return await fn(manager, body);
+  } finally {
+    await manager.disconnectAllServers();
+  }
+}
+
+/**
+ * Authorize and create a hosted ephemeral MCP manager without binding it to the
+ * HTTP response lifecycle. Use only when the caller will keep the manager alive
+ * after returning a Response, and will explicitly disconnect it when background
+ * work settles.
+ */
+export async function createManualHostedConnection<S extends z.ZodTypeAny>(
+  c: any,
+  rawBody: Record<string, unknown>,
+  schema: S,
+  options?: {
+    timeoutMs?: number;
+    guestUnsupportedMessage?: string;
+    rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+  }
+): Promise<{
+  manager: InstanceType<typeof MCPClientManager>;
+  body: z.infer<S>;
+  convexAuthToken: string;
+}> {
   // Both guest and signed-in actors flow through the same Convex
   // authorization path: the bearer token (guest JWT or WorkOS bearer) is
   // forwarded to /web/authorize-batch, which dispatches to the right
@@ -1167,28 +1201,27 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
-  return await withManager(
-    createAuthorizedManager(
-      callerContextFromHono(c),
-      bearerToken,
-      raw.projectId as string,
-      serverIds,
-      timeoutMs,
-      oauthTokens,
-      (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-        undefined,
-      {
-        accessScope,
-        chatboxId,
-        accessVersion,
-        rpcLogger: options?.rpcLogger,
-        serverNames,
-        initializePins,
-        mcpProtocolVersionsByServerId,
-      }
-    ),
-    (manager) => fn(manager, body as z.infer<S>)
+  const { manager } = await createAuthorizedManager(
+    callerContextFromHono(c),
+    bearerToken,
+    raw.projectId as string,
+    serverIds,
+    timeoutMs,
+    oauthTokens,
+    (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+      undefined,
+    {
+      accessScope,
+      chatboxId,
+      accessVersion,
+      rpcLogger: options?.rpcLogger,
+      serverNames,
+      initializePins,
+      mcpProtocolVersionsByServerId,
+    }
   );
+
+  return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
 }
 
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
