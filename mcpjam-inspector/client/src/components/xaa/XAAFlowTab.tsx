@@ -465,14 +465,25 @@ export function XAAFlowTab({
     ? "Flow Complete"
     : "Continue";
 
+  // A confidential server whose secret can't be resolved yet must not run —
+  // sending an empty secret would make the auth server reject the client.
+  const secretBlocked = target.secretUnavailable;
+  const secretBlockedReason = secretBlocked
+    ? target.serversLoading
+      ? "Resolving this server's saved secret…"
+      : "Couldn't resolve this server's saved secret. Re-save it in Configure Server to Test so its secret syncs to this project."
+    : null;
+
   const continueDisabled =
     !isTestable ||
+    secretBlocked ||
     flowState.isBusy ||
     isRunningAll ||
     flowState.currentStep === "complete" ||
     Boolean(flowState.negativeProbe);
 
-  const runAllDisabled = !isTestable || flowState.isBusy || isRunningAll;
+  const runAllDisabled =
+    !isTestable || secretBlocked || flowState.isBusy || isRunningAll;
 
   const targetName = selectedRegistration
     ? selectedRegistration.name
@@ -565,6 +576,19 @@ export function XAAFlowTab({
           >
             Use bar server
           </Button>
+        </div>
+      ) : null}
+      {secretBlockedReason ? (
+        <div
+          className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          {target.serversLoading ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          )}
+          <span>{secretBlockedReason}</span>
         </div>
       ) : null}
       <div className="flex-1 overflow-hidden">

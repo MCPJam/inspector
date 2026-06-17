@@ -36,8 +36,18 @@ export interface XaaTestTarget {
   serverId?: string;
   projectId?: string;
   /** bar_server with a stored secret → resolve it (and the token endpoint)
-   * server-side; the browser only sends serverId. */
+   * server-side; the browser only sends serverId. A server with a secret is
+   * ALWAYS confidential — it can never run as a public client with an empty
+   * secret, even before its serverId resolves. */
   usesServerSideSecret: boolean;
+  /** Confidential server whose secret can't be sent right now because its
+   * RemoteServer id hasn't resolved (not synced to this project, or still
+   * loading). Runs must be blocked in this state — sending an empty secret
+   * would make the auth server reject the client. */
+  secretUnavailable: boolean;
+  /** The project-servers query is still loading; distinguishes a transient
+   * "resolving" from a terminal "couldn't resolve". */
+  serversLoading: boolean;
   /** false for STDIO / non-OAuth / blank-URL servers. */
   isTestable: boolean;
   notTestableReason?: string;
@@ -93,10 +103,11 @@ export function useXaaTestTarget({
   projectId,
 }: UseXaaTestTargetParams): XaaTestTarget {
   const { isAuthenticated } = useConvexAuth();
-  const { servers: remoteServers } = useProjectServers({
-    projectId,
-    isAuthenticated,
-  });
+  const { servers: remoteServers, isLoading: serversLoading } =
+    useProjectServers({
+      projectId,
+      isAuthenticated,
+    });
 
   const httpConfig =
     server && "url" in server.config
@@ -143,6 +154,8 @@ export function useXaaTestTarget({
         },
         targetKey: `registration:${selectedRegistration.id}`,
         usesServerSideSecret: false,
+        secretUnavailable: false,
+        serversLoading,
         isTestable: true,
       };
     }
@@ -154,6 +167,8 @@ export function useXaaTestTarget({
         runInput: emptyInput(userId, email, negativeTestMode),
         targetKey: "none",
         usesServerSideSecret: false,
+        secretUnavailable: false,
+        serversLoading,
         isTestable: false,
       };
     }
@@ -165,12 +180,19 @@ export function useXaaTestTarget({
         runInput: emptyInput(userId, email, negativeTestMode),
         targetKey: `bar_server:${selectedServerName}`,
         usesServerSideSecret: false,
+        secretUnavailable: false,
+        serversLoading,
         isTestable: false,
         notTestableReason: NOT_TESTABLE_REASON,
       };
     }
 
-    const usesServerSideSecret = hasClientSecret && Boolean(remoteServerId);
+    // A server with a stored secret is ALWAYS confidential — never fall back
+    // to a public-client run with an empty secret (the auth server would
+    // reject it). The secret is sent only via the serverId path; until that
+    // id resolves, the run is blocked rather than silently sent without it.
+    const usesServerSideSecret = hasClientSecret;
+    const secretUnavailable = hasClientSecret && !remoteServerId;
 
     return {
       targetSource: "bar_server",
@@ -191,9 +213,12 @@ export function useXaaTestTarget({
       serverId: remoteServerId,
       projectId: remoteProjectId ?? projectId ?? undefined,
       usesServerSideSecret,
+      secretUnavailable,
+      serversLoading,
       isTestable: true,
     };
   }, [
+    serversLoading,
     selectedRegistration,
     server,
     selectedServerName,
