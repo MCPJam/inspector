@@ -47,6 +47,24 @@ vi.mock("@/hooks/useXaaTestTarget", () => ({
   useXaaTestTarget: () => currentTarget,
 }));
 
+// Controllable global run settings (simulated identity + mode). Tests mutate
+// runSettingsState then rerender to drive an identity edit.
+let runSettingsState: {
+  userId: string;
+  email: string;
+  negativeTestMode: "valid" | "expired" | "wrong_audience" | "bad_signature";
+} = { userId: "u", email: "e@example.com", negativeTestMode: "valid" };
+const setIdentityMock = vi.fn();
+const setNegativeTestModeMock = vi.fn();
+vi.mock("@/hooks/useXaaRunSettings", () => ({
+  useXaaRunSettings: () => ({
+    ...runSettingsState,
+    isDefaultIdentity: false,
+    setIdentity: setIdentityMock,
+    setNegativeTestMode: setNegativeTestModeMock,
+  }),
+}));
+
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
@@ -151,6 +169,13 @@ describe("XAAFlowTab", () => {
     machineShouldComplete = true;
     resourceApps = [];
     localStorage.clear();
+    runSettingsState = {
+      userId: "u",
+      email: "e@example.com",
+      negativeTestMode: "valid",
+    };
+    setIdentityMock.mockClear();
+    setNegativeTestModeMock.mockClear();
     currentTarget = makeTarget();
   });
 
@@ -227,6 +252,34 @@ describe("XAAFlowTab", () => {
         mode: "local-profile",
         target_source: "bar_server",
       }),
+    );
+  });
+
+  it("a debounced identity reset can't wipe a run started within its window", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+    );
+
+    // Edit the simulated identity — arms the 400ms debounced flow rebuild.
+    runSettingsState = { ...runSettingsState, userId: "john" };
+    currentTarget = makeTarget({
+      runInput: { ...makeTarget().runInput, userId: "john" },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    // Start a run inside that window — Run all rebuilds + drives to complete.
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+      "Flow Complete",
+    );
+
+    // Let the debounce elapse: the stale timer must skip (Run all already
+    // applied this identity) rather than rebuild and wipe the completed run.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+      "Flow Complete",
     );
   });
 

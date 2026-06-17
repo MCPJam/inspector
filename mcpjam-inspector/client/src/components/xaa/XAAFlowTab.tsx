@@ -299,19 +299,41 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  // The simulated identity the flow was last (re)built with. Tracked so an
+  // identity edit rebuilds the flow (clearing the already-minted ID token /
+  // ID-JAG that carry the old sub) — without that, advancing step-by-step
+  // keeps sending the stale subject. Seeded from the initial identity so no
+  // spurious reset fires on mount.
+  const lastAppliedIdentity = useRef({
+    userId: runSettings.userId,
+    email: runSettings.email,
+  });
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
     negativeTestMode: NegativeTestMode;
   } | null>(null);
 
+  // Rebuild the flow from the current input and record the identity it was
+  // built with. Every rebuild path goes through here so the debounced identity
+  // reset can tell whether another path (Run all, Reset, target switch) already
+  // applied the current identity — and skip a stale timer that would otherwise
+  // wipe a freshly-started run.
+  const rebuildFlow = useCallback(() => {
+    lastAppliedIdentity.current = {
+      userId: runInput.userId,
+      email: runInput.email,
+    };
+    applyFlowState(buildFlowStateFromInput(runInput));
+    setFocusedStep(null);
+  }, [applyFlowState, runInput]);
+
   const applyTargetReset = useCallback(
     (nextTargetKey: string, nextMode: NegativeTestMode) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
-      applyFlowState(buildFlowStateFromInput(runInput));
-      setFocusedStep(null);
+      rebuildFlow();
     },
-    [applyFlowState, runInput]
+    [rebuildFlow]
   );
 
   useEffect(() => {
@@ -334,6 +356,37 @@ export function XAAFlowTab({
     applyTargetReset(targetKey, nextMode);
   }, [targetKey, runSettings.negativeTestMode, applyTargetReset]);
 
+  // Identity edits rebuild the flow so the next run mints tokens for the new
+  // sub/email. Unlike target/mode (which change discretely), the identity
+  // inputs fire on every keystroke, so the rebuild is debounced — typing
+  // "john" resets once, not four times. No confirm dialog: editing the
+  // identity is a deliberate "test as someone else", and the chips clearing is
+  // the feedback. The live-read in the auth step covers the debounce window.
+  useEffect(() => {
+    const nextUserId = runSettings.userId;
+    const nextEmail = runSettings.email;
+    if (
+      lastAppliedIdentity.current.userId === nextUserId &&
+      lastAppliedIdentity.current.email === nextEmail
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      // Another path (Run all, Reset, target switch) may have rebuilt the flow
+      // with this identity while the timer was pending. If so the tracker
+      // already matches — bail rather than wipe that fresh (possibly running)
+      // state a second time.
+      if (
+        lastAppliedIdentity.current.userId === nextUserId &&
+        lastAppliedIdentity.current.email === nextEmail
+      ) {
+        return;
+      }
+      rebuildFlow();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [runSettings.userId, runSettings.email, rebuildFlow]);
+
   useEffect(() => {
     setFocusedStep(null);
   }, [flowState.currentStep]);
@@ -350,9 +403,8 @@ export function XAAFlowTab({
   }, []);
 
   const resetFlow = useCallback(() => {
-    applyFlowState(buildFlowStateFromInput(runInput));
-    setFocusedStep(null);
-  }, [runInput, applyFlowState]);
+    rebuildFlow();
+  }, [rebuildFlow]);
 
   const handleChangeNegativeTestMode = useCallback(
     (mode: NegativeTestMode) => {
@@ -419,8 +471,9 @@ export function XAAFlowTab({
     }
 
     // Every Run all begins from a clean slate so the chips reflect this run.
-    applyFlowState(buildFlowStateFromInput(runInput));
-    setFocusedStep(null);
+    // rebuildFlow also syncs the identity tracker, so a debounced identity
+    // reset armed just before this click can't fire mid-run and wipe it.
+    rebuildFlow();
     fireFlowStarted();
     setIsRunningAll(true);
     try {
@@ -444,9 +497,8 @@ export function XAAFlowTab({
     }
   }, [
     isTestable,
-    runInput,
+    rebuildFlow,
     xaaStateMachine,
-    applyFlowState,
     fireFlowStarted,
     authServerModeForTelemetry,
   ]);
