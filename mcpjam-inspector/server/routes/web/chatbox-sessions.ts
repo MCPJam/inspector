@@ -239,6 +239,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
     const builtInToolIds = runtime.config.builtInToolIds;
+    const harness = runtime.config.harness;
     // `runtime.config.accessVersion` is the server-resolved value the
     // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
     // which the generate-sessions dialog never sends). Use the runtime
@@ -264,6 +265,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         respectToolVisibility,
         progressiveToolDiscovery,
         ...(builtInToolIds ? { builtInToolIds } : {}),
+        ...(harness ? { harness } : {}),
         // Threaded into the runner's per-tool widget snapshot capture so
         // `chatSessions:createWidgetSnapshot` can authenticate against the
         // chatbox path. Without it the Sessions viewer can't render MCP App

@@ -330,6 +330,9 @@ chatV2.post("/", async (c) => {
           accessVersion,
           authenticatedUserId,
           originalMessages: messages,
+          ...(resolvedExecution.harness
+            ? { harness: resolvedExecution.harness }
+            : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
