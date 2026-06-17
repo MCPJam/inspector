@@ -1985,6 +1985,10 @@ const runIterationViaBackendWithBrowser = async (
       maxSteps: MAX_STEPS,
       runStartedAt,
       isAborted,
+      // Harness selector + host approval intent (forwarded only for harness
+      // turns inside driveHostedEvalTurn; emulated evals are unaffected).
+      harness: resolvedExecution.harness,
+      requireToolApproval: resolvedExecution.requireToolApproval,
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),
       acc: {
@@ -3929,6 +3933,10 @@ const streamIterationViaBackendWithBrowser = async (
       maxSteps: MAX_STEPS,
       runStartedAt,
       isAborted,
+      // Harness selector + host approval intent (forwarded only for harness
+      // turns inside driveHostedEvalTurn; emulated evals are unaffected).
+      harness: resolvedExecution.harness,
+      requireToolApproval: resolvedExecution.requireToolApproval,
       logSuffix: " (stream)",
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),

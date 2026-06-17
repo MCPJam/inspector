@@ -154,7 +154,6 @@ export async function runHarnessTurn(
     onEngineError,
     onLiveTextDelta,
     requireToolApproval,
-    approvalMode,
   } = options;
 
   // The engine mutates a single messageHistory ref through the turn (parity
@@ -186,27 +185,26 @@ export async function runHarnessTurn(
       if (!authHeader) {
         throw new Error("harness turn requires an auth bearer to resolve the computer");
       }
-      // Tool approval isn't bridged into the harness yet (no
+      // Interactive tool approval isn't bridged into the harness yet (no
       // tool-approval-request continuation handling), and the harness runs
-      // allow-all — it can neither pause for interactive approval nor
-      // selectively deny one call. Fail closed on BOTH approval signals rather
-      // than risk silently bypassing the host's policy:
-      //   • requireToolApproval — the host explicitly wants approval gating.
-      //   • approvalMode "auto-deny" — the headless realization eval/synthetic
-      //     pass. It is intentionally refused (not treated as a no-op): those
-      //     callers don't forward the host's requireToolApproval into this turn,
-      //     so from here "auto-deny" is ambiguous — it could be a
-      //     requireToolApproval host whose tools must be denied, and allowing it
-      //     would bypass that policy. Distinguishing the two requires the
-      //     eval/synthetic callers to thread requireToolApproval through (the
-      //     eval-harness follow-up).
-      // Until then: run a Claude Code host with requireToolApproval off via
-      // chat/playground, or use the emulated engine.
-      if (requireToolApproval || approvalMode === "auto-deny") {
+      // allow-all — it can neither pause for approval nor selectively deny one
+      // call. So fail closed when the host actually wants approval gating:
+      // requireToolApproval. Every harness-reachable caller threads the host's
+      // real requireToolApproval through (chat/playground directly; eval +
+      // synthetic forward resolvedExecution.requireToolApproval), so this is the
+      // authoritative signal.
+      //
+      // approvalMode "auto-deny" alone is NOT rejected: it's the headless
+      // "no human in the loop" default eval/synthetic always set. With a
+      // non-approval host nothing needs denying, so allow-all is faithful; an
+      // approval host is already caught by requireToolApproval above. To run a
+      // Claude Code harness host that requires approval, use the emulated engine
+      // until approval continuations land.
+      if (requireToolApproval) {
         throw new Error(
-          "harness (Claude Code) turns don't support tool approval yet — turn " +
-            "off requireToolApproval on this host, or use the emulated engine, " +
-            "until approval continuation handling lands",
+          "harness (Claude Code) turns don't support interactive tool approval " +
+            "yet — turn off requireToolApproval on this host, or use the " +
+            "emulated engine, until approval continuation handling lands",
         );
       }
 
@@ -216,14 +214,10 @@ export async function runHarnessTurn(
       // the user's computer (and bumping its activity) only to fail afterward.
       const auth = resolveHarnessModelAuth();
 
-      // 2. Resolve (and wake) the host's computer → sandbox id.
-      const { sandboxId } = await resolveHarnessSandbox({
-        bearer: authHeader,
-        projectId,
-        signal: abortSignal,
-      });
-
-      // 3. Build the .mcp.json from the selected servers.
+      // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
+      // harnessServerInputFromConfig throws e.g. for a local stdio server with
+      // no tunnel — so build it BEFORE waking the computer: a bad MCP config
+      // shouldn't wake/provision the box (or bump its activity) only to fail.
       //
       // Progressive tool discovery (progressivePlan / discoveryState) is
       // intentionally NOT applied here. It is an EMULATED-engine mechanism:
@@ -239,6 +233,13 @@ export async function runHarnessTurn(
         mcpClientManager,
         selectedServers ?? [],
       );
+
+      // 3. Resolve (and wake) the host's computer → sandbox id.
+      const { sandboxId } = await resolveHarnessSandbox({
+        bearer: authHeader,
+        projectId,
+        signal: abortSignal,
+      });
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });

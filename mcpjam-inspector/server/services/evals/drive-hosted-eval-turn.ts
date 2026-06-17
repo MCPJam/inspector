@@ -108,6 +108,14 @@ export interface DriveHostedEvalTurnParams {
   /** Canonical model id override for the wire payload (wallet/quota keys). */
   modelId: string;
   selectedServers: string[];
+  /** Host harness selector (resolvedExecution.harness). When "claude-code" the
+   *  turn runs the real Claude Code runtime; absent ⇒ emulated (today's path). */
+  harness?: "claude-code";
+  /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
+   *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
+   *  (no interactive approval yet). The emulated eval path is unchanged (it
+   *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+  requireToolApproval?: boolean;
   mcpClientManager: MCPClientManager;
   evalAuthContext: { kind: "user_bearer"; token: string };
   endpointPath: string;
@@ -302,6 +310,19 @@ export async function driveHostedEvalTurn(
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      // Harness eval (host harness === "claude-code"): forward the selector and
+      // the host's real approval intent so runHarnessTurn fail-closes on a
+      // requireToolApproval host (it can't do interactive approval yet) while
+      // still running non-approval hosts under allow-all. Gated on harness so
+      // emulated evals stay byte-identical (they forward neither today).
+      ...(params.harness
+        ? {
+            harness: params.harness,
+            ...(params.requireToolApproval !== undefined
+              ? { requireToolApproval: params.requireToolApproval }
+              : {}),
+          }
+        : {}),
       endpointPath: params.endpointPath,
       extraBodyFields: mergedExtraBodyFields,
       ...(abortSignal ? { abortSignal } : {}),
