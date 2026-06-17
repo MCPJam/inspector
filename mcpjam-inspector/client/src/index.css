@@ -110,8 +110,7 @@
   .trace-waterfall-bar-tool,
   .trace-waterfall-bar-step,
   .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28),
       0 1px 3px rgb(15 23 42 / 0.08);
   }
   .dark .trace-waterfall-bar-prompt,
@@ -124,8 +123,7 @@
   .app-theme-scope.dark .trace-waterfall-bar-tool,
   .app-theme-scope.dark .trace-waterfall-bar-step,
   .app-theme-scope.dark .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12),
       0 1px 4px rgb(0 0 0 / 0.26);
   }
   .trace-waterfall-row-selected {
@@ -351,6 +349,114 @@
   }
 }
 
+/* n8n thinking indicator — MCPJam's three-dot bounce wave recolored to n8n's
+   coral brand red (#FF6D5A, the n8n logo fill). Shares the
+   `mcpjam-mark-dot-wave` keyframes and reduced-motion fallback. */
+.n8n-mark-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.25rem;
+}
+
+.n8n-mark-indicator__dot {
+  display: inline-block;
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 9999px;
+  background-color: #ff6d5a;
+  animation: mcpjam-mark-dot-wave 1.25s ease-in-out infinite;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.n8n-mark-indicator__dot--1 {
+  animation-delay: 0ms;
+}
+
+.n8n-mark-indicator__dot--2 {
+  animation-delay: 160ms;
+}
+
+.n8n-mark-indicator__dot--3 {
+  animation-delay: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .n8n-mark-indicator__dot {
+    animation: thinking-dot-pulse 1.5s ease-in-out infinite;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Perplexity thinking indicator — its brand mark spinning next to a
+   shimmering "Thinking" label. Recreated from a live perplexity.ai capture:
+   the status verb runs a 1.2s ease shimmer in Perplexity's muted teal
+   (color(srgb 0.305882 0.6 0.639216) ≈ #4E99A3). We render the sweep with the
+   background-clip text gradient idiom (same as Cursor/Codex) instead of
+   Perplexity's mask-position technique — visually identical, tested fallback. */
+@keyframes perplexity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.perplexity-spin {
+  animation: perplexity-spin 1s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@keyframes perplexity-shimmer-text {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+.perplexity-shimmer-text {
+  /* Base teal captured verbatim; highlight is a lighter teal for the sweep. */
+  --perplexity-shimmer-base: #4e99a3;
+  --perplexity-shimmer-highlight: #bfe7ec;
+  background-image: linear-gradient(
+    90deg,
+    var(--perplexity-shimmer-base) 0%,
+    var(--perplexity-shimmer-base) 40%,
+    var(--perplexity-shimmer-highlight) 50%,
+    var(--perplexity-shimmer-base) 60%,
+    var(--perplexity-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: perplexity-shimmer-text 1.2s ease infinite;
+}
+
+.perplexity-shimmer-text[data-theme="light"] {
+  /* Darker teal base so the verb keeps contrast on a light chat surface. */
+  --perplexity-shimmer-base: #20808d;
+  --perplexity-shimmer-highlight: #4e99a3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .perplexity-spin {
+    animation: none;
+  }
+
+  .perplexity-shimmer-text {
+    animation: none;
+    -webkit-text-fill-color: var(--perplexity-shimmer-base);
+    color: var(--perplexity-shimmer-base);
+  }
+}
+
 .claude-loading-indicator__stage {
   isolation: isolate;
 }
@@ -376,14 +482,12 @@
 }
 
 .claude-loading-indicator__strip--900 {
-  animation:
-    claude-strip-900-position 1.7s linear infinite,
+  animation: claude-strip-900-position 1.7s linear infinite,
     claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
-  animation:
-    claude-strip-800-position 1.7s linear infinite,
+  animation: claude-strip-800-position 1.7s linear infinite,
     claude-strip-800-visibility 1.7s step-end infinite;
 }
 
@@ -1067,7 +1171,6 @@
  * utility. Falls back to the system mono stack offline.
  */
 @theme {
-  --font-metric:
-    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }

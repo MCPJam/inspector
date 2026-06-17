@@ -41,6 +41,8 @@ import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
+import { N8nMarkIndicator } from "./indicators/n8n-mark";
+import { PerplexityShimmerIndicator } from "./indicators/perplexity-shimmer";
 import type {
   HostStyleDefinition,
   ResolvedMcpAppsCapabilities,
@@ -568,7 +570,8 @@ export const N8N_HOST_STYLE: HostStyleDefinition = {
     logoSrc: n8nLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    loadingIndicator: MCPJamMarkIndicator,
+    // MCPJam's three-dot wave recolored to n8n's coral brand red.
+    loadingIndicator: N8nMarkIndicator,
   },
 };
 
@@ -593,7 +596,9 @@ export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
     logoSrc: perplexityLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    loadingIndicator: MCPJamMarkIndicator,
+    // Spinning Perplexity mark + teal shimmer "Thinking" label, captured from
+    // a live perplexity.ai probe.
+    loadingIndicator: PerplexityShimmerIndicator,
   },
 };
 
