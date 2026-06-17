@@ -53,24 +53,44 @@ function loadPersistedLocalSecret(spec: LocalSecretSpec): string | null {
     return value.length > 0 ? value : null;
   } catch (error) {
     logger.warn(
-      `[guest-auth] Failed to load local ${spec.label} (${error instanceof Error ? error.message : String(error)})`,
+      `[guest-auth] Failed to load local ${spec.label} (${
+        error instanceof Error ? error.message : String(error)
+      })`
     );
     return null;
   }
 }
 
+function isHostedRuntime(): boolean {
+  return (
+    process.env.VITE_MCPJAM_HOSTED_MODE === "true" ||
+    process.env.DOCKER_CONTAINER === "true" ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_ID)
+  );
+}
+
+function canUseLocalSecretFile(): boolean {
+  if (process.env.NODE_ENV === "test") {
+    return false;
+  }
+  if (process.env.NODE_ENV === "development") {
+    return true;
+  }
+  return !isHostedRuntime();
+}
+
 /**
  * Resolve a server-side secret with this precedence:
  *   1. Trimmed value of `spec.envVar` if set.
- *   2. Only when `NODE_ENV === "development"`: load the persisted file at
- *      `~/.mcpjam/<fileName>`, or generate, persist, and return a fresh
- *      32-byte hex value.
- *   3. Otherwise (production, test, staging, preview, ci, unset, …):
+ *   2. In local runtimes: load the persisted file at `~/.mcpjam/<fileName>`,
+ *      or generate, persist, and return a fresh 32-byte hex value.
+ *   3. Otherwise (test, hosted Docker/Railway production, staging, preview):
  *      throw `spec.productionErrorMessage`.
  *
- * The allowlist is deliberate: a containerized staging deployment with an
- * ephemeral filesystem would otherwise generate a fresh random secret on
- * every restart, silently invalidating every existing guest-session hash.
+ * Hosted runtimes must fail loudly when a required secret is missing. Local
+ * production runtimes (`npx @mcpjam/inspector`, packaged desktop) still need a
+ * stable local secret because the launcher starts the server with
+ * `NODE_ENV=production`.
  */
 export function getOrCreateLocalSecret(spec: LocalSecretSpec): string {
   const envValue = process.env[spec.envVar]?.trim();
@@ -78,7 +98,7 @@ export function getOrCreateLocalSecret(spec: LocalSecretSpec): string {
     return envValue;
   }
 
-  if (process.env.NODE_ENV !== "development") {
+  if (!canUseLocalSecretFile()) {
     throw new Error(spec.productionErrorMessage);
   }
 
