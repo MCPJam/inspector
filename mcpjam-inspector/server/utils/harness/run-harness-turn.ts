@@ -280,6 +280,13 @@ export async function runHarnessTurn(
         },
       });
 
+      // maxSteps (MCPJamHandlerOptions) is intentionally NOT enforced here. It
+      // caps MCPJam's *emulated* agentic loop; the harness exposes no equivalent
+      // knob and the real Claude Code owns its own loop, so its "steps" aren't
+      // MCPJam steps — a client-side cap would cut the real agent off mid-task
+      // and defeat the point of observing it (same rationale as progressive tool
+      // discovery above). The turn-level abortSignal/timeout (propagated into
+      // agent.stream below) is the cost/runaway backstop.
       const session = await agent.createSession();
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
