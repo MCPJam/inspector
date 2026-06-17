@@ -502,7 +502,7 @@ export function useEvalHandlers({
           );
         }
 
-        toast.success("Replay completed!", {
+        toast.success("Replay started!", {
           id: replayToastId,
         });
       } catch (error) {
@@ -750,7 +750,7 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
         });
 
-        posthog.capture("eval_suite_run_completed", {
+        posthog.capture("eval_suite_run_start_requests_completed", {
           location: "evals_tab",
           platform: detectPlatform(),
           environment: detectEnvironment(),
@@ -768,7 +768,7 @@ export function useEvalHandlers({
           toast.success(
             runPlans.length > 1
               ? `All ${runPlans.length} host runs started.`
-              : "Eval run completed!",
+              : "Eval run started!",
           );
 
           // Drop the user on the new run's detail page so they can see

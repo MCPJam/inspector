@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -13,7 +14,7 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
-  runEvalsWithManager,
+  prepareEvalRun,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
@@ -85,8 +86,31 @@ evals.post("/run", async (c) => {
       );
     }
 
+    const prepared = await prepareEvalRun(
+      c.mcpClientManager,
+      validationResult.data,
+    );
+
+    detachPreparedEvalRun({
+      prepared,
+      convexAuthToken: validationResult.data.convexAuthToken,
+      logPrefix: "[mcp evals]",
+      logContext: {
+        route: "/api/mcp/evals/run",
+        projectId: validationResult.data.projectId,
+      },
+    });
+
     return c.json(
-      await runEvalsWithManager(c.mcpClientManager, validationResult.data),
+      {
+        success: true,
+        suiteId: prepared.suiteId,
+        runId: prepared.runId,
+        status: "running",
+        message: "Eval run started. Results will appear shortly.",
+        caseUpsert: prepared.caseUpsert,
+      },
+      202,
     );
   } catch (error) {
     logger.error("[Error running evals]", error);

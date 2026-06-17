@@ -194,6 +194,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       return bTime - aTime;
     })[0];
   }, [runs]);
+  const latestRunIsInProgress =
+    latestRunForMetadata?.status === "running" ||
+    latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
     setEditedName(suite.name);
@@ -278,7 +281,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning = rerunningSuiteId === suite._id;
+  const isRerunning =
+    rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
