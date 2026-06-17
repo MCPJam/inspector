@@ -197,6 +197,9 @@ export function XAAServerModal({
                 placeholder="mcpjam-debugger"
                 spellCheck={false}
                 autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
               />
             </div>
 
@@ -243,6 +246,9 @@ export function XAAServerModal({
                   id="xaa-client-secret"
                   type="password"
                   autoComplete="off"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
                   value={secretInput}
                   onChange={(event) => setSecretInput(event.target.value)}
                   placeholder={
