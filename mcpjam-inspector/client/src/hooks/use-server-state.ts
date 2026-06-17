@@ -1267,6 +1267,9 @@ export function useServerState({
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
           storedOAuthConfig.resourceUrl,
+        ...(serverEntry.xaaAuthzIssuer !== undefined
+          ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
+          : {}),
       } as const;
 
       try {
@@ -2322,6 +2325,8 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServerForSave?.hasHeaders,
+        xaaAuthzIssuer:
+          formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2685,6 +2690,8 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServer?.hasHeaders,
+        xaaAuthzIssuer:
+          formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -4106,6 +4113,8 @@ export function useServerState({
           oauthFlowProfile: originalServer?.oauthFlowProfile,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
+          xaaAuthzIssuer:
+            formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
         } as ServerWithName;
 
         if (!formData.useOAuth) {

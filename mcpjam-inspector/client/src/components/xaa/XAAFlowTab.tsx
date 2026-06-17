@@ -8,6 +8,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
@@ -117,6 +118,10 @@ interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
   organizationId?: string | null;
+  // Shared server-bar callbacks (mirror the OAuth Debugger). Wired in PR-I1;
+  // consumed starting in PR-I2 (modal save) and PR-I5 (chip selection).
+  onSelectServer?: (serverName: string) => void;
+  onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
 }
 
 export function XAAFlowTab({
