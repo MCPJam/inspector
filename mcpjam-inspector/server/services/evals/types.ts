@@ -5,7 +5,7 @@ import {
   type ToolCall,
   type ArgumentMismatch,
 } from "@/shared/eval-matching";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { isPinnedTurn, type PromptTurn } from "@/shared/prompt-turns";
 
 export type { ToolCall };
 
@@ -81,6 +81,25 @@ export const evaluateMultiTurnResults = (
       const actualToolCalls = Array.isArray(toolsCalledByPrompt[promptIndex])
         ? toolsCalledByPrompt[promptIndex]!
         : [];
+
+      // Pinned tool calls are fixture input, not model behavior: the call is
+      // pre-determined, so it is exempt from expected/extra/order matching
+      // (otherwise strict / maxExtraToolCalls=0 options would fail a legacy
+      // render check). The call is still surfaced in `actualToolCalls` so it
+      // flows into the transcript's toolCalls for predicate visibility.
+      if (isPinnedTurn(turn)) {
+        return {
+          promptIndex,
+          prompt: turn.prompt,
+          expectedToolCalls: [],
+          actualToolCalls,
+          expectedOutput: turn.expectedOutput,
+          missing: [],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: true,
+        };
+      }
 
       if (isNegativeTest) {
         const evaluation = evaluateResults(

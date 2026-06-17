@@ -68,12 +68,19 @@ import { logger } from "../utils/logger";
 export interface CreateBrowserSessionContextParams {
   /** Driver model id — decides Computer Use availability. Mapped Claude ids
    *  resolve offline; other ids are checked against the OpenRouter catalog
-   *  for vision + tool calling (see model-capabilities.ts). */
-  model: string;
+   *  for vision + tool calling (see model-capabilities.ts). Omitted for
+   *  model-free sessions (a pinned-tool-call / render-check iteration): no
+   *  driver means no Computer Use, and the harness still renders widgets and
+   *  records observations on demand. */
+  model?: string;
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
   /** Log prefix so each surface stays greppable. Defaults to `"evals"`. */
   logScope?: "evals" | "sessionSimulation";
+  /** Iteration-level render budget (ms). Applied to the harness when first
+   *  launched; used by pinned-tool-call turns that carry a `renderTimeoutMs`
+   *  override. Harness default applies when absent. */
+  renderTimeoutMs?: number;
 }
 
 export interface BrowserSessionContext {
@@ -106,6 +113,19 @@ export interface BrowserSessionContext {
     >
   ): Promise<void>;
   /**
+   * Model-free pinned-tool-call render path. Same render+observe pipeline as
+   * the model hooks, but a tool with no UI resource records an explicit
+   * `no_ui_resource` observation (so a render check fails closed) instead of
+   * being silently skipped.
+   */
+  renderPinnedToolResult(args: {
+    toolCallId: string;
+    toolName: string;
+    serverId: string;
+    toolInput: Record<string, unknown> | undefined;
+    output: unknown;
+  }): Promise<void>;
+  /**
    * Return artifacts appended since the previous drain (both arrays stay
    * intact for end-of-run consumers like `finalizeEvalIteration`). Lets
    * per-turn persisters (the simulation runner) upload incrementally.
@@ -126,15 +146,20 @@ export async function createBrowserSessionContext(
 ): Promise<BrowserSessionContext> {
   const { mcpClientManager, injectOpenAiCompat } = params;
   const scope = params.logScope ?? "evals";
-  const computerUseVersion = resolveComputerUseToolVersion(params.model);
+  // No driver model (model-free pinned-tool-call iteration) ⇒ no Computer Use;
+  // skip the capability probe entirely. The harness still renders widgets.
+  const computerUseVersion = params.model
+    ? resolveComputerUseToolVersion(params.model)
+    : null;
   // Capability gate, resolved ONCE at construction so the tool surface is
   // deterministic for the whole session/iteration: mapped Claude ids are
   // eligible offline; anything else needs vision + tool calling per the
   // OpenRouter catalog. Unknown/unreachable → no computer tools (the
   // pre-feature behavior for non-Claude drivers).
   const computerUseSupported =
-    computerUseVersion !== null ||
-    (await modelSupportsComputerUse(params.model));
+    params.model != null &&
+    (computerUseVersion !== null ||
+      (await modelSupportsComputerUse(params.model)));
 
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
     current: null,
@@ -153,6 +178,11 @@ export async function createBrowserSessionContext(
         callTool: (sid, name, args) =>
           mcpClientManager.executeTool(sid, name, args),
         viewport: DEFAULT_VIEWPORT,
+        // Honor a pinned turn's per-render budget override (mirrors the legacy
+        // probe harness construction). Harness default applies when absent.
+        ...(params.renderTimeoutMs
+          ? { budgets: { renderTimeoutMs: params.renderTimeoutMs } }
+          : {}),
       });
     }
     return widgetHarnessRef.current;
@@ -231,18 +261,38 @@ export async function createBrowserSessionContext(
       : undefined;
 
   /** Shared render path: read the widget resource, mount it in the harness,
-   *  record the observation. Containment contract: never throws. */
+   *  record the observation. Containment contract: never throws.
+   *
+   *  `recordNonRenderable` flips the behavior for a tool that declares no UI
+   *  resource: the model path silently skips it (a model calling a non-UI tool
+   *  shouldn't manufacture a render observation), but a pinned render check
+   *  MUST record an explicit `no_ui_resource` observation so `widgetRendered`
+   *  fails closed with a clear status instead of an empty scope. */
   const renderIfRenderable = async (args: {
     toolCallId: string;
     toolName: string;
     serverId: string;
     toolInput: Record<string, unknown> | undefined;
     output: unknown;
+    recordNonRenderable?: boolean;
   }): Promise<void> => {
     const meta = mcpClientManager.getAllToolsMetadata(args.serverId)?.[
       args.toolName
     ];
-    if (!isRenderableMcpAppTool(meta)) return;
+    if (!isRenderableMcpAppTool(meta)) {
+      if (args.recordNonRenderable) {
+        widgetRenderObservations.push({
+          toolCallId: args.toolCallId,
+          toolName: args.toolName,
+          serverId: args.serverId,
+          status: "no_ui_resource",
+          elapsedMs: 0,
+          ts: Date.now(),
+          promptIndex: activePromptIndex,
+        });
+      }
+      return;
+    }
     try {
       const obs = await renderMcpAppToolResult({
         toolCallId: args.toolCallId,
@@ -340,6 +390,9 @@ export async function createBrowserSessionContext(
     },
     handleEngineToolResult,
     handleDirectToolResultChunk,
+    renderPinnedToolResult(args) {
+      return renderIfRenderable({ ...args, recordNonRenderable: true });
+    },
     drainNewArtifacts() {
       const observations = widgetRenderObservations.slice(
         drainedObservationCount

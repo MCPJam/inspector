@@ -42,7 +42,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
-import { type PromptTurn } from "@/shared/prompt-turns";
+import { type PromptTurn, isPinnedOnly } from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
@@ -69,6 +69,10 @@ export const promptTurnSchema = z.object({
     }),
   ),
   expectedOutput: z.string().optional(),
+  // When present, this turn is model-free: the runner executes the pinned tool
+  // call and renders its widget (the per-turn successor to a `widget_probe`'s
+  // top-level `probeConfig`). Reuses the same pinned-call shape.
+  pinnedToolCall: probeConfigSchema.optional(),
 });
 
 export const RunEvalsRequestSchema = z.object({
@@ -304,7 +308,7 @@ export function assertSuiteRunWithinCap(
   // zero model calls and are excluded entirely.
   const totalCalls =
     request.tests.reduce((sum, t) => {
-      if (t.caseType === "widget_probe") return sum;
+      if (isPinnedOnly(t)) return sum;
       const iterations = override ?? t.runs ?? 0;
       const turns = Math.max(t.promptTurns?.length ?? 0, 1);
       return sum + iterations * turns;
@@ -344,10 +348,8 @@ export function buildCapEntriesFromPersistedCases(
     const promptTurns = Array.isArray(testCase.promptTurns)
       ? (testCase.promptTurns as RunEvalsRequest["tests"][number]["promptTurns"])
       : undefined;
-    const fanout =
-      testCase.caseType === "widget_probe"
-        ? 1
-        : Math.max(testCase.models?.length ?? 0, 1);
+    const pinnedOnly = isPinnedOnly(testCase);
+    const fanout = pinnedOnly ? 1 : Math.max(testCase.models?.length ?? 0, 1);
     for (let i = 0; i < fanout; i++) {
       entries.push({
         title: testCase.title ?? "",
@@ -357,9 +359,9 @@ export function buildCapEntriesFromPersistedCases(
         provider: "none",
         expectedToolCalls: [],
         ...(promptTurns ? { promptTurns } : {}),
-        ...(testCase.caseType === "widget_probe"
-          ? { caseType: "widget_probe" as const }
-          : {}),
+        // Preserve the discriminator the cap reducer (`isPinnedOnly`) reads to
+        // exclude model-free cases from the LLM-call budget.
+        ...(pinnedOnly ? { caseType: "widget_probe" as const } : {}),
       });
     }
   }

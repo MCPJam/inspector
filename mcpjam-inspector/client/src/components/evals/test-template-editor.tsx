@@ -50,11 +50,15 @@ import {
 import {
   deriveLegacyPromptFields,
   flattenAssertedExpectedToolCalls,
+  isPinnedOnly,
+  isPinnedTurn,
+  legacyProbeToPinnedTurn,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
+import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveMatchOptions,
@@ -119,7 +123,6 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { WidgetProbeEditor } from "./widget-probe-editor";
 
 interface TestTemplate {
   title: string;
@@ -202,21 +205,44 @@ function deriveIsNegativeTestFromPromptTurns(
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
 }
 
+/** A render-check (pinned) turn needs a server and a real (non-placeholder) tool. */
+function isPinnedTurnIncomplete(turn: PromptTurn): boolean {
+  const p = turn.pinnedToolCall;
+  return (
+    !p ||
+    !p.serverName?.trim() ||
+    !p.toolName?.trim() ||
+    p.toolName === PROBE_TOOL_NAME_PLACEHOLDER
+  );
+}
+
 const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
   if (!Array.isArray(promptTurns) || promptTurns.length === 0) {
     return false;
   }
 
-  if (promptTurns.some((turn) => !turn.prompt.trim())) {
-    return false;
+  // Pinned (render-check) turns need a server + tool, not a prompt.
+  for (const turn of promptTurns) {
+    if (isPinnedTurn(turn)) {
+      if (isPinnedTurnIncomplete(turn)) return false;
+    } else if (!turn.prompt.trim()) {
+      return false;
+    }
   }
 
-  const isNegativeTest = deriveIsNegativeTestFromPromptTurns(promptTurns);
+  // Negative/asserted-tool logic applies only to model (non-pinned) turns.
+  const modelTurns = promptTurns.filter((turn) => !isPinnedTurn(turn));
+  if (modelTurns.length === 0) {
+    // Pinned-only case (render check): all pinned turns validated above.
+    return true;
+  }
+
+  const isNegativeTest = deriveIsNegativeTestFromPromptTurns(modelTurns);
   if (isNegativeTest) {
     return true;
   }
 
-  const assertedTurns = promptTurns.filter(
+  const assertedTurns = modelTurns.filter(
     (turn) => turn.expectedToolCalls.length > 0
   );
   if (assertedTurns.length === 0) {
@@ -236,8 +262,21 @@ export function getPromptTurnBlockReason(
     return "Configure at least one prompt step.";
   }
 
+  const incompletePinned = promptTurns
+    .map((turn, i) =>
+      isPinnedTurn(turn) && isPinnedTurnIncomplete(turn) ? i + 1 : null
+    )
+    .filter((n): n is number => n !== null);
+  if (incompletePinned.length > 0) {
+    return promptTurns.length === 1
+      ? "Pick a server and tool for the render check."
+      : `Pick a server and tool for render-check turn(s) ${incompletePinned.join(", ")}.`;
+  }
+
   const emptySteps = promptTurns
-    .map((turn, i) => (!turn.prompt.trim() ? i + 1 : null))
+    .map((turn, i) =>
+      !isPinnedTurn(turn) && !turn.prompt.trim() ? i + 1 : null
+    )
     .filter((n): n is number => n !== null);
 
   if (emptySteps.length > 0) {
@@ -255,6 +294,8 @@ export function getPromptTurnBlockReason(
 }
 
 function isStepPromptEmpty(turn: PromptTurn | undefined): boolean {
+  // A pinned (render-check) turn needs no prompt, so it's never "empty".
+  if (turn && isPinnedTurn(turn)) return false;
   return !(turn?.prompt ?? "").trim();
 }
 
@@ -566,7 +607,17 @@ export function TestTemplateEditor({
       return;
     }
 
-    const promptTurns = resolvePromptTurns(currentTestCase);
+    // Legacy `widget_probe` rows store the pinned call as top-level
+    // `probeConfig` (not a turn). Surface it as a pinned turn so it edits in
+    // the unified editor like any render-check turn. (Post-migration rows
+    // already carry the pinned turn, so this is a no-op for them.)
+    const resolvedTurns = resolvePromptTurns(currentTestCase);
+    const promptTurns =
+      currentTestCase.caseType === "widget_probe" &&
+      currentTestCase.probeConfig &&
+      !resolvedTurns.some(isPinnedTurn)
+        ? [legacyProbeToPinnedTurn(currentTestCase.probeConfig)]
+        : resolvedTurns;
     setEditForm({
       title: currentTestCase.title,
       runs: currentTestCase.runs,
@@ -729,6 +780,13 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
+  // A case whose every turn is a pinned render check needs no model — hide the
+  // model picker and drop the "select a model" run gate for it.
+  const casePinnedOnly = useMemo(
+    () => (editForm ? isPinnedOnly({ promptTurns: editForm.promptTurns }) : false),
+    [editForm],
+  );
+
   const arePredicatesValid = useMemo(() => {
     if (!editForm?.predicates) return true;
     // In `inherit` mode the case's `list` is semantically ignored by the
@@ -767,7 +825,7 @@ export function TestTemplateEditor({
   ]);
 
   const runPrimaryDisabled =
-    selectedModelValues.length === 0 ||
+    (!casePinnedOnly && selectedModelValues.length === 0) ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid;
@@ -776,7 +834,7 @@ export function TestTemplateEditor({
     if (!runPrimaryDisabled) {
       return null;
     }
-    if (selectedModelValues.length === 0) {
+    if (!casePinnedOnly && selectedModelValues.length === 0) {
       return "Select at least one model to run.";
     }
     if (!canRun) {
@@ -1868,22 +1926,9 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
-  // Widget probes get a dedicated, much smaller editor — none of the
-  // prompt-turn / model / compare machinery below applies to them. Placed
-  // after every hook call so both editors share identical hook order.
-  if (currentTestCase?.caseType === "widget_probe") {
-    return (
-      <WidgetProbeEditor
-        testCase={currentTestCase}
-        suiteServers={effectiveSuiteServers}
-        availableTools={availableTools}
-        projectServers={projectServers}
-        onBackToList={onBackToList}
-        updateTestCase={updateTestCaseMutation}
-      />
-    );
-  }
-
+  // Render checks are no longer a separate editor — a case whose turns are all
+  // pinned renders here like any other, just with the model-only UI hidden
+  // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
@@ -2136,6 +2181,8 @@ export function TestTemplateEditor({
                       editForm.matchOptions,
                     ).argumentMatching
                   }
+                  suiteServers={effectiveSuiteServers}
+                  projectServers={projectServers}
                 />
               ) : null}
             </div>

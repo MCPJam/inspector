@@ -19,6 +19,7 @@ import type {
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
 import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -858,7 +859,7 @@ export function useEvalHandlers({
       // run-test-case endpoints only execute model-driven cases, and probes
       // intentionally carry no models. Without this branch the model guard
       // below would surface a misleading "Add a model first".
-      if (testCase.caseType === "widget_probe") {
+      if (isPinnedOnly(testCase)) {
         toast.info("Render checks run with the full suite or on its schedule.");
         return null;
       }
@@ -1343,17 +1344,26 @@ export function useEvalHandlers({
         const firstServer: string =
           (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
 
+        // Unified shape: a render check is a single model-free pinned turn —
+        // no `caseType`/`probeConfig`. The runner detects it via `isPinnedOnly`
+        // (all turns pinned) and the editor dispatches on the same predicate.
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId,
           title: "Untitled render check",
           query: "",
           models: [],
-          caseType: "widget_probe",
-          probeConfig: {
-            serverName: firstServer,
-            toolName: PROBE_TOOL_NAME_PLACEHOLDER,
-            arguments: {},
-          },
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "",
+              expectedToolCalls: [],
+              pinnedToolCall: {
+                serverName: firstServer,
+                toolName: PROBE_TOOL_NAME_PLACEHOLDER,
+                arguments: {},
+              },
+            },
+          ],
           predicates: {
             mode: "replace",
             list: [{ type: "widgetRendered" }],
