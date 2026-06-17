@@ -300,14 +300,21 @@ export function hasPinnedTurn(promptTurns: unknown): boolean {
 }
 
 /**
- * True when the case requires no model: a legacy widget probe, or a case whose
- * (non-empty) turn list is entirely pinned. The empty-list guard prevents a
- * vacuous `[].every()` from classifying a fresh/model case as pinned-only.
+ * True when the case is entirely model-free (no model turns).
+ *
+ * - No authored turns: a legacy `widget_probe`'s `probeConfig` IS the single
+ *   model-free pinned call, so it's pinned-only; any other empty case is a
+ *   model case.
+ * - Authored turns: pinned-only iff EVERY turn is pinned. This intentionally
+ *   does NOT short-circuit on `caseType === "widget_probe"` — a widget_probe
+ *   that also carries model prompt turns (a hybrid) must be treated as
+ *   model-driven, or it would route model-free and then throw when the loop
+ *   reaches a model turn with no LLM setup.
  */
 export function isPinnedOnly(input: PinnedCaseInput): boolean {
-  if (input.caseType === "widget_probe") return true;
   const turns = rawTurns(input.promptTurns);
-  return turns.length > 0 && turns.every(isPinnedTurn);
+  if (turns.length === 0) return input.caseType === "widget_probe";
+  return turns.every(isPinnedTurn);
 }
 
 /** True when at least one turn needs the model (the inverse of pinned-only). */
@@ -350,11 +357,18 @@ export function resolvePromptTurnsWithLegacyProbe(
   } & Parameters<typeof resolvePromptTurns>[0],
 ): PromptTurn[] {
   const turns = resolvePromptTurns(input);
-  if (
-    input.caseType === "widget_probe" &&
-    input.probeConfig &&
-    !turns.some(isPinnedTurn)
-  ) {
+  // Only surface the legacy probeConfig as a pinned turn when the case carries
+  // NO real authored turn — i.e. a pure legacy probe (empty prompt, no expected
+  // calls, none already pinned). A widget_probe that also has real prompt steps
+  // must keep them; replacing the whole list would silently drop them in the
+  // editor and at run time.
+  const hasRealTurn = turns.some(
+    (t) =>
+      isPinnedTurn(t) ||
+      t.prompt.trim().length > 0 ||
+      t.expectedToolCalls.length > 0,
+  );
+  if (input.caseType === "widget_probe" && input.probeConfig && !hasRealTurn) {
     return [legacyProbeToPinnedTurn(input.probeConfig)];
   }
   return turns;
