@@ -25,6 +25,7 @@ import type {
 } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -424,10 +425,23 @@ export async function runAssistantTurn(
   // A host with `harness: "claude-code"` runs the real Claude Code runtime
   // inside its computer; otherwise the emulated engine. Both satisfy the same
   // ChatEngineLoopResult contract, so everything downstream is identical.
-  const engineResult =
-    opts.harness === "claude-code"
-      ? await runHarnessTurn(handlerOptions, opts.streamSink)
-      : await runChatEngineLoop(handlerOptions, opts.streamSink);
+  //
+  // Harness is MCPJam-model-only: runHarnessTurn authenticates the model via the
+  // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
+  // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
+  // would use the wrong credentials and mis-account spend, so for BYOK models we
+  // fall back to the emulated engine (which honors the org-BYOK path). This
+  // mirrors live web chat, where only the MCPJam-free branch forwards harness;
+  // eval/synthetic forward it unconditionally, so this is the authoritative gate.
+  const useHarness =
+    opts.harness === "claude-code" &&
+    isMCPJamProvidedModel(
+      String(opts.modelDefinition.id),
+      opts.modelDefinition.provider,
+    );
+  const engineResult = useHarness
+    ? await runHarnessTurn(handlerOptions, opts.streamSink)
+    : await runChatEngineLoop(handlerOptions, opts.streamSink);
 
   // For streamSink: "none" the engine has fully run — its
   // onConversationComplete tap (wrapped above) populated
