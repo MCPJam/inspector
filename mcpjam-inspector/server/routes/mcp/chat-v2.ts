@@ -661,6 +661,9 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        ...(resolvedExecution.harness
+          ? { harness: resolvedExecution.harness }
+          : {}),
         projectId: body.projectId,
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId

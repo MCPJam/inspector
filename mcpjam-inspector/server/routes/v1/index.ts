@@ -39,39 +39,65 @@ v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // pattern here (and its own guest security review). The catalog reads in this
 // list additionally relax the Convex /v1/* surface (publicApi/routes.ts
 // authedV1) so the proxied reads succeed end-to-end.
-const GUEST_ALLOWED_V1_PATTERNS: readonly RegExp[] = [
-  /^\/chat-sessions$/,
-  /^\/projects$/,
-  /^\/projects\/[^/]+\/servers$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/prompts$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/resources$/,
-  /^\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/,
-  /^\/projects\/[^/]+\/eval-suites$/,
-  /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/,
-  /^\/projects\/[^/]+\/eval-runs$/,
-  /^\/projects\/[^/]+\/eval-runs\/[^/]+$/,
-  /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
-  /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
-  /^\/projects\/[^/]+\/chatboxes$/,
-  /^\/projects\/[^/]+\/chatboxes\/[^/]+$/,
+// An allowlist entry is method-aware: `methods` omitted means any method is
+// guest-allowed on that path (the historical behavior); a `methods` list
+// restricts it. `eval-suites` is GET-only because the GET lists suites (a read)
+// but POST /eval-suites CREATES a suite — a WRITE that must stay guest-denied.
+type GuestRule = { pattern: RegExp; methods?: readonly string[] };
+
+const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
+  { pattern: /^\/chat-sessions$/ },
+  { pattern: /^\/projects$/ },
+  { pattern: /^\/projects\/[^/]+\/servers$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources$/ },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/ },
+  // GET lists a project's suites (read, guest-allowed). POST /eval-suites
+  // CREATES a suite (write) and is intentionally guest-DENIED.
+  { pattern: /^\/projects\/[^/]+\/eval-suites$/, methods: ["GET"] },
+  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
+  { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
+  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
+  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
+  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/ },
+  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
+  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
 ];
 
-export function isGuestAllowedV1Path(fullPath: string): boolean {
+export function isGuestAllowedV1Request(
+  method: string,
+  fullPath: string,
+): boolean {
   // `c.req.path` is the full request path; strip the mount prefix so the
   // patterns above stay readable and relative.
   const relative = fullPath.replace(/^\/api\/v1/, "");
-  return GUEST_ALLOWED_V1_PATTERNS.some((pattern) => pattern.test(relative));
+  const upper = method.toUpperCase();
+  return GUEST_ALLOWED_V1_RULES.some(
+    (rule) =>
+      rule.pattern.test(relative) &&
+      (!rule.methods || rule.methods.includes(upper)),
+  );
+}
+
+/**
+ * Back-compat path-only (method-agnostic) check for any external importer of
+ * the old name. Prefer `isGuestAllowedV1Request` — this ignores method and so
+ * would admit guest writes on method-restricted paths.
+ */
+export function isGuestAllowedV1Path(fullPath: string): boolean {
+  const relative = fullPath.replace(/^\/api\/v1/, "");
+  return GUEST_ALLOWED_V1_RULES.some((rule) => rule.pattern.test(relative));
 }
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
   // allowlisted platform-tool routes; everything else is rejected at the
   // boundary so a regression in a deeper layer can't silently expose it.
-  if (c.get("guestId") && !isGuestAllowedV1Path(c.req.path)) {
+  if (c.get("guestId") && !isGuestAllowedV1Request(c.req.method, c.req.path)) {
     return v1Error(c, "UNAUTHORIZED", "Guests cannot access this endpoint");
   }
   return next();

@@ -191,7 +191,7 @@ function buildDraftTestCase(
   if (kind === "widget_probe") {
     return {
       _id: id,
-      title: "Untitled widget probe",
+      title: "Untitled render check",
       query: "",
       runs: 1,
       models: [],
@@ -1085,7 +1085,7 @@ export function TestTemplateEditor({
       test_case_id: newTestCaseId,
       case_type: "widget_probe",
     });
-    toast.success("Widget probe created");
+    toast.success("Render check created");
     onDraftSaved?.(newTestCaseId);
   };
 

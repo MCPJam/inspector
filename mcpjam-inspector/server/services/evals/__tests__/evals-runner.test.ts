@@ -102,7 +102,11 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
-import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
+import {
+  createConcurrencyLimiter,
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../evals-runner";
 
 describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   const convexClient = {
@@ -4661,5 +4665,56 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         runAssistantTurnSpy.mockRestore();
       }
     });
+  });
+});
+
+describe("createConcurrencyLimiter", () => {
+  it("admits up to `max` at once, never more, and runs every thunk", async () => {
+    const limit = createConcurrencyLimiter(3);
+    let active = 0;
+    let peak = 0;
+    const task = (i: number) =>
+      limit(async () => {
+        active++;
+        peak = Math.max(peak, active);
+        // Span a few microtasks so admitted thunks genuinely overlap.
+        await Promise.resolve();
+        await Promise.resolve();
+        active--;
+        return i;
+      });
+
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => task(i)),
+    );
+
+    expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(peak).toBe(3); // reached the cap, never exceeded it
+  });
+
+  it("releases a slot when a thunk rejects (no leak)", async () => {
+    const limit = createConcurrencyLimiter(1);
+    await expect(limit(async () => Promise.reject(new Error("boom")))).rejects.toThrow(
+      "boom",
+    );
+    // The single slot must be reusable after the rejection.
+    await expect(limit(async () => "ok")).resolves.toBe("ok");
+  });
+
+  it("treats max < 1 as 1", async () => {
+    const limit = createConcurrencyLimiter(0);
+    let active = 0;
+    let peak = 0;
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        limit(async () => {
+          active++;
+          peak = Math.max(peak, active);
+          await Promise.resolve();
+          active--;
+        }),
+      ),
+    );
+    expect(peak).toBe(1);
   });
 });

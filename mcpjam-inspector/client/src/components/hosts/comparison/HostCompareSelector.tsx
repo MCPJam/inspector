@@ -28,6 +28,8 @@ interface HostCompareSelectorProps {
   onToggleHost: (hostId: string) => void;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
+  showDescriptions: boolean;
+  onShowDescriptionsChange: (enabled: boolean) => void;
   disabled?: boolean;
 }
 
@@ -38,6 +40,8 @@ export function HostCompareSelector({
   onToggleHost,
   divergingOnly,
   onDivergingOnlyChange,
+  showDescriptions,
+  onShowDescriptionsChange,
   disabled = false,
 }: HostCompareSelectorProps) {
   const selectedSet = new Set(selectedHostIds);
@@ -67,14 +71,24 @@ export function HostCompareSelector({
         />
       ) : null}
 
-      <label className="ml-auto flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
-        <Switch
-          checked={divergingOnly}
-          onCheckedChange={onDivergingOnlyChange}
-          aria-label="Show only diverging fields"
-        />
-        <span>Only diverging</span>
-      </label>
+      <div className="ml-auto flex items-center gap-4">
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
+          <Switch
+            checked={showDescriptions}
+            onCheckedChange={onShowDescriptionsChange}
+            aria-label="Show field descriptions"
+          />
+          <span>Descriptions</span>
+        </label>
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
+          <Switch
+            checked={divergingOnly}
+            onCheckedChange={onDivergingOnlyChange}
+            aria-label="Show only diverging fields"
+          />
+          <span>Only diverging</span>
+        </label>
+      </div>
     </div>
   );
 }

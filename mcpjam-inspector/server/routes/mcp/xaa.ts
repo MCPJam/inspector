@@ -30,8 +30,15 @@ import {
   buildDiscoveryCandidates,
   evaluateDiscovery,
 } from "../../services/xaa-discovery.js";
-import { WebRouteError } from "../web/errors.js";
-import type { XaaResourceAppSecretResult } from "../../utils/server-secrets.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  fetchServerClientSecret,
+  fetchXaaResourceAppSecret,
+} from "../../utils/server-secrets.js";
+import type {
+  ServerClientSecretResult,
+  XaaResourceAppSecretResult,
+} from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
@@ -100,10 +107,15 @@ const negativeTestsSchema = z
     clientSecret: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     registrationId: z.string().trim().min(1).optional(),
+    serverId: z.string().trim().min(1).optional(),
+    projectId: z.string().trim().min(1).optional(),
   })
-  .refine((data) => data.registrationId || data.tokenEndpoint, {
-    message: "tokenEndpoint or registrationId is required",
-  });
+  .refine(
+    (data) => data.registrationId || data.serverId || data.tokenEndpoint,
+    {
+      message: "tokenEndpoint, registrationId, or serverId is required",
+    }
+  );
 
 type NegativeCaseOutcome = {
   mode: NegativeTestMode;
@@ -228,10 +240,18 @@ const proxyTokenSchema = z
     // Registration-backed runs: the server resolves the stored secret and
     // forces the outbound URL to the registration's stored token endpoint.
     registrationId: z.string().trim().min(1).optional(),
+    // Server-target runs: the server resolves the stored secret AND discovers
+    // the token endpoint from the server's own config (clientId/url/issuer
+    // are all pinned server-side).
+    serverId: z.string().trim().min(1).optional(),
+    projectId: z.string().trim().min(1).optional(),
   })
-  .refine((data) => data.registrationId || data.tokenEndpoint, {
-    message: "tokenEndpoint or registrationId is required",
-  });
+  .refine(
+    (data) => data.registrationId || data.serverId || data.tokenEndpoint,
+    {
+      message: "tokenEndpoint, registrationId, or serverId is required",
+    }
+  );
 
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
@@ -243,13 +263,20 @@ interface CreateXaaRouterOptions {
   trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
   // Resolves a registered resource app's client secret + stored token
-  // endpoint server-side (hosted instance only). When absent — the
-  // unauthenticated local instance — registration-backed proxy requests are
-  // rejected.
+  // endpoint server-side, using the caller's bearer to read Convex. When
+  // absent, registration-backed proxy requests are rejected.
   resolveRegistrationSecret?: (args: {
     registrationId: string;
     bearerToken: string;
   }) => Promise<XaaResourceAppSecretResult>;
+  // Resolves a server target's confidential client secret + non-secret config
+  // (clientId/url/issuer) server-side, using the caller's bearer to read
+  // Convex. When absent, server-target proxy requests are rejected.
+  resolveServerSecret?: (args: {
+    serverId: string;
+    projectId: string;
+    bearerToken: string;
+  }) => Promise<ServerClientSecretResult>;
 }
 
 type ParsedJwtPayload = {
@@ -287,6 +314,107 @@ function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
     );
   }
   return parsed.data;
+}
+
+// Resolved authorization-server target for a server-target run. Every field
+// is pinned server-side from the stored server config; nothing is taken from
+// the request body.
+interface ResolvedServerTarget {
+  tokenEndpoint: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+// Discover the token endpoint for a server target's issuer, reusing the same
+// well-known sweep as /discover-as. The issuer is the stored xaaAuthzIssuer
+// (or the server URL); the client never supplies it.
+async function discoverServerTargetTokenEndpoint(
+  issuer: string,
+  httpsOnly: boolean
+): Promise<string> {
+  let candidates: string[];
+  try {
+    candidates = buildDiscoveryCandidates(issuer);
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "The server's authorization issuer is not a valid URL"
+    );
+  }
+
+  for (const candidate of candidates) {
+    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    if ("metadata" in result) {
+      const verdict = evaluateDiscovery(result.metadata, {
+        requestedIssuer: issuer,
+        metadataUrl: candidate,
+      });
+      if (verdict.tokenEndpoint) {
+        return verdict.tokenEndpoint;
+      }
+    }
+  }
+
+  throw new WebRouteError(
+    404,
+    ErrorCode.NOT_FOUND,
+    "Couldn't discover an authorization server. Set the issuer in Configure Server to Test."
+  );
+}
+
+// Resolve a server target's secret AND token endpoint entirely server-side.
+// The browser sends only serverId + projectId; the stored config dictates the
+// secret, client id, and the endpoint the secret may be posted to — so a
+// caller can never redirect the confidential secret elsewhere.
+async function resolveServerTarget(
+  options: CreateXaaRouterOptions,
+  args: {
+    serverId: string;
+    projectId?: string;
+    bearerToken: string;
+  }
+): Promise<ResolvedServerTarget> {
+  if (!options.resolveServerSecret) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Server-target runs are not available on this instance"
+    );
+  }
+  if (!args.projectId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "projectId is required for server-target runs"
+    );
+  }
+
+  const resolved = await options.resolveServerSecret({
+    serverId: args.serverId,
+    projectId: args.projectId,
+    bearerToken: args.bearerToken,
+  });
+
+  const issuer = resolved.xaaAuthzIssuer || resolved.serverUrl;
+  if (!issuer) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "The server has no URL or issuer to discover an authorization server from"
+    );
+  }
+
+  const tokenEndpoint = await discoverServerTargetTokenEndpoint(
+    issuer,
+    options.httpsOnlyProxy
+  );
+
+  return {
+    tokenEndpoint,
+    clientId: resolved.clientId ?? undefined,
+    clientSecret: resolved.clientSecret ?? undefined,
+  };
 }
 
 function getIssuerForRequest(
@@ -508,7 +636,29 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       let clientSecret = parsed.clientSecret;
       let extraHeaders = parsed.headers;
 
-      if (parsed.registrationId) {
+      if (parsed.serverId) {
+        const authHeader = c.req.header("authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return toJsonError("Missing or invalid bearer token", {
+            status: 401,
+            code: "UNAUTHORIZED",
+          });
+        }
+
+        // The secret AND the token endpoint are resolved/discovered from the
+        // stored server config. Everything is pinned by ASSIGNMENT — the
+        // client-supplied tokenEndpoint/clientId/clientSecret/headers are
+        // discarded so the confidential secret can't be redirected.
+        const resolved = await resolveServerTarget(options, {
+          serverId: parsed.serverId,
+          projectId: parsed.projectId,
+          bearerToken: authHeader.slice("Bearer ".length),
+        });
+        url = resolved.tokenEndpoint;
+        clientId = resolved.clientId;
+        clientSecret = resolved.clientSecret;
+        extraHeaders = undefined;
+      } else if (parsed.registrationId) {
         if (!options.resolveRegistrationSecret) {
           return toJsonError(
             "Registration-backed runs are not available on this instance",
@@ -747,7 +897,28 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     let extraHeaders = parsed.headers;
 
     try {
-      if (parsed.registrationId) {
+      if (parsed.serverId) {
+        const authHeader = c.req.header("authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return toJsonError("Missing or invalid bearer token", {
+            status: 401,
+            code: "UNAUTHORIZED",
+          });
+        }
+        // Same server-side hardening as /proxy/token: secret + endpoint are
+        // resolved/discovered from the stored server config and pinned by
+        // assignment; client-supplied endpoint/clientId/secret/headers are
+        // discarded.
+        const resolved = await resolveServerTarget(options, {
+          serverId: parsed.serverId,
+          projectId: parsed.projectId,
+          bearerToken: authHeader.slice("Bearer ".length),
+        });
+        tokenEndpoint = resolved.tokenEndpoint;
+        clientId = resolved.clientId;
+        clientSecret = resolved.clientSecret;
+        extraHeaders = undefined;
+      } else if (parsed.registrationId) {
         if (!options.resolveRegistrationSecret) {
           return toJsonError(
             "Registration-backed runs are not available on this instance",
@@ -949,7 +1120,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
 const xaa = createXaaRouter({
   issuerBasePath: "/api/mcp",
+  // Local dev allows plain-http loopback targets (e.g. a localhost
+  // xaa-mcp-server). The hosted router keeps httpsOnlyProxy: true.
   httpsOnlyProxy: false,
+  // Server-target / registration runs resolve the confidential secret from
+  // Convex using the caller's bearer; works locally when the user is signed in.
+  resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
+  resolveServerSecret: (args) => fetchServerClientSecret(args),
 });
 
 export default xaa;

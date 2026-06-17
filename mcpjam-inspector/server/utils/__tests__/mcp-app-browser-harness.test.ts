@@ -5,7 +5,11 @@ import {
   ChromiumNotInstalledError,
   cspSourceMatchesUrl,
   injectCspMeta,
+  isBlockedEgressHost,
   isChromiumInstalled,
+  pushBoundedDiagnostic,
+  MAX_DIAGNOSTIC_ENTRIES,
+  MAX_DIAGNOSTIC_ENTRY_CHARS,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -548,6 +552,57 @@ describe("cspSourceMatchesUrl — CSP host-source matching", () => {
   });
 });
 
+describe("isBlockedEgressHost — SSRF guard", () => {
+  it("ALWAYS blocks cloud metadata + link-local, in both modes", () => {
+    for (const blockPrivate of [false, true]) {
+      // The crown-jewel target: cloud instance metadata.
+      expect(isBlockedEgressHost("169.254.169.254", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("169.254.0.1", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("metadata.google.internal", blockPrivate)).toBe(
+        true
+      );
+      // IPv6 link-local + IPv4-mapped link-local + unspecified.
+      expect(isBlockedEgressHost("[fe80::1]", blockPrivate)).toBe(true);
+      expect(
+        isBlockedEgressHost("[::ffff:169.254.169.254]", blockPrivate)
+      ).toBe(true);
+      expect(isBlockedEgressHost("0.0.0.0", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("[::]", blockPrivate)).toBe(true);
+    }
+  });
+
+  it("blocks loopback/private/CGNAT/ULA only in hosted mode", () => {
+    const internal = [
+      "127.0.0.1",
+      "localhost",
+      "10.1.2.3",
+      "192.168.1.10",
+      "172.16.0.1",
+      "172.31.255.255",
+      "100.64.0.1", // CGNAT
+      "[::1]", // IPv6 loopback
+      "[fd00::1]", // IPv6 ULA
+    ];
+    for (const host of internal) {
+      expect(isBlockedEgressHost(host, true)).toBe(true); // hosted: blocked
+      expect(isBlockedEgressHost(host, false)).toBe(false); // local: allowed
+    }
+    // A public range neighbour of the private blocks stays allowed in hosted.
+    expect(isBlockedEgressHost("172.32.0.1", true)).toBe(false);
+    expect(isBlockedEgressHost("11.0.0.1", true)).toBe(false);
+  });
+
+  it("never blocks ordinary public hosts", () => {
+    for (const blockPrivate of [false, true]) {
+      expect(isBlockedEgressHost("esm.sh", blockPrivate)).toBe(false);
+      expect(isBlockedEgressHost("cdn.excalidraw.com", blockPrivate)).toBe(
+        false
+      );
+      expect(isBlockedEgressHost("8.8.8.8", blockPrivate)).toBe(false);
+    }
+  });
+});
+
 describe("injectCspMeta", () => {
   it("inserts the policy as the first child of <head>", () => {
     const out = injectCspMeta(
@@ -696,4 +751,32 @@ const app = new App({ name: "fixture-csp1", version: "1.0.0" });
       /Connecting to 'https:\/\/anywhere\.invalid/
     );
   }, 45_000);
+});
+
+describe("pushBoundedDiagnostic", () => {
+  it("passes short entries through unchanged", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "console error");
+    expect(arr).toEqual(["console error"]);
+  });
+
+  it("truncates an over-long entry and marks it", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "x".repeat(MAX_DIAGNOSTIC_ENTRY_CHARS + 500));
+    expect(arr).toHaveLength(1);
+    expect(arr[0]).toHaveLength(MAX_DIAGNOSTIC_ENTRY_CHARS + 1); // + ellipsis
+    expect(arr[0].endsWith("…")).toBe(true);
+  });
+
+  it("caps the count with a single sentinel and drops the rest", () => {
+    const arr: string[] = [];
+    for (let i = 0; i < MAX_DIAGNOSTIC_ENTRIES + 25; i++) {
+      pushBoundedDiagnostic(arr, `e${i}`);
+    }
+    // MAX real entries + exactly one sentinel; everything past that dropped.
+    expect(arr).toHaveLength(MAX_DIAGNOSTIC_ENTRIES + 1);
+    expect(arr[MAX_DIAGNOSTIC_ENTRIES]).toMatch(/suppressed/);
+    expect(arr.filter((e) => /suppressed/.test(e))).toHaveLength(1);
+    expect(arr[0]).toBe("e0"); // earliest entries are the ones kept
+  });
 });

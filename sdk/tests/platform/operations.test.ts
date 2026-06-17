@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   callServerToolOperation,
   closeTunnelOperation,
+  createEvalSuiteOperation,
   createTunnelOperation,
   diagnoseServerOperation,
   getChatboxOperation,
@@ -213,6 +214,24 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/servers$/.test(path)) {
       return Response.json({ items: servers });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      const requestBody = JSON.parse(String(init?.body)) as {
+        name?: string;
+        serverIds?: string[];
+      };
+      return Response.json(
+        {
+          suiteId: "suite-created",
+          name: requestBody.name ?? null,
+          servers: (requestBody.serverIds ?? []).map((id) => ({ id })),
+          caseUpsert: { committed: [{ name: "case-1" }], failed: [] },
+        },
+        { status: 201 }
+      );
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
@@ -555,6 +574,166 @@ describe("runEvalSuiteOperation", () => {
   });
 });
 
+describe("createEvalSuiteOperation", () => {
+  it("authors a suite from cases, resolving project and servers", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await createEvalSuiteOperation.execute(
+      {
+        project: "new",
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            query: "say hi",
+            expectedToolCalls: ["echo", { toolName: "ping", arguments: { x: 1 } }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    expect(result.suite).toEqual({ id: "suite-created", name: "Authored smoke" });
+    expect(result.servers).toEqual([{ id: "server-http", name: "Echo" }]);
+    expect(result.caseUpsert.committed).toEqual([{ name: "case-1" }]);
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(createCall).toBeTruthy();
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.name).toBe("Authored smoke");
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+    expect(body.model).toBe("anthropic/claude-haiku-4.5");
+    expect(body.tests).toHaveLength(1);
+    expect(body.tests[0]).toMatchObject({
+      title: "echo works",
+      query: "say hi",
+      expectedToolCalls: ["echo", { toolName: "ping", arguments: { x: 1 } }],
+    });
+  });
+
+  it("rejects stdio servers before creating the suite", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Smoke",
+          servers: ["Docs"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [{ title: "t", query: "q" }],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("stdio");
+    const createCalls = fetchMock.mock.calls.filter(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(createCalls).toHaveLength(0);
+  });
+
+  it("forwards advanced case fields instead of stripping them", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.parse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        {
+          title: "t",
+          query: "q",
+          advancedConfig: { system: "be terse", temperature: 0.2 },
+          matchOptions: { caseSensitive: false },
+          predicates: { mode: "replace", list: [] },
+          caseType: "prompt",
+          promptTurns: [{ role: "user", content: "hi" }],
+        },
+      ],
+    }) as {
+      cases: Array<Record<string, unknown>>;
+    };
+    const authored = parsed.cases[0]!;
+    expect(authored.advancedConfig).toEqual({
+      system: "be terse",
+      temperature: 0.2,
+    });
+    expect(authored.matchOptions).toEqual({ caseSensitive: false });
+    expect(authored.predicates).toEqual({ mode: "replace", list: [] });
+    expect(authored.caseType).toBe("prompt");
+    expect(authored.promptTurns).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  it("caps cases at 100 and requires a query only for prompt cases", () => {
+    const base = {
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+    };
+    // Over the cap is rejected before any network call.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: Array.from({ length: 101 }, (_, i) => ({
+          title: `t${i}`,
+          query: "q",
+        })),
+      }).success
+    ).toBe(false);
+    // A prompt case without a query is rejected...
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [{ title: "t" }],
+      }).success
+    ).toBe(false);
+    // ...but a widget_probe case may omit the query.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [
+          {
+            title: "probe",
+            caseType: "widget_probe",
+            probeConfig: { serverName: "echo", toolName: "echo" },
+          },
+        ],
+      }).success
+    ).toBe(true);
+  });
+
+  it("requires a name, at least one server, and at least one case", () => {
+    expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
+      false
+    );
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        name: "n",
+        model: "m",
+        servers: [],
+        cases: [{ title: "t", query: "q" }],
+      }).success
+    ).toBe(false);
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        name: "n",
+        model: "m",
+        servers: ["s"],
+        cases: [],
+      }).success
+    ).toBe(false);
+  });
+});
+
 describe("eval run polling operations", () => {
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
@@ -796,6 +975,15 @@ describe("operation catalog consistency", () => {
     { operation: listEvalSuiteRunsOperation, minimalInput: { suite: "s" } },
     { operation: runEvalSuiteOperation, minimalInput: { suite: "s" } },
     {
+      operation: createEvalSuiteOperation,
+      minimalInput: {
+        name: "s",
+        model: "anthropic/claude-haiku-4.5",
+        servers: ["echo"],
+        cases: [{ title: "t", query: "q" }],
+      },
+    },
+    {
       operation: getEvalRunOperation,
       minimalInput: { project: "p", runId: "r" },
     },
@@ -848,6 +1036,7 @@ describe("operation catalog consistency", () => {
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
       "run_eval_suite",
+      "create_eval_suite",
       "call_server_tool",
       "create_tunnel",
       "close_tunnel",

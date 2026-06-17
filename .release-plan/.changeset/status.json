@@ -5,10 +5,14 @@
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
         }
       ],
-      "summary": "The mcpjam-agent MCP server now exposes the full platform catalog — eval, chatbox, and project tools plus live MCP server operations — advertises the `io.modelcontextprotocol/ui` capability, and connects the platform MCP server for native widget rendering.",
-      "id": "agent-platform-catalog"
+      "summary": "New `mcpjam apps session start|action|close` drives an MCP App widget interactively, headlessly: `start` renders a widget and keeps it mounted (a live Chromium tab), `action` steps it with a Computer-Use action (click/type/scroll/…) and reports the post-action frame plus any widget→host `tools/call`s it triggered, and `close` disposes it. The CLI exposes the session; the external agent drives the steps (no LLM is embedded).\n\nBacked by a new local-only Inspector surface (`POST /api/mcp/widget-session`, `POST /api/mcp/widget-session/:id/action`, `DELETE /api/mcp/widget-session/:id`) over a session registry with strict browser lifecycle — max concurrent sessions cap, idle TTL refreshed on each action, a periodic sweep, and dispose-all on process shutdown — so a mounted tab can't leak. The gate-first render flow (listTools → renderability gate → executeTool → render) is shared with `apps render` via a common core. Same output conventions as `apps render`: screenshot to a file by default (`--screenshot-out`), inline base64 opt-in (`--screenshot-base64`).",
+      "id": "cli-apps-session"
     },
     {
       "releases": [
@@ -19,10 +23,14 @@
         {
           "name": "@mcpjam/cli",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         }
       ],
-      "summary": "Add MCPJam tunnels to the platform surface and CLI. The SDK gains `createTunnel`/`closeTunnel` on `PlatformApiClient` plus the `create_tunnel`/`close_tunnel` operations (`@mcpjam/sdk/platform`); the CLI gains `mcpjam tunnel`, which exposes a local MCP server (HTTP URL or stdio command) through a public MCPJam tunnel URL and registers it as a server in your hosted project. The CLI's tunnel command requires this SDK version's platform exports, so the two release together.",
-      "id": "cli-tunnel-command"
+      "summary": "Add `create_eval_suite`: author runnable eval suites from the CLI and MCP.\n\n- **@mcpjam/sdk**: new `createEvalSuiteOperation` platform operation plus\n  `PlatformApiClient.createEvalSuite` and the `PlatformEvalSuiteCreated` type.\n  Resolves the project selector and HTTP-only servers like `run_eval_suite`,\n  and forwards the full case shape (expected tool calls, expected output,\n  advanced config, prompt turns, match options, predicates, widget probes).\n- **@mcpjam/cli**: new `mcpjam eval` command group (`create` / `list` / `run` /\n  `status`). `create` accepts a JSON suite definition via `--file`/`--json`\n  with `--name`/`--model`/`--provider`/`--server`/`--project` overrides and\n  authors a suite without running it.\n- **@mcpjam/inspector**: new author-only `POST /api/v1/projects/:projectId/eval-suites`\n  endpoint that creates a runnable suite from test-case definitions (extracted\n  from the eval-run path, which is unchanged). The v1 guest gate is now\n  method-aware: `GET /eval-suites` stays guest-allowed, `POST` is denied.",
+      "id": "create-eval-suite"
     },
     {
       "releases": [
@@ -31,28 +39,8 @@
           "type": "minor"
         }
       ],
-      "summary": "Computer Use grows up: evals accept any vision + tool-calling model (not just a hardcoded allowlist), computers delegate to a remote data plane so credential-less inspectors can still drive sessions, synthetic sessions run through the same eval browser pipeline (render observations + Computer Use), and the computer terminal gets a themed UI with a toolbar and clipboard support.",
-      "id": "computer-use-expansion"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "The app now lands on Home instead of Connect. Home resolves the org from the active project and shows a skeleton while context loads, and the Host tab's focus panel starts expanded.",
-      "id": "home-landing-default"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Clients can use models configured at the org level, and model pickers share one availability pipeline so chat, host, and evals agree on which models are offered.",
-      "id": "org-models-availability"
+      "summary": "Route brand-new signups to the Playground on first load while keeping returning users on Home. Onboarding state now distinguishes a first-ever session from a returning one so the initial destination matches the user's intent.",
+      "id": "nux-signup-routing"
     },
     {
       "releases": [
@@ -61,74 +49,41 @@
           "type": "patch"
         }
       ],
-      "summary": "Local OSS development points at the open community backend by default.",
-      "id": "oss-community-backend"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "MCPJam relay tunneling replaces ngrok for exposing local MCP servers. Tunnel URLs are edge-secured bearer URLs with a transparent bridge and per-server isolation.",
-      "id": "relay-tunnels"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "`run_eval_suite` no longer guesses a server default client-side: when `servers` is omitted, the request omits `serverIds` and the platform connects the suite's saved server selection — the exact set the run snapshot references (the previous all-enabled-HTTP default could miss it and fail the run after the 202). The resolved set comes back in the result, and `PlatformEvalRunCreated` gains the matching optional `servers` field. Explicit `servers` overrides keep their client-side resolution and validation. Requires a platform deployment where `POST /eval-runs` accepts rerun bodies without `serverIds`; older deployments answer with an actionable `VALIDATION_ERROR`.",
-      "id": "run-eval-suite-saved-selection"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "`mcpjam tunnel` shutdown revokes the grant by calling the close endpoint directly with the project ID already resolved at startup, instead of going through the `close_tunnel` operation's project re-resolution. This removes a `listProjects` round-trip from the 5s revocation grace window and an independent failure mode where a listing hiccup could skip a revocation that would have succeeded.",
-      "id": "tunnel-close-direct"
+      "summary": "Fix the sidebar flashing a signed-out layout while authentication is still resolving. The sidebar and user section now hold their rendering until auth state settles, avoiding a brief flicker on load.",
+      "id": "sidebar-auth-flash"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.11.0",
+      "oldVersion": "2.13.0",
       "changesets": [
-        "agent-platform-catalog",
-        "computer-use-expansion",
-        "home-landing-default",
-        "org-models-availability",
-        "oss-community-backend",
-        "relay-tunnels"
+        "cli-apps-session",
+        "create-eval-suite",
+        "nux-signup-routing",
+        "sidebar-auth-flash"
       ],
-      "newVersion": "2.12.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.16.0",
-      "changesets": [
-        "cli-tunnel-command",
-        "run-eval-suite-saved-selection"
-      ],
-      "newVersion": "1.17.0"
+      "newVersion": "2.14.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.5.0",
+      "oldVersion": "3.7.0",
       "changesets": [
-        "cli-tunnel-command",
-        "tunnel-close-direct"
+        "cli-apps-session",
+        "create-eval-suite"
       ],
-      "newVersion": "3.6.0"
+      "newVersion": "3.8.0"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.18.0",
+      "changesets": [
+        "create-eval-suite"
+      ],
+      "newVersion": "1.19.0"
     },
     {
       "name": "@mcpjam/mcp",

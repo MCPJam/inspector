@@ -382,7 +382,7 @@ export function useEvalHandlers({
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
           toast.error(
-            "No tests to run. The suite's widget probes are missing their probe configuration."
+            "No tests to run. The suite's render checks are missing their configuration."
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
@@ -857,7 +857,7 @@ export function useEvalHandlers({
       // intentionally carry no models. Without this branch the model guard
       // below would surface a misleading "Add a model first".
       if (testCase.caseType === "widget_probe") {
-        toast.info("Widget probes run with the full suite or on its schedule.");
+        toast.info("Render checks run with the full suite or on its schedule.");
         return null;
       }
 

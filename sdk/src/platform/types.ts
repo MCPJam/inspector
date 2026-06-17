@@ -131,6 +131,24 @@ export interface PlatformEvalRunCreated {
   servers?: Array<{ id: string; name?: string }>;
 }
 
+/**
+ * `201` response of `POST /projects/{p}/eval-suites` — an authored, runnable
+ * suite created from test-case definitions (NOT run; execute it with
+ * `run_eval_suite`). Tolerant reader: unknown fields pass through.
+ */
+export interface PlatformEvalSuiteCreated {
+  suiteId: string;
+  /** Suite name as persisted; echoes the request name. */
+  name: string | null;
+  /** The HTTP servers the suite was configured against. */
+  servers?: Array<{ id: string; name?: string }>;
+  /** Per-case create outcomes, mirroring eval-run caseUpsert. */
+  caseUpsert: {
+    committed?: Array<{ id?: string; name?: string }>;
+    failed?: Array<{ id?: string; name?: string; error?: string }>;
+  };
+}
+
 export interface PlatformEvalIteration {
   id: string;
   testCaseId: string | null;

@@ -158,12 +158,16 @@ export async function fetchPendingChangesets(
 }
 
 /**
- * Ignored packages (from .changeset/config.json). We hardcode the single
- * ignore rather than reading config.json so there's no second round-trip —
- * CLAUDE.md guarantees `@mcpjam/soundcheck` is the only ignored package.
- * If that contract ever changes, bump this list.
+ * Ignored packages — mirrors `.changeset/config.json`'s `ignore` list. We
+ * hardcode it rather than reading config.json so there's no second GitHub
+ * contents round-trip. Keep this in sync with `.changeset/config.json`: when a
+ * package is added to / removed from the ignore list there, update it here too.
  */
-const IGNORED_PACKAGES = new Set<string>(["@mcpjam/soundcheck"]);
+const IGNORED_PACKAGES = new Set<string>([
+  "@mcpjam/soundcheck",
+  "@mcpjam/mcp",
+  "@mcpjam/design-system"
+]);
 
 export interface BuildPlanInput {
   changesets: ChangesetFile[];

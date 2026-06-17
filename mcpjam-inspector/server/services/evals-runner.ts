@@ -103,6 +103,51 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 
+/**
+ * Max render-check (`widget_probe`) cases that may execute at once. Each one
+ * launches a headless Chromium (~hundreds of MB), so a monitoring suite full
+ * of render checks would otherwise spawn one browser PER case in parallel and
+ * exhaust the worker's memory. LLM-only cases are network-bound and run
+ * unbounded. Override with MCPJAM_MAX_CONCURRENT_RENDER_CHECKS.
+ */
+const MAX_CONCURRENT_RENDER_CHECKS = (() => {
+  const raw = Number(process.env.MCPJAM_MAX_CONCURRENT_RENDER_CHECKS);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 4;
+})();
+
+/**
+ * Minimal async concurrency limiter: returns a function that runs at most
+ * `max` thunks concurrently and queues the rest. A slot is released when its
+ * thunk SETTLES (resolve or reject), so a slot can never leak even if the work
+ * throws — unlike tying the cap to a browser's dispose() call.
+ */
+export function createConcurrencyLimiter(max: number) {
+  const limit = Math.max(1, max);
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const pump = () => {
+    while (active < limit && queue.length > 0) {
+      active++;
+      queue.shift()!();
+    }
+  };
+  return <T>(thunk: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const run = async () => {
+        try {
+          resolve(await thunk());
+        } catch (err) {
+          reject(err);
+        } finally {
+          active--;
+          pump();
+        }
+      };
+      queue.push(run);
+      pump();
+    });
+}
+
 export type EvalTestCase = {
   title: string;
   query: string;
@@ -1985,6 +2030,13 @@ const runIterationViaBackendWithBrowser = async (
       maxSteps: MAX_STEPS,
       runStartedAt,
       isAborted,
+      // Harness selector + host approval intent (forwarded only for harness
+      // turns inside driveHostedEvalTurn; emulated evals are unaffected).
+      harness: resolvedExecution.harness,
+      requireToolApproval: resolvedExecution.requireToolApproval,
+      ...(builtInTarget && "projectId" in builtInTarget
+        ? { projectId: builtInTarget.projectId }
+        : {}),
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),
       acc: {
@@ -2485,8 +2537,15 @@ export const runEvalSuiteWithAiSdk = async ({
     // Create AbortController to cancel in-flight requests
     const abortController = new AbortController();
 
-    // Run all tests in parallel
-    const testPromises = tests.map((test) =>
+    // Run tests in parallel, but cap concurrent render checks: each
+    // `widget_probe` case launches a headless Chromium, so an all-render-check
+    // monitoring suite would otherwise spawn one browser per case at once and
+    // exhaust the worker. LLM-only cases are network-bound and stay unbounded.
+    // The limiter releases a slot when each case settles, so it can't leak.
+    const renderCheckLimit = createConcurrencyLimiter(
+      MAX_CONCURRENT_RENDER_CHECKS
+    );
+    const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
         tools,
@@ -2509,7 +2568,11 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
-      })
+      });
+    const testPromises = tests.map((test) =>
+      test.caseType === "widget_probe"
+        ? renderCheckLimit(() => runOne(test))
+        : runOne(test)
     );
 
     // Create a cancellation checker that polls every 2s
@@ -3929,6 +3992,13 @@ const streamIterationViaBackendWithBrowser = async (
       maxSteps: MAX_STEPS,
       runStartedAt,
       isAborted,
+      // Harness selector + host approval intent (forwarded only for harness
+      // turns inside driveHostedEvalTurn; emulated evals are unaffected).
+      harness: resolvedExecution.harness,
+      requireToolApproval: resolvedExecution.requireToolApproval,
+      ...(builtInTarget && "projectId" in builtInTarget
+        ? { projectId: builtInTarget.projectId }
+        : {}),
       logSuffix: " (stream)",
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),

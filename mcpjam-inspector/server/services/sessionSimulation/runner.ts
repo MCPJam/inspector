@@ -172,6 +172,13 @@ export interface RunSimulationOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Host harness selector mirrored from the chatbox's pinned HostConfigV2.
+   * When "claude-code" the synthetic visitor's turns run the real Claude Code
+   * runtime; absent ⇒ emulated. Forward-compatible: only activates once the
+   * backend runtime-config endpoint serves it.
+   */
+  harness?: "claude-code";
+  /**
    * Optional hosted-chat access version. Forwarded into
    * `chatSessions:createWidgetSnapshot` so the optimistic-concurrency check
    * fires if the chatbox's access surface (mode/allowlist/grants) shifted
@@ -301,6 +308,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    harness,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -350,6 +358,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           respectToolVisibility,
           progressiveToolDiscovery,
           builtInToolIds,
+          harness,
           accessVersion,
           convexHttpUrl,
           convexAuthToken,
@@ -439,6 +448,7 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  harness?: "claude-code";
   accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -460,6 +470,7 @@ async function runOneSession(args: {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    harness,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -609,6 +620,7 @@ async function runOneSession(args: {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
+        ...(harness ? { harness } : {}),
         chatboxId,
         // The chatbox runtime-config redeem returns an accessVersion that
         // /stream/org/resolve uses to authorize the actor against the
@@ -1191,6 +1203,10 @@ export async function drainAssistantTurn(
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
+    // Harness selector: when the chatbox host runs harness: "claude-code",
+    // synthetic turns run the real Claude Code runtime. requireToolApproval is
+    // already threaded above, so runHarnessTurn fail-closes correctly.
+    ...(args.harness ? { harness: args.harness } : {}),
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
