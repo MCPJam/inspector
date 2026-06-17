@@ -23,7 +23,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.getByText("test-tool")).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.getByText("Custom description")).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.queryByText(/description/i)).not.toBeInTheDocument();
@@ -65,7 +65,7 @@ describe("ToolItem", () => {
           name="display-name"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.getByText("display-name")).toBeInTheDocument();
@@ -82,7 +82,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={true}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       const toolElement = container.firstChild as HTMLElement;
@@ -99,7 +99,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       const toolElement = container.firstChild as HTMLElement;
@@ -117,7 +117,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={onClick}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByText("test-tool"));
@@ -133,7 +133,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={onClick}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByText("Click me"));
@@ -150,7 +150,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       const toolElement = container.firstChild as HTMLElement;
@@ -167,7 +167,7 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       // Should render without crashing
@@ -183,7 +183,7 @@ describe("ToolItem", () => {
           name={longName}
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.getByText(longName)).toBeInTheDocument();
@@ -198,7 +198,7 @@ describe("ToolItem", () => {
           name={specialName}
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       expect(screen.getByText(specialName)).toBeInTheDocument();
@@ -213,12 +213,80 @@ describe("ToolItem", () => {
           name="test-tool"
           isSelected={false}
           onClick={vi.fn()}
-        />,
+        />
       );
 
       // Description should have line-clamp class
       const descriptionElement = container.querySelector(".line-clamp-2");
       expect(descriptionElement).toBeInTheDocument();
+    });
+  });
+
+  describe("quality badge", () => {
+    const badgeOf = (container: HTMLElement) =>
+      container.querySelector(
+        '[aria-label*="tool quality"]'
+      ) as HTMLElement | null;
+
+    it("renders no badge when no quality is provided", () => {
+      const { container } = render(
+        <ToolItem
+          tool={createTool()}
+          name="test-tool"
+          isSelected={false}
+          onClick={vi.fn()}
+        />
+      );
+      expect(badgeOf(container)).toBeNull();
+    });
+
+    it("renders an error-styled badge with the finding count and a tooltip", () => {
+      const { container } = render(
+        <ToolItem
+          tool={createTool()}
+          name="test-tool"
+          isSelected={false}
+          onClick={vi.fn()}
+          quality={{
+            severity: "error",
+            labels: ["inputSchema missing (REQUIRED by MCP)", "no description"],
+          }}
+        />
+      );
+      const badge = badgeOf(container);
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toBe("2");
+      expect(badge!.className).toContain("text-destructive");
+      expect(badge!.getAttribute("title")).toContain("inputSchema missing");
+      expect(badge!.getAttribute("title")).toContain("no description");
+    });
+
+    it("renders a warn-styled badge for signal-only findings", () => {
+      const { container } = render(
+        <ToolItem
+          tool={createTool()}
+          name="test-tool"
+          isSelected={false}
+          onClick={vi.fn()}
+          quality={{ severity: "warn", labels: ["very short description"] }}
+        />
+      );
+      const badge = badgeOf(container);
+      expect(badge!.textContent).toBe("1");
+      expect(badge!.className).toContain("amber");
+    });
+
+    it("renders no badge when the label list is empty", () => {
+      const { container } = render(
+        <ToolItem
+          tool={createTool()}
+          name="test-tool"
+          isSelected={false}
+          onClick={vi.fn()}
+          quality={{ severity: "warn", labels: [] }}
+        />
+      );
+      expect(badgeOf(container)).toBeNull();
     });
   });
 });
