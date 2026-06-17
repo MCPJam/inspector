@@ -729,6 +729,14 @@ export function createXAAStateMachine(
 
   const authenticateUser = async () => {
     const state = currentState();
+    // Read the simulated identity from the live machine config, not the flow
+    // snapshot. The machine is rebuilt whenever the identity changes, so the
+    // config always holds the latest sub/email — whereas state.userId is the
+    // value captured when the flow was last (re)built and can lag an edit made
+    // mid-run. `??` (not `||`) so a deliberately-cleared field stays empty
+    // rather than silently reviving the stale snapshot value.
+    const activeUserId = userId ?? state.userId;
+    const activeEmail = email ?? state.email;
     const request = {
       method: "POST",
       url: "/authenticate",
@@ -736,8 +744,8 @@ export function createXAAStateMachine(
         "Content-Type": "application/json",
       },
       body: {
-        userId: state.userId,
-        email: state.email,
+        userId: activeUserId,
+        email: activeEmail,
         audience: state.clientId || "mcpjam-xaa-debugger",
       },
     };
@@ -778,8 +786,8 @@ export function createXAAStateMachine(
         "xaa-identity-assertion",
         "Identity assertion issued",
         {
-          userId: state.userId,
-          email: state.email,
+          userId: activeUserId,
+          email: activeEmail,
         }
       );
     } catch (error) {
