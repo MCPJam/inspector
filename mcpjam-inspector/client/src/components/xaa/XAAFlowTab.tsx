@@ -313,20 +313,27 @@ export function XAAFlowTab({
     negativeTestMode: NegativeTestMode;
   } | null>(null);
 
+  // Rebuild the flow from the current input and record the identity it was
+  // built with. Every rebuild path goes through here so the debounced identity
+  // reset can tell whether another path (Run all, Reset, target switch) already
+  // applied the current identity — and skip a stale timer that would otherwise
+  // wipe a freshly-started run.
+  const rebuildFlow = useCallback(() => {
+    lastAppliedIdentity.current = {
+      userId: runInput.userId,
+      email: runInput.email,
+    };
+    applyFlowState(buildFlowStateFromInput(runInput));
+    setFocusedStep(null);
+  }, [applyFlowState, runInput]);
+
   const applyTargetReset = useCallback(
     (nextTargetKey: string, nextMode: NegativeTestMode) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
-      // A target rebuild already bakes in the current identity, so keep the
-      // identity tracker in sync to avoid a redundant follow-up reset.
-      lastAppliedIdentity.current = {
-        userId: runInput.userId,
-        email: runInput.email,
-      };
-      applyFlowState(buildFlowStateFromInput(runInput));
-      setFocusedStep(null);
+      rebuildFlow();
     },
-    [applyFlowState, runInput]
+    [rebuildFlow]
   );
 
   useEffect(() => {
@@ -365,12 +372,20 @@ export function XAAFlowTab({
       return;
     }
     const timer = setTimeout(() => {
-      lastAppliedIdentity.current = { userId: nextUserId, email: nextEmail };
-      applyFlowState(buildFlowStateFromInput(runInput));
-      setFocusedStep(null);
+      // Another path (Run all, Reset, target switch) may have rebuilt the flow
+      // with this identity while the timer was pending. If so the tracker
+      // already matches — bail rather than wipe that fresh (possibly running)
+      // state a second time.
+      if (
+        lastAppliedIdentity.current.userId === nextUserId &&
+        lastAppliedIdentity.current.email === nextEmail
+      ) {
+        return;
+      }
+      rebuildFlow();
     }, 400);
     return () => clearTimeout(timer);
-  }, [runSettings.userId, runSettings.email, runInput, applyFlowState]);
+  }, [runSettings.userId, runSettings.email, rebuildFlow]);
 
   useEffect(() => {
     setFocusedStep(null);
@@ -388,9 +403,8 @@ export function XAAFlowTab({
   }, []);
 
   const resetFlow = useCallback(() => {
-    applyFlowState(buildFlowStateFromInput(runInput));
-    setFocusedStep(null);
-  }, [runInput, applyFlowState]);
+    rebuildFlow();
+  }, [rebuildFlow]);
 
   const handleChangeNegativeTestMode = useCallback(
     (mode: NegativeTestMode) => {
@@ -457,8 +471,9 @@ export function XAAFlowTab({
     }
 
     // Every Run all begins from a clean slate so the chips reflect this run.
-    applyFlowState(buildFlowStateFromInput(runInput));
-    setFocusedStep(null);
+    // rebuildFlow also syncs the identity tracker, so a debounced identity
+    // reset armed just before this click can't fire mid-run and wipe it.
+    rebuildFlow();
     fireFlowStarted();
     setIsRunningAll(true);
     try {
@@ -482,9 +497,8 @@ export function XAAFlowTab({
     }
   }, [
     isTestable,
-    runInput,
+    rebuildFlow,
     xaaStateMachine,
-    applyFlowState,
     fireFlowStarted,
     authServerModeForTelemetry,
   ]);
