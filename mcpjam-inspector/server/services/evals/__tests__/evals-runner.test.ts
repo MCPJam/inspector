@@ -224,6 +224,68 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     };
   }
 
+  function buildQuickRunConfig(serverRef = "srv-1") {
+    return {
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: {
+          servers: [serverRef],
+          serverBindings: [
+            {
+              serverName: "Asana",
+              projectServerId: "srv-1",
+            },
+          ],
+        },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    };
+  }
+
+  it("surfaces a clear error when the selected server is not connected at runtime", async () => {
+    mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
+      new Error('Unknown MCP server "srv-1".'),
+    );
+
+    await expect(
+      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any),
+    ).rejects.toThrow(
+      'Could not start eval because "Asana" is not connected. Reconnect the server and try again.',
+    );
+  });
+
+  it("surfaces a clear error when the selected server fails tools/list", async () => {
+    mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
+      new Error("tools/list exploded"),
+    );
+
+    await expect(
+      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any),
+    ).rejects.toThrow(
+      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.',
+    );
+  });
+
   function createAsyncIterable<T>(items: T[]): AsyncIterable<T> {
     return {
       async *[Symbol.asyncIterator]() {
