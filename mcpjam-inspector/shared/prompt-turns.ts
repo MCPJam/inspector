@@ -335,3 +335,27 @@ export function legacyProbeToPinnedTurn(
     pinnedToolCall: { ...probeConfig },
   };
 }
+
+/**
+ * Resolve a case's turns, surfacing a legacy `widget_probe` row's top-level
+ * `probeConfig` as a single pinned turn so callers see ONE shape. No-op for
+ * already-pinned / prompt cases. Shared by the editor (editForm seeding) and
+ * the runner (`normalizeTestForPinnedTurns`) so the legacy-detection rule lives
+ * in one place.
+ */
+export function resolvePromptTurnsWithLegacyProbe(
+  input: {
+    caseType?: string | null;
+    probeConfig?: ProbeConfig;
+  } & Parameters<typeof resolvePromptTurns>[0],
+): PromptTurn[] {
+  const turns = resolvePromptTurns(input);
+  if (
+    input.caseType === "widget_probe" &&
+    input.probeConfig &&
+    !turns.some(isPinnedTurn)
+  ) {
+    return [legacyProbeToPinnedTurn(input.probeConfig)];
+  }
+  return turns;
+}

@@ -42,7 +42,11 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
-import { type PromptTurn, isPinnedOnly } from "@/shared/prompt-turns";
+import {
+  type PromptTurn,
+  countModelTurns,
+  isPinnedOnly,
+} from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
@@ -310,7 +314,10 @@ export function assertSuiteRunWithinCap(
     request.tests.reduce((sum, t) => {
       if (isPinnedOnly(t)) return sum;
       const iterations = override ?? t.runs ?? 0;
-      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      // Count only model-driven turns — pinned (render-check) turns issue no
+      // LLM call, so a hybrid case shouldn't over-count its budget. Floor at 1
+      // for legacy single-turn cases that carry no promptTurns array.
+      const turns = Math.max(countModelTurns(t.promptTurns), 1);
       return sum + iterations * turns;
     }, 0) * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {

@@ -57,6 +57,9 @@ type TestCasePromptFlowProps = {
   suiteServers: string[];
   /** Project servers, to resolve a display name to a stable id for pinning. */
   projectServers?: RemoteServer[];
+  /** Gates the per-turn "Render check" toggle (an already-pinned turn always
+   *  shows its controls so existing render checks stay editable). */
+  syntheticMonitorsEnabled: boolean;
 };
 
 export function TestCasePromptFlow({
@@ -74,6 +77,7 @@ export function TestCasePromptFlow({
   argumentMatching,
   suiteServers,
   projectServers,
+  syntheticMonitorsEnabled,
 }: TestCasePromptFlowProps) {
   const multi = promptTurns.length > 1;
 
@@ -275,45 +279,49 @@ export function TestCasePromptFlow({
                             >
                               {/* Per-turn input mode: a normal model prompt,
                                   or a model-free pinned tool call (render
-                                  check). */}
-                              <div className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-0.5">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={pinned ? "ghost" : "secondary"}
-                                  className="h-6 px-2 text-[11px]"
-                                  onClick={() =>
-                                    updatePromptTurn(index, (currentTurn) => {
-                                      if (!isPinnedTurn(currentTurn))
-                                        return currentTurn;
-                                      const { pinnedToolCall, ...rest } =
-                                        currentTurn;
-                                      return rest;
-                                    })
-                                  }
-                                >
-                                  Prompt
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={pinned ? "secondary" : "ghost"}
-                                  className="h-6 px-2 text-[11px]"
-                                  onClick={() =>
-                                    updatePromptTurn(index, (currentTurn) => ({
-                                      ...currentTurn,
-                                      pinnedToolCall:
-                                        currentTurn.pinnedToolCall ?? {
-                                          serverName: suiteServers[0] ?? "",
-                                          toolName: "",
-                                          arguments: {},
-                                        },
-                                    }))
-                                  }
-                                >
-                                  Render check
-                                </Button>
-                              </div>
+                                  check). Gated by the synthetic-monitors flag,
+                                  but an already-pinned turn always shows it so
+                                  existing render checks stay editable. */}
+                              {syntheticMonitorsEnabled || pinned ? (
+                                <div className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-0.5">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={pinned ? "ghost" : "secondary"}
+                                    className="h-6 px-2 text-[11px]"
+                                    onClick={() =>
+                                      updatePromptTurn(index, (currentTurn) => {
+                                        if (!isPinnedTurn(currentTurn))
+                                          return currentTurn;
+                                        const { pinnedToolCall, ...rest } =
+                                          currentTurn;
+                                        return rest;
+                                      })
+                                    }
+                                  >
+                                    Prompt
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={pinned ? "secondary" : "ghost"}
+                                    className="h-6 px-2 text-[11px]"
+                                    onClick={() =>
+                                      updatePromptTurn(index, (currentTurn) => ({
+                                        ...currentTurn,
+                                        pinnedToolCall:
+                                          currentTurn.pinnedToolCall ?? {
+                                            serverName: suiteServers[0] ?? "",
+                                            toolName: "",
+                                            arguments: {},
+                                          },
+                                      }))
+                                    }
+                                  >
+                                    Render check
+                                  </Button>
+                                </div>
+                              ) : null}
 
                               {pinned ? (
                                 <section className="space-y-2">
