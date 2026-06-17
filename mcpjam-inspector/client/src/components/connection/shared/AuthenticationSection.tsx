@@ -107,6 +107,8 @@ export function AuthenticationSection({
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
+  const [revealedClientSecretContextKey, setRevealedClientSecretContextKey] =
+    useState<string | null>(null);
   const [isRevealedSecretVisible, setIsRevealedSecretVisible] = useState(false);
   const [isRevealingClientSecret, setIsRevealingClientSecret] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -122,21 +124,35 @@ export function AuthenticationSection({
     !clearClientSecret &&
     !!projectId &&
     !!hostedServerId;
+  const revealContextKey = canRevealClientSecret
+    ? `${projectId}:${hostedServerId}`
+    : null;
+  const visibleRevealedClientSecret =
+    revealedClientSecretContextKey === revealContextKey
+      ? revealedClientSecret
+      : null;
 
   // Drop any revealed value if the saved-secret context disappears (e.g.
   // user pasted a replacement, toggled Clear, or switched servers).
   useEffect(() => {
-    if (!canRevealClientSecret) {
+    if (revealedClientSecretContextKey !== revealContextKey) {
       setRevealedClientSecret(null);
+      setRevealedClientSecretContextKey(null);
       setIsRevealedSecretVisible(false);
       setRevealError(null);
       setDidCopyRevealedSecret(false);
       setIsReplacingSecret(false);
     }
-  }, [canRevealClientSecret, projectId, hostedServerId]);
+  }, [revealContextKey, revealedClientSecretContextKey]);
 
   const handleRevealClientSecret = async () => {
-    if (!projectId || !hostedServerId || isRevealingClientSecret) return;
+    if (
+      !projectId ||
+      !hostedServerId ||
+      !revealContextKey ||
+      isRevealingClientSecret
+    )
+      return;
     setIsRevealingClientSecret(true);
     setRevealError(null);
     setIsReplacingSecret(false);
@@ -146,9 +162,11 @@ export function AuthenticationSection({
         serverId: hostedServerId,
       });
       setRevealedClientSecret(result.clientSecret);
+      setRevealedClientSecretContextKey(revealContextKey);
       setIsRevealedSecretVisible(true);
     } catch (error) {
       setRevealedClientSecret(null);
+      setRevealedClientSecretContextKey(null);
       setIsRevealedSecretVisible(false);
       setRevealError(
         error instanceof Error
@@ -162,6 +180,7 @@ export function AuthenticationSection({
 
   const handleHideRevealedSecret = () => {
     setRevealedClientSecret(null);
+    setRevealedClientSecretContextKey(null);
     setIsRevealedSecretVisible(false);
     setRevealError(null);
     setDidCopyRevealedSecret(false);
@@ -171,6 +190,17 @@ export function AuthenticationSection({
       onClientSecretChange("");
     }
     setIsReplacingSecret(false);
+  };
+
+  const handleClearClientSecret = () => {
+    onClientSecretChange("");
+    setRevealedClientSecret(null);
+    setRevealedClientSecretContextKey(null);
+    setIsRevealedSecretVisible(false);
+    setRevealError(null);
+    setDidCopyRevealedSecret(false);
+    setIsReplacingSecret(false);
+    onClearClientSecret?.();
   };
 
   const handleCopyRevealedSecret = async (value: string) => {
@@ -188,7 +218,7 @@ export function AuthenticationSection({
   // revealed value; once the user starts editing it tracks their replacement.
   const secretFieldValue = isReplacingSecret
     ? clientSecret
-    : (revealedClientSecret ?? "");
+    : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
     oauthRegistrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
@@ -425,23 +455,24 @@ export function AuthenticationSection({
                           Client Secret (Optional)
                         </label>
                         <div className="flex items-center gap-1">
-                          {canRevealClientSecret && !revealedClientSecret && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-2 text-xs"
-                              onClick={() => void handleRevealClientSecret()}
-                              disabled={isRevealingClientSecret}
-                            >
-                              {isRevealingClientSecret ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                "Reveal"
-                              )}
-                            </Button>
-                          )}
-                          {revealedClientSecret && (
+                          {canRevealClientSecret &&
+                            !visibleRevealedClientSecret && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-xs"
+                                onClick={() => void handleRevealClientSecret()}
+                                disabled={isRevealingClientSecret}
+                              >
+                                {isRevealingClientSecret ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  "Reveal"
+                                )}
+                              </Button>
+                            )}
+                          {visibleRevealedClientSecret && (
                             <Button
                               type="button"
                               variant="ghost"
@@ -458,7 +489,7 @@ export function AuthenticationSection({
                               variant="ghost"
                               size="sm"
                               className="h-8 px-2 text-xs"
-                              onClick={onClearClientSecret}
+                              onClick={handleClearClientSecret}
                             >
                               Clear
                             </Button>
@@ -480,7 +511,7 @@ export function AuthenticationSection({
                         <p className="text-xs text-muted-foreground">
                           Saved client secret will be removed when you save.
                         </p>
-                      ) : revealedClientSecret !== null ? (
+                      ) : visibleRevealedClientSecret !== null ? (
                         <>
                           <div className="relative">
                             <Input

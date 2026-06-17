@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AuthenticationSection } from "../shared/AuthenticationSection";
 import { fetchHostedOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
@@ -309,5 +310,75 @@ describe("AuthenticationSection", () => {
         screen.queryByTestId("revealed-client-secret"),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  it("clears a pending replacement when Clear is clicked", async () => {
+    fetchHostedOAuthClientSecretMock.mockResolvedValue({
+      clientSecret: "sk-stored-secret",
+    });
+
+    function Harness() {
+      const [clientSecret, setClientSecret] = useState("");
+      const [clearClientSecret, setClearClientSecret] = useState(false);
+
+      return (
+        <>
+          <AuthenticationSection
+            {...hostedSecretProps}
+            clientSecret={clientSecret}
+            onClientSecretChange={setClientSecret}
+            clearClientSecret={clearClientSecret}
+            onClearClientSecret={() => setClearClientSecret(true)}
+          />
+          <output data-testid="client-secret-state">{clientSecret}</output>
+          <output data-testid="clear-secret-state">
+            {String(clearClientSecret)}
+          </output>
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+
+    const input = (await screen.findByTestId(
+      "revealed-client-secret",
+    )) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "sk-new-secret" } });
+    expect(screen.getByTestId("client-secret-state")).toHaveTextContent(
+      "sk-new-secret",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(screen.getByTestId("client-secret-state")).toHaveTextContent("");
+    expect(screen.getByTestId("clear-secret-state")).toHaveTextContent("true");
+  });
+
+  it("forgets a revealed secret when the hosted server context changes", async () => {
+    fetchHostedOAuthClientSecretMock.mockResolvedValue({
+      clientSecret: "sk-stored-secret",
+    });
+
+    const { rerender } = render(
+      <AuthenticationSection {...hostedSecretProps} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+
+    const input = (await screen.findByTestId(
+      "revealed-client-secret",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("sk-stored-secret");
+
+    rerender(
+      <AuthenticationSection {...hostedSecretProps} hostedServerId="server-2" />,
+    );
+
+    expect(screen.queryByTestId("revealed-client-secret")).not.toBeInTheDocument();
+    expect(screen.getByText(/A client secret is saved/i)).toBeInTheDocument();
   });
 });
