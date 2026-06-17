@@ -1319,6 +1319,23 @@ describe("mcp-oauth", () => {
       expect(info.client_secret).toBe("static-client-secret");
     });
 
+    it("ignores malformed stored client information", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      localStorage.setItem("mcp-client-asana", "{not-json");
+
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id",
+        "static-client-secret"
+      );
+
+      await expect(provider.clientInformation()).resolves.toMatchObject({
+        client_id: "static-client-id",
+        client_secret: "static-client-secret",
+      });
+    });
+
     it("advertises client_secret_basic in clientMetadata when a static secret is configured", async () => {
       // The DCR metadata advertises `token_endpoint_auth_method`. Hard-coding
       // "none" while we hold a confidential client secret tells the server
@@ -2194,6 +2211,41 @@ describe("mcp-oauth", () => {
           clientSecret: "encrypted-table-secret",
         },
       });
+    });
+
+    it("retries stored preregistered client secret fetches after transient failures", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      authFetch
+        .mockRejectedValueOnce(new Error("temporary outage"))
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            success: true,
+            clientSecret: "encrypted-table-secret",
+          })
+        );
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          kind: "generic",
+          hasClientSecret: true,
+        }
+      );
+
+      await expect(provider.clientInformation()).rejects.toThrow(
+        "temporary outage"
+      );
+      await expect(provider.clientInformation()).resolves.toMatchObject({
+        client_id: "client-from-arg",
+        client_secret: "encrypted-table-secret",
+      });
+      expect(authFetch).toHaveBeenCalledTimes(2);
     });
 
     it("falls back to localStorage-only when no binding is provided", async () => {

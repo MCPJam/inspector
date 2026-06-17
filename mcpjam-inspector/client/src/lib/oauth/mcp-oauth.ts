@@ -1968,7 +1968,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   private readStoredClientInformation(): Record<string, any> | undefined {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    const storedJson = stored ? JSON.parse(stored) : undefined;
+    let storedJson: unknown;
+    try {
+      storedJson = stored ? JSON.parse(stored) : undefined;
+    } catch {
+      return undefined;
+    }
     if (!storedJson || typeof storedJson !== "object") {
       return undefined;
     }
@@ -1998,7 +2003,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       this.storedClientSecretPromise = fetchOAuthClientSecret({
         projectId: this.convexBinding.projectId,
         serverId: this.convexBinding.serverId,
-      }).then((result) => result.clientSecret);
+      })
+        .then((result) => result.clientSecret)
+        .catch((error) => {
+          this.storedClientSecretPromise = undefined;
+          throw error;
+        });
     }
     return this.storedClientSecretPromise;
   }
