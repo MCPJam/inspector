@@ -111,6 +111,8 @@ interface TestCasesOverviewProps {
    */
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
+  /** Why Generate is disabled (shown in its tooltip), mirroring the suite header. */
+  generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
   onCreateWidgetProbe?: () => void;
@@ -136,6 +138,7 @@ export function TestCasesOverview({
   isDirectGuest = false,
   onGenerateTestCases,
   canGenerateTestCases = false,
+  generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onCreateTestCase,
   onCreateWidgetProbe,
@@ -518,30 +521,49 @@ export function TestCasesOverview({
                     {onGenerateTestCases || onCreateTestCase ? (
                       <div className="flex items-center gap-2">
                         {onGenerateTestCases ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5"
-                            onClick={onGenerateTestCases}
-                            disabled={
-                              !canGenerateTestCases || isGeneratingTestCases
-                            }
-                            aria-busy={isGeneratingTestCases}
-                          >
-                            {isGeneratingTestCases ? (
-                              <Loader2
-                                className="h-3.5 w-3.5 shrink-0 animate-spin"
-                                aria-hidden
-                              />
-                            ) : (
-                              <Sparkles
-                                className="h-3.5 w-3.5 shrink-0"
-                                aria-hidden
-                              />
-                            )}
-                            Generate
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1.5"
+                                  onClick={onGenerateTestCases}
+                                  disabled={
+                                    !canGenerateTestCases ||
+                                    isGeneratingTestCases
+                                  }
+                                  aria-busy={isGeneratingTestCases}
+                                >
+                                  {isGeneratingTestCases ? (
+                                    <Loader2
+                                      className="h-3.5 w-3.5 shrink-0 animate-spin"
+                                      aria-hidden
+                                    />
+                                  ) : (
+                                    <Sparkles
+                                      className="h-3.5 w-3.5 shrink-0"
+                                      aria-hidden
+                                    />
+                                  )}
+                                  Generate
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              variant="muted"
+                              side="bottom"
+                              sideOffset={6}
+                            >
+                              {isGeneratingTestCases
+                                ? "Generating test cases…"
+                                : !canGenerateTestCases
+                                ? generateTestCasesDisabledReason ??
+                                  "Configure suite servers before generating cases."
+                                : "Generate suggested cases from your server's tools."}
+                            </TooltipContent>
+                          </Tooltip>
                         ) : null}
                         {onCreateTestCase ? (
                           syntheticMonitorsEnabled && onCreateWidgetProbe ? (

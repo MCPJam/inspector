@@ -1019,6 +1019,9 @@ export function SuiteIterationsView({
                       connectedServerNames={connectedServerNames}
                       onGenerateTestCases={onGenerateTestCases}
                       canGenerateTestCases={canGenerateTestCases}
+                      generateTestCasesDisabledReason={
+                        generateTestCasesDisabledReason
+                      }
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       onCreateWidgetProbe={onCreateWidgetProbe}
