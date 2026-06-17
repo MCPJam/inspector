@@ -14,6 +14,7 @@ import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -363,16 +364,49 @@ export const startSuiteRunWithRecorder = async ({
     throw new Error("Failed to start suite run");
   }
 
-  // Pre-create all iterations
-  await convexClient.mutation("testSuites:precreateIterationsForRun" as any, {
-    runId,
-  });
-
   const recorder = createSuiteRunRecorder({
     convexClient,
     suiteId,
     runId,
   });
+
+  // Pre-create all iterations
+  try {
+    await convexClient.mutation("testSuites:precreateIterationsForRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    logger.error("[evals] Failed to pre-create suite run iterations", error, {
+      suiteId,
+      runId,
+    });
+    try {
+      await convexClient.mutation(
+        "testSuites:markSetupPendingIterationsFailed" as any,
+        { runId, error: cause },
+      );
+    } catch (cleanupError) {
+      logger.warn("[evals] Failed to mark setup iterations failed", {
+        suiteId,
+        runId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+    await recorder.finalize({
+      status: "failed",
+      notes: "Failed to prepare eval test attempts.",
+    });
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
+      { runId, cause },
+    );
+  }
 
   // Use the full environment Convex snapshotted into the run (derived
   // from suite.hostConfigId.serverIds when available, else the legacy

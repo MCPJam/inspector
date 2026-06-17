@@ -193,6 +193,58 @@ describe("startSuiteRunWithRecorder", () => {
 
     expect(result.config.environment).toEqual(snapshotEnvironment);
   });
+
+  it("marks the suite run failed when iteration precreate fails", async () => {
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runId: "run-1",
+        testCases: [
+          {
+            _id: "tc-1",
+            title: "Broken setup",
+            query: "Try setup",
+            model: "gpt-5",
+            provider: "openai",
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error("validation exploded"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation: mutationMock } as any,
+        suiteId: "suite-1",
+        serverIds: ["alpha"],
+      }),
+    ).rejects.toThrow(
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
+    );
+
+    expect(mutationMock).toHaveBeenNthCalledWith(
+      2,
+      "testSuites:precreateIterationsForRun",
+      { runId: "run-1" },
+    );
+    expect(mutationMock).toHaveBeenNthCalledWith(
+      3,
+      "testSuites:markSetupPendingIterationsFailed",
+      { runId: "run-1", error: "validation exploded" },
+    );
+    expect(mutationMock).toHaveBeenNthCalledWith(
+      4,
+      "testSuites:updateTestSuiteRun",
+      {
+        runId: "run-1",
+        status: "failed",
+        summary: undefined,
+        notes: "Failed to prepare eval test attempts.",
+      },
+    );
+  });
 });
 
 describe("createSuiteRunRecorder", () => {
