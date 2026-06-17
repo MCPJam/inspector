@@ -56,6 +56,7 @@ import {
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
+import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
@@ -294,6 +295,72 @@ const MAX_STEPS = 20;
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
+
+function getServerLabelForEvalError(
+  serverId: string,
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
+): string {
+  const binding = environment?.serverBindings?.find(
+    (entry) =>
+      entry.projectServerId === serverId ||
+      entry.projectServerId?.toLowerCase() === serverId.toLowerCase(),
+  );
+  return binding?.serverName || serverId;
+}
+
+function isMissingRuntimeServerError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /unknown mcp server/i.test(message) ||
+    /not connected/i.test(message) ||
+    /server .* is not connected/i.test(message)
+  );
+}
+
+async function getEvalToolsForAiSdkOrThrow(args: {
+  mcpClientManager: MCPClientManager;
+  serverIds: string[];
+  includeAppOnly: boolean;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): Promise<ToolSet> {
+  const perServerTools = await Promise.all(
+    args.serverIds.map(async (serverId) => {
+      try {
+        return args.includeAppOnly
+          ? await args.mcpClientManager.getToolsForAiSdk([serverId], {
+              includeAppOnly: true,
+            })
+          : await args.mcpClientManager.getToolsForAiSdk([serverId]);
+      } catch (error) {
+        const serverLabel = getServerLabelForEvalError(
+          serverId,
+          args.environment,
+        );
+        if (isMissingRuntimeServerError(error)) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.SERVER_UNREACHABLE,
+            `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+            { serverId, serverName: serverLabel },
+          );
+        }
+        const cause = error instanceof Error ? error.message : String(error);
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+          { serverId, serverName: serverLabel, cause },
+        );
+      }
+    }),
+  );
+
+  const flattened: ToolSet = {};
+  for (const toolset of perServerTools) {
+    Object.assign(flattened, toolset);
+  }
+  return flattened;
+}
 
 export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
@@ -2670,34 +2737,6 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         });
 
-  // When a host policy is present we need the full tool set (including
-  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
-  //   1. Count `toolsTotalBefore` honestly, and
-  //   2. Keep app-only tools when the host opted out of visibility filtering.
-  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
-  // sees a partial set — drops are reported as 0 even when tools were hidden.
-  const tools = (
-    hostExecutionPolicy
-      ? await mcpClientManager.getToolsForAiSdk(serverIds, {
-          includeAppOnly: true,
-        })
-      : await mcpClientManager.getToolsForAiSdk(serverIds)
-  ) as ToolSet;
-
-  // Apply visibility filtering when a host policy is present. The filter
-  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
-  // runners see the post-filter set.
-  const resolvedToolSignals = hostExecutionPolicy
-    ? applyVisibilityPolicyAndCountSignals(
-        tools as Record<string, unknown>,
-        mcpClientManager,
-        hostExecutionPolicy
-      )
-    : undefined;
-
-  // Note: Iterations are now pre-created in startSuiteRunWithRecorder
-  // This code is no longer needed as precreateIterationsForRun is called there
-
   const summary = {
     total: 0,
     passed: 0,
@@ -2705,6 +2744,33 @@ export const runEvalSuiteWithAiSdk = async ({
   };
 
   try {
+    // When a host policy is present we need the full tool set (including
+    // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+    //   1. Count `toolsTotalBefore` honestly, and
+    //   2. Keep app-only tools when the host opted out of visibility filtering.
+    // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+    // sees a partial set — drops are reported as 0 even when tools were hidden.
+    const tools = await getEvalToolsForAiSdkOrThrow({
+      mcpClientManager,
+      serverIds,
+      includeAppOnly: Boolean(hostExecutionPolicy),
+      environment: config.environment,
+    });
+
+    // Apply visibility filtering when a host policy is present. The filter
+    // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+    // runners see the post-filter set.
+    const resolvedToolSignals = hostExecutionPolicy
+      ? applyVisibilityPolicyAndCountSignals(
+          tools as Record<string, unknown>,
+          mcpClientManager,
+          hostExecutionPolicy
+        )
+      : undefined;
+
+    // Note: Iterations are now pre-created in startSuiteRunWithRecorder
+    // This code is no longer needed as precreateIterationsForRun is called there
+
     // Check if run has been cancelled before starting (only for suite runs)
     if (runId !== null) {
       const currentRun = await convexClient.query(

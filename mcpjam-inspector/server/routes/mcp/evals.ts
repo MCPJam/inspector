@@ -25,6 +25,7 @@ function jsonRouteError(c: any, error: unknown) {
   if (error instanceof WebRouteError) {
     return c.json(
       {
+        code: error.code,
         error: error.message,
         ...(error.details ? { details: error.details } : {}),
       },

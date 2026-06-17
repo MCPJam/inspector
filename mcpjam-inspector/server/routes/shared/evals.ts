@@ -583,7 +583,8 @@ export function resolveServerIdsOrThrow(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        `Server '${requestedId}' not found`,
+        `Could not start eval because "${requestedId}" is not connected. Reconnect the server and try again.`,
+        { serverId: requestedId },
       );
     }
 
