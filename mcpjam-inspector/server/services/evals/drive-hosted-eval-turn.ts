@@ -116,6 +116,11 @@ export interface DriveHostedEvalTurnParams {
    *  (no interactive approval yet). The emulated eval path is unchanged (it
    *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
+  /** Project that owns the host's computer — required by runHarnessTurn to
+   *  resolve the E2B sandbox. Forwarded (harness turns only) from the eval's
+   *  resolved billing target; absent for org-level evals (no project/computer,
+   *  so a harness turn there fails fast with a clear projectId error). */
+  projectId?: string;
   mcpClientManager: MCPClientManager;
   evalAuthContext: { kind: "user_bearer"; token: string };
   endpointPath: string;
@@ -321,6 +326,10 @@ export async function driveHostedEvalTurn(
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
               : {}),
+            // runHarnessTurn needs projectId to resolve the host's computer
+            // (authHeader already rides authContext.token). Harness-gated so
+            // emulated evals stay byte-identical.
+            ...(params.projectId ? { projectId: params.projectId } : {}),
           }
         : {}),
       endpointPath: params.endpointPath,

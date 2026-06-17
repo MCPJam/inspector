@@ -1989,6 +1989,9 @@ const runIterationViaBackendWithBrowser = async (
       // turns inside driveHostedEvalTurn; emulated evals are unaffected).
       harness: resolvedExecution.harness,
       requireToolApproval: resolvedExecution.requireToolApproval,
+      ...(builtInTarget && "projectId" in builtInTarget
+        ? { projectId: builtInTarget.projectId }
+        : {}),
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),
       acc: {
@@ -3937,6 +3940,9 @@ const streamIterationViaBackendWithBrowser = async (
       // turns inside driveHostedEvalTurn; emulated evals are unaffected).
       harness: resolvedExecution.harness,
       requireToolApproval: resolvedExecution.requireToolApproval,
+      ...(builtInTarget && "projectId" in builtInTarget
+        ? { projectId: builtInTarget.projectId }
+        : {}),
       logSuffix: " (stream)",
       extractToolCalls: (messages) =>
         extractToolCallsFromConversation({ messages }),
