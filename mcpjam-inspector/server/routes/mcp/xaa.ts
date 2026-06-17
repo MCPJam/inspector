@@ -31,6 +31,10 @@ import {
   evaluateDiscovery,
 } from "../../services/xaa-discovery.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  fetchServerClientSecret,
+  fetchXaaResourceAppSecret,
+} from "../../utils/server-secrets.js";
 import type {
   ServerClientSecretResult,
   XaaResourceAppSecretResult,
@@ -259,16 +263,15 @@ interface CreateXaaRouterOptions {
   trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
   // Resolves a registered resource app's client secret + stored token
-  // endpoint server-side (hosted instance only). When absent — the
-  // unauthenticated local instance — registration-backed proxy requests are
-  // rejected.
+  // endpoint server-side, using the caller's bearer to read Convex. When
+  // absent, registration-backed proxy requests are rejected.
   resolveRegistrationSecret?: (args: {
     registrationId: string;
     bearerToken: string;
   }) => Promise<XaaResourceAppSecretResult>;
   // Resolves a server target's confidential client secret + non-secret config
-  // (clientId/url/issuer) server-side (hosted instance only). When absent — the
-  // unauthenticated local instance — server-target proxy requests are rejected.
+  // (clientId/url/issuer) server-side, using the caller's bearer to read
+  // Convex. When absent, server-target proxy requests are rejected.
   resolveServerSecret?: (args: {
     serverId: string;
     projectId: string;
@@ -1117,7 +1120,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
 const xaa = createXaaRouter({
   issuerBasePath: "/api/mcp",
+  // Local dev allows plain-http loopback targets (e.g. a localhost
+  // xaa-mcp-server). The hosted router keeps httpsOnlyProxy: true.
   httpsOnlyProxy: false,
+  // Server-target / registration runs resolve the confidential secret from
+  // Convex using the caller's bearer; works locally when the user is signed in.
+  resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
+  resolveServerSecret: (args) => fetchServerClientSecret(args),
 });
 
 export default xaa;
