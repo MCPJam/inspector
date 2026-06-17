@@ -731,10 +731,10 @@ export function XAAFlowLogger({
             <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
               <li>
                 <span className="font-medium text-foreground">
-                  Configure a target
+                  Add or pick a server in the bar above
                 </span>{" "}
-                — the MCP server URL, a client ID, and (for your own auth
-                server) its issuer. Start here.
+                — each environment (beta/staging/prod) is its own server. Set
+                the simulated identity and negative-test Mode in the run bar.
               </li>
               <li>
                 <span className="font-medium text-foreground">
@@ -752,7 +752,9 @@ export function XAAFlowLogger({
               </li>
             </ol>
 
-            <Button onClick={actions.onConfigure}>Configure Target</Button>
+            <Button onClick={actions.onConfigure}>
+              Configure Server to Test
+            </Button>
           </div>
         ) : groups.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">

@@ -55,7 +55,7 @@ describe("XAAIdpCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("names the Configure Target Client ID in the registration steps", async () => {
+  it("names the Configure Server to Test Client ID in the registration steps", async () => {
     const user = userEvent.setup();
     render(<XAAIdpCard />);
 
@@ -64,7 +64,7 @@ describe("XAAIdpCard", () => {
     );
 
     expect(
-      screen.getByText(/the Client ID you set in Configure Target/i)
+      screen.getByText(/the Client ID you set in Configure Server to Test/i)
     ).toBeInTheDocument();
   });
 
