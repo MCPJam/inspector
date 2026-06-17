@@ -454,6 +454,9 @@ export function TestTemplateEditor({
   const getAccessToken = useConvexAccessToken();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Guards the first-Save insert of a prompt draft so a double-click can't
+  // create the case twice while createTestCase is in flight.
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
   );
@@ -804,7 +807,10 @@ export function TestTemplateEditor({
   }, [editForm?.predicates]);
 
   const savePrimaryDisabled =
-    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
+    !arePromptTurnsValid ||
+    !arePredicatesValid ||
+    isRunningCompare ||
+    isSavingDraft;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -1015,7 +1021,7 @@ export function TestTemplateEditor({
   // record that does not exist yet), then hand the new id to the parent so it
   // can swap the `draft:<kind>` route for the real one.
   const handleCreateFromDraft = async () => {
-    if (!editForm) return;
+    if (!editForm || isSavingDraft) return;
 
     if (!validatePromptTurns(editForm.promptTurns)) {
       toast.error(
@@ -1025,6 +1031,7 @@ export function TestTemplateEditor({
       return;
     }
 
+    setIsSavingDraft(true);
     try {
       const savePayload = buildSavePayload(editForm);
       const newTestCaseId = await createTestCaseMutation({
@@ -1047,6 +1054,8 @@ export function TestTemplateEditor({
       console.error("Failed to create test case:", error);
       toast.error(getBillingErrorMessage(error, "Failed to create test case"));
       throw error;
+    } finally {
+      setIsSavingDraft(false);
     }
   };
 
@@ -1062,6 +1071,7 @@ export function TestTemplateEditor({
       suiteId,
       title: payload.title,
       query: "",
+      runs: payload.runs,
       models: [],
       caseType: "widget_probe",
       probeConfig: payload.probeConfig,
