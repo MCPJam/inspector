@@ -13,16 +13,20 @@ function renderModal(
 ) {
   const onSave = vi.fn();
   const onOpenChange = vi.fn();
+  const onIdentityChange = vi.fn();
   render(
     <XAAServerModal
       open
       onOpenChange={onOpenChange}
       existingServerNames={[]}
       onSave={onSave}
+      simulatedUserId="user-12345"
+      simulatedEmail="demo.user@example.com"
+      onIdentityChange={onIdentityChange}
       {...props}
     />,
   );
-  return { onSave, onOpenChange };
+  return { onSave, onOpenChange, onIdentityChange };
 }
 
 describe("XAAServerModal", () => {
@@ -146,6 +150,40 @@ describe("XAAServerModal", () => {
     expect(formData.clientSecret).toBeUndefined();
   });
 
+  it("shows the global simulated identity prefilled from props", () => {
+    renderModal();
+
+    expect(screen.getByLabelText("Subject (sub)")).toHaveValue("user-12345");
+    expect(screen.getByLabelText("Email")).toHaveValue(
+      "demo.user@example.com",
+    );
+  });
+
+  it("reports identity edits through onIdentityChange, not the form save", async () => {
+    const user = userEvent.setup();
+    const { onIdentityChange, onSave } = renderModal();
+
+    // Editing identity reports the change immediately (it's a global setting,
+    // not part of the server form).
+    await user.type(screen.getByLabelText("Subject (sub)"), "x");
+    expect(onIdentityChange).toHaveBeenLastCalledWith({ userId: "user-12345x" });
+
+    // Saving the server config carries no identity fields.
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData).not.toHaveProperty("userId");
+    expect(formData).not.toHaveProperty("email");
+  });
+
   it("rejects a duplicate name when creating a new server", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal({ existingServerNames: ["staging-mcp"] });
@@ -174,6 +212,9 @@ describe("XAAServerModal", () => {
         onOpenChange={onOpenChange}
         existingServerNames={[]}
         onSave={onSave}
+        simulatedUserId="user-12345"
+        simulatedEmail="demo.user@example.com"
+        onIdentityChange={vi.fn()}
       />,
     );
 

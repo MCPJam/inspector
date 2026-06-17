@@ -22,6 +22,13 @@ interface XAAServerModalProps {
   // May be async. The modal stays open (preserving the entered values) if this
   // rejects, so a downstream save failure never discards the form.
   onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
+  // Global simulated identity (sub/email). Owned by XAAFlowTab's run settings
+  // and edited here because it applies to every target, not just this server —
+  // editing it updates the live run immediately (it is not part of the form
+  // save). Single source of truth, so the running flow always sees the change.
+  simulatedUserId: string;
+  simulatedEmail: string;
+  onIdentityChange: (patch: { userId?: string; email?: string }) => void;
 }
 
 // "keep" the saved secret untouched, "replace" it with a new value, or
@@ -35,6 +42,9 @@ export function XAAServerModal({
   server,
   existingServerNames,
   onSave,
+  simulatedUserId,
+  simulatedEmail,
+  onIdentityChange,
 }: XAAServerModalProps) {
   const derived = useMemo(
     () => deriveOAuthProfileFromServer(server),
@@ -319,6 +329,58 @@ export function XAAServerModal({
               Client ID, secret, and scopes are this server's OAuth credentials
               (shared with the OAuth Debugger).
             </p>
+
+            <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="xaa-identity-sub">Simulated identity</Label>
+                <p className="text-xs text-muted-foreground">
+                  The IdP mints a mock login for this user before the flow runs.
+                  Applies to every server you test — not just this one.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="xaa-identity-sub"
+                  className="text-xs text-muted-foreground"
+                >
+                  Subject (sub)
+                </Label>
+                <Input
+                  id="xaa-identity-sub"
+                  value={simulatedUserId}
+                  onChange={(event) =>
+                    onIdentityChange({ userId: event.target.value })
+                  }
+                  placeholder="user-12345"
+                  spellCheck={false}
+                  autoComplete="off"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="xaa-identity-email"
+                  className="text-xs text-muted-foreground"
+                >
+                  Email
+                </Label>
+                <Input
+                  id="xaa-identity-email"
+                  value={simulatedEmail}
+                  onChange={(event) =>
+                    onIdentityChange({ email: event.target.value })
+                  }
+                  placeholder="demo.user@example.com"
+                  spellCheck={false}
+                  autoComplete="off"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
+                />
+              </div>
+            </div>
           </div>
 
           {error && (

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
-import { Loader2, Play, ShieldAlert } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   AlertDialog,
@@ -29,10 +29,8 @@ import {
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAServerModal } from "./XAAServerModal";
-import { XAASimulatedIdentity } from "./XAASimulatedIdentity";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
-import { XAARunChips } from "./XAARunChips";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import type { NegativeTestMode } from "@/shared/xaa.js";
@@ -537,25 +535,6 @@ export function XAAFlowTab({
   const runAllDisabled =
     !isTestable || secretBlocked || flowState.isBusy || isRunningAll;
 
-  const targetName = selectedRegistration
-    ? selectedRegistration.name
-    : selectedServerName !== "none"
-    ? selectedServerName
-    : "";
-  const targetBadge = selectedRegistration
-    ? "registered app"
-    : isTestable
-    ? "from server"
-    : "not testable";
-
-  // Announce only the resolved target NAME (not badge flips), debounced so a
-  // quick succession of switches doesn't spam the live region.
-  const [announcedTarget, setAnnouncedTarget] = useState("");
-  useEffect(() => {
-    const id = setTimeout(() => setAnnouncedTarget(targetName), 250);
-    return () => clearTimeout(id);
-  }, [targetName]);
-
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
   const showNotTestable =
     target.targetSource === "bar_server" && !isTestable;
@@ -572,50 +551,6 @@ export function XAAFlowTab({
           )
         }
       />
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2">
-        <Button
-          type="button"
-          size="sm"
-          onClick={handleRunAll}
-          disabled={runAllDisabled}
-        >
-          {isRunningAll ? (
-            <>
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-              Running
-            </>
-          ) : (
-            <>
-              <Play className="mr-1 h-3.5 w-3.5" />
-              Run all
-            </>
-          )}
-        </Button>
-        <XAARunChips
-          flowState={flowState}
-          activeStep={focusedStep ?? flowState.currentStep}
-          onFocusStep={setFocusedStep}
-        />
-        <span
-          className="max-w-[40%] shrink-0 truncate pl-3 text-xs text-muted-foreground"
-          aria-hidden="true"
-        >
-          {targetName ? (
-            <>
-              Target: {targetName}{" "}
-              <span className="text-muted-foreground/70">· {targetBadge}</span>
-            </>
-          ) : (
-            "No server selected"
-          )}
-        </span>
-        <span className="sr-only" aria-live="polite">
-          {announcedTarget ? `Target: ${announcedTarget}` : "No server selected"}
-        </span>
-        <div className="ml-auto shrink-0">
-          <XAASimulatedIdentity />
-        </div>
-      </div>
       {selectedRegistration ? (
         <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
           <span>Using registered app — overrides the bar selection</span>
@@ -697,9 +632,12 @@ export function XAAFlowTab({
                   onConfigure: () => setIsServerModalOpen(true),
                   onReset: isTestable ? () => resetFlow() : undefined,
                   onContinue: continueDisabled ? undefined : handleAdvance,
+                  onRunAll: isTestable ? handleRunAll : undefined,
                   onChangeNegativeTestMode: handleChangeNegativeTestMode,
                   continueLabel,
                   continueDisabled,
+                  runAllDisabled,
+                  isRunningAll,
                   resetDisabled:
                     !isTestable || flowState.isBusy || isRunningAll,
                 }}
@@ -727,6 +665,9 @@ export function XAAFlowTab({
         onOpenChange={setIsServerModalOpen}
         server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
+        simulatedUserId={runSettings.userId}
+        simulatedEmail={runSettings.email}
+        onIdentityChange={runSettings.setIdentity}
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
           // values) if the save rejects. Selection only follows a save that
