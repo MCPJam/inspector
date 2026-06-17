@@ -32,6 +32,18 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
 - **Elicitation support** - Handle elicitation requests from tools
 - **Save requests** - Save frequently used tool invocations for quick testing
+- **Quality badges** - See per-tool quality indicators in the sidebar for tools with definition issues
+
+### Tool quality badges
+
+When enabled, each tool in the sidebar may display a small badge showing the number of quality findings for that tool:
+
+| Badge color | Meaning |
+|-------------|---------|
+| Red | A spec-level error (for example, `inputSchema` missing or not an object) |
+| Amber | A quality warning (for example, undocumented parameters, a description referencing a parameter not in the schema, or a `required` name missing from `properties`) |
+
+Hover over a badge to see the full list of findings. Tools with no issues show no badge.
 
 Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
 
