@@ -2737,33 +2737,6 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         });
 
-  // When a host policy is present we need the full tool set (including
-  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
-  //   1. Count `toolsTotalBefore` honestly, and
-  //   2. Keep app-only tools when the host opted out of visibility filtering.
-  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
-  // sees a partial set — drops are reported as 0 even when tools were hidden.
-  const tools = await getEvalToolsForAiSdkOrThrow({
-    mcpClientManager,
-    serverIds,
-    includeAppOnly: Boolean(hostExecutionPolicy),
-    environment: config.environment,
-  });
-
-  // Apply visibility filtering when a host policy is present. The filter
-  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
-  // runners see the post-filter set.
-  const resolvedToolSignals = hostExecutionPolicy
-    ? applyVisibilityPolicyAndCountSignals(
-        tools as Record<string, unknown>,
-        mcpClientManager,
-        hostExecutionPolicy
-      )
-    : undefined;
-
-  // Note: Iterations are now pre-created in startSuiteRunWithRecorder
-  // This code is no longer needed as precreateIterationsForRun is called there
-
   const summary = {
     total: 0,
     passed: 0,
@@ -2771,6 +2744,33 @@ export const runEvalSuiteWithAiSdk = async ({
   };
 
   try {
+    // When a host policy is present we need the full tool set (including
+    // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+    //   1. Count `toolsTotalBefore` honestly, and
+    //   2. Keep app-only tools when the host opted out of visibility filtering.
+    // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+    // sees a partial set — drops are reported as 0 even when tools were hidden.
+    const tools = await getEvalToolsForAiSdkOrThrow({
+      mcpClientManager,
+      serverIds,
+      includeAppOnly: Boolean(hostExecutionPolicy),
+      environment: config.environment,
+    });
+
+    // Apply visibility filtering when a host policy is present. The filter
+    // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+    // runners see the post-filter set.
+    const resolvedToolSignals = hostExecutionPolicy
+      ? applyVisibilityPolicyAndCountSignals(
+          tools as Record<string, unknown>,
+          mcpClientManager,
+          hostExecutionPolicy
+        )
+      : undefined;
+
+    // Note: Iterations are now pre-created in startSuiteRunWithRecorder
+    // This code is no longer needed as precreateIterationsForRun is called there
+
     // Check if run has been cancelled before starting (only for suite runs)
     if (runId !== null) {
       const currentRun = await convexClient.query(

@@ -286,6 +286,34 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("marks suite runs failed when tool loading fails", async () => {
+    mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
+      new Error("tools/list exploded"),
+    );
+    const recorder = {
+      runId: "run-1",
+      suiteId: "suite-1",
+      startIteration: vi.fn(),
+      finishIteration: vi.fn(),
+      finalize: vi.fn(),
+    };
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        runId: "run-1",
+        recorder,
+      } as any),
+    ).rejects.toThrow(
+      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.',
+    );
+
+    expect(recorder.finalize).toHaveBeenCalledWith({
+      status: "failed",
+      summary: undefined,
+    });
+  });
+
   function createAsyncIterable<T>(items: T[]): AsyncIterable<T> {
     return {
       async *[Symbol.asyncIterator]() {
