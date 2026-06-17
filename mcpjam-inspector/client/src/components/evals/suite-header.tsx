@@ -261,10 +261,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           suite_id: suite._id,
           server_attachment_id: serverAttachmentId,
         });
-        toast.success("Server attachment updated");
+        toast.success("Server group updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update server attachment")
+          getBillingErrorMessage(error, "Failed to update server group")
         );
       }
     },
