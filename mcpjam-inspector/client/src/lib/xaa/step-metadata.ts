@@ -30,36 +30,40 @@ export const XAA_PHASE_ORDER: XAAPhaseKey[] = [
   "mcp_request",
 ];
 
+// Actor names match the sequence diagram exactly — Agent, IdP, MCP Server,
+// Authorization Server — so a reader new to XAA can map every sentence onto a
+// box in the picture. Jargon (ID token, ID-JAG, access token) is glossed on
+// first use; RFC numbers stay as secondary parentheticals, never the lead.
 export const XAA_PHASES: Record<XAAPhaseKey, XAAPhaseInfo> = {
   bootstrap: {
-    title: "Bootstrap — MCP discovery",
+    title: "Setup — find the MCP server's authorization server",
     specStep: null,
     blurb:
-      "RFC 9728/8414 discovery, not part of the XAA grant. The spec assumes the client already knows the resource's authorization server; an MCP client learns it here instead — and that issuer becomes the ID-JAG audience in Phase 2. Skipped entirely when the authorization server is pre-configured.",
+      "Setup that runs before XAA proper. The Agent asks the MCP Server which Authorization Server protects it, then looks up where that server hands out tokens. The XAA spec assumes the Agent already knows this, so it's numbered Phase 0 — and skipped entirely when you've pre-configured the Authorization Server. The Authorization Server's issuer found here is reused later so the grant is addressed to the right server. (Uses the standard OAuth discovery specs, RFC 9728 and 8414.)",
   },
   sso: {
-    title: "User SSO with the IdP",
+    title: "Sign in — the user logs in at the IdP",
     specStep: 1,
     blurb:
-      "The user signs in at the enterprise IdP and the requesting app holds an OIDC ID token. This happens once per user session, independent of any particular MCP server. The debugger mocks the IdP.",
+      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an ID token: proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
   },
   token_exchange: {
-    title: "Token exchange: ID token → ID-JAG",
+    title: "Exchange — swap the login for a cross-app grant",
     specStep: 2,
     blurb:
-      "RFC 8693 exchange at the IdP. The app presents the ID token with audience = the resource authorization server's issuer; the IdP mints an ID-JAG addressed to that server. The ID token itself never leaves the IdP relationship.",
+      "The Agent hands the ID token back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The ID token itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
   },
   jwt_bearer: {
-    title: "JWT bearer grant at the resource's auth server",
+    title: "Redeem — trade the grant for an access token",
     specStep: 3,
     blurb:
-      "RFC 7523: the app presents the ID-JAG as an assertion to the resource authorization server's token endpoint. That server validates iss, aud, and resource, then mints an access token.",
+      "The Agent presents the ID-JAG to the MCP server's Authorization Server. That server checks the grant came from an IdP it trusts, is addressed to itself, and names the right MCP Server — then issues an access token the Agent can actually use. (On the wire this is an RFC 7523 JWT-bearer grant.)",
   },
   mcp_request: {
-    title: "Authenticated resource request",
+    title: "Call — use the access token on the MCP server",
     specStep: 4,
     blurb:
-      "Call the MCP server with the access token — the only credential the resource server ever sees. Neither the ID token nor the ID-JAG is sent to it.",
+      "The final step: the Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees. The ID token and ID-JAG stay behind. To the MCP Server this looks like an ordinary authenticated request.",
   },
 };
 
@@ -96,129 +100,132 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   idle: {
     title: "Idle",
     summary:
-      "The debugger is ready to walk through the XAA enterprise authorization flow.",
+      "Ready to walk the XAA flow step by step. XAA lets the Agent call an MCP Server on the user's behalf without making the user log in again.",
     teachableMoments: [
-      "You need three aligned values before the JWT bearer grant works: trusted issuer, audience, and resource.",
+      "The whole flow hinges on three values lining up: the IdP must be trusted by the Authorization Server, the grant must be addressed to that Authorization Server, and it must name the right MCP Server.",
     ],
   },
   discover_resource_metadata: {
-    title: "Discover Resource Metadata",
+    title: "Ask the MCP Server Who Guards It",
     summary:
-      "Fetch RFC 9728 protected resource metadata from the target MCP server.",
+      "The Agent asks the MCP Server which Authorization Server protects it. (RFC 9728 protected-resource metadata.)",
     phase: "bootstrap",
     teachableMoments: [
-      "This tells the client which authorization server should mint access tokens for the MCP server.",
+      "This is how the Agent learns which Authorization Server can issue access tokens for the MCP Server — the MCP equivalent of already knowing your auth server.",
     ],
   },
   received_resource_metadata: {
-    title: "Resource Metadata Received",
+    title: "MCP Server Names Its Authorization Server",
     summary:
-      "Capture the MCP server resource identifier and linked authorization server issuer.",
+      "The MCP Server replies with its resource identifier and the Authorization Server that guards it.",
     phase: "bootstrap",
     teachableMoments: [
-      "The `resource` claim in the ID-JAG minted in Phase 2 should line up with this metadata.",
+      "Remember the Authorization Server named here: the ID-JAG minted in Phase 2 is addressed to it, and the ID-JAG's `resource` should match this MCP Server.",
     ],
   },
   discover_authz_metadata: {
-    title: "Discover Authorization Metadata",
+    title: "Look Up the Authorization Server's Token Endpoint",
     summary:
-      "Fetch RFC 8414 or OIDC discovery metadata from the authorization server.",
+      "The Agent looks up where the Authorization Server hands out tokens. (RFC 8414 / OpenID Connect discovery.)",
     phase: "bootstrap",
     teachableMoments: [
-      "Note the `issuer` in this metadata: the ID-JAG minted in Phase 2 must carry it as `aud`. The spec requires the audience to be the authorization server's issuer identifier — not its `token_endpoint`.",
+      "The `issuer` in this metadata is what the ID-JAG must carry as its `aud` (audience). The audience is the Authorization Server's issuer URL — not its `token_endpoint`.",
     ],
   },
   received_authz_metadata: {
-    title: "Authorization Metadata Received",
+    title: "Authorization Server Details Received",
     summary:
-      "Inspect the issuer and token endpoint that will receive the JWT bearer assertion.",
+      "The Agent now knows the Authorization Server's issuer and token endpoint — where the ID-JAG gets redeemed in Phase 3.",
     phase: "bootstrap",
     teachableMoments: [
-      "If discovery fails, the authorization server issuer or well-known metadata is usually misconfigured.",
+      "If discovery fails, the Authorization Server's issuer or its well-known metadata URL is usually misconfigured.",
     ],
   },
   user_authentication: {
-    title: "Mock User Authentication",
+    title: "Sign In at the IdP",
     summary:
-      "MCPJam issues a synthetic OIDC ID token for the simulated enterprise user.",
+      "The user signs in at the IdP and the Agent receives an ID token — proof of who the user is. MCPJam fakes the IdP here.",
     phase: "sso",
     teachableMoments: [
-      "Spec step 1: the user authenticates at the enterprise IdP and the app receives an identity assertion (an OIDC ID token).",
+      "XAA step 1: the user authenticates at the IdP and the Agent receives an ID token (an OpenID Connect identity assertion).",
     ],
   },
   received_identity_assertion: {
-    title: "Identity Assertion Ready",
+    title: "ID Token Ready",
     summary:
-      "The debugger stores the synthetic ID token that will be exchanged for an ID-JAG.",
+      "The Agent holds the ID token, ready to trade it for an ID-JAG. The ID token itself never leaves the IdP.",
     phase: "sso",
     teachableMoments: [
-      "The ID token is an input to token exchange; it is not sent directly to the target authorization server.",
-      'Naming note: here "identity assertion" means the OIDC ID token. Some IdPs (e.g. Okta) call the ID-JAG itself the "identity assertion" — in this debugger the ID-JAG is the grant minted in Phase 2.',
+      "The ID token is only an input to the next step — it is never sent to the Authorization Server or the MCP Server.",
+      'Naming note: here "identity assertion" means the OpenID Connect ID token. Some IdPs (e.g. Okta) call the ID-JAG itself the "identity assertion" — in this debugger the ID-JAG is the grant minted in Phase 2.',
     ],
   },
   token_exchange_request: {
-    title: "RFC 8693 Token Exchange",
+    title: "Exchange the ID Token for an ID-JAG",
     summary:
-      "Exchange the synthetic ID token for an ID-JAG, optionally injecting a negative test mode.",
+      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. A test mode can deliberately break it here.",
     phase: "token_exchange",
     teachableMoments: [
-      "Spec step 2: the `audience` parameter names the resource authorization server's issuer — the value discovered (or pre-configured) in Phase 0.",
-      "This is where broken assertions get created for audience, issuer, header, and claim validation tests.",
+      "XAA step 2: the `audience` the Agent sends names the MCP Server's Authorization Server — the issuer discovered (or pre-configured) in Phase 0.",
+      "This is where the debugger can forge broken grants to test how the Authorization Server reacts: wrong audience, bad signature, expired, and so on.",
       "On the wire this exchange uses `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`.",
     ],
   },
   received_id_jag: {
     title: "ID-JAG Issued",
-    summary: "The synthetic issuer returns a signed ID-JAG JWT.",
+    summary: "The IdP returns a signed ID-JAG — the cross-app grant.",
     phase: "token_exchange",
     teachableMoments: [
-      "A valid ID-JAG includes `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, `iat`, and `exp`.",
-      "ID-JAG stands for Identity Assertion JWT Authorization Grant — the token type defined by the XAA spec.",
+      "A valid ID-JAG carries `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, `iat`, and `exp`.",
+      "ID-JAG stands for Identity Assertion JWT Authorization Grant — the grant type defined by the XAA spec.",
     ],
   },
   inspect_id_jag: {
-    title: "Inspect ID-JAG",
+    title: "Inspect the ID-JAG",
     summary:
-      "Decode the header and payload locally before sending the assertion downstream.",
+      "Decode the ID-JAG locally to check its claims before sending it to the Authorization Server.",
     phase: "token_exchange",
     teachableMoments: [
-      "`aud` must exactly match the resource authorization server's issuer, and `resource` must match the MCP server's resource identifier.",
-      "Use this step to confirm which field a negative test mode is intentionally breaking.",
+      "`aud` must exactly match the Authorization Server's issuer, and `resource` must match the MCP Server's resource identifier.",
+      "Use this step to confirm which field a test mode is intentionally breaking.",
     ],
   },
   jwt_bearer_request: {
-    title: "RFC 7523 JWT Bearer Request",
+    title: "Redeem the ID-JAG for an Access Token",
     summary:
-      "Submit the ID-JAG to the target authorization server token endpoint through the debugger proxy.",
+      "The Agent presents the ID-JAG to the MCP Server's Authorization Server, which validates it and returns an access token. (RFC 7523 JWT-bearer grant.)",
     phase: "jwt_bearer",
     teachableMoments: [
-      "Spec step 3: the resource authorization server validates the ID-JAG's `iss`, `aud`, and `resource` before minting an access token.",
-      "If this fails, check whether the server trusts the synthetic issuer JWKS and supports the JWT bearer grant.",
-      "On the wire this is `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` — match this against your authorization server's request logs.",
+      "XAA step 3: the Authorization Server checks the ID-JAG's `iss` (a trusted IdP?), `aud` (addressed to me?), and `resource` (the right MCP Server?) before issuing a token.",
+      "If this fails, check that the Authorization Server trusts the IdP's signing keys (its JWKS) and supports the JWT-bearer grant.",
+      "On the wire this is `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` — match it against your Authorization Server's request logs.",
     ],
   },
   received_access_token: {
     title: "Access Token Received",
-    summary: "Store the access token returned by the authorization server.",
+    summary:
+      "The Authorization Server accepted the ID-JAG and issued an access token for the MCP Server.",
     phase: "jwt_bearer",
     teachableMoments: [
-      "A successful response here proves the authorization server accepted the ID-JAG and policy checks passed.",
+      "Getting a token here proves the Authorization Server accepted the ID-JAG and its policy checks passed.",
     ],
   },
   authenticated_mcp_request: {
-    title: "Authenticated MCP Request",
-    summary: "Retry an MCP initialize request with the issued access token.",
+    title: "Call the MCP Server with the Token",
+    summary:
+      "The Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees.",
     phase: "mcp_request",
     teachableMoments: [
-      "Spec step 4: this closes the loop — the access token has to work on the real MCP server, not just the token endpoint.",
+      "XAA step 4: this closes the loop — the access token has to work on the real MCP Server, not just at the token endpoint.",
     ],
   },
   complete: {
     title: "Flow Complete",
-    summary: "The debugger completed the synthetic XAA flow end-to-end.",
+    summary:
+      "The MCP Server accepted the access token. The full cross-app flow worked end to end.",
     phase: "mcp_request",
     teachableMoments: [
-      "Switch negative test modes to probe specific authorization server validation paths.",
+      "Switch test modes to probe specific Authorization Server validation paths: wrong audience, bad signature, expired grant, and more.",
     ],
   },
 };
