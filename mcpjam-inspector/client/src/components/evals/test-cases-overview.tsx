@@ -501,7 +501,12 @@ export function TestCasesOverview({
 
             <div className="divide-y overflow-y-auto">
               {testCaseStats.length === 0 ? (
-                showDisconnectedPlaygroundEmptyState ? (
+                isGeneratingTestCases ? (
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 px-4 py-12 text-sm text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+                    <span>Generating test cases…</span>
+                  </div>
+                ) : showDisconnectedPlaygroundEmptyState ? (
                   <EmptyState
                     icon={Puzzle}
                     title={`Connect "${disconnectedPlaygroundServerName}" to generate tests`}
