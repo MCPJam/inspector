@@ -58,13 +58,24 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn().mockReturnValue("web"),
 }));
 
-// Stub the tool-quality lint subscription so it resolves to "pending"
-// (undefined) without a ConvexProvider in the test tree. Other convex/react
-// exports are preserved for any child that relies on them.
+// Route the tool-quality lint subscription through a spy so tests can assert
+// its args (snapshot vs "skip"). Resolves to "pending" (undefined) by default —
+// no ConvexProvider needed. Other convex/react exports are preserved.
+const { mockUseQuery, mockUseToolQualityEnabled } = vi.hoisted(() => ({
+  mockUseQuery: vi.fn((..._args: unknown[]) => undefined as unknown),
+  mockUseToolQualityEnabled: vi.fn(() => true),
+}));
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("convex/react")>();
-  return { ...actual, useQuery: () => undefined };
+  return { ...actual, useQuery: (...args: unknown[]) => mockUseQuery(...args) };
 });
+
+// Tool-quality rollout flag — on by default so existing tests are unaffected;
+// flipped per-test in the "tool-quality flag gate" suite below.
+vi.mock("@/hooks/useToolQualityEnabled", () => ({
+  TOOL_QUALITY_FEATURE_FLAG: "tool-quality-enabled",
+  useToolQualityEnabled: () => mockUseToolQualityEnabled(),
+}));
 
 // Mock task tracker
 vi.mock("@/lib/task-tracker", () => ({
@@ -100,6 +111,8 @@ describe("ToolsTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseToolQualityEnabled.mockReturnValue(true);
+    mockUseQuery.mockReturnValue(undefined);
     mockListTools.mockResolvedValue({ tools: [] });
     mockGetTaskCapabilities.mockResolvedValue({
       supportsToolCalls: false,
@@ -670,6 +683,66 @@ describe("ToolsTab", () => {
 
       // After clicking, saved tab should have active styling
       expect(savedTabButton.className).toContain("text-primary");
+    });
+  });
+
+  describe("tool-quality flag gate", () => {
+    const toolResponse = {
+      tools: [
+        {
+          name: "read-file",
+          description: "Read a file from disk",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    };
+
+    it("subscribes with a snapshot when the flag is on", async () => {
+      mockUseToolQualityEnabled.mockReturnValue(true);
+      mockListTools.mockResolvedValue(toolResponse);
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("read-file")).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(mockUseQuery).toHaveBeenCalledWith(
+          "toolPrechecks:get",
+          expect.objectContaining({
+            snapshot: expect.objectContaining({ servers: expect.any(Array) }),
+          })
+        );
+      });
+    });
+
+    it("skips the subscription (no snapshot) when the flag is off", async () => {
+      mockUseToolQualityEnabled.mockReturnValue(false);
+      mockListTools.mockResolvedValue(toolResponse);
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+
+      // Tools still load; only the lint subscription is gated.
+      await waitFor(() => {
+        expect(screen.getByText("read-file")).toBeInTheDocument();
+      });
+
+      expect(mockUseQuery).toHaveBeenCalledWith("toolPrechecks:get", "skip");
+      expect(mockUseQuery).not.toHaveBeenCalledWith(
+        "toolPrechecks:get",
+        expect.objectContaining({ snapshot: expect.anything() })
+      );
     });
   });
 });

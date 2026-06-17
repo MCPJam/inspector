@@ -48,6 +48,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { useQuery } from "convex/react";
 import { stripConvexReservedKeys } from "@/lib/convex-args";
+import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 
@@ -266,6 +267,10 @@ export function ToolsTab({
     void fetchTaskCapabilities();
   }, [serverConfig, serverName, isServerConnected]);
 
+  // Rollout gate (PostHog): only lint when the flag is on. Off ⇒ the snapshot
+  // stays null ⇒ the query below is skipped and no badges render.
+  const toolQualityEnabled = useToolQualityEnabled();
+
   // Live per-tool quality lint for the loaded tools. Pure backend compute over
   // a snapshot of the current tool definitions; the sidebar renders a small
   // badge per flagged tool. The snapshot carries no version (the backend owns
@@ -275,12 +280,13 @@ export function ToolsTab({
   // churning. Convex-reserved keys ($-/_-prefixed: JSON Schema's $ref/$defs/
   // $schema, MCP _meta) are stripped so the client can serialize the args at all.
   const toolQualitySnapshot = useMemo(() => {
+    if (!toolQualityEnabled || !serverName) return null;
     const toolList = Object.values(tools)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((tool) => stripConvexReservedKeys(tool));
-    if (!serverName || toolList.length === 0) return null;
+    if (toolList.length === 0) return null;
     return { servers: [{ serverId: serverName, tools: toolList }] };
-  }, [tools, serverName]);
+  }, [tools, serverName, toolQualityEnabled]);
 
   const toolQualityResult = useQuery(
     "toolPrechecks:get" as any,
