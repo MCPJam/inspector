@@ -130,6 +130,8 @@ describe("XAARunChips", () => {
 
     await user.hover(screen.getByTestId("xaa-run-chip-token_exchange_request"));
 
-    expect(screen.getByText("RFC 8693 Token Exchange")).toBeInTheDocument();
+    expect(
+      screen.getByText("Exchange the ID Token for an ID-JAG")
+    ).toBeInTheDocument();
   });
 });
