@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
+import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
@@ -18,7 +19,9 @@ interface XAAServerModalProps {
   onOpenChange: (open: boolean) => void;
   server?: ServerWithName;
   existingServerNames: string[];
-  onSave: (payload: { formData: ServerFormData }) => void;
+  // May be async. The modal stays open (preserving the entered values) if this
+  // rejects, so a downstream save failure never discards the form.
+  onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
 }
 
 // "keep" the saved secret untouched, "replace" it with a new value, or
@@ -48,6 +51,7 @@ export function XAAServerModal({
   const [secretInput, setSecretInput] = useState("");
   const [secretAction, setSecretAction] = useState<SecretAction>("keep");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -61,9 +65,10 @@ export function XAAServerModal({
     setSecretInput("");
     setSecretAction(hasSavedSecret ? "keep" : "replace");
     setError(null);
+    setSaving(false);
   }, [open, server, derived, hasSavedSecret]);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const trimmedName = serverName.trim();
@@ -146,8 +151,32 @@ export function XAAServerModal({
       xaaAuthzIssuer: trimmedIssuer,
     };
 
-    onSave({ formData });
-    onOpenChange(false);
+    // Final gate: the exact validator the save path runs. Any rule added there
+    // is enforced here too, so a new rule can never pass this form and then be
+    // rejected downstream — which would close the dialog and discard everything
+    // entered. The field-level messages above stay for nicer UX; this keeps the
+    // form and the save path in lockstep.
+    const validationError = validateServerFormData(formData);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    // Keep the modal open until the save resolves. If it throws, surface the
+    // reason inline and preserve every entered value instead of closing.
+    setSaving(true);
+    try {
+      await onSave({ formData });
+      onOpenChange(false);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Couldn't save this server. Your changes were kept — try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -303,10 +332,13 @@ export function XAAServerModal({
               type="button"
               variant="ghost"
               onClick={() => onOpenChange(false)}
+              disabled={saving}
             >
               Cancel
             </Button>
-            <Button type="submit">Save configuration</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save configuration"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -675,8 +675,11 @@ export function XAAFlowTab({
         onOpenChange={setIsServerModalOpen}
         server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
-        onSave={({ formData }) => {
-          void onSaveServerConfig?.(formData);
+        onSave={async ({ formData }) => {
+          // Await so the modal can keep itself open (and preserve the entered
+          // values) if the save rejects. Selection only follows a save that
+          // didn't throw.
+          await onSaveServerConfig?.(formData);
           onSelectServer?.(formData.name);
           // A bar server overrides any selected registration.
           setSelectedRegistrationId(null);

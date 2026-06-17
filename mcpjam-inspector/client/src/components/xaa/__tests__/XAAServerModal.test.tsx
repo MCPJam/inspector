@@ -161,4 +161,59 @@ describe("XAAServerModal", () => {
     expect(onSave).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
   });
+
+  it("stays open and preserves the entered values when the save rejects", async () => {
+    const user = userEvent.setup();
+    const onSave = vi
+      .fn()
+      .mockRejectedValue(new Error("Hosted mode requires HTTPS server URLs"));
+    const onOpenChange = vi.fn();
+    render(
+      <XAAServerModal
+        open
+        onOpenChange={onOpenChange}
+        existingServerNames={[]}
+        onSave={onSave}
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.type(screen.getByLabelText("Client Secret"), "super-secret");
+    await user.type(
+      screen.getByLabelText("Scopes"),
+      "read:tools read:resources",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // The modal surfaces the rejection inline and never closes.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Hosted mode requires HTTPS server URLs/i,
+    );
+
+    // Every entered value is still in the form, so there's nothing to re-type.
+    expect(screen.getByLabelText(/Server Name/)).toHaveValue("staging-mcp");
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://staging.mcp.example.com",
+    );
+    expect(screen.getByLabelText(/Client ID/)).toHaveValue("staging-client");
+    expect(screen.getByLabelText("Client Secret")).toHaveValue("super-secret");
+    expect(screen.getByLabelText("Scopes")).toHaveValue(
+      "read:tools read:resources",
+    );
+
+    // The submit button is interactive again for a retry.
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeEnabled();
+  });
 });

@@ -46,6 +46,7 @@ import {
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
@@ -1120,27 +1121,10 @@ export function useServerState({
     ]
   );
 
-  const validateForm = (formData: ServerFormData): string | null => {
-    if (formData.type === "stdio") {
-      if (!formData.command || formData.command.trim() === "") {
-        return "Command is required for STDIO connections";
-      }
-      return null;
-    }
-    if (!formData.url || formData.url.trim() === "") {
-      return "URL is required for HTTP connections";
-    }
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(formData.url);
-    } catch (err) {
-      return `Invalid URL format: ${formData.url} ${err}`;
-    }
-    if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
-      return "Hosted mode requires HTTPS server URLs";
-    }
-    return null;
-  };
+  // Shared with the forms that feed this save path (XAAServerModal, ...) so a
+  // form can never pass a config the save path would reject and lose the
+  // user's input. See lib/server-form-validation.
+  const validateForm = validateServerFormData;
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     const connectedNames = Object.entries(appState.servers)
