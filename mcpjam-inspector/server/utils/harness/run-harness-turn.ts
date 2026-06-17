@@ -142,6 +142,22 @@ function buildMcpJsonFromManager(
   };
 }
 
+/** The Claude Code harness serializes MCP tool-call arguments as a JSON STRING
+ *  (e.g. `'{"city":"NYC"}'`), but MCPJam's UI chunks, the onToolCall callback,
+ *  eval arg-matching, and MCP App widget capture all expect the structured
+ *  object. Parse a string input back to its object/array; fall back to the raw
+ *  value when it isn't JSON or doesn't decode to a structure (don't coerce a
+ *  bare string/number/bool, and pass already-structured inputs through). */
+function coerceToolInput(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -436,10 +452,11 @@ export async function runHarnessTurn(
               rawToolName,
               keyToServerId,
             );
-            const input =
+            const input = coerceToolInput(
               (part as { input?: unknown }).input ??
-              (part as { args?: unknown }).args ??
-              {};
+                (part as { args?: unknown }).args ??
+                {},
+            );
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
