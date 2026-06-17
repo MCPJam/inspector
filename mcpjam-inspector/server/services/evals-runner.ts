@@ -1753,14 +1753,19 @@ const runIterationWithAiSdk = async ({
     // Check if request was aborted
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] iteration aborted due to cancellation");
-      // Don't record anything for aborted iterations
+      // Don't record anything for aborted iterations; force passed:false so an
+      // all-pinned case (which evaluateMultiTurnResults scores passed:true with
+      // no calls) can't inflate the suite's passed count on abort.
       return {
-        evaluation: evaluateMultiTurnResults(
-          promptTurns,
-          toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions
-        ),
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions
+          ),
+          passed: false,
+        },
         iterationId: undefined,
       };
     }
@@ -2808,7 +2813,11 @@ export const runEvalSuiteWithAiSdk = async ({
         environment: config.environment,
       });
     const testPromises = tests.map((test) =>
-      test.caseType === "widget_probe"
+      // Cap concurrent headless browsers for every model-free render check
+      // (legacy widget_probe OR a unified case whose turns are all pinned),
+      // not just the legacy discriminator — otherwise a monitoring suite of
+      // new pinned-only cases launches one Chromium per case at once.
+      isPinnedOnly({ caseType: test.caseType, promptTurns: test.promptTurns })
         ? renderCheckLimit(() => runOne(test))
         : runOne(test)
     );
@@ -3782,13 +3791,18 @@ const streamIterationWithAiSdk = async ({
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
+      // Force passed:false (see the non-stream runner) so an all-pinned case
+      // can't score a pass on abort.
       return {
-        evaluation: evaluateMultiTurnResults(
-          promptTurns,
-          toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions
-        ),
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions
+          ),
+          passed: false,
+        },
         iterationId: undefined,
       };
     }

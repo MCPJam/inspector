@@ -407,13 +407,17 @@ export function assertBareRerunCasesRunnable(
         model?: string;
         provider?: string;
         caseType?: string;
+        promptTurns?: unknown;
       }>
     | null,
 ): void {
   const unrunnable = (cases ?? [])
     .filter(
       (c) =>
-        c.caseType !== "widget_probe" &&
+        // Model-free pinned cases (legacy widget_probe OR a unified case whose
+        // turns are all pinned) need no model and ARE runnable — don't flag
+        // them as unrunnable prompt cases.
+        !isPinnedOnly({ caseType: c.caseType, promptTurns: c.promptTurns }) &&
         !(c.models && c.models.length > 0) &&
         !(c.model && c.provider),
     )

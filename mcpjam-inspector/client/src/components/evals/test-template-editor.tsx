@@ -724,7 +724,10 @@ export function TestTemplateEditor({
   };
 
   const currentPromptTurns = useMemo(
-    () => (currentTestCase ? resolvePromptTurns(currentTestCase) : []),
+    // Match how editForm.promptTurns is seeded (legacy widget_probe → pinned
+    // turn) so a freshly-opened legacy render check doesn't read as dirty.
+    () =>
+      currentTestCase ? resolvePromptTurnsWithLegacyProbe(currentTestCase) : [],
     [currentTestCase]
   );
   const currentAdvancedConfig = useMemo(
@@ -835,7 +838,11 @@ export function TestTemplateEditor({
   ]);
 
   const runPrimaryDisabled =
-    (!casePinnedOnly && selectedModelValues.length === 0) ||
+    // A model-free render check has no editor quick-run path — it runs with the
+    // full suite (the compare path below would abort on "no model"). Disable
+    // Run for it with an explanatory tooltip instead of letting it fail.
+    casePinnedOnly ||
+    selectedModelValues.length === 0 ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid;
@@ -844,7 +851,10 @@ export function TestTemplateEditor({
     if (!runPrimaryDisabled) {
       return null;
     }
-    if (!casePinnedOnly && selectedModelValues.length === 0) {
+    if (casePinnedOnly) {
+      return "Render checks run with the full suite, not on their own.";
+    }
+    if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
     }
     if (!canRun) {
@@ -870,6 +880,7 @@ export function TestTemplateEditor({
     return "Run is unavailable for this test right now.";
   }, [
     runPrimaryDisabled,
+    casePinnedOnly,
     selectedModelValues.length,
     canRun,
     missingServers,
