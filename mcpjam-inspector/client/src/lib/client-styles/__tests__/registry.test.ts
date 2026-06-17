@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CHATGPT_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
   CODEX_HOST_STYLE,
@@ -18,13 +19,20 @@ import {
 } from "..";
 
 describe("host-styles registry", () => {
-  it("registers built-in mcpjam, claude, chatgpt, copilot, and codex hosts by id", () => {
+  it("registers built-in mcpjam, claude, claude-desktop, chatgpt, copilot, and codex hosts by id", () => {
     expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
+    expect(findHostStyle("claude-desktop")).toBe(CLAUDE_DESKTOP_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
     expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
+  });
+
+  it("uses the Claude Code thinking indicator for Claude Desktop", () => {
+    expect(CLAUDE_DESKTOP_HOST_STYLE.chatUi.loadingIndicator).toBe(
+      CLAUDE_CODE_HOST_STYLE.chatUi.loadingIndicator,
+    );
   });
 
   it("returns undefined for unknown ids", () => {
@@ -43,6 +51,7 @@ describe("host-styles registry", () => {
   it("recognises only registered ids via the type guard", () => {
     expect(isKnownHostStyleId("mcpjam")).toBe(true);
     expect(isKnownHostStyleId("claude")).toBe(true);
+    expect(isKnownHostStyleId("claude-desktop")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
@@ -56,6 +65,7 @@ describe("host-styles registry", () => {
     const ids = listHostStyles().map((host) => host.id);
     expect(ids).toContain("mcpjam");
     expect(ids).toContain("claude");
+    expect(ids).toContain("claude-desktop");
     expect(ids).toContain("chatgpt");
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
@@ -63,7 +73,12 @@ describe("host-styles registry", () => {
     // MCPJam ships first so the default-fallback host appears at the top
     // of pickers.
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
-    expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
+    expect(ids.indexOf("claude")).toBeLessThan(
+      ids.indexOf("claude-desktop"),
+    );
+    expect(ids.indexOf("claude-desktop")).toBeLessThan(
+      ids.indexOf("chatgpt"),
+    );
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
@@ -103,6 +118,15 @@ describe("host-styles registry", () => {
     // Identity equality no longer holds — buildHostCapabilities returns a
     // fresh object each call. Verify the derived blob's shape instead.
     expect(getHostCapabilitiesForStyle("claude")).toEqual({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+      downloadFile: {},
+    });
+    expect(getHostCapabilitiesForStyle("claude-desktop")).toEqual({
       openLinks: {},
       serverTools: {},
       serverResources: {},

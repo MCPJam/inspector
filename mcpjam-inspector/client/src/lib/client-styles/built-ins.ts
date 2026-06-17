@@ -254,6 +254,31 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+/**
+ * Claude Desktop is intentionally distinct from the generic Claude preset:
+ * the desktop app renders inline-only MCP Apps in an Electron iframe, while
+ * the web-flavored Claude preset keeps broader display-mode assumptions for
+ * historical host tests. The visual chrome is the same Claude family; the
+ * capability matrix clamps display modes to the captured desktop surface.
+ */
+export const CLAUDE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-desktop",
+  mcp: {
+    ...CLAUDE_HOST_STYLE.mcp,
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      availableDisplayModes: ["inline"],
+    },
+  },
+  chatUi: {
+    ...CLAUDE_HOST_STYLE.chatUi,
+    label: "Claude Desktop",
+    shortLabel: "Claude Desktop host",
+    pickerDescription: "Claude Desktop Electron app chrome",
+    loadingIndicator: ClaudeCodeCliIndicator,
+  },
+};
+
 // Claude Code is a terminal agent with no chat chrome of its own, so it
 // borrows Claude's desktop chat surface wholesale (style variables, fonts,
 // background, MCP profile) and only differs in brand identity: its own
@@ -588,6 +613,7 @@ export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
 export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   CHATGPT_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
