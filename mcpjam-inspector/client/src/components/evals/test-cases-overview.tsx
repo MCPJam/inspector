@@ -512,7 +512,7 @@ export function TestCasesOverview({
                 ) : showDisconnectedPlaygroundEmptyState ? (
                   <EmptyState
                     icon={Puzzle}
-                    title={`Connect "${disconnectedPlaygroundServerName}" to generate tests`}
+                    title={`Connect to "${disconnectedPlaygroundServerName}" server to generate tests`}
                     description="Playground can automatically generate test cases once a server is connected."
                     className="h-auto min-h-[240px]"
                   />
