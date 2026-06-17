@@ -25,10 +25,6 @@ vi.mock("../xaa/XAAServerModal", () => ({
   XAAServerModal: () => <div data-testid="xaa-server-modal" />,
 }));
 
-vi.mock("../xaa/XAASimulatedIdentity", () => ({
-  XAASimulatedIdentity: () => <div data-testid="xaa-simulated-identity" />,
-}));
-
 let resourceApps: unknown[] = [];
 vi.mock("@/hooks/useXaaResourceApps", () => ({
   useXaaResourceApps: () => ({
@@ -85,13 +81,36 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
     actions,
   }: {
     summary: { serverUrl?: string };
-    actions: { continueLabel: string };
+    actions: {
+      continueLabel: string;
+      continueDisabled?: boolean;
+      runAllDisabled?: boolean;
+      isRunningAll?: boolean;
+      onContinue?: () => void;
+      onRunAll?: () => void;
+    };
   }) => (
     <div data-testid="xaa-flow-logger">
       <span data-testid="logger-server-url">
         {summary.serverUrl || "No target configured"}
       </span>
       <span data-testid="logger-continue-label">{actions.continueLabel}</span>
+      <button
+        type="button"
+        data-testid="logger-run-all"
+        disabled={actions.runAllDisabled || !actions.onRunAll}
+        onClick={() => actions.onRunAll?.()}
+      >
+        Run all
+      </button>
+      <button
+        type="button"
+        data-testid="logger-continue"
+        disabled={actions.continueDisabled || !actions.onContinue}
+        onClick={() => actions.onContinue?.()}
+      >
+        {actions.continueLabel}
+      </button>
     </div>
   ),
 }));
@@ -179,28 +198,24 @@ describe("XAAFlowTab", () => {
     currentTarget = makeTarget();
   });
 
-  it("shows the not-testable state (named + badged) for a STDIO/non-OAuth server", () => {
-    currentTarget = makeTarget({
-      isTestable: false,
-      notTestableReason:
-        "This server can't be XAA-tested — it needs an HTTP URL and OAuth.",
-    });
+  it("shows the not-testable state naming the server, with a configure CTA", () => {
+    currentTarget = makeTarget({ isTestable: false });
 
     render(
       <XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />,
     );
 
     expect(screen.getByText(/Not XAA-compatible/i)).toBeInTheDocument();
+    // The card names the selected server and points at the config modal.
+    expect(screen.getByText("local-stdio")).toBeInTheDocument();
     expect(
       screen.getByText(/needs an HTTP URL and OAuth/i),
     ).toBeInTheDocument();
-    // The indicator names the selected server instead of lying "No server
-    // selected", and badges it as not testable.
-    expect(screen.getByText(/Target: local-stdio/)).toBeInTheDocument();
-    expect(screen.getByText(/not testable/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /run all/i }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: /configure server to test/i }),
+    ).toBeInTheDocument();
+    // No run controls (and no top-bar Run all) in the not-testable state.
+    expect(screen.queryByTestId("logger-run-all")).not.toBeInTheDocument();
   });
 
   it("'Back to start' clears the selection from the not-testable state", async () => {
@@ -391,12 +406,6 @@ describe("XAAFlowTab", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the source-badged indicator for a bar server", () => {
-    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
-    expect(screen.getByText(/Target: staging/)).toBeInTheDocument();
-    expect(screen.getByText(/from server/)).toBeInTheDocument();
-  });
-
   it("surfaces the registration override with a clear control", async () => {
     const user = userEvent.setup();
     resourceApps = [
@@ -428,8 +437,6 @@ describe("XAAFlowTab", () => {
     expect(
       screen.getByRole("button", { name: /use bar server/i }),
     ).toBeInTheDocument();
-    // The indicator badge reads "· registered app".
-    expect(screen.getByText(/· registered app/)).toBeInTheDocument();
   });
 
   it("xaa_flow_started carries a salted target_id (no raw name/url)", async () => {

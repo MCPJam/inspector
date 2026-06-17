@@ -9,6 +9,7 @@ import {
   Lightbulb,
   Loader2,
   Pencil,
+  Play,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -16,6 +17,12 @@ import {
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -62,9 +69,14 @@ interface XAAFlowLoggerProps {
     onConfigure: () => void;
     onReset?: () => void;
     onContinue?: () => void;
+    /** Run the whole flow — surfaced in the Continue split-button's menu. */
+    onRunAll?: () => void;
     onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
     continueLabel: string;
     continueDisabled?: boolean;
+    runAllDisabled?: boolean;
+    /** A Run all is in flight; the primary button shows a spinner. */
+    isRunningAll?: boolean;
     resetDisabled?: boolean;
   };
   summary: {
@@ -597,14 +609,50 @@ export function XAAFlowLogger({
                 <RotateCcw className="h-3 w-3 mr-1" />
                 Reset
               </Button>
-              <Button
-                size="sm"
-                onClick={actions.onContinue}
-                disabled={actions.continueDisabled || !actions.onContinue}
-                className="h-7"
-              >
-                {actions.continueLabel}
-              </Button>
+              <div className="flex items-stretch">
+                <Button
+                  size="sm"
+                  onClick={actions.onContinue}
+                  disabled={
+                    actions.continueDisabled ||
+                    !actions.onContinue ||
+                    actions.isRunningAll
+                  }
+                  className={cn("h-7", actions.onRunAll && "rounded-r-none")}
+                >
+                  {actions.isRunningAll ? (
+                    <>
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      Running
+                    </>
+                  ) : (
+                    actions.continueLabel
+                  )}
+                </Button>
+                {actions.onRunAll && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        aria-label="More run options"
+                        disabled={actions.isRunningAll}
+                        className="h-7 rounded-l-none border-l border-primary-foreground/25 px-1.5"
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={actions.onRunAll}
+                        disabled={actions.runAllDisabled}
+                      >
+                        <Play className="mr-2 h-3.5 w-3.5" />
+                        Run all
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
             </div>
           )}
         </div>
