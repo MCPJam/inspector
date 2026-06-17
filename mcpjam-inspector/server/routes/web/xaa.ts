@@ -1,6 +1,9 @@
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
-import { fetchXaaResourceAppSecret } from "../../utils/server-secrets.js";
+import {
+  fetchServerClientSecret,
+  fetchXaaResourceAppSecret,
+} from "../../utils/server-secrets.js";
 import { createXaaRouter } from "../mcp/xaa.js";
 
 const xaaWeb = createXaaRouter({
@@ -9,6 +12,7 @@ const xaaWeb = createXaaRouter({
   trustForwardedHeaders: true,
   protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
   resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
+  resolveServerSecret: (args) => fetchServerClientSecret(args),
 });
 
 export default xaaWeb;
