@@ -2955,7 +2955,19 @@ export default function App() {
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
-          onConnect: handleConnect,
+          // XAA targets are saved server configs, never live connections.
+          // Adding one from the header picker must NOT launch a browser OAuth
+          // flow (handleConnect does a full-page redirect to the auth server,
+          // which strands the user on an error page when the client isn't
+          // registered). Save without connecting, then select it as the target.
+          onConnect:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? async (formData) => {
+                  await saveServerConfigWithoutConnecting(formData);
+                  const name = formData.name?.trim();
+                  if (name) setSelectedServer(name);
+                }
+              : handleConnect,
           onReconnect: handleReconnect,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,

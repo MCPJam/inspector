@@ -34,7 +34,7 @@ export function XAASimulatedIdentity({
           aria-label="Edit simulated identity"
         >
           <User className="h-3.5 w-3.5" />
-          {iconOnly ? null : <span className="ml-1.5">Identity</span>}
+          {iconOnly ? null : <span>Identity</span>}
           {!isDefaultIdentity ? (
             <span
               className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary"
