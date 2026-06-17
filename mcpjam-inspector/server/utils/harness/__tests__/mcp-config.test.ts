@@ -3,6 +3,8 @@ import type { MCPServerConfig } from "@mcpjam/sdk";
 import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
+  harnessServerKeyToName,
+  parseHarnessToolName,
   serializeHarnessMcpJson,
   HarnessMcpConfigError,
 } from "../mcp-config.js";
@@ -131,5 +133,56 @@ describe("serializeHarnessMcpJson", () => {
       { name: "w", transport: "http", url: "https://x" },
     ]);
     expect(JSON.parse(serializeHarnessMcpJson(json))).toEqual(json);
+  });
+});
+
+describe("harnessServerKeyToName", () => {
+  it("maps sanitized keys back to original input names (deduped)", () => {
+    const map = harnessServerKeyToName([
+      { name: "My Server!", transport: "http", url: "https://a" },
+      { name: "My/Server?", transport: "http", url: "https://b" },
+    ]);
+    expect(map).toEqual({
+      My_Server: "My Server!",
+      My_Server_2: "My/Server?",
+    });
+  });
+
+  it("uses the same keys buildHarnessMcpJson produces", () => {
+    const servers = [
+      { name: "alpha", transport: "http" as const, url: "https://a" },
+      { name: "beta", transport: "http" as const, url: "https://b" },
+    ];
+    expect(Object.keys(harnessServerKeyToName(servers)).sort()).toEqual(
+      Object.keys(buildHarnessMcpJson(servers).mcpServers).sort(),
+    );
+  });
+});
+
+describe("parseHarnessToolName", () => {
+  const map = { weather: "srv_weather", My_Server_2: "srv-id-2" };
+
+  it("splits mcp__<server>__<tool> into serverId + un-namespaced tool", () => {
+    expect(parseHarnessToolName("mcp__weather__get_forecast", map)).toEqual({
+      serverId: "srv_weather",
+      toolName: "get_forecast",
+    });
+  });
+
+  it("delimits on the first '__' (sanitized keys never contain one)", () => {
+    expect(parseHarnessToolName("mcp__My_Server_2__do__thing", map)).toEqual({
+      serverId: "srv-id-2",
+      toolName: "do__thing",
+    });
+  });
+
+  it("returns native (un-prefixed) tool names unchanged, no serverId", () => {
+    expect(parseHarnessToolName("Bash", map)).toEqual({ toolName: "Bash" });
+  });
+
+  it("returns the raw name when the server key is unknown", () => {
+    expect(parseHarnessToolName("mcp__unknown__tool", map)).toEqual({
+      toolName: "mcp__unknown__tool",
+    });
   });
 });

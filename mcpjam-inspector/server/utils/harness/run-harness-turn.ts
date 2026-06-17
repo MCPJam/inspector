@@ -39,11 +39,14 @@ import type {
   MCPJamHandlerOptions,
 } from "../mcpjam-stream-handler.js";
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
+  harnessServerKeyToName,
+  parseHarnessToolName,
   serializeHarnessMcpJson,
   type HarnessMcpServerInput,
 } from "./mcp-config.js";
@@ -130,7 +133,13 @@ function buildMcpJsonFromManager(
     const tunnelUrl = tunnelManager.getServerTunnelUrl(id);
     inputs.push(harnessServerInputFromConfig(id, config, { tunnelUrl }));
   }
-  return buildHarnessMcpJson(inputs);
+  return {
+    mcpJson: buildHarnessMcpJson(inputs),
+    // Sanitized .mcp.json key → serverId, so Claude Code's mcp__<key>__<tool>
+    // tool names map back to a serverId for eval matching / spans / MCP App
+    // rendering (which all key off serverId + the un-namespaced tool name).
+    keyToServerId: harnessServerKeyToName(inputs),
+  };
 }
 
 export async function runHarnessTurn(
@@ -151,6 +160,7 @@ export async function runHarnessTurn(
     onStreamWriterReady,
     onToolCall,
     onToolResult,
+    onStepFinish,
     onEngineError,
     onLiveTextDelta,
     requireToolApproval,
@@ -166,6 +176,9 @@ export async function runHarnessTurn(
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
   let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
+  // sibling closure) can read them into PersistedTurnTrace.spans.
+  const capturedSpans: EvalTraceSpan[] = [];
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -229,7 +242,7 @@ export async function runHarnessTurn(
       // own discovery. Re-applying the emulation would double it, defeat the
       // "observe the real runtime" purpose, and isn't expressible anyway —
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
-      const mcpJson = buildMcpJsonFromManager(
+      const { mcpJson, keyToServerId } = buildMcpJsonFromManager(
         mcpClientManager,
         selectedServers ?? [],
       );
@@ -332,6 +345,28 @@ export async function runHarnessTurn(
           }
           pendingResults.length = 0;
         };
+        // Step + tool-identity tracking. A "step" spans assistant content + its
+        // tool results; the next assistant content after results begins the next
+        // step. finishStep emits the emulated engine's onStepFinish contract
+        // (eval's stream runner turns it into a `step_finish` SSE snapshot).
+        let stepIndex = 0;
+        const toolMeta = new Map<
+          string,
+          { serverId?: string; toolName: string }
+        >();
+        const toolStartMs = new Map<string, number>();
+        const finishStep = () => {
+          onStepFinish?.({
+            stepIndex,
+            promptIndex: 0,
+            // Usage is only known at the harness `finish`, so intermediate steps
+            // carry what's settled (matches the engine's cumulative semantics).
+            ...(usage ? { turnUsage: usage } : {}),
+            settledWithError: false,
+            turnSpans: [...capturedSpans],
+          });
+          stepIndex += 1;
+        };
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
@@ -348,7 +383,10 @@ export async function runHarnessTurn(
             );
             if (!delta) continue;
             // Assistant text after tool results begins the next step.
-            if (pendingResults.length > 0) flushSegment();
+            if (pendingResults.length > 0) {
+              flushSegment();
+              finishStep();
+            }
             if (textId === undefined) {
               textId = crypto.randomUUID();
               writer.write({ type: "text-start", id: textId });
@@ -365,7 +403,10 @@ export async function runHarnessTurn(
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
-            if (pendingResults.length > 0) flushSegment();
+            if (pendingResults.length > 0) {
+              flushSegment();
+              finishStep();
+            }
             // Flush any open text block before the tool so the UI stream stays
             // balanced (matches the emulated engine's flush-before-tool order);
             // later text opens a fresh block with a new id.
@@ -376,13 +417,27 @@ export async function runHarnessTurn(
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? crypto.randomUUID(),
             );
-            const toolName = String(
+            const rawToolName = String(
               (part as { toolName?: unknown }).toolName ?? "tool",
+            );
+            // Claude Code namespaces MCP tools as mcp__<server>__<tool>; map back
+            // to { serverId, un-namespaced toolName } so the UI chunks, engine
+            // callbacks, and persisted transcript carry MCPJam tool identity
+            // (eval matching + MCP App rendering key off it). Native harness
+            // tools (Bash, Read, …) have no prefix → serverId stays undefined.
+            const { serverId, toolName } = parseHarnessToolName(
+              rawToolName,
+              keyToServerId,
             );
             const input =
               (part as { input?: unknown }).input ??
               (part as { args?: unknown }).args ??
               {};
+            toolMeta.set(toolCallId, {
+              ...(serverId ? { serverId } : {}),
+              toolName,
+            });
+            toolStartMs.set(toolCallId, Date.now());
             writer.write({
               type: "tool-input-available",
               toolCallId,
@@ -393,9 +448,9 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
-              stepIndex: 0,
+              stepIndex,
               promptIndex: 0,
-              serverId: undefined,
+              serverId,
             });
             assistantParts.push({ type: "tool-call", toolCallId, toolName, input });
           } else if (
@@ -413,19 +468,42 @@ export async function runHarnessTurn(
             const isError =
               (part as { isError?: unknown }).isError === true ||
               (part as { error?: unknown }).error != null;
+            // Reuse the identity resolved at tool-call time (the result part may
+            // omit the name); fall back to parsing the result's own toolName.
+            const meta =
+              toolMeta.get(toolCallId) ??
+              parseHarnessToolName(
+                String((part as { toolName?: unknown }).toolName ?? "tool"),
+                keyToServerId,
+              );
             writer.write({ type: "tool-output-available", toolCallId, output });
             await onToolResult?.({
               toolCallId,
-              toolName: (part as { toolName?: string }).toolName,
+              toolName: meta.toolName,
               output,
               isError,
-              stepIndex: 0,
+              stepIndex,
               promptIndex: 0,
-              serverId: undefined,
+              serverId: meta.serverId,
+            });
+            // Record a tool span for the turn trace (cumulative; snapshotted into
+            // each onStepFinish and the final PersistedTurnTrace.spans).
+            capturedSpans.push({
+              id: crypto.randomUUID(),
+              name: meta.toolName,
+              category: "tool",
+              startMs: toolStartMs.get(toolCallId) ?? Date.now(),
+              endMs: Date.now(),
+              promptIndex: 0,
+              stepIndex,
+              status: isError ? "error" : "ok",
+              toolCallId,
+              toolName: meta.toolName,
+              ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
             pendingResults.push({
               toolCallId,
-              toolName: (part as { toolName?: string }).toolName,
+              toolName: meta.toolName,
               output,
               isError,
             });
@@ -466,6 +544,8 @@ export async function runHarnessTurn(
         // steps were flushed as new assistant content arrived after results, so
         // the persisted history preserves assistant → tool → assistant ordering.
         flushSegment();
+        // Final step settles now that usage is known from the finish part.
+        finishStep();
         writer.write({
           type: "finish",
           finishReason: turnFinishReason,
@@ -504,7 +584,7 @@ export async function runHarnessTurn(
         promptIndex: 0,
         startedAt: turnStartedAt,
         endedAt: Date.now(),
-        spans: [],
+        spans: [...capturedSpans],
         ...(usage ? { usage } : {}),
         finishReason: turnFinishReason,
         modelId,

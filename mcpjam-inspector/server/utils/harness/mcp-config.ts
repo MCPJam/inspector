@@ -129,21 +129,34 @@ export function harnessServerInputFromConfig(
   return { name, transport: "stdio", tunnelUrl: opts.tunnelUrl };
 }
 
-/** Build the `.mcp.json` object from normalized inputs. Names are sanitized and
- *  de-duplicated so distinct servers never collide on a key. */
-export function buildHarnessMcpJson(
+/** Assign each server its sanitized, de-duplicated `.mcp.json` key, preserving
+ *  input order. Shared by buildHarnessMcpJson and harnessServerKeyToName so the
+ *  keys — and thus Claude Code's `mcp__<key>__<tool>` names — can't drift. */
+function assignServerKeys(
   servers: HarnessMcpServerInput[],
-): HarnessMcpJson {
-  const mcpServers: Record<string, HarnessMcpHttpEntry> = {};
+): Array<{ key: string; server: HarnessMcpServerInput }> {
   const used = new Set<string>();
-  for (const s of servers) {
-    let key = sanitizeServerName(s.name);
+  const out: Array<{ key: string; server: HarnessMcpServerInput }> = [];
+  for (const server of servers) {
+    let key = sanitizeServerName(server.name);
     if (used.has(key)) {
       let i = 2;
       while (used.has(`${key}_${i}`)) i++;
       key = `${key}_${i}`;
     }
     used.add(key);
+    out.push({ key, server });
+  }
+  return out;
+}
+
+/** Build the `.mcp.json` object from normalized inputs. Names are sanitized and
+ *  de-duplicated so distinct servers never collide on a key. */
+export function buildHarnessMcpJson(
+  servers: HarnessMcpServerInput[],
+): HarnessMcpJson {
+  const mcpServers: Record<string, HarnessMcpHttpEntry> = {};
+  for (const { key, server: s } of assignServerKeys(servers)) {
     const url = s.transport === "http" ? s.url : s.tunnelUrl;
     const entry: HarnessMcpHttpEntry = { type: "http", url };
     if (s.headers && Object.keys(s.headers).length > 0) {
@@ -152,6 +165,38 @@ export function buildHarnessMcpJson(
     mcpServers[key] = entry;
   }
   return { mcpServers };
+}
+
+/** Map each sanitized `.mcp.json` key → the input's original name (the MCPJam
+ *  serverId), using the SAME sanitize+dedup as buildHarnessMcpJson. Lets the
+ *  turn runner map Claude Code's `mcp__<key>__<tool>` tool names back to the
+ *  originating serverId (eval tool matching, trace spans, MCP App rendering). */
+export function harnessServerKeyToName(
+  servers: HarnessMcpServerInput[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const { key, server } of assignServerKeys(servers)) {
+    out[key] = server.name;
+  }
+  return out;
+}
+
+/** Parse a Claude Code tool name into `{ serverId?, toolName }`. MCP tools are
+ *  namespaced `mcp__<server>__<tool>`; native harness tools (Bash, Read, Edit,
+ *  …) have no prefix. Returns the un-namespaced tool name (what the emulated
+ *  engine + eval matching expect) plus the originating serverId when resolvable.
+ *  A namespaced name whose key isn't in `keyToServerId` is returned verbatim —
+ *  don't fabricate an attribution we can't make. */
+export function parseHarnessToolName(
+  rawToolName: string,
+  keyToServerId: Record<string, string>,
+): { serverId?: string; toolName: string } {
+  const match = /^mcp__(.+?)__(.+)$/.exec(rawToolName);
+  if (!match) return { toolName: rawToolName };
+  const key = match[1]!;
+  const tool = match[2]!;
+  const serverId = keyToServerId[key];
+  return serverId ? { serverId, toolName: tool } : { toolName: rawToolName };
 }
 
 /** Serialize to the JSON the harness writes into the sandbox workdir. */
