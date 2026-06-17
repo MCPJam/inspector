@@ -21,12 +21,27 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Configure Target** - Click **Configure Server** to open the server modal. Provide your MCP server URL and authorization server details. You can also set the simulated identity (subject and email) here — see [Simulated identity](#simulated-identity) below.
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Run Controls
+
+The logger panel shows a **Continue** split button at the bottom right:
+
+- **Continue** (primary) — advances the flow one step at a time.
+- **▾ menu → Run all** — runs every remaining step automatically without pausing.
+
+While a "Run all" is in progress the primary button shows a spinner and is disabled until the run completes or fails.
+
+## Simulated Identity
+
+The MCPJam IdP mints a mock ID token for a simulated user before the flow runs. You can customise the subject (`sub`) and email for that user inside the **Configure Server** modal, under the **Simulated identity** section.
+
+The identity applies to every server you test — not just the one currently open in the modal. Changes take effect immediately and are reflected in the next run without needing to save the server configuration.
 
 ## Authorization Server Compatibility
 
