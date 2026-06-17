@@ -299,6 +299,15 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  // The simulated identity the flow was last (re)built with. Tracked so an
+  // identity edit rebuilds the flow (clearing the already-minted ID token /
+  // ID-JAG that carry the old sub) — without that, advancing step-by-step
+  // keeps sending the stale subject. Seeded from the initial identity so no
+  // spurious reset fires on mount.
+  const lastAppliedIdentity = useRef({
+    userId: runSettings.userId,
+    email: runSettings.email,
+  });
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
     negativeTestMode: NegativeTestMode;
@@ -308,6 +317,12 @@ export function XAAFlowTab({
     (nextTargetKey: string, nextMode: NegativeTestMode) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
+      // A target rebuild already bakes in the current identity, so keep the
+      // identity tracker in sync to avoid a redundant follow-up reset.
+      lastAppliedIdentity.current = {
+        userId: runInput.userId,
+        email: runInput.email,
+      };
       applyFlowState(buildFlowStateFromInput(runInput));
       setFocusedStep(null);
     },
@@ -333,6 +348,29 @@ export function XAAFlowTab({
     }
     applyTargetReset(targetKey, nextMode);
   }, [targetKey, runSettings.negativeTestMode, applyTargetReset]);
+
+  // Identity edits rebuild the flow so the next run mints tokens for the new
+  // sub/email. Unlike target/mode (which change discretely), the identity
+  // inputs fire on every keystroke, so the rebuild is debounced — typing
+  // "john" resets once, not four times. No confirm dialog: editing the
+  // identity is a deliberate "test as someone else", and the chips clearing is
+  // the feedback. The live-read in the auth step covers the debounce window.
+  useEffect(() => {
+    const nextUserId = runSettings.userId;
+    const nextEmail = runSettings.email;
+    if (
+      lastAppliedIdentity.current.userId === nextUserId &&
+      lastAppliedIdentity.current.email === nextEmail
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      lastAppliedIdentity.current = { userId: nextUserId, email: nextEmail };
+      applyFlowState(buildFlowStateFromInput(runInput));
+      setFocusedStep(null);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [runSettings.userId, runSettings.email, runInput, applyFlowState]);
 
   useEffect(() => {
     setFocusedStep(null);
