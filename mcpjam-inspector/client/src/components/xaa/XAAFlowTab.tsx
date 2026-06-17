@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
-import { Loader2, Play } from "lucide-react";
+import { Loader2, Play, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   AlertDialog,
@@ -476,10 +476,14 @@ export function XAAFlowTab({
 
   const targetName = selectedRegistration
     ? selectedRegistration.name
-    : isTestable
+    : selectedServerName !== "none"
     ? selectedServerName
     : "";
-  const targetBadge = selectedRegistration ? "registered app" : "from server";
+  const targetBadge = selectedRegistration
+    ? "registered app"
+    : isTestable
+    ? "from server"
+    : "not testable";
 
   // Announce only the resolved target NAME (not badge flips), debounced so a
   // quick succession of switches doesn't spam the live region.
@@ -566,19 +570,32 @@ export function XAAFlowTab({
       <div className="flex-1 overflow-hidden">
         {showNotTestable ? (
           <div className="flex h-full items-center justify-center p-6">
-            <div className="max-w-md space-y-4 rounded-lg border border-dashed border-border p-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                This server can't be XAA-tested — it needs an HTTP URL and
-                OAuth.
+            <div className="max-w-md rounded-lg border border-border bg-background p-8 text-center shadow-lg">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                <ShieldAlert className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="mb-2 text-lg font-semibold">Not XAA-compatible</h3>
+              <p className="mb-6 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {selectedServerName}
+                </span>{" "}
+                needs an HTTP URL and OAuth to run the cross-app access flow.
               </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setIsServerModalOpen(true)}
-              >
-                Configure Server to Test
-              </Button>
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  onClick={() => setIsServerModalOpen(true)}
+                >
+                  Configure Server to Test
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => onSelectServer?.("none")}
+                >
+                  Back to start
+                </Button>
+              </div>
             </div>
           </div>
         ) : (

@@ -152,7 +152,7 @@ describe("XAAFlowTab", () => {
     currentTarget = makeTarget();
   });
 
-  it("shows the not-testable state for a selected STDIO/non-OAuth server", () => {
+  it("shows the not-testable state (named + badged) for a STDIO/non-OAuth server", () => {
     currentTarget = makeTarget({
       isTestable: false,
       notTestableReason:
@@ -163,12 +163,34 @@ describe("XAAFlowTab", () => {
       <XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />,
     );
 
+    expect(screen.getByText(/Not XAA-compatible/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/can't be XAA-tested/i),
+      screen.getByText(/needs an HTTP URL and OAuth/i),
     ).toBeInTheDocument();
+    // The indicator names the selected server instead of lying "No server
+    // selected", and badges it as not testable.
+    expect(screen.getByText(/Target: local-stdio/)).toBeInTheDocument();
+    expect(screen.getByText(/not testable/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /run all/i }),
     ).toBeDisabled();
+  });
+
+  it("'Back to start' clears the selection from the not-testable state", async () => {
+    const user = userEvent.setup();
+    const onSelectServer = vi.fn();
+    currentTarget = makeTarget({ isTestable: false });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="local-stdio"
+        onSelectServer={onSelectServer}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /back to start/i }));
+    expect(onSelectServer).toHaveBeenCalledWith("none");
   });
 
   it("fires xaa_tab_viewed once per mount with a target_count", () => {
