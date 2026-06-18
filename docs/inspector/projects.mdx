@@ -109,6 +109,14 @@ Editing the default host config does **not** change existing chatboxes or eval s
 
 The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
 
+#### Personal computer
+
+When your deployment exposes computer-backed tools (such as **Bash**), a **Personal computer** toggle appears in the built-in tools section of the host config editor. Turning it on attaches a per-member cloud workstation — a persistent Linux sandbox — to the host.
+
+- **Computer-backed tools are disabled until a computer is attached.** The checkbox for tools like Bash is greyed out with a hint ("Requires a personal computer") until you turn the toggle on.
+- **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
+- The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
+
 ## What's Next
 
 - **[Servers](/inspector/connecting-servers)** - Configure MCP servers to add to your projects
