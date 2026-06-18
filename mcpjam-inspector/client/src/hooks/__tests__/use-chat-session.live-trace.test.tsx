@@ -119,6 +119,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
+  // useChatSession reads the credit balance (to lock free models at 0
+  // credits); no balance in these tests → outOfCredits resolves false.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@ai-sdk/react", () => ({

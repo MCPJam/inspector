@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAvailableModelsFromOrgConfig,
+  buildModelMenuGroups,
   isOrgProviderAvailable,
 } from "../model-helpers";
 
@@ -77,5 +78,31 @@ describe("org model helpers", () => {
         (m) => m.provider === "bedrock"
       )
     ).toBe(false);
+  });
+
+  it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {
+    const groups = buildModelMenuGroups([
+      {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini (Free)",
+        provider: "openai",
+      },
+      {
+        id: "openai/gpt-5-mini",
+        name: "openai/gpt-5-mini",
+        provider: "openrouter",
+      },
+    ]);
+
+    expect(groups).toEqual([
+      expect.objectContaining({
+        provider: "openai",
+        providerType: "provided",
+      }),
+      expect.objectContaining({
+        provider: "openrouter",
+        providerType: "configured",
+      }),
+    ]);
   });
 });

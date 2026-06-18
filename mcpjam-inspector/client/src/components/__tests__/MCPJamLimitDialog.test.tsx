@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
 const authState: { isLoading: boolean; user: { id: string } | null } = {
@@ -57,11 +58,14 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     authStatus: "loading",
     hasPendingLimit: false,
+    outOfCreditsHit: false,
+    outOfCreditsOrganizationId: null,
     isOpen: false,
     intent: null,
     organizationId: null,
     pendingInput: null,
   });
+  useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
 });
 
 afterEach(() => {
@@ -152,19 +156,26 @@ describe("MCPJamLimitDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("redirects to the org models page on BYOK click", async () => {
+  it("opens the model picker's Your providers tab on BYOK click (no org redirect)", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    const nonceBefore =
+      useModelPickerIntentStore.getState().openProvidersTabNonce;
     render(<MCPJamLimitDialog />);
 
     await user.click(
       screen.getByRole("button", { name: /bring your own key/i })
     );
 
+    // Closes the dialog and asks the picker to open its "Your providers" tab —
+    // it must NOT navigate to the org models settings page.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(window.location.pathname).toBe("/organizations/org-active/models");
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      nonceBefore + 1
+    );
+    expect(window.location.pathname).not.toContain("/models");
   });
 
   it("redirects to the active org's billing page with the topup flag on CTA click", async () => {

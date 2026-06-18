@@ -51,8 +51,10 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   GUEST_LOCKED_MODEL_REASON,
+  OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
+import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
@@ -1291,6 +1293,7 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (chatbox embeds resolve a host-provided project context).
+  const outOfCredits = useOutOfCredits();
   const availableModels = useMemo(
     () =>
       composeAvailableModels({
@@ -1302,6 +1305,7 @@ export function useChatSession(
         getOpenRouterSelectedModels,
         getAzureBaseUrl,
         customProviders,
+        outOfCredits,
       }),
     [
       hasToken,
@@ -1312,6 +1316,7 @@ export function useChatSession(
       isAuthenticated,
       customProviders,
       hostedOrgModelConfig,
+      outOfCredits,
     ]
   );
 
@@ -1348,7 +1353,14 @@ export function useChatSession(
 
       return (
         availableModels.find(
-          (model) => String(model.id) === modelId && !model.disabled
+          (model) =>
+            String(model.id) === modelId &&
+            // Keep an out-of-credits model selected so the existing send →
+            // limit-error → out-of-credits modal still fires. The gray-out
+            // must not silently switch the user off it. Other locks (guest,
+            // ollama-no-tools) stay unselectable.
+            (!model.disabled ||
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
         ) ?? null
       );
     };

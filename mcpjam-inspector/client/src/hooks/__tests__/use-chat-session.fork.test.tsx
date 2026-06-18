@@ -115,6 +115,9 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  // useChatSession reads the credit balance (to lock free models at 0
+  // credits); no balance in these tests → outOfCredits resolves false.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@ai-sdk/react", async () => {
