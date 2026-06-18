@@ -696,11 +696,13 @@ export function registerEvalCommands(program: Command): void {
       ] as const) {
         const raw = options[key];
         if (raw !== undefined) {
-          const parsed = Number.parseInt(raw, 10);
-          if (!Number.isFinite(parsed)) {
+          // Number() (not parseInt) so partial junk like "2abc" is rejected
+          // rather than silently truncated to 2.
+          const parsed = Number(raw);
+          if (!Number.isInteger(parsed)) {
             const flag = key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
             throw usageError(
-              `--${flag} requires a numeric value, got "${raw}".`
+              `--${flag} requires an integer value, got "${raw}".`
             );
           }
           caseMix[key] = parsed;

@@ -2114,22 +2114,30 @@ evals.post(
       { serverNames }
     );
 
+    // An empty `caseMix: {}` is treated as absent — same as backend #589, which
+    // ignores a bucketless mix. Without this, `{}` (truthy) would supersede
+    // `mode` here while the backend falls back to the default plan, so e.g.
+    // `{ mode: "negative", caseMix: {} }` would silently become normal
+    // generation.
+    const hasCaseMix =
+      !!body.caseMix &&
+      Object.values(body.caseMix).some((v) => typeof v === "number");
     const generationOptions =
-      body.caseMix || body.varyUserStyles
+      hasCaseMix || body.varyUserStyles
         ? {
-            ...(body.caseMix ? { caseMix: body.caseMix } : {}),
+            ...(hasCaseMix ? { caseMix: body.caseMix } : {}),
             ...(body.varyUserStyles ? { varyUserStyles: true } : {}),
           }
         : undefined;
 
-    // caseMix supersedes mode: an explicit caseMix routes through the
+    // caseMix supersedes mode: a non-empty caseMix routes through the
     // plan-driven generator (which expresses negative-only via its `negative`
     // bucket and forwards generationOptions) and returns per-case
     // `isNegativeTest` flags. The legacy negative-only path — which forces every
-    // draft negative — is used only when mode is "negative" AND no caseMix was
-    // given. This same flag gates persistence/counting below so a
+    // draft negative — is used only when mode is "negative" AND no real caseMix
+    // was given. This same flag gates persistence/counting below so a
     // `mode: "negative"` + caseMix request doesn't mislabel its positive cases.
-    const legacyNegativeOnly = mode === "negative" && !body.caseMix;
+    const legacyNegativeOnly = mode === "negative" && !hasCaseMix;
 
     let drafts: any[];
     try {
