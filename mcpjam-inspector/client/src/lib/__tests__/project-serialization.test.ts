@@ -178,9 +178,23 @@ describe("project-serialization xaaAuthzIssuer round-trip", () => {
   });
 
   it("treats an xaaAuthzIssuer change as a difference to resync", () => {
-    const local = makeOAuthHttpServer("read", {
-      xaaAuthzIssuer: "https://issuer.test",
-    });
+    // No oauthFlowProfile on either side, so the only thing that can differ
+    // is the issuer — otherwise the assertions could pass on an unrelated
+    // OAuth-profile mismatch and never exercise the issuer comparison.
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+        xaaAuthzIssuer: "https://issuer.test",
+      } as ServerWithName,
+    };
+
+    // Same issuer (otherwise identical) → no resync.
     expect(
       serversHaveChanged(local, [
         {
@@ -188,8 +202,19 @@ describe("project-serialization xaaAuthzIssuer round-trip", () => {
           enabled: true,
           useOAuth: true,
           url: "https://example.test/mcp",
-          clientId: "client-1",
-          oauthScopes: ["read"],
+          xaaAuthzIssuer: "https://issuer.test",
+        },
+      ])
+    ).toBe(false);
+
+    // Only the issuer differs → resync.
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
           xaaAuthzIssuer: "https://different.test",
         },
       ])
