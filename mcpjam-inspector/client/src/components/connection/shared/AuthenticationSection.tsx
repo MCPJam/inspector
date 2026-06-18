@@ -22,7 +22,7 @@ import type {
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
-import { fetchHostedOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
@@ -135,7 +135,7 @@ export function AuthenticationSection({
     setIsRevealingClientSecret(true);
     setRevealError(null);
     try {
-      const result = await fetchHostedOAuthClientSecret({
+      const result = await fetchOAuthClientSecret({
         projectId,
         serverId: hostedServerId,
       });
