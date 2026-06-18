@@ -3,6 +3,7 @@ import {
   serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
+  deserializeServersFromConvex,
 } from "../project-serialization";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -145,5 +146,53 @@ describe("serversHaveChanged redacted secrets", () => {
         },
       ])
     ).toBe(false);
+  });
+});
+
+describe("project-serialization xaaAuthzIssuer round-trip", () => {
+  // The XAA "Configure Server to Test" modal reads the Authorization Server
+  // Issuer from server.xaaAuthzIssuer. If serialize/deserialize drops it, the
+  // field resets every time the runtime entry is rebuilt from the catalog
+  // (e.g. on a reconnect that needs re-auth).
+  it("persists xaaAuthzIssuer through serialization", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read", {
+        xaaAuthzIssuer: "https://issuer.test",
+      })
+    );
+    expect((out.s1 as any).xaaAuthzIssuer).toBe("https://issuer.test");
+  });
+
+  it("restores xaaAuthzIssuer from the flat servers table", () => {
+    const out = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client-1",
+        xaaAuthzIssuer: "https://issuer.test",
+      },
+    ]);
+    expect(out.s1.xaaAuthzIssuer).toBe("https://issuer.test");
+  });
+
+  it("treats an xaaAuthzIssuer change as a difference to resync", () => {
+    const local = makeOAuthHttpServer("read", {
+      xaaAuthzIssuer: "https://issuer.test",
+    });
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
+          clientId: "client-1",
+          oauthScopes: ["read"],
+          xaaAuthzIssuer: "https://different.test",
+        },
+      ])
+    ).toBe(true);
   });
 });
