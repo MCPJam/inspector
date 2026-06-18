@@ -454,6 +454,91 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
+  it("PATCH case with a matching kind is a no-op (never forwards caseType)", async () => {
+    // CASE_DOC.caseType === "prompt"; round-tripping the same kind must not
+    // forward caseType to updateTestCase (which rejects it).
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { kind: "prompt", prompt: "updated" }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase"
+    )![1];
+    expect(args.caseType).toBeUndefined();
+  });
+
+  it("PATCH case rejects a kind change with 400", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { kind: "render-check", renderCheck: { server: "s", tool: "t" } }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("PATCH render-check preserves existing probe arguments when omitted", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestCase"
+        ? Promise.resolve({
+            ...CASE_DOC,
+            caseType: "widget_probe",
+            query: "",
+            probeConfig: {
+              serverName: "Excalidraw (App)",
+              toolName: "old",
+              arguments: { keep: 1 },
+              renderTimeoutMs: 5000,
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { renderCheck: { server: "Excalidraw (App)", tool: "new_tool" } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase"
+    )![1];
+    expect(args.probeConfig).toEqual({
+      serverName: "Excalidraw (App)",
+      toolName: "new_tool",
+      arguments: { keep: 1 },
+      renderTimeoutMs: 5000,
+    });
+  });
+
+  it("GET canonicalizes a single-turn case to top-level fields (turns suppressed)", async () => {
+    // A persisted single-turn case carries one promptTurn; the backend mirrors
+    // it into top-level query/expectedToolCalls, so the DTO reports the
+    // assertion via expectedToolCalls and omits the redundant single `turns`.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestCase"
+        ? Promise.resolve({
+            ...CASE_DOC,
+            query: "only turn",
+            expectedToolCalls: [{ toolName: "list", arguments: {} }],
+            promptTurns: [
+              {
+                prompt: "only turn",
+                expectedToolCalls: [{ toolName: "list", arguments: {} }],
+              },
+            ],
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+    );
+    const body = (await res.json()) as any;
+    expect(body.expectedToolCalls).toEqual([{ tool: "list" }]);
+    expect(body.turns).toBeUndefined();
+  });
+
   it("DELETE suite returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
@@ -600,5 +685,59 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:createTestCase"
       )
     ).toBe(true);
+  });
+
+  it("generate resolves a server NAME override to an ID before authorizing", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "servers:getProjectServers"
+        ? Promise.resolve([{ _id: "srv_1", name: "Excalidraw (App)" }])
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal", servers: ["Excalidraw (App)"] }
+    );
+    expect(res.status).toBe(200);
+    // createAuthorizedManager receives the resolved ID, not the name.
+    const managerArgs = createAuthorizedManagerMock.mock.calls[0];
+    expect(managerArgs[3]).toEqual(["srv_1"]);
+  });
+
+  it("generate surfaces drafts that failed to persist under `skipped`", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        { title: "Bad draft", query: "x", runs: 1, expectedToolCalls: [] },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getSuiteRunServerSelection"
+        ? Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] })
+        : defaultQueryImpl(name)
+    );
+    convexMutationMock.mockImplementation((name: string) => {
+      if (name === "testSuites:createTestCase")
+        return Promise.reject(new Error("Server Error\nUncaught Error: nope"));
+      return defaultMutationImpl(name);
+    });
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.created).toHaveLength(0);
+    expect(body.skipped).toEqual([
+      { title: "Bad draft", error: expect.any(String) },
+    ]);
   });
 });

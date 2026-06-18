@@ -291,6 +291,8 @@ export interface PlatformEvalCasesGenerated {
   generationModel: string;
   created: PlatformEvalCase[];
   counts: { normal?: number; negative?: number };
+  /** Drafts that were generated but failed to persist (never silently dropped). */
+  skipped?: Array<{ title: string; error: string }>;
 }
 
 export interface PlatformEvalIteration {

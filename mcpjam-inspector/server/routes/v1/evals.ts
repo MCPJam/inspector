@@ -929,6 +929,8 @@ function buildCaseMutationArgs(
     existingCaseType?: string;
     /** The persisted case's match options, to merge a partial PATCH onto. */
     existingMatchOptions?: unknown;
+    /** The persisted case's probeConfig, to merge a partial renderCheck PATCH onto. */
+    existingProbeConfig?: any;
   }
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
@@ -939,24 +941,40 @@ function buildCaseMutationArgs(
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 
-  // A kind-less PATCH must preserve the existing kind: deriving solely from
-  // `body.kind` would route a `renderCheck`- or `prompt`-only patch to the
-  // wrong branch on an existing render-check case.
+  const existingKind =
+    opts.existingCaseType === "widget_probe" ? "render-check" : "prompt";
+  // A kind-less PATCH must preserve the existing kind. Kind is IMMUTABLE after
+  // create (updateTestCase doesn't accept caseType): reject a real change, and
+  // never forward caseType on update (so round-tripping a GET payload — which
+  // includes the matching kind — is a no-op, not a validation failure).
   const isRenderCheck =
     body.kind !== undefined
       ? body.kind === "render-check"
       : opts.existingCaseType === "widget_probe";
-  if (body.kind !== undefined)
-    args.caseType = isRenderCheck ? "widget_probe" : "prompt";
+  if (opts.forCreate) {
+    if (body.kind !== undefined)
+      args.caseType = isRenderCheck ? "widget_probe" : "prompt";
+  } else if (body.kind !== undefined && body.kind !== existingKind) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Case kind is immutable (this case is "${existingKind}"); create a new case to change it.`
+    );
+  }
 
   if (isRenderCheck) {
     if (body.renderCheck) {
+      // PATCH preserves omitted fields: merge arguments/renderTimeoutMs onto
+      // the existing probeConfig instead of resetting them.
+      const existingProbe = opts.existingProbeConfig ?? {};
       args.probeConfig = {
         serverName: body.renderCheck.server,
         toolName: body.renderCheck.tool,
-        arguments: body.renderCheck.arguments ?? {},
+        arguments: body.renderCheck.arguments ?? existingProbe.arguments ?? {},
         ...(body.renderCheck.renderTimeoutMs !== undefined
           ? { renderTimeoutMs: body.renderCheck.renderTimeoutMs }
+          : existingProbe.renderTimeoutMs !== undefined
+          ? { renderTimeoutMs: existingProbe.renderTimeoutMs }
           : {}),
       };
     }
@@ -1546,6 +1564,61 @@ async function defaultCaseModels(
   return [];
 }
 
+/**
+ * Resolve project-server selectors (names OR IDs) to Convex server IDs against
+ * the project's server catalog — no live connection. Used by generate so the
+ * public `servers` override accepts names even on direct API calls (batch
+ * authorization only accepts IDs).
+ */
+async function resolveProjectServerSelectors(
+  convex: ReturnType<typeof createConvexReadClient>,
+  projectId: string,
+  selectors: string[]
+): Promise<{ serverIds: string[]; serverNames: string[] }> {
+  let servers: any[];
+  try {
+    servers = await convex.query("servers:getProjectServers" as any, {
+      projectId,
+    });
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  const byId = new Map<string, any>();
+  const byName = new Map<string, any[]>();
+  for (const s of servers ?? []) {
+    byId.set(String(s._id), s);
+    const key = String(s.name ?? "").toLocaleLowerCase();
+    byName.set(key, [...(byName.get(key) ?? []), s]);
+  }
+  const serverIds: string[] = [];
+  const serverNames: string[] = [];
+  for (const selector of selectors) {
+    const trimmed = selector.trim();
+    let match = byId.get(trimmed);
+    if (!match) {
+      const named = byName.get(trimmed.toLocaleLowerCase()) ?? [];
+      if (named.length > 1) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Server name "${trimmed}" is ambiguous; use the server id.`
+        );
+      }
+      match = named[0];
+    }
+    if (!match) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        `Server "${trimmed}" not found in this project.`
+      );
+    }
+    serverIds.push(String(match._id));
+    serverNames.push(String(match.name ?? ""));
+  }
+  return { serverIds, serverNames };
+}
+
 // GET /v1/projects/:projectId/eval-suites/:suiteId — full suite settings.
 evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
@@ -1888,6 +1961,7 @@ evals.patch(
       existingCaseType:
         typeof existing.caseType === "string" ? existing.caseType : undefined,
       existingMatchOptions: existing.matchOptions,
+      existingProbeConfig: existing.probeConfig,
     });
     const { convexClient } = createConvexClients(token);
     let updated: CaseDoc | null | undefined;
@@ -1979,7 +2053,9 @@ evals.post(
     requireProjectMatch(suite, projectId, "Eval suite");
 
     // Resolve the servers to discover tools from: explicit override, else the
-    // suite's saved selection.
+    // suite's saved selection. An override may be server names OR IDs (the API
+    // is the contract — don't assume the SDK pre-resolved), so map to IDs here;
+    // batch authorization in createAuthorizedManager only accepts Convex IDs.
     let serverIds = body.servers;
     let serverNames: string[] | undefined;
     if (!serverIds || serverIds.length === 0) {
@@ -1990,6 +2066,14 @@ evals.post(
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;
+    } else {
+      const resolved = await resolveProjectServerSelectors(
+        readClient,
+        projectId,
+        serverIds
+      );
+      serverIds = resolved.serverIds;
+      serverNames = resolved.serverNames;
     }
 
     const caseModels =
