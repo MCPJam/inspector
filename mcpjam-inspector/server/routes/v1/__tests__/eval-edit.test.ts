@@ -325,6 +325,51 @@ describe("v1 eval-edit routes", () => {
     expect(args.refreshHostConfigFromEnvironment).toBe(true);
   });
 
+  it("PATCH env+hosts resolves host server picks against the patched environment", async () => {
+    // First getTestSuite read has only the old binding; after the environment
+    // update, the re-read exposes the newly-added server's binding.
+    let suiteReads = 0;
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") {
+        suiteReads += 1;
+        return Promise.resolve(
+          suiteReads === 1
+            ? SUITE_DOC
+            : {
+                ...SUITE_DOC,
+                environment: {
+                  servers: ["New Server"],
+                  serverBindings: [
+                    { serverName: "New Server", projectServerId: "srv_new" },
+                  ],
+                },
+              }
+        );
+      }
+      if (name === "hosts:listHosts")
+        return Promise.resolve([{ hostId: "host_1", name: "Prod" }]);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      {
+        environment: { servers: ["New Server"] },
+        hosts: [{ host: "Prod", servers: ["New Server"] }],
+      }
+    );
+    expect(res.status).toBe(200);
+    const hostCall = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments
+    );
+    expect(hostCall![1].hostAttachments).toEqual([
+      { namedHostId: "host_1", selectedServerIds: ["srv_new"] },
+    ]);
+    // The suite was re-read (twice) so the new server's binding was visible.
+    expect(suiteReads).toBeGreaterThanOrEqual(2);
+  });
+
   it("PATCH execution config round-trips getSuiteConfig and preserves servers", async () => {
     const res = await request(
       "PATCH",

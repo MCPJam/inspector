@@ -1567,15 +1567,6 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs.judgeConfig = { goalCompletion };
     }
   }
-  if (body.hosts !== undefined) {
-    updateArgs.hostAttachments = await resolveHostAttachments(
-      convexClient,
-      projectId,
-      suite!,
-      body.hosts
-    );
-  }
-
   // Only call updateTestSuite when there's something beyond the suiteId.
   if (Object.keys(updateArgs).length > 1) {
     try {
@@ -1583,6 +1574,29 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         "testSuites:updateTestSuite" as any,
         updateArgs
       );
+    } catch (error) {
+      throw translateConvexWriteError(error);
+    }
+  }
+
+  // Host attachments resolve their per-host server picks against the suite's
+  // environment bindings — so apply them AFTER the environment update above and
+  // re-read, letting one PATCH atomically add a server (environment.servers)
+  // and scope a host to that newly-added server.
+  if (body.hosts !== undefined) {
+    const refreshed: SuiteDoc | null = updateArgs.environment
+      ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
+      : suite;
+    try {
+      await convexClient.mutation("testSuites:updateTestSuite" as any, {
+        suiteId,
+        hostAttachments: await resolveHostAttachments(
+          convexClient,
+          projectId,
+          refreshed ?? suite!,
+          body.hosts
+        ),
+      });
     } catch (error) {
       throw translateConvexWriteError(error);
     }
