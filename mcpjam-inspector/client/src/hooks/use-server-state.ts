@@ -1959,7 +1959,14 @@ export function useServerState({
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
-          const existingServer = latestEffectiveServersRef.current[serverName];
+          // Prefer the runtime entry over the project catalog: it holds the
+          // user's freshly-saved OAuth config (clientId/secret/scopes/issuer),
+          // which the catalog round-trip can lag or drop. Rebuilding from the
+          // catalog here — then syncing back — is what reset the config after a
+          // reconnect that needed re-auth.
+          const existingServer =
+            appStateServersRef.current[serverName] ??
+            latestEffectiveServersRef.current[serverName];
           const mergedServerConfig = mergeOAuthCallbackServerConfig(
             existingServer?.config,
             result.serverConfig
@@ -1988,6 +1995,7 @@ export function useServerState({
             oauthTokens: existingServer?.oauthTokens,
             oauthFlowProfile: resolvedOAuthProfile,
             hasClientSecret: existingServer?.hasClientSecret,
+            xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             lastOAuthTrace: result.oauthTrace,
