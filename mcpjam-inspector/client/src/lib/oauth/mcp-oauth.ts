@@ -3400,26 +3400,12 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
     return { tokens: undefined, isInvalid: false };
   }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
-  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
   if (!tokens) return { tokens: undefined, isInvalid: false };
 
   try {
     const tokensJson = JSON.parse(tokens);
-    const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
-    if (
-      clientJson &&
-      typeof clientJson === "object" &&
-      "client_secret" in clientJson
-    ) {
-      const sanitizedClientInfo = Object.fromEntries(
-        Object.entries(clientJson).filter(([key]) => key !== "client_secret")
-      );
-      localStorage.setItem(
-        `mcp-client-${serverName}`,
-        JSON.stringify(sanitizedClientInfo)
-      );
-    }
+    const clientJson = readStoredClientInformation(serverName);
 
     // Merge tokens with client_id from client information
     return {

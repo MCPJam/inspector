@@ -1338,6 +1338,69 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("strips OAuth bearer headers from reconnect fallback configs", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(reconnectServer)
+      .mockResolvedValueOnce({
+        success: false,
+        error: "Requires OAuth authentication",
+      } as any)
+      .mockResolvedValueOnce({
+        success: true,
+        initInfo: {
+          clientCapabilities: {},
+        },
+      } as any);
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+            "X-Keep": "yes",
+          },
+        },
+      },
+      tokens: undefined,
+    } as any);
+
+    await result.current.handleReconnect("demo-server");
+
+    await waitFor(() => {
+      expect(vi.mocked(reconnectServer)).toHaveBeenCalledTimes(2);
+    });
+
+    const [, effectiveConfig] =
+      vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+    expect(effectiveConfig?.requestInit?.headers).toEqual({
+      "X-Keep": "yes",
+    });
+
+    const successAction = dispatch.mock.calls.find(
+      ([action]) => action.type === "CONNECT_SUCCESS"
+    )?.[0] as AppAction | undefined;
+    expect(successAction?.config).toMatchObject({
+      url: "https://example.com/mcp",
+      requestInit: {
+        headers: {
+          "X-Keep": "yes",
+        },
+      },
+    });
+    expect((successAction?.config as any)?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
+      })
+    );
+  });
+
   it("prefers an exact per-server clientCapabilities override over project capability merging", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(

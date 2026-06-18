@@ -3759,9 +3759,13 @@ export function useServerState({
             error: authResult.error,
           };
         }
+        const authServerConfig =
+          "url" in authResult.serverConfig
+            ? stripAuthorizationFromHttpConfig(authResult.serverConfig)
+            : authResult.serverConfig;
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(authResult.serverConfig)
+          withProjectConnectionDefaults(authServerConfig)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -3773,7 +3777,7 @@ export function useServerState({
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: authResult.serverConfig,
+            config: authServerConfig,
             tokens: authResult.tokens,
             useOAuth: server.useOAuth === true || authResult.tokens != null,
             oauthTrace: authResult.oauthTrace,

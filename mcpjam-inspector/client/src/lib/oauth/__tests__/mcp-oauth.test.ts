@@ -1524,6 +1524,33 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("ignores malformed stored client information when token data is valid", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+
+      localStorage.setItem(
+        "mcp-tokens-asana",
+        JSON.stringify({
+          access_token: "stored-access",
+          refresh_token: "stored-refresh",
+        })
+      );
+      localStorage.setItem("mcp-client-asana", '{"client_id":"broken"');
+
+      expect(getStoredTokens("asana")).toMatchObject({
+        access_token: "stored-access",
+        refresh_token: "stored-refresh",
+      });
+      expect(getStoredTokensState("asana")).toMatchObject({
+        tokens: {
+          access_token: "stored-access",
+          refresh_token: "stored-refresh",
+        },
+        isInvalid: false,
+      });
+    });
+
     it("routes Asana-style callback token exchange through Convex for registry servers", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
