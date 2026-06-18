@@ -21,11 +21,16 @@ import type {
   PlatformChatboxDetail,
   PlatformChatSession,
   PlatformDoctorReport,
+  PlatformEvalCase,
+  PlatformEvalCaseDeleted,
+  PlatformEvalCasesGenerated,
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformEvalSuiteDeleted,
+  PlatformEvalSuiteDetail,
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
@@ -831,114 +836,120 @@ export const runEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const evalCaseInput = z.object({
-  title: z.string().trim().min(1).describe("Short label for the test case."),
-  query: z
-    .string()
-    .trim()
-    .optional()
-    .describe(
-      "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
-    ),
-  runs: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe("Iterations to run this case per eval run. Defaults to 1."),
-  expectedToolCalls: z
-    .array(
-      z.union([
-        z.string().trim().min(1),
-        z.object({
-          toolName: z.string().trim().min(1),
-          arguments: z.record(z.string(), z.any()).optional(),
-        }),
-      ])
-    )
-    .optional()
-    .describe(
-      "Tools the agent is expected to call. Either a tool name string or { toolName, arguments }. Defaults to none."
-    ),
-  expectedOutput: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe("Expected final answer or substring to assert against."),
-  isNegativeTest: z
-    .boolean()
-    .optional()
-    .describe("When true, the case passes if the expectation is NOT met."),
-  scenario: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe("Optional scenario/context note for the case."),
-  // Advanced authoring fields. Typed permissively here and validated
-  // authoritatively by the backend route — but declared so they are forwarded
-  // verbatim instead of being stripped as unknown keys.
-  promptTurns: z
-    .array(z.record(z.string(), z.any()))
-    .optional()
-    .describe("Multi-turn prompt sequence for the case (advanced)."),
-  advancedConfig: z
-    .object({
-      system: z.string().optional(),
-      temperature: z.number().optional(),
-      toolChoice: z.any().optional(),
-    })
-    .passthrough()
-    .optional()
-    .describe("Per-case system prompt / temperature / tool-choice overrides."),
-  matchOptions: z
-    .record(z.string(), z.any())
-    .optional()
-    .describe("Per-case matcher options (advanced)."),
-  predicates: z
-    .record(z.string(), z.any())
-    .optional()
-    .describe("Per-case success-predicate gate (advanced)."),
-  caseType: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe('Case type: "prompt" (default) or "widget_probe".'),
-  probeConfig: z
-    .record(z.string(), z.any())
-    .optional()
-    .describe(
-      "Widget-probe pinned tool call; required when caseType is widget_probe."
-    ),
-  model: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe("Per-case model override; defaults to the suite-level model."),
-  provider: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe("Per-case provider override; defaults to the suite-level provider."),
-}).superRefine((testCase, ctx) => {
-  // Prompt cases need a query; widget_probe cases run a pinned tool call and
-  // carry an empty query (the run schema normalizes to "").
-  if (
-    testCase.caseType !== "widget_probe" &&
-    (testCase.query === undefined || testCase.query.length === 0)
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["query"],
-      message: "query is required for prompt cases",
-    });
-  }
-});
+const evalCaseInput = z
+  .object({
+    title: z.string().trim().min(1).describe("Short label for the test case."),
+    query: z
+      .string()
+      .trim()
+      .optional()
+      .describe(
+        "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
+      ),
+    runs: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .optional()
+      .describe("Iterations to run this case per eval run. Defaults to 1."),
+    expectedToolCalls: z
+      .array(
+        z.union([
+          z.string().trim().min(1),
+          z.object({
+            toolName: z.string().trim().min(1),
+            arguments: z.record(z.string(), z.any()).optional(),
+          }),
+        ])
+      )
+      .optional()
+      .describe(
+        "Tools the agent is expected to call. Either a tool name string or { toolName, arguments }. Defaults to none."
+      ),
+    expectedOutput: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Expected final answer or substring to assert against."),
+    isNegativeTest: z
+      .boolean()
+      .optional()
+      .describe("When true, the case passes if the expectation is NOT met."),
+    scenario: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Optional scenario/context note for the case."),
+    // Advanced authoring fields. Typed permissively here and validated
+    // authoritatively by the backend route — but declared so they are forwarded
+    // verbatim instead of being stripped as unknown keys.
+    promptTurns: z
+      .array(z.record(z.string(), z.any()))
+      .optional()
+      .describe("Multi-turn prompt sequence for the case (advanced)."),
+    advancedConfig: z
+      .object({
+        system: z.string().optional(),
+        temperature: z.number().optional(),
+        toolChoice: z.any().optional(),
+      })
+      .passthrough()
+      .optional()
+      .describe(
+        "Per-case system prompt / temperature / tool-choice overrides."
+      ),
+    matchOptions: z
+      .record(z.string(), z.any())
+      .optional()
+      .describe("Per-case matcher options (advanced)."),
+    predicates: z
+      .record(z.string(), z.any())
+      .optional()
+      .describe("Per-case success-predicate gate (advanced)."),
+    caseType: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe('Case type: "prompt" (default) or "widget_probe".'),
+    probeConfig: z
+      .record(z.string(), z.any())
+      .optional()
+      .describe(
+        "Widget-probe pinned tool call; required when caseType is widget_probe."
+      ),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Per-case model override; defaults to the suite-level model."),
+    provider: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Per-case provider override; defaults to the suite-level provider."
+      ),
+  })
+  .superRefine((testCase, ctx) => {
+    // Prompt cases need a query; widget_probe cases run a pinned tool call and
+    // carry an empty query (the run schema normalizes to "").
+    if (
+      testCase.caseType !== "widget_probe" &&
+      (testCase.query === undefined || testCase.query.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["query"],
+        message: "query is required for prompt cases",
+      });
+    }
+  });
 
 const createEvalSuiteInput = z.object({
   project: z
@@ -1042,6 +1053,606 @@ export const createEvalSuiteOperation: PlatformOperation<
       })),
       caseUpsert: created.caseUpsert,
     };
+  },
+};
+
+// ── Eval suite + case editing ────────────────────────────────────────
+// Public-model operations: callers speak the eval-suite vocabulary (settings,
+// checks, judge, match options, environment, hosts, execution config). The
+// inspector v1 route layer translates these to the internal Convex model — no
+// internal field names cross this boundary.
+
+const CASE_SELECTOR_DESCRIPTION = "Eval case title or ID.";
+
+const publicMatchOptionsSchema = z
+  .object({
+    toolCallOrder: z
+      .enum(["any", "in-order", "exact"])
+      .optional()
+      .describe(
+        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence."
+      ),
+    extraToolCalls: z
+      .union([z.literal("unlimited"), z.number().int().min(0)])
+      .optional()
+      .describe('"unlimited" or a max count of unexpected extra tool calls.'),
+    arguments: z
+      .enum(["ignore", "partial", "exact"])
+      .optional()
+      .describe("Argument comparison strictness."),
+  })
+  .describe("Tool-call match options.");
+
+const publicCheckSchema = z
+  .object({ type: z.string().trim().min(1) })
+  .passthrough()
+  .describe(
+    "A deterministic check; `type` is the check kind (e.g. responseContains, toolCalledWith) and remaining fields depend on it."
+  );
+
+const publicCheckOverrideSchema = z
+  .object({
+    mode: z.enum(["inherit", "replace", "extend"]),
+    list: z.array(publicCheckSchema),
+  })
+  .describe("Per-case check override (how case checks combine with defaults).");
+
+const expectedToolCallSchema = z.object({
+  tool: z.string().trim().min(1),
+  arguments: z.record(z.string(), z.any()).optional(),
+});
+
+const caseModelSchema = z.object({
+  model: z.string().trim().min(1),
+  provider: z.string().trim().min(1).optional(),
+});
+
+const renderCheckSchema = z.object({
+  server: z.string().trim().min(1),
+  tool: z.string().trim().min(1),
+  arguments: z.record(z.string(), z.any()).optional(),
+  renderTimeoutMs: z.number().int().positive().optional(),
+});
+
+// Per-case editable fields, shared by create and update. All optional so a
+// PATCH carries only what changes; create layers required fields on top.
+const caseFieldsShape = {
+  title: z.string().trim().min(1).optional().describe("Short case label."),
+  kind: z
+    .enum(["prompt", "render-check"])
+    .optional()
+    .describe("Case kind. Defaults to prompt."),
+  prompt: z
+    .string()
+    .trim()
+    .optional()
+    .describe("User prompt for a single-turn prompt case."),
+  turns: z
+    .array(
+      z.object({
+        prompt: z.string().trim().min(1),
+        expectedToolCalls: z.array(expectedToolCallSchema).optional(),
+        expectedOutput: z.string().trim().min(1).optional(),
+      })
+    )
+    .optional()
+    .describe("Multi-turn prompt sequence (alternative to prompt)."),
+  expectedToolCalls: z
+    .array(expectedToolCallSchema)
+    .optional()
+    .describe("Tools the agent is expected to call."),
+  expectedOutput: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Expected final answer / substring to assert against."),
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Iterations to run per eval run. Defaults to 1."),
+  isNegative: z
+    .boolean()
+    .optional()
+    .describe("When true, the case passes if the expectation is NOT met."),
+  scenario: z.string().trim().min(1).optional(),
+  models: z
+    .array(caseModelSchema)
+    .optional()
+    .describe("Execution models for the case (compare runs each model)."),
+  // Nullable so an update can CLEAR a per-case override (null) vs leave it
+  // untouched (omitted). On create, null is treated as "no override".
+  matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  checks: publicCheckOverrideSchema.nullable().optional(),
+  renderCheck: renderCheckSchema
+    .optional()
+    .describe("Pinned tool call for a render-check case."),
+} as const;
+
+/** Build the public case body forwarded to the route (drops undefined keys). */
+function buildCaseBody(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const keys = Object.keys(caseFieldsShape);
+  const body: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (input[key] !== undefined) body[key] = input[key];
+  }
+  return body;
+}
+
+const getEvalSuiteInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+});
+export type GetEvalSuiteInput = z.infer<typeof getEvalSuiteInput>;
+
+export const getEvalSuiteOperation: PlatformOperation<
+  GetEvalSuiteInput,
+  PlatformEvalSuiteDetail
+> = {
+  name: "get_eval_suite",
+  title: "Get MCPJam eval suite",
+  description:
+    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule.",
+  readOnly: true,
+  inputSchema: getEvalSuiteInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal }
+    );
+  },
+};
+
+const updateEvalSuiteInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).optional(),
+  description: z.string().trim().optional(),
+  environment: z
+    .object({ servers: z.array(z.string().trim().min(1)) })
+    .optional()
+    .describe("Server selection by name; replaces the suite's server set."),
+  executionConfig: z
+    .object({
+      model: z.string().trim().min(1).optional(),
+      systemPrompt: z.string().optional(),
+      temperature: z.number().optional(),
+    })
+    .optional()
+    .describe("Suite execution config; unspecified fields are preserved."),
+  hosts: z
+    .array(
+      z.object({
+        host: z.string().trim().min(1).describe("Host name or ID."),
+        servers: z.array(z.string().trim().min(1)).optional(),
+      })
+    )
+    .optional()
+    .describe("Host attachments (replace-all)."),
+  settings: z
+    .object({
+      minimumAccuracy: z.number().min(0).max(100).optional(),
+      // Nullable to CLEAR suite defaults (vs omit to leave untouched).
+      matchOptions: publicMatchOptionsSchema.nullable().optional(),
+      checks: z.array(publicCheckSchema).nullable().optional(),
+      judge: z
+        .object({
+          enabled: z.boolean().optional(),
+          model: z.string().trim().min(1).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
+
+export const updateEvalSuiteOperation: PlatformOperation<
+  UpdateEvalSuiteInput,
+  PlatformEvalSuiteDetail
+> = {
+  name: "update_eval_suite",
+  title: "Update MCPJam eval suite",
+  description:
+    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. Only the fields you pass change.",
+  readOnly: false,
+  inputSchema: updateEvalSuiteInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const body: Record<string, unknown> = {};
+    for (const key of [
+      "name",
+      "description",
+      "environment",
+      "executionConfig",
+      "hosts",
+      "settings",
+    ] as const) {
+      if (input[key] !== undefined) body[key] = input[key];
+    }
+    return client.updateEvalSuite(
+      { projectId: project.id, suiteId: suite.id, body },
+      { signal }
+    );
+  },
+};
+
+const deleteEvalSuiteInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+});
+export type DeleteEvalSuiteInput = z.infer<typeof deleteEvalSuiteInput>;
+
+export const deleteEvalSuiteOperation: PlatformOperation<
+  DeleteEvalSuiteInput,
+  PlatformEvalSuiteDeleted
+> = {
+  name: "delete_eval_suite",
+  title: "Delete MCPJam eval suite",
+  description:
+    "Permanently delete an eval suite and all its cases and runs. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteEvalSuiteInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.deleteEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal }
+    );
+  },
+};
+
+const setEvalSuiteScheduleInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  enabled: z.boolean().describe("Turn scheduled runs on or off."),
+  intervalMinutes: z
+    .number()
+    .int()
+    .min(5)
+    .max(10080)
+    .optional()
+    .describe("Run interval in minutes (5–10080). Required when enabling."),
+});
+export type SetEvalSuiteScheduleInput = z.infer<
+  typeof setEvalSuiteScheduleInput
+>;
+
+export const setEvalSuiteScheduleOperation: PlatformOperation<
+  SetEvalSuiteScheduleInput,
+  PlatformEvalSuiteDetail
+> = {
+  name: "set_eval_suite_schedule",
+  title: "Set MCPJam eval suite schedule",
+  description:
+    "Enable or disable automatic scheduled runs for a suite, and set the interval. Disabling preserves the stored interval.",
+  readOnly: false,
+  inputSchema: setEvalSuiteScheduleInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.setEvalSuiteSchedule(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          enabled: input.enabled,
+          ...(input.intervalMinutes !== undefined
+            ? { intervalMinutes: input.intervalMinutes }
+            : {}),
+        },
+      },
+      { signal }
+    );
+  },
+};
+
+const listEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+});
+export type ListEvalCasesInput = z.infer<typeof listEvalCasesInput>;
+
+export const listEvalCasesOperation: PlatformOperation<
+  ListEvalCasesInput,
+  PlatformPage<PlatformEvalCase>
+> = {
+  name: "list_eval_cases",
+  title: "List MCPJam eval cases",
+  description:
+    "List the test cases in an eval suite, with their ids and configuration.",
+  readOnly: true,
+  inputSchema: listEvalCasesInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.listEvalCases(
+      { projectId: project.id, suiteId: suite.id },
+      { signal }
+    );
+  },
+};
+
+const getEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+});
+export type GetEvalCaseInput = z.infer<typeof getEvalCaseInput>;
+
+export const getEvalCaseOperation: PlatformOperation<
+  GetEvalCaseInput,
+  PlatformEvalCase
+> = {
+  name: "get_eval_case",
+  title: "Get MCPJam eval case",
+  description: "Fetch one eval test case's full definition.",
+  readOnly: true,
+  inputSchema: getEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const testCase = await resolveCase(
+      client,
+      project,
+      suite,
+      input.case,
+      signal
+    );
+    return client.getEvalCase(
+      { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
+      { signal }
+    );
+  },
+};
+
+const createEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  ...caseFieldsShape,
+  title: z.string().trim().min(1).describe("Short case label."),
+});
+export type CreateEvalCaseInput = z.infer<typeof createEvalCaseInput>;
+
+export const createEvalCaseOperation: PlatformOperation<
+  CreateEvalCaseInput,
+  PlatformEvalCase
+> = {
+  name: "create_eval_case",
+  title: "Create MCPJam eval case",
+  description:
+    "Add one test case to an eval suite. A prompt case needs a prompt (or turns); a render-check case needs renderCheck. Positive cases must assert something: an expected tool call, expected output, or a check.",
+  readOnly: false,
+  inputSchema: createEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.createEvalCase(
+      { projectId: project.id, suiteId: suite.id, body: buildCaseBody(input) },
+      { signal }
+    );
+  },
+};
+
+const updateEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+  ...caseFieldsShape,
+});
+export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
+
+export const updateEvalCaseOperation: PlatformOperation<
+  UpdateEvalCaseInput,
+  PlatformEvalCase
+> = {
+  name: "update_eval_case",
+  title: "Update MCPJam eval case",
+  description:
+    "Edit an eval test case. Only the fields you pass change (prompt, turns, expected tool calls, expected output, iterations, models, match options, checks, render check).",
+  readOnly: false,
+  inputSchema: updateEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const testCase = await resolveCase(
+      client,
+      project,
+      suite,
+      input.case,
+      signal
+    );
+    return client.updateEvalCase(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        caseId: testCase.id,
+        body: buildCaseBody(input),
+      },
+      { signal }
+    );
+  },
+};
+
+const deleteEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+});
+export type DeleteEvalCaseInput = z.infer<typeof deleteEvalCaseInput>;
+
+export const deleteEvalCaseOperation: PlatformOperation<
+  DeleteEvalCaseInput,
+  PlatformEvalCaseDeleted
+> = {
+  name: "delete_eval_case",
+  title: "Delete MCPJam eval case",
+  description:
+    "Permanently delete one test case from an eval suite. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const testCase = await resolveCase(
+      client,
+      project,
+      suite,
+      input.case,
+      signal
+    );
+    return client.deleteEvalCase(
+      { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
+      { signal }
+    );
+  },
+};
+
+const generateEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  mode: z
+    .enum(["normal", "negative"])
+    .optional()
+    .describe(
+      "normal = mixed positive/negative cases; negative = only negative. Defaults to normal."
+    ),
+  servers: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Server names/IDs to discover tools from; defaults to the suite's selection."
+    ),
+  caseModels: z
+    .array(caseModelSchema)
+    .optional()
+    .describe("Execution models to set on the generated cases."),
+});
+export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
+
+export const generateEvalCasesOperation: PlatformOperation<
+  GenerateEvalCasesInput,
+  PlatformEvalCasesGenerated
+> = {
+  name: "generate_eval_cases",
+  title: "Generate MCPJam eval cases",
+  description:
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
+  readOnly: false,
+  inputSchema: generateEvalCasesInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.generateEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          ...(input.mode ? { mode: input.mode } : {}),
+          ...(input.servers ? { servers: input.servers } : {}),
+          ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+        },
+      },
+      { signal }
+    );
   },
 };
 
@@ -1212,6 +1823,29 @@ async function resolveSuite(
     selector,
     "Eval suite",
     `project "${project.name}"`
+  );
+}
+
+/**
+ * Resolve a test case within a suite by id or (case-insensitive) title. Cases
+ * expose `title`, so map it onto the `name` field `resolveByIdOrName` matches.
+ */
+async function resolveCase(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformEvalCase> {
+  const page = await client.listEvalCases(
+    { projectId: project.id, suiteId: suite.id },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items.map((testCase) => ({ ...testCase, name: testCase.title })),
+    selector,
+    "Eval case",
+    `suite "${suite.name ?? suite.id}"`
   );
 }
 

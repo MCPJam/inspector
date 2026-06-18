@@ -10,15 +10,22 @@
  */
 import {
   callServerToolOperation,
+  createEvalCaseOperation,
   createEvalSuiteOperation,
+  deleteEvalCaseOperation,
+  deleteEvalSuiteOperation,
   diagnoseServerOperation,
+  generateEvalCasesOperation,
   getChatboxOperation,
+  getEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalSuiteOperation,
   getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
+  listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
@@ -30,6 +37,9 @@ import {
   PlatformApiClient,
   readServerResourceOperation,
   runEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  updateEvalCaseOperation,
+  updateEvalSuiteOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -59,6 +69,16 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
   createEvalSuiteOperation,
+  getEvalSuiteOperation,
+  updateEvalSuiteOperation,
+  deleteEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  listEvalCasesOperation,
+  getEvalCaseOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  deleteEvalCaseOperation,
+  generateEvalCasesOperation,
   getEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
@@ -66,6 +86,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getChatboxOperation,
   listChatSessionsOperation,
 ];
+
+/**
+ * Operations that PERMANENTLY destroy a known resource. They carry an
+ * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
+ * effects are merely unknowable). Kept here rather than on the SDK operation
+ * so the wire contract stays surface-agnostic.
+ */
+const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+  deleteEvalSuiteOperation.name,
+  deleteEvalCaseOperation.name,
+]);
 
 /**
  * Catalog operations that render as MCP Apps widgets, mapped to their view
@@ -140,6 +171,10 @@ export function operationAnnotations(
   if (operation.readOnly) {
     return { readOnlyHint: true };
   }
+  // Known-destructive deletes: announce it explicitly so clients can confirm.
+  if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
+    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true };
+  }
   // Operations whose effects are unknowable upstream (call_server_tool runs
   // arbitrary third-party tools) omit destructive/idempotent hints on
   // purpose: per spec, clients must then assume destructive — the honest
@@ -176,7 +211,10 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     const payload = await operation.execute(input, { client });
     return toolSuccess(transformPayload ? transformPayload(payload) : payload);
   } catch (error) {
-    return toolError(describeOperationError(error), errorStructuredContent(error));
+    return toolError(
+      describeOperationError(error),
+      errorStructuredContent(error)
+    );
   }
 }
 
