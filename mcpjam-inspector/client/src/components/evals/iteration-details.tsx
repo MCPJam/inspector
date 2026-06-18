@@ -39,6 +39,7 @@ import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
+  isPinnedOnly,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
 } from "@/shared/prompt-turns";
@@ -816,7 +817,14 @@ export function IterationDetails({
   // Widget probes get an artifacts-first layout: checks + the rendered
   // widget. Tool-call diff (expected vs actual is meaningless for a pinned
   // call) and the full trace viewer (no LLM conversation) are hidden.
-  const isProbe = iteration.testCaseSnapshot?.caseType === "widget_probe";
+  const isProbe = isPinnedOnly({
+    caseType: iteration.testCaseSnapshot?.caseType,
+    promptTurns: iteration.testCaseSnapshot?.promptTurns,
+  });
+  // Pure render checks hide the trace viewer (no LLM conversation), so they get
+  // a dedicated "Widget Render" section here. Every other case (prompt/hybrid)
+  // already surfaces the same observations via the trace viewer's Browser tab,
+  // so no separate section is added for them — see the layout below.
   const probeObservations = useMemo<
     import("@/shared/eval-trace").EvalTraceWidgetRenderObservationView[]
   >(() => {
@@ -837,9 +845,6 @@ export function IterationDetails({
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
-        // A failed artifact load must not masquerade as "no observation" —
-        // reuse the trace section's error panel (with retry) since the probe
-        // layout hides that section.
         <TraceBlobLoadErrorPanel
           error={error}
           layoutMode={layoutMode}

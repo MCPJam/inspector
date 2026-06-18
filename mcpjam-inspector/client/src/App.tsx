@@ -1037,7 +1037,14 @@ export function OAuthFlowRoute() {
 }
 
 export function XAAFlowRoute() {
-  const { xaaEnabled, appState, activeOrganizationId } = useAppRouteContext();
+  const {
+    xaaEnabled,
+    appState,
+    activeOrganizationId,
+    convexProjectId,
+    setSelectedServer,
+    saveServerConfigWithoutConnecting,
+  } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
   return (
@@ -1052,6 +1059,9 @@ export function XAAFlowRoute() {
         serverConfigs={appState.servers}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
+        projectId={convexProjectId ?? null}
+        onSelectServer={setSelectedServer}
+        onSaveServerConfig={saveServerConfigWithoutConnecting}
       />
     </ErrorBoundary>
   );
@@ -2594,7 +2604,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
+    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
+      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
+      // `undefined`; redirecting then would strand a flagged-in user who
+      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
+      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
@@ -2945,7 +2959,19 @@ export default function App() {
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
-          onConnect: handleConnect,
+          // XAA targets are saved server configs, never live connections.
+          // Adding one from the header picker must NOT launch a browser OAuth
+          // flow (handleConnect does a full-page redirect to the auth server,
+          // which strands the user on an error page when the client isn't
+          // registered). Save without connecting, then select it as the target.
+          onConnect:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? async (formData) => {
+                  await saveServerConfigWithoutConnecting(formData);
+                  const name = formData.name?.trim();
+                  if (name) setSelectedServer(name);
+                }
+              : handleConnect,
           onReconnect: handleReconnect,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,

@@ -383,6 +383,8 @@ export function createXAAStateMachine(
     scope,
     authzServerIssuer,
     registrationId,
+    serverId,
+    projectId,
   } = config;
 
   const state: Partial<XAAFlowState> = initialState ?? {};
@@ -727,6 +729,14 @@ export function createXAAStateMachine(
 
   const authenticateUser = async () => {
     const state = currentState();
+    // Read the simulated identity from the live machine config, not the flow
+    // snapshot. The machine is rebuilt whenever the identity changes, so the
+    // config always holds the latest sub/email — whereas state.userId is the
+    // value captured when the flow was last (re)built and can lag an edit made
+    // mid-run. `??` (not `||`) so a deliberately-cleared field stays empty
+    // rather than silently reviving the stale snapshot value.
+    const activeUserId = userId ?? state.userId;
+    const activeEmail = email ?? state.email;
     const request = {
       method: "POST",
       url: "/authenticate",
@@ -734,8 +744,8 @@ export function createXAAStateMachine(
         "Content-Type": "application/json",
       },
       body: {
-        userId: state.userId,
-        email: state.email,
+        userId: activeUserId,
+        email: activeEmail,
         audience: state.clientId || "mcpjam-xaa-debugger",
       },
     };
@@ -776,8 +786,8 @@ export function createXAAStateMachine(
         "xaa-identity-assertion",
         "Identity assertion issued",
         {
-          userId: state.userId,
-          email: state.email,
+          userId: activeUserId,
+          email: activeEmail,
         }
       );
     } catch (error) {
@@ -921,14 +931,22 @@ export function createXAAStateMachine(
       return;
     }
 
-    // Registration-backed runs send only the registration id: the server
-    // resolves the stored secret and forces the outbound URL to the
-    // registration's stored token endpoint, so neither ever rides in from
-    // the browser. Manual runs may carry a profile-configured secret —
-    // confidential-client servers reject the jwt-bearer grant without one.
+    // Registration- and server-target runs send only an opaque id: the server
+    // resolves the stored secret and forces the outbound URL server-side, so
+    // neither the secret nor the destination ever rides in from the browser.
+    // Manual runs may carry a profile-configured secret — confidential-client
+    // servers reject the jwt-bearer grant without one.
     const tokenRequestBody = registrationId
       ? {
           registrationId,
+          assertion: state.idJag,
+          scope: state.scope,
+          resource: state.resourceUrl || state.serverUrl,
+        }
+      : serverId
+      ? {
+          serverId,
+          ...(projectId ? { projectId } : {}),
           assertion: state.idJag,
           scope: state.scope,
           resource: state.resourceUrl || state.serverUrl,

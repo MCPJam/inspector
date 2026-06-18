@@ -106,6 +106,10 @@ export interface NegativeTestsInput {
   tokenEndpoint?: string;
   clientSecret?: string;
   registrationId?: string;
+  // Server-target runs: the server resolves the stored secret and discovers
+  // the token endpoint from the server's own config.
+  serverId?: string;
+  projectId?: string;
 }
 
 /**

@@ -7,13 +7,6 @@ import {
 } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@mcpjam/design-system/dropdown-menu";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -112,12 +105,6 @@ interface SuiteHeaderProps {
   evalRunsDisabledReason?: string | null;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
-  /**
-   * Create a widget probe case (synthetic monitor). When present AND the
-   * synthetic-monitors flag is on, "New case" becomes a two-option menu
-   * (prompt test / widget probe); otherwise the plain button renders.
-   */
-  onCreateWidgetProbe?: () => void;
   /** Per-case runs from the test cases list / sidebar; not shown in the suite header. */
   onRunTestCase?: (testCase: EvalCase) => void;
   /** When true, per-case runs (row play + header run-first) are disabled. */
@@ -179,7 +166,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
-    onCreateWidgetProbe,
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
@@ -192,7 +178,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
-  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -209,6 +194,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       return bTime - aTime;
     })[0];
   }, [runs]);
+  const latestRunIsInProgress =
+    latestRunForMetadata?.status === "running" ||
+    latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
     setEditedName(suite.name);
@@ -258,10 +246,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           suite_id: suite._id,
           server_attachment_id: serverAttachmentId,
         });
-        toast.success("Server attachment updated");
+        toast.success("Server group updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update server attachment")
+          getBillingErrorMessage(error, "Failed to update server group")
         );
       }
     },
@@ -293,7 +281,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning = rerunningSuiteId === suite._id;
+  const isRerunning =
+    rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
@@ -827,40 +816,18 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Tooltip>
             ) : null}
             {showTestCaseCtas && onCreateTestCase ? (
-              syntheticMonitorsEnabled && onCreateWidgetProbe ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1.5"
-                    >
-                      <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      New case
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => onCreateTestCase()}>
-                      Prompt test
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onCreateWidgetProbe()}>
-                      Render check
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5"
-                  onClick={onCreateTestCase}
-                >
-                  <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  New case
-                </Button>
-              )
+              // One case type now. A render check is just a case whose turn is
+              // toggled to "Render check" inside the editor — no separate entry.
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5"
+                onClick={onCreateTestCase}
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                New case
+              </Button>
             ) : null}
           </div>
         ) : null}

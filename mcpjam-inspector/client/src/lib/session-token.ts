@@ -264,6 +264,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Local XAA proxy paths whose server-target / registration runs resolve a
+  // Convex-stored secret on the user's behalf (the hosted `/api/web/xaa/*`
+  // equivalents are already covered by the `/api/web/` prefix above).
+  "/api/mcp/xaa/proxy/token",
+  "/api/mcp/xaa/negative-tests",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];

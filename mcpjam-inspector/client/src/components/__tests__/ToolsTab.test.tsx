@@ -58,6 +58,25 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn().mockReturnValue("web"),
 }));
 
+// Route the tool-quality lint subscription through a spy so tests can assert
+// its args (snapshot vs "skip"). Resolves to "pending" (undefined) by default —
+// no ConvexProvider needed. Other convex/react exports are preserved.
+const { mockUseQuery, mockUseToolQualityEnabled } = vi.hoisted(() => ({
+  mockUseQuery: vi.fn((..._args: unknown[]) => undefined as unknown),
+  mockUseToolQualityEnabled: vi.fn(() => true),
+}));
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("convex/react")>();
+  return { ...actual, useQuery: (...args: unknown[]) => mockUseQuery(...args) };
+});
+
+// Tool-quality rollout flag — on by default so existing tests are unaffected;
+// flipped per-test in the "tool-quality flag gate" suite below.
+vi.mock("@/hooks/useToolQualityEnabled", () => ({
+  TOOL_QUALITY_FEATURE_FLAG: "tool-quality-enabled",
+  useToolQualityEnabled: () => mockUseToolQualityEnabled(),
+}));
+
 // Mock task tracker
 vi.mock("@/lib/task-tracker", () => ({
   trackTask: vi.fn(),
@@ -81,17 +100,19 @@ vi.mock("../logger-view", () => ({
 
 describe("ToolsTab", () => {
   const createServerConfig = (
-    overrides: Partial<MCPServerConfig> = {},
+    overrides: Partial<MCPServerConfig> = {}
   ): MCPServerConfig =>
     ({
       transportType: "stdio",
       command: "node",
       args: ["server.js"],
       ...overrides,
-    }) as MCPServerConfig;
+    } as MCPServerConfig);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseToolQualityEnabled.mockReturnValue(true);
+    mockUseQuery.mockReturnValue(undefined);
     mockListTools.mockResolvedValue({ tools: [] });
     mockGetTaskCapabilities.mockResolvedValue({
       supportsToolCalls: false,
@@ -107,8 +128,8 @@ describe("ToolsTab", () => {
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Connect to an MCP server to explore and test its available tools.",
-        ),
+          "Connect to an MCP server to explore and test its available tools."
+        )
       ).toBeInTheDocument();
     });
 
@@ -151,13 +172,13 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       expect(mockListTools).not.toHaveBeenCalled();
       expect(mockGetTaskCapabilities).not.toHaveBeenCalled();
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
     });
 
@@ -173,7 +194,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -186,14 +207,14 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       await waitFor(() => {
         expect(screen.queryByText("test-tool")).not.toBeInTheDocument();
       });
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
       expect(mockListTools).toHaveBeenCalledTimes(1);
     });
@@ -206,7 +227,7 @@ describe("ToolsTab", () => {
       mockListTools.mockReturnValue(
         new Promise((resolve) => {
           resolveTools = resolve;
-        }),
+        })
       );
 
       const { rerender } = render(
@@ -214,7 +235,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -226,7 +247,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="disconnected"
-        />,
+        />
       );
 
       await act(async () => {
@@ -237,7 +258,7 @@ describe("ToolsTab", () => {
 
       expect(screen.queryByText("late-tool")).not.toBeInTheDocument();
       expect(
-        screen.getByText("Connect this server to load tools."),
+        screen.getByText("Connect this server to load tools.")
       ).toBeInTheDocument();
     });
 
@@ -264,7 +285,7 @@ describe("ToolsTab", () => {
           serverConfig={serverConfig}
           serverName="test-server"
           serverConnectionStatus="connected"
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -384,7 +405,7 @@ describe("ToolsTab", () => {
       // After selection, the execute button should be visible
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /^run/i }),
+          screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
     });
@@ -496,7 +517,7 @@ describe("ToolsTab", () => {
       // Wait for execute button to be available
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /^run/i }),
+          screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
 
@@ -509,7 +530,7 @@ describe("ToolsTab", () => {
           "test-server",
           "greet",
           expect.any(Object),
-          undefined,
+          undefined
         );
       });
     });
@@ -536,7 +557,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="test-server" />,
+        <ToolsTab serverConfig={serverConfig} serverName="test-server" />
       );
 
       await waitFor(() => {
@@ -559,7 +580,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="server-1" />,
+        <ToolsTab serverConfig={serverConfig} serverName="server-1" />
       );
 
       await waitFor(() => {
@@ -662,6 +683,66 @@ describe("ToolsTab", () => {
 
       // After clicking, saved tab should have active styling
       expect(savedTabButton.className).toContain("text-primary");
+    });
+  });
+
+  describe("tool-quality flag gate", () => {
+    const toolResponse = {
+      tools: [
+        {
+          name: "read-file",
+          description: "Read a file from disk",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    };
+
+    it("subscribes with a snapshot when the flag is on", async () => {
+      mockUseToolQualityEnabled.mockReturnValue(true);
+      mockListTools.mockResolvedValue(toolResponse);
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("read-file")).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(mockUseQuery).toHaveBeenCalledWith(
+          "toolPrechecks:get",
+          expect.objectContaining({
+            snapshot: expect.objectContaining({ servers: expect.any(Array) }),
+          })
+        );
+      });
+    });
+
+    it("skips the subscription (no snapshot) when the flag is off", async () => {
+      mockUseToolQualityEnabled.mockReturnValue(false);
+      mockListTools.mockResolvedValue(toolResponse);
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+
+      // Tools still load; only the lint subscription is gated.
+      await waitFor(() => {
+        expect(screen.getByText("read-file")).toBeInTheDocument();
+      });
+
+      expect(mockUseQuery).toHaveBeenCalledWith("toolPrechecks:get", "skip");
+      expect(mockUseQuery).not.toHaveBeenCalledWith(
+        "toolPrechecks:get",
+        expect.objectContaining({ snapshot: expect.anything() })
+      );
     });
   });
 });

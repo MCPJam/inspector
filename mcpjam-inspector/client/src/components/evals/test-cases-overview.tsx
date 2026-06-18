@@ -31,6 +31,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
@@ -508,9 +509,14 @@ export function TestCasesOverview({
                           (serverName) => !connectedServerNames.has(serverName)
                         );
                   const hasModels = Boolean(testCase.models?.length);
-                  // Probes have no quick-run path (suite/schedule only); keep
-                  // the gate explicit rather than riding on their empty models.
-                  const isProbeCase = testCase.caseType === "widget_probe";
+                  // Render checks have no quick-run path (suite/schedule only);
+                  // keep the gate explicit rather than riding on their empty
+                  // models. Detect both legacy widget_probe and new unified
+                  // pinned-only cases.
+                  const isProbeCase = isPinnedOnly({
+                    caseType: testCase.caseType,
+                    promptTurns: testCase.promptTurns,
+                  });
                   const isThisCaseRunning = runningTestCaseId === testCase._id;
                   const isAnotherCaseRunning =
                     runningTestCaseId != null &&

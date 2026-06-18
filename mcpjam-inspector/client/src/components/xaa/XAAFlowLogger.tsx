@@ -9,6 +9,7 @@ import {
   Lightbulb,
   Loader2,
   Pencil,
+  Play,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -16,6 +17,12 @@ import {
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -62,9 +69,14 @@ interface XAAFlowLoggerProps {
     onConfigure: () => void;
     onReset?: () => void;
     onContinue?: () => void;
+    /** Run the whole flow — surfaced in the Continue split-button's menu. */
+    onRunAll?: () => void;
     onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
     continueLabel: string;
     continueDisabled?: boolean;
+    runAllDisabled?: boolean;
+    /** A Run all is in flight; the primary button shows a spinner. */
+    isRunningAll?: boolean;
     resetDisabled?: boolean;
   };
   summary: {
@@ -571,40 +583,78 @@ export function XAAFlowLogger({
 
   return (
     <div className="h-full border-l border-border flex flex-col">
-      <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
-        <div className="flex items-center gap-2">
+      <div className="@container/xaa-run-bar bg-muted/30 border-b border-border px-4 py-3 space-y-3">
+        <div className="flex flex-col gap-2 @min-[384px]/xaa-run-bar:flex-row @min-[384px]/xaa-run-bar:items-center">
           <button
             onClick={actions.onConfigure}
-            className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer group"
+            className="flex w-full min-w-0 items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer group @min-[384px]/xaa-run-bar:flex-1"
           >
-            <p className="text-sm font-medium text-foreground break-all flex-1">
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
               {summary.serverUrl || "Configure an MCP server URL to start."}
             </p>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
               <Pencil className="h-3 w-3" />
               Edit
             </span>
           </button>
-          <div className="flex items-center gap-1 shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={actions.onReset}
-              disabled={actions.resetDisabled || !actions.onReset}
-              className="h-7"
-            >
-              <RotateCcw className="h-3 w-3 mr-1" />
-              Reset
-            </Button>
-            <Button
-              size="sm"
-              onClick={actions.onContinue}
-              disabled={actions.continueDisabled || !actions.onContinue}
-              className="h-7"
-            >
-              {actions.continueLabel}
-            </Button>
-          </div>
+          {hasProfile && (
+            <div className="flex shrink-0 items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={actions.onReset}
+                disabled={actions.resetDisabled || !actions.onReset}
+                className="h-7"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Reset
+              </Button>
+              <div className="flex items-stretch">
+                <Button
+                  size="sm"
+                  onClick={actions.onContinue}
+                  disabled={
+                    actions.continueDisabled ||
+                    !actions.onContinue ||
+                    actions.isRunningAll
+                  }
+                  className={cn("h-7", actions.onRunAll && "rounded-r-none")}
+                >
+                  {actions.isRunningAll ? (
+                    <>
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      Running
+                    </>
+                  ) : (
+                    actions.continueLabel
+                  )}
+                </Button>
+                {actions.onRunAll && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        aria-label="More run options"
+                        disabled={actions.isRunningAll}
+                        className="h-7 rounded-l-none border-l border-primary-foreground/25 px-1.5"
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={actions.onRunAll}
+                        disabled={actions.runAllDisabled}
+                      >
+                        <Play className="mr-2 h-3.5 w-3.5" />
+                        Run all
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {hasProfile && (
@@ -731,10 +781,10 @@ export function XAAFlowLogger({
             <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
               <li>
                 <span className="font-medium text-foreground">
-                  Configure a target
+                  Add or pick a server in the bar above
                 </span>{" "}
-                — the MCP server URL, a client ID, and (for your own auth
-                server) its issuer. Start here.
+                — each environment (beta/staging/prod) is its own server. Set
+                the simulated identity and negative-test Mode in the run bar.
               </li>
               <li>
                 <span className="font-medium text-foreground">
@@ -751,8 +801,6 @@ export function XAAFlowLogger({
                 authorization server accepts the ID-JAG MCPJam mints.
               </li>
             </ol>
-
-            <Button onClick={actions.onConfigure}>Configure Target</Button>
           </div>
         ) : groups.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">

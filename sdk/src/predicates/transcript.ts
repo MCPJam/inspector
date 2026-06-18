@@ -13,6 +13,7 @@ import type { EvalTraceInput } from "../eval-reporting-types.js";
 import type {
   IterationTranscript,
   RenderObservationSummary,
+  ToolErrorRecord,
   TranscriptToolCall,
   TranscriptUsage,
 } from "./types.js";
@@ -66,6 +67,13 @@ export interface BuildTranscriptInput {
   finalAssistantMessage?: string;
   /** Widget render observation summaries, when the runner captured any. */
   renderObservations?: RenderObservationSummary[];
+  /**
+   * Tool errors the runner observed outside the trace. A model-free pinned
+   * tool call has no trace for `extractToolErrors` to read, so its failures
+   * (content-error / protocol-error) must be passed explicitly — otherwise
+   * `noToolErrors` would pass falsely. Merged with trace-derived errors.
+   */
+  toolErrors?: ToolErrorRecord[];
 }
 
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
@@ -75,9 +83,13 @@ export function buildIterationTranscript(
   const finalAssistantMessage =
     input.finalAssistantMessage ??
     extractFinalAssistantMessage(messagesOf(input.trace));
+  const toolErrors = [
+    ...extractToolErrors(input.trace),
+    ...(input.toolErrors ?? []),
+  ];
   return {
     toolCalls: input.toolCalls,
-    toolErrors: extractToolErrors(input.trace),
+    toolErrors,
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     ...(input.usage ? { usage: input.usage } : {}),
     ...(input.renderObservations && input.renderObservations.length > 0

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-  Check,
   ChevronDown,
+  ChevronRight,
   Info,
   Loader2,
   Plus,
@@ -48,6 +48,21 @@ type ServerAttachmentPickerProps = {
   infoText?: string;
   /** Tooltip on the delete button when the attachment is the selected one. */
   selectedDeleteHint?: string;
+  /**
+   * When provided, the currently-selected group can be deleted from the
+   * list and this is called to clear the now-dangling selection. Omit it
+   * where the selection is persisted to a saved suite — there the in-use
+   * group stays locked (the backend rejects it anyway). Passing it signals
+   * an unsaved selection (e.g. the create-suite dialog) that's safe to drop.
+   */
+  onClearSelection?: () => void;
+  /**
+   * Render the dropdown in place instead of portaling it to <body>. Set
+   * this when the picker lives inside a modal Dialog, whose scroll-lock
+   * otherwise blocks wheel-scrolling the server list. Leave false on bars
+   * and other non-modal surfaces so the dropdown can overflow freely.
+   */
+  inModal?: boolean;
 };
 
 export function ServerAttachmentPicker({
@@ -55,9 +70,11 @@ export function ServerAttachmentPicker({
   value,
   onChange,
   disabled = false,
-  emptyTriggerLabel = "No server attachment · pick one",
-  infoText = "A server attachment is a named set of MCP servers that every client in the suite runs against. Reuse the same attachment across suites, or create one per scenario.",
+  emptyTriggerLabel = "No server group · pick one",
+  infoText = "A server group is a named set of MCP servers that every host in the suite runs against.",
   selectedDeleteHint = "In use by this suite — pick another first",
+  onClearSelection,
+  inModal = false,
 }: ServerAttachmentPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -72,7 +89,6 @@ export function ServerAttachmentPicker({
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [nameTouched, setNameTouched] = useState(false);
   const [createServerIds, setCreateServerIds] = useState<Set<string>>(
     new Set()
   );
@@ -92,6 +108,8 @@ export function ServerAttachmentPicker({
     "serverAttachments:deleteServerAttachment" as any
   );
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Which group row is expanded to reveal its server names.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // The optimistic record must not outlive the in-flight create window
   // — otherwise switching to another suite (which feeds a new `value`,
@@ -125,7 +143,9 @@ export function ServerAttachmentPicker({
   const handleSelect = useCallback(
     (attachment: EvalServerAttachment) => {
       onChange(attachment._id, attachment);
-      setOpen(false);
+      // Clicking a row both picks the group and reveals its servers —
+      // keep the popover open and expand this row (collapse on re-click).
+      setExpandedId((cur) => (cur === attachment._id ? null : attachment._id));
     },
     [onChange]
   );
@@ -137,19 +157,35 @@ export function ServerAttachmentPicker({
       setDeletingId(attachment._id);
       try {
         await deleteServerAttachment({ serverAttachmentId: attachment._id });
+        // Deleting the group we had picked leaves the selection dangling —
+        // clear it so the suite falls back to "No server group · pick one".
+        if (attachment._id === value) onClearSelection?.();
         toast.success(`Deleted "${attachment.name}"`);
       } catch (err) {
         const msg =
           err instanceof Error
             ? err.message
-            : "Failed to delete server attachment";
+            : "Failed to delete server group";
         toast.error(msg);
       } finally {
         setDeletingId(null);
       }
     },
-    [deleteServerAttachment],
+    [deleteServerAttachment, value, onClearSelection],
   );
+
+  // Auto-name new groups "group 1", "group 2", … using the lowest number
+  // not already taken — the name no longer depends on the picked servers.
+  const nextGroupName = useCallback(() => {
+    const used = new Set<number>();
+    for (const a of serverAttachments) {
+      const m = /^group (\d+)$/i.exec((a.name ?? "").trim());
+      if (m) used.add(Number(m[1]));
+    }
+    let n = 1;
+    while (used.has(n)) n++;
+    return `group ${n}`;
+  }, [serverAttachments]);
 
   const handleToggleServer = useCallback(
     (serverId: string, checked: boolean) => {
@@ -157,25 +193,15 @@ export function ServerAttachmentPicker({
         const next = new Set(prev);
         if (checked) next.add(serverId);
         else next.delete(serverId);
-        // Auto-derive name from the first picked server unless the user
-        // has explicitly typed one. Sets preserve insertion order, so
-        // iterating gives us the earliest still-picked server.
-        if (!nameTouched) {
-          const firstId = next.values().next().value as string | undefined;
-          const firstName = firstId
-            ? projectServers.find((s) => s._id === firstId)?.name ?? ""
-            : "";
-          setCreateName(firstName);
-        }
         return next;
       });
     },
-    [nameTouched, projectServers]
+    []
   );
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim();
-    if (!name) return;
+    if (!name || createServerIds.size === 0) return;
     setIsCreating(true);
     try {
       const pickedServerIds = Array.from(createServerIds);
@@ -197,11 +223,14 @@ export function ServerAttachmentPicker({
       setOpen(false);
       setShowCreate(false);
       setCreateName("");
-      setNameTouched(false);
       setCreateServerIds(new Set());
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to create server attachment";
+      const raw = err instanceof Error ? err.message : "";
+      // The backend rejects duplicate names with a verbose, stack-y message;
+      // surface a clean toast instead of leaking it.
+      const msg = /already exists/i.test(raw)
+        ? `A server group named "${name}" already exists.`
+        : "Failed to create server group";
       toast.error(msg);
     } finally {
       setIsCreating(false);
@@ -232,7 +261,6 @@ export function ServerAttachmentPicker({
           // a half-filled create form from the last session.
           setShowCreate(false);
           setCreateName("");
-          setNameTouched(false);
           setCreateServerIds(new Set());
         }
       }}
@@ -271,21 +299,40 @@ export function ServerAttachmentPicker({
         className="w-64 p-1"
         align="start"
         sideOffset={4}
-        onInteractOutside={() => {
-          if (!isCreating) setShowCreate(false);
+        // Inside a modal, render in place (not portaled to <body>) so the
+        // list scrolls — the dialog's scroll-lock blocks the wheel on
+        // portaled content rendered outside it.
+        portalled={!inModal}
+        onInteractOutside={(e) => {
+          // While a create is in flight, don't let an outside click
+          // dismiss the popover mid-request.
+          if (isCreating) {
+            e.preventDefault();
+            return;
+          }
+          // Clicking outside the popover commits the in-progress
+          // attachment instead of discarding it — the Create button can
+          // sit below the fold when the server list is long, so the
+          // click-away IS the save. Keep the popover open until
+          // handleCreate resolves (it closes itself on success) so the
+          // trigger doesn't flash empty during the mutation.
+          if (showCreate && createName.trim() && createServerIds.size > 0) {
+            e.preventDefault();
+            void handleCreate();
+          }
         }}
       >
         {!showCreate ? (
           <div className="space-y-0.5">
             <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Server attachments
+                Server groups
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    aria-label="What is a server attachment?"
+                    aria-label="What is a server group?"
                     className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Info className="size-3" />
@@ -298,15 +345,21 @@ export function ServerAttachmentPicker({
             </div>
             {serverAttachments.length === 0 && !isLoading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                No server attachments yet — create one below.
+                No server groups yet — create one below.
               </p>
             ) : null}
             {serverAttachments.map((attachment) => {
               const isSelected = attachment._id === value;
               const isDeleting = deletingId === attachment._id;
+              // The selected group is only locked from deletion when the
+              // selection is persisted (no onClearSelection handler) — e.g.
+              // a saved suite. In the unsaved create dialog it's deletable.
+              const lockSelected = isSelected && !onClearSelection;
+              const isExpanded = expandedId === attachment._id;
+              const serverNames = attachment.resolvedServerNames ?? [];
               return (
+                <div key={attachment._id}>
                 <div
-                  key={attachment._id}
                   className={cn(
                     "group flex w-full items-center gap-1 rounded pr-1 text-sm",
                     "hover:bg-accent hover:text-accent-foreground",
@@ -316,16 +369,30 @@ export function ServerAttachmentPicker({
                   <button
                     type="button"
                     onClick={() =>
-                      handleSelect(attachment as EvalServerAttachment)
+                      setExpandedId(isExpanded ? null : attachment._id)
                     }
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left"
+                    aria-expanded={isExpanded}
+                    aria-label={
+                      isExpanded
+                        ? `Hide servers in ${attachment.name}`
+                        : `Show servers in ${attachment.name}`
+                    }
+                    className="shrink-0 rounded p-1 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <Check
+                    <ChevronRight
                       className={cn(
-                        "size-3.5 shrink-0",
-                        isSelected ? "opacity-100" : "opacity-0",
+                        "size-3.5 transition-transform",
+                        isExpanded && "rotate-90",
                       )}
                     />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelect(attachment as EvalServerAttachment)
+                    }
+                    className="flex min-w-0 flex-1 items-center rounded px-2 py-1.5 text-left"
+                  >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium">
                         {attachment.name}
@@ -347,12 +414,12 @@ export function ServerAttachmentPicker({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (isSelected) return;
+                            if (lockSelected) return;
                             void handleDelete(
                               attachment as EvalServerAttachment,
                             );
                           }}
-                          disabled={isDeleting || isSelected}
+                          disabled={isDeleting || lockSelected}
                           aria-label={`Delete ${attachment.name}`}
                           className="rounded p-1 text-muted-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                         >
@@ -366,21 +433,46 @@ export function ServerAttachmentPicker({
                     </TooltipTrigger>
                     <TooltipContent side="right">
                       <p className="text-xs">
-                        {isSelected ? selectedDeleteHint : "Delete attachment"}
+                        {lockSelected ? selectedDeleteHint : "Delete group"}
                       </p>
                     </TooltipContent>
                   </Tooltip>
+                </div>
+                {isExpanded ? (
+                  <div className="pb-1 pl-7 pr-2 pt-0.5">
+                    {serverNames.length === 0 ? (
+                      <p className="py-0.5 text-[11px] italic text-muted-foreground">
+                        No servers in this group.
+                      </p>
+                    ) : (
+                      <ul className="space-y-0.5">
+                        {serverNames.map((name, i) => (
+                          <li
+                            key={`${attachment._id}-${i}`}
+                            className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
+                          >
+                            <Server className="size-3 shrink-0" />
+                            <span className="truncate">{name}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
                 </div>
               );
             })}
             <div className="pt-0.5">
               <button
                 type="button"
-                onClick={() => setShowCreate(true)}
+                onClick={() => {
+                  setShowCreate(true);
+                  setCreateName(nextGroupName());
+                }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
               >
                 <Plus className="size-3.5 shrink-0 text-muted-foreground" />
-                <span>Create new attachment…</span>
+                <span>Create new group…</span>
               </button>
             </div>
           </div>
@@ -388,23 +480,19 @@ export function ServerAttachmentPicker({
           <div className="space-y-3 p-1">
             <div className="space-y-1">
               <Label htmlFor="server-attachment-name" className="text-[11px]">
-                Attachment name
+                Group name
               </Label>
               <Input
                 id="server-attachment-name"
                 value={createName}
-                onChange={(e) => {
-                  setNameTouched(true);
-                  setCreateName(e.target.value);
-                }}
-                placeholder="Auto-filled from first server"
+                onChange={(e) => setCreateName(e.target.value)}
+                placeholder="e.g. group 3"
                 className="h-7 text-xs"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void handleCreate();
                   if (e.key === "Escape") {
                     setShowCreate(false);
                     setCreateName("");
-                    setNameTouched(false);
                     setCreateServerIds(new Set());
                   }
                 }}
@@ -414,20 +502,24 @@ export function ServerAttachmentPicker({
               <Label className="text-[11px]">
                 Servers ({createServerIds.size} picked)
               </Label>
-              <ServerSelectionList
-                servers={projectServers.map((s) => ({
-                  id: s._id,
-                  name: s.name,
-                }))}
-                selectedIds={createServerIds}
-                onToggle={handleToggleServer}
-                emptyState={
-                  <p className="px-2 py-1 text-xs italic text-muted-foreground">
-                    No servers in the project pool yet.
-                  </p>
-                }
-                ariaLabel="Pick servers for this attachment"
-              />
+              {/* Scroll the list internally so a long server pool never
+                  pushes the Create button below the fold. */}
+              <div className="max-h-48 overflow-y-auto pr-1">
+                <ServerSelectionList
+                  servers={projectServers.map((s) => ({
+                    id: s._id,
+                    name: s.name,
+                  }))}
+                  selectedIds={createServerIds}
+                  onToggle={handleToggleServer}
+                  emptyState={
+                    <p className="px-2 py-1 text-xs italic text-muted-foreground">
+                      No servers in the project pool yet.
+                    </p>
+                  }
+                  ariaLabel="Pick servers for this group"
+                />
+              </div>
             </div>
             <div className="flex gap-2">
               <Button
@@ -454,7 +546,6 @@ export function ServerAttachmentPicker({
                 onClick={() => {
                   setShowCreate(false);
                   setCreateName("");
-                  setNameTouched(false);
                   setCreateServerIds(new Set());
                 }}
               >
