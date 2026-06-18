@@ -240,6 +240,19 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             <span className="hp-section-title">Client capabilities</span>
           </button>
           <div className="hp-caps">
+            {connectedClientCaps.length === 0 ? (
+              <button
+                type="button"
+                className="hp-cap hp-cap--off"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectNode(PROTOCOL_HUB_NODE_ID);
+                }}
+              >
+                <span className="hp-cap-dot" aria-hidden />
+                <span className="hp-cap-name">none advertised</span>
+              </button>
+            ) : null}
             {connectedClientCaps.map((row) => (
               <button
                 key={row.key}

@@ -28,12 +28,6 @@ import {
  * extension and have the render gate honor that. Inferring from
  * `hostStyle` would silently override their edit.
  *
- * **Known capability-less Apps hosts:** Le Chat currently renders MCP Apps
- * while reporting base MCP `clientCapabilities: {}`. That is not a server
- * UI-extension advertisement, but it is a real host behavior captured from
- * `ui/initialize`. The optional `hostStyle` override lets call sites model
- * this one known host without mutating its captured wire data.
- *
  * **Transitional gap:** the OpenAI Apps SDK (`window.openai`) is a
  * separate rendering protocol not yet represented by a capability flag.
  * In practice every Apps-SDK host we ship today (ChatGPT, Copilot)
@@ -51,21 +45,10 @@ import {
  */
 export function hostSupportsWidgetRendering(
   clientCapabilities: Record<string, unknown> | undefined,
-  opts?: { hostStyle?: string | null | undefined },
+  _opts?: { hostStyle?: string | null | undefined },
 ): boolean {
   if (clientCapabilities === undefined) return true;
-  if (clientAdvertisesMcpApps(clientCapabilities)) return true;
-  return hostStyleRendersAppsWithoutClientCapability(
-    opts?.hostStyle,
-    clientCapabilities,
-  );
-}
-
-function hostStyleRendersAppsWithoutClientCapability(
-  hostStyle: string | null | undefined,
-  clientCapabilities: Record<string, unknown>,
-): boolean {
-  return hostStyle === "mistral" && Object.keys(clientCapabilities).length === 0;
+  return clientAdvertisesMcpApps(clientCapabilities);
 }
 
 /**

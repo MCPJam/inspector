@@ -50,9 +50,9 @@ const MARKET_HOSTS: readonly MarketHost[] = [
     provenance: "vendor-doc",
     rendersMcpApps: true,
   },
-  // Le Chat renders MCP Apps (via `ui/initialize`) despite reporting base
-  // `clientCapabilities: {}`; the render gate models that capability-less
-  // case, so it's a genuine Apps shipping target here. Captured from a probe.
+  // Le Chat renders MCP Apps (via `ui/initialize`) and the normalized
+  // template advertises the standard MCP UI extension for that surface.
+  // Captured from a probe.
   {
     id: "mistral",
     label: "Mistral",

@@ -335,10 +335,10 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
 
 /**
  * Mistral Le Chat host style. Le Chat is a real MCP Apps host — it renders
- * widgets through `ui/initialize` — but its base MCP `initialize` capture
- * reports `clientCapabilities: {}` (no UI extension advertised). The render
- * gate (`host-capabilities.ts`) treats "mistral" as a known capability-less
- * Apps host so widgets still render without mutating that captured wire data.
+ * widgets through `ui/initialize`. One capture reported base MCP
+ * `clientCapabilities: {}` despite rendering Apps; the template normalizes
+ * that to the standard `io.modelcontextprotocol/ui` advertisement while this
+ * style keeps the Apps-side host surface faithful to the captured behavior.
  *
  * Style variables are captured from Le Chat's `host-context-changed` payload;
  * the chat surface is Le Chat's near-black (#111115) dark / white light. The
@@ -351,10 +351,9 @@ export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: MISTRAL_PLATFORM,
     fontCss: MISTRAL_FONT_CSS,
-    // Le Chat renders MCP Apps but the base MCP initialize capture reports
-    // `clientCapabilities: {}`. Keep this preset keyed to the Apps-side
-    // `ui/initialize` evidence: no PIP, no downloadFile, no teardown claims,
-    // no `window.openai` shim, and a text+image message surface.
+    // Keep this preset keyed to the Apps-side `ui/initialize` evidence:
+    // no PIP, no downloadFile, no teardown claims, no `window.openai` shim,
+    // and a text+image message surface.
     mcpAppsCapabilities: {
       ...MCP_APPS_FULL_SURFACE,
       availableDisplayModes: ["inline", "fullscreen"],

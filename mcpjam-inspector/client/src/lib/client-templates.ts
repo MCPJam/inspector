@@ -2,6 +2,10 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import {
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk/browser";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
   MCPJAM_FONT_CSS,
@@ -878,23 +882,29 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
-        // Local model catalog carries Mistral's provider ids as bare names
-        // (not "mistral/<slug>"), so use the supported id verbatim.
-        modelId: "mistral-large-latest",
+        // Le Chat's MCP/App captures identify the host and MCP client, not
+        // the backing model. Keep this empty so the template doesn't imply
+        // unobserved evidence such as "Mistral Large".
+        modelId: "",
         temperature: 0.7,
         requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
-      // Verbatim from Le Chat's base MCP `initialize` capture:
+      // Le Chat's captured base MCP `initialize` reported:
       //   clientInfo: { name: "mcp", version: "0.1.0" }
       //   clientCapabilities: {}
-      //
-      // Unlike Claude/Cursor, Le Chat currently renders MCP Apps without
-      // advertising the MCP UI extension in base clientCapabilities. The
-      // render gate handles "mistral" as a known capability-less Apps host
-      // so this template can keep the wire data honest.
-      base.clientCapabilities = {};
+      // But the same capture rendered MCP Apps and completed ui/initialize.
+      // For the normalized MCPJam template, advertise the standard MCP Apps
+      // extension explicitly so the canvas/runtime reflect the capability
+      // Le Chat demonstrated instead of preserving a contradictory raw quirk.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
@@ -927,6 +937,27 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         apps: {
           uiInitialize: {
             hostInfo: { name: "Le Chat", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            toolCancelled: false,
+            hostContextChanged: true,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
           },
           compatRuntime: { openaiApps: false },
           sandbox: {
