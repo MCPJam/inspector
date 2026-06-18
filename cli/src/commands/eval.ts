@@ -1,4 +1,11 @@
-import { readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import {
   createEvalCaseOperation,
@@ -22,9 +29,18 @@ import {
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
-import { usageError, writeResult } from "../lib/output.js";
+import {
+  type RenderedScreenshot,
+  extractRenderedScreenshots,
+  screenshotFilename,
+} from "../lib/eval-screenshots.js";
+import { operationalError, usageError, writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
-import { getGlobalOptions } from "../lib/server-config.js";
+import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
+import {
+  detectInlineImageProtocol,
+  encodeInlineImage,
+} from "../lib/terminal-image.js";
 
 type PlatformOptions = {
   apiKey?: string;
@@ -285,6 +301,64 @@ function buildCaseInput(
   return input;
 }
 
+/** A screenshot entry as emitted in JSON output (and after an optional save). */
+type ScreenshotItem = RenderedScreenshot & { savedTo?: string };
+
+/** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
+async function fetchScreenshotBytes(
+  url: string,
+  timeoutMs: number
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const handle = setTimeout(() => controller.abort(), timeoutMs);
+  handle.unref?.();
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw operationalError(
+        `Failed to download screenshot (HTTP ${response.status}).`,
+        { url }
+      );
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw operationalError(
+        `Timed out downloading screenshot after ${timeoutMs}ms.`,
+        { url }
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(handle);
+  }
+}
+
+/**
+ * Resolve where a screenshot should be written for `--out`. A path that is (or
+ * looks like) a directory gets a generated per-render filename; otherwise the
+ * literal path is used — but only when saving a single image, so multiple
+ * renders never overwrite one file.
+ */
+function resolveScreenshotPath(
+  out: string,
+  shot: RenderedScreenshot,
+  index: number,
+  total: number
+): string {
+  const looksLikeDir =
+    out.endsWith("/") || (existsSync(out) && statSync(out).isDirectory());
+  if (looksLikeDir) {
+    return join(out, screenshotFilename(shot, index));
+  }
+  if (total > 1) {
+    throw usageError(
+      "--out must be a directory when the iteration rendered multiple screenshots."
+    );
+  }
+  return out;
+}
+
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
@@ -490,6 +564,141 @@ export function registerEvalCommands(program: Command): void {
         options,
         command
       );
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("screenshot")
+      .description(
+        "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--out <path>",
+        "Save the PNG(s) to a file or directory instead of rendering inline"
+      )
+      .option("--index <n>", "Show only the Nth screenshot (1-based)")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+        out?: string;
+        index?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const index =
+        options.index !== undefined
+          ? parsePositiveInteger(options.index, "--index")
+          : undefined;
+
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getEvalIterationTraceOperation.execute(
+            {
+              project: options.project,
+              runId: options.run,
+              iterationId: options.iteration,
+            },
+            { client, signal }
+          )
+      );
+
+      let shots = extractRenderedScreenshots(result);
+      if (index !== undefined) {
+        if (index > shots.length) {
+          throw usageError(
+            `--index ${index} is out of range; this iteration rendered ${shots.length} screenshot(s).`
+          );
+        }
+        shots = [shots[index - 1]];
+      }
+
+      const base = {
+        project: result.project,
+        runId: result.runId,
+        iterationId: result.iterationId,
+      };
+      const isJson = globalOptions.format === "json";
+
+      // Save mode: download each PNG to disk regardless of output format.
+      if (options.out !== undefined) {
+        const saved: ScreenshotItem[] = [];
+        for (let i = 0; i < shots.length; i += 1) {
+          const shot = shots[i];
+          const bytes = await fetchScreenshotBytes(
+            shot.screenshotUrl,
+            globalOptions.timeout
+          );
+          const path = resolveScreenshotPath(
+            options.out,
+            shot,
+            i,
+            shots.length
+          );
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, bytes);
+          saved.push({ ...shot, savedTo: path });
+        }
+        if (isJson) {
+          writeResult({ ...base, items: saved });
+          return;
+        }
+        if (saved.length === 0) {
+          process.stdout.write(
+            "No rendered widget screenshots for this iteration.\n"
+          );
+          return;
+        }
+        for (const shot of saved) {
+          process.stdout.write(
+            `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`
+          );
+        }
+        return;
+      }
+
+      // JSON without --out: structured screenshot URLs, no image bytes.
+      if (isJson) {
+        writeResult({ ...base, items: shots });
+        return;
+      }
+
+      // Human: render inline if the terminal supports it, else print the URL.
+      if (shots.length === 0) {
+        process.stdout.write(
+          "No rendered widget screenshots for this iteration.\n"
+        );
+        return;
+      }
+      const protocol = detectInlineImageProtocol();
+      for (const shot of shots) {
+        const caption = `${shot.toolName ?? "widget"} · ${shot.status}`;
+        if (protocol) {
+          const bytes = await fetchScreenshotBytes(
+            shot.screenshotUrl,
+            globalOptions.timeout
+          );
+          process.stdout.write(`${caption}\n`);
+          process.stdout.write(encodeInlineImage(bytes, protocol));
+        } else {
+          process.stdout.write(`${caption}  ${shot.screenshotUrl}\n`);
+        }
+      }
     }
   );
 
