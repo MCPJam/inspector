@@ -36,13 +36,59 @@ type MarketHost = {
 };
 
 const MARKET_HOSTS: readonly MarketHost[] = [
-  { id: "claude", label: "Claude", logoSrc: "/claude_logo.png", provenance: "assumed", rendersMcpApps: true },
-  { id: "chatgpt", label: "ChatGPT", logoSrc: "/openai_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "cursor", label: "Cursor", logoSrc: "/cursor_logo.png", provenance: "probe", rendersMcpApps: true },
-  { id: "copilot", label: "Copilot", logoSrc: "/copilot_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
+  {
+    id: "claude",
+    label: "Claude",
+    logoSrc: "/claude_logo.png",
+    provenance: "assumed",
+    rendersMcpApps: true,
+  },
+  {
+    id: "chatgpt",
+    label: "ChatGPT",
+    logoSrc: "/openai_logo.png",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
+  // Le Chat renders MCP Apps (via `ui/initialize`) despite reporting base
+  // `clientCapabilities: {}`; the render gate models that capability-less
+  // case, so it's a genuine Apps shipping target here. Captured from a probe.
+  {
+    id: "mistral",
+    label: "Mistral",
+    logoSrc: "/mistral_logo.png",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    logoSrc: "/cursor_logo.png",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "copilot",
+    label: "Copilot",
+    logoSrc: "/copilot_logo.png",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
   // Codex is a CLI — it renders no widgets, of either flavor.
-  { id: "codex", label: "Codex", logoSrc: "/codex-logo.svg", provenance: "assumed", rendersMcpApps: false },
-  { id: "n8n", label: "n8n", logoSrc: "/n8n_logo.svg", provenance: "probe", rendersMcpApps: false },
+  {
+    id: "codex",
+    label: "Codex",
+    logoSrc: "/codex-logo.svg",
+    provenance: "assumed",
+    rendersMcpApps: false,
+  },
+  {
+    id: "n8n",
+    label: "n8n",
+    logoSrc: "/n8n_logo.svg",
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
   {
     id: "perplexity",
     label: "Perplexity",

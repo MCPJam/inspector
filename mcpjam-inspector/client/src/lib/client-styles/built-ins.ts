@@ -1,6 +1,7 @@
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -34,6 +35,12 @@ import {
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
+import {
+  MISTRAL_CHAT_BACKGROUND,
+  MISTRAL_FONT_CSS,
+  MISTRAL_PLATFORM,
+  getMistralStyleVariables,
+} from "@/config/mistral-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
@@ -42,7 +49,8 @@ import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import { N8nMarkIndicator } from "./indicators/n8n-mark";
-import { PerplexityShimmerIndicator } from "./indicators/perplexity-shimmer";
+import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
+import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
 import type {
   HostStyleDefinition,
   ResolvedMcpAppsCapabilities,
@@ -325,6 +333,57 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+/**
+ * Mistral Le Chat host style. Le Chat is a real MCP Apps host — it renders
+ * widgets through `ui/initialize` — but its base MCP `initialize` capture
+ * reports `clientCapabilities: {}` (no UI extension advertised). The render
+ * gate (`host-capabilities.ts`) treats "mistral" as a known capability-less
+ * Apps host so widgets still render without mutating that captured wire data.
+ *
+ * Style variables are captured from Le Chat's `host-context-changed` payload;
+ * the chat surface is Le Chat's near-black (#111115) dark / white light. The
+ * loading indicator is Le Chat's iconic morphing five-square loader plus a
+ * shimmering "Thinking" label (see `indicators/mistral-spinner.tsx`).
+ */
+export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
+  id: "mistral",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MISTRAL_PLATFORM,
+    fontCss: MISTRAL_FONT_CSS,
+    // Le Chat renders MCP Apps but the base MCP initialize capture reports
+    // `clientCapabilities: {}`. Keep this preset keyed to the Apps-side
+    // `ui/initialize` evidence: no PIP, no downloadFile, no teardown claims,
+    // no `window.openai` shim, and a text+image message surface.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      availableDisplayModes: ["inline", "fullscreen"],
+      toolCancelled: false,
+      resourceTeardown: false,
+      toolInfo: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+      widgetDisplayModeRequests: "accept",
+    },
+    hostCapabilitiesAugment: {
+      message: { image: {} },
+    },
+    resolveStyleVariables: getMistralStyleVariables,
+  },
+  chatUi: {
+    label: "Mistral",
+    shortLabel: "Mistral-style host",
+    pickerDescription: "Mistral web host",
+    logoSrc: mistralLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],
+    loadingIndicator: MistralSpinnerIndicator,
+  },
+};
+
 export const CURSOR_HOST_STYLE: HostStyleDefinition = {
   id: "cursor",
   mcp: {
@@ -543,7 +602,11 @@ export const AGENTCORE_HOST_STYLE: HostStyleDefinition = {
     // MCPJam, whose neutral tokens AgentCore borrows.
     family: "claude",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    loadingIndicator: MCPJamMarkIndicator,
+    // AgentCore is a text-only AWS runtime with no chat surface of its own, so
+    // it shows the generic Codex/Cursor "Thinking" shimmer rather than a
+    // branded mark. (Its "claude" family is for bubble chrome only — it opts
+    // out of the claude.ai streaming-footer mark in loading-indicator-content.)
+    loadingIndicator: CodexShineIndicator,
   },
 };
 
@@ -596,9 +659,9 @@ export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
     logoSrc: perplexityLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    // Spinning Perplexity mark + teal shimmer "Thinking" label, captured from
-    // a live perplexity.ai probe.
-    loadingIndicator: PerplexityShimmerIndicator,
+    // Scrolling Perplexity-mark sprite strip (the mark morphing/rotating in
+    // place), captured verbatim from a live perplexity.ai probe.
+    loadingIndicator: PerplexityMarkIndicator,
   },
 };
 
@@ -648,6 +711,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  MISTRAL_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
