@@ -776,9 +776,24 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
   };
 }
 
+/**
+ * Resolve a model id's provider. Handles a `provider/model` prefix directly,
+ * and looks a BARE id (e.g. "claude-sonnet-4-5") up in the model catalog —
+ * suite execution configs store bare ids, so a slash check alone would fail to
+ * derive a provider and leave new cases model-less.
+ */
+function providerForModelId(modelId: string): string | undefined {
+  if (modelId.includes("/")) return modelId.split("/")[0];
+  const match = SUPPORTED_MODELS.find(
+    (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
+  );
+  return match ? String(match.provider) : undefined;
+}
+
 function deriveProvider(model: string, explicit: string | undefined): string {
   if (explicit) return explicit;
-  if (model.includes("/")) return model.split("/")[0]!;
+  const provider = providerForModelId(model);
+  if (provider) return provider;
   throw new WebRouteError(
     400,
     ErrorCode.VALIDATION_ERROR,
@@ -1519,8 +1534,11 @@ async function defaultCaseModels(
       suiteId,
     });
     const modelId = cfg?.modelId;
-    if (typeof modelId === "string" && modelId.includes("/")) {
-      return [{ model: modelId, provider: modelId.split("/")[0]! }];
+    if (typeof modelId === "string" && modelId.length > 0) {
+      // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
+      // provider via the catalog so the new case isn't persisted model-less.
+      const provider = providerForModelId(modelId);
+      if (provider) return [{ model: modelId, provider }];
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.

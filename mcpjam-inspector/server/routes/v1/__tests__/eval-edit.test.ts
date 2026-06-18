@@ -468,6 +468,28 @@ describe("v1 eval-edit routes", () => {
     ).toBe(true);
   });
 
+  it("create case without models derives the provider for a bare suite default", async () => {
+    // Suite execution config stores a BARE model id (no slash).
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "hostConfigsV2:getSuiteConfig"
+        ? Promise.resolve({ ...EXEC_CONFIG, modelId: "claude-sonnet-4-5" })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      { title: "bare", prompt: "hi", expectedToolCalls: [{ tool: "x" }] }
+    );
+    expect(res.status).toBe(201);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCase"
+    )![1];
+    // Provider resolved via the catalog, not dropped to [].
+    expect(args.models).toEqual([
+      { model: "claude-sonnet-4-5", provider: "anthropic" },
+    ]);
+  });
+
   it("GET cases returns scrubbed public case DTOs", async () => {
     const res = await request(
       "GET",
