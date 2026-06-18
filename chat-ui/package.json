@@ -26,6 +26,11 @@
       "import": "./dist/trace.js",
       "default": "./dist/trace.js"
     },
+    "./trace-timeline": {
+      "types": "./dist/trace-timeline.d.ts",
+      "import": "./dist/trace-timeline.js",
+      "default": "./dist/trace-timeline.js"
+    },
     "./styles.css": "./dist/styles.css"
   },
   "sideEffects": [

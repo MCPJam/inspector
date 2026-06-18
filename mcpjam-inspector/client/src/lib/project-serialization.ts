@@ -31,6 +31,10 @@ function serializeServersInternal(
       useOAuth: server.useOAuth,
     };
 
+    if (server.xaaAuthzIssuer !== undefined) {
+      serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
+    }
+
     if (server.config) {
       const config: Record<string, unknown> = {};
 
@@ -195,6 +199,12 @@ export function deserializeServersFromConvex(
       hasHeaders: serverData.hasHeaders === true,
     };
 
+    const xaaAuthzIssuer =
+      serverData.xaaAuthzIssuer ?? serverData.config?.xaaAuthzIssuer;
+    if (xaaAuthzIssuer !== undefined) {
+      server.xaaAuthzIssuer = xaaAuthzIssuer;
+    }
+
     // Handle oauthFlowProfile from legacy nested structure
     if (serverData.oauthFlowProfile) {
       server.oauthFlowProfile = serverData.oauthFlowProfile;
@@ -250,6 +260,11 @@ export function serversHaveChanged(
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
+
+    const remoteXaaAuthzIssuer =
+      remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
+    if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
 
     // Get local URL
     const localUrl =

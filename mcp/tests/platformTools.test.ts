@@ -98,6 +98,17 @@ const PLAIN_TOOLS = [
   "read_server_resource",
   "run_eval_suite",
   "create_eval_suite",
+  // Eval suite/case editing: agent-oriented payloads, no widget view.
+  "get_eval_suite",
+  "update_eval_suite",
+  "delete_eval_suite",
+  "set_eval_suite_schedule",
+  "list_eval_cases",
+  "get_eval_case",
+  "create_eval_case",
+  "update_eval_case",
+  "delete_eval_case",
+  "generate_eval_cases",
   "get_eval_iteration_trace",
   "list_chat_sessions",
 ];
@@ -165,6 +176,16 @@ describe("platform tool registration", () => {
       "list_eval_suite_runs",
       "run_eval_suite",
       "create_eval_suite",
+      "get_eval_suite",
+      "update_eval_suite",
+      "delete_eval_suite",
+      "set_eval_suite_schedule",
+      "list_eval_cases",
+      "get_eval_case",
+      "create_eval_case",
+      "update_eval_case",
+      "delete_eval_case",
+      "generate_eval_cases",
       "get_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
@@ -206,15 +227,33 @@ describe("platform tool registration", () => {
 
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
+    const NON_DESTRUCTIVE_WRITES = new Set([
+      "run_eval_suite",
+      "create_eval_suite",
+      "update_eval_suite",
+      "set_eval_suite_schedule",
+      "create_eval_case",
+      "update_eval_case",
+      "generate_eval_cases",
+    ]);
+    const DESTRUCTIVE_DELETES = new Set([
+      "delete_eval_suite",
+      "delete_eval_case",
+    ]);
+
     for (const registration of registrations) {
-      if (
-        registration.name === "run_eval_suite" ||
-        registration.name === "create_eval_suite"
-      ) {
+      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
+        });
+      } else if (DESTRUCTIVE_DELETES.has(registration.name)) {
+        // Known-destructive deletes announce it explicitly.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
         });
       } else if (registration.name === "call_server_tool") {
         // Arbitrary third-party tool execution: destructive/idempotent hints
@@ -378,7 +417,10 @@ describe("runPlatformOperation", () => {
       "fetch",
       vi.fn(async () =>
         Response.json(
-          { code: "NOT_FOUND", message: "No accessible MCPJam projects were found." },
+          {
+            code: "NOT_FOUND",
+            message: "No accessible MCPJam projects were found.",
+          },
           { status: 404 }
         )
       )

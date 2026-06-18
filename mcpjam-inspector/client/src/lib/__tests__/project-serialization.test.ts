@@ -3,6 +3,7 @@ import {
   serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
+  deserializeServersFromConvex,
 } from "../project-serialization";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -145,5 +146,78 @@ describe("serversHaveChanged redacted secrets", () => {
         },
       ])
     ).toBe(false);
+  });
+});
+
+describe("project-serialization xaaAuthzIssuer round-trip", () => {
+  // The XAA "Configure Server to Test" modal reads the Authorization Server
+  // Issuer from server.xaaAuthzIssuer. If serialize/deserialize drops it, the
+  // field resets every time the runtime entry is rebuilt from the catalog
+  // (e.g. on a reconnect that needs re-auth).
+  it("persists xaaAuthzIssuer through serialization", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read", {
+        xaaAuthzIssuer: "https://issuer.test",
+      })
+    );
+    expect((out.s1 as any).xaaAuthzIssuer).toBe("https://issuer.test");
+  });
+
+  it("restores xaaAuthzIssuer from the flat servers table", () => {
+    const out = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client-1",
+        xaaAuthzIssuer: "https://issuer.test",
+      },
+    ]);
+    expect(out.s1.xaaAuthzIssuer).toBe("https://issuer.test");
+  });
+
+  it("treats an xaaAuthzIssuer change as a difference to resync", () => {
+    // No oauthFlowProfile on either side, so the only thing that can differ
+    // is the issuer — otherwise the assertions could pass on an unrelated
+    // OAuth-profile mismatch and never exercise the issuer comparison.
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+        xaaAuthzIssuer: "https://issuer.test",
+      } as ServerWithName,
+    };
+
+    // Same issuer (otherwise identical) → no resync.
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
+          xaaAuthzIssuer: "https://issuer.test",
+        },
+      ])
+    ).toBe(false);
+
+    // Only the issuer differs → resync.
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
+          xaaAuthzIssuer: "https://different.test",
+        },
+      ])
+    ).toBe(true);
   });
 });

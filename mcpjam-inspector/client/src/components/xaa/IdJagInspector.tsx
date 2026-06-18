@@ -47,17 +47,19 @@ function LintVerdictRow({ verdict }: { verdict: IdJagLintVerdict }) {
       data-testid={`idjag-lint-${verdict.id}`}
       className={`border rounded-md px-3 py-2 ${styles.row}`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <Icon className={`h-3.5 w-3.5 shrink-0 ${styles.icon}`} />
-        <code className="text-xs font-mono font-medium">{verdict.claim}</code>
+        <code className="shrink-0 text-xs font-mono font-medium">
+          {verdict.claim}
+        </code>
         {verdict.actual !== undefined && (
-          <code className="min-w-0 truncate text-[11px] font-mono text-muted-foreground">
+          <code className="min-w-0 flex-1 truncate text-[11px] font-mono text-muted-foreground">
             {verdict.actual}
           </code>
         )}
         <Badge
           variant="outline"
-          className="ml-auto shrink-0 text-[10px] font-normal"
+          className="ml-auto max-w-full whitespace-normal text-left text-[10px] font-normal"
         >
           {verdict.citation.spec} {verdict.citation.section}
         </Badge>

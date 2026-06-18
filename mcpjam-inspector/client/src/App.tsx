@@ -1040,6 +1040,7 @@ export function XAAFlowRoute() {
   const {
     xaaEnabled,
     appState,
+    displayServerConfigs,
     activeOrganizationId,
     convexProjectId,
     setSelectedServer,
@@ -1056,7 +1057,11 @@ export function XAAFlowRoute() {
       }
     >
       <XAAFlowTab
-        serverConfigs={appState.servers}
+        // The saved project catalog (clientId, scopes, hasClientSecret,
+        // xaaAuthzIssuer), not the runtime connection entries — the latter
+        // drop the persisted OAuth config, so the Configure modal and the
+        // runner saw a confidential server as a public client with no issuer.
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}

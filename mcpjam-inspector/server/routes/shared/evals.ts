@@ -478,6 +478,25 @@ export type ServerAttachmentInput = z.infer<
   typeof ServerAttachmentInputSchema
 >;
 
+// Per-bucket case counts for configurable generation. Field names mirror the
+// backend `CaseMix`. Each bucket is bounded; the backend additionally caps the
+// total. Omitted buckets inherit the backend's mode default.
+export const CaseMixSchema = z.object({
+  simple: z.number().int().min(0).max(10).optional(),
+  multiTool: z.number().int().min(0).max(10).optional(),
+  multiTurn: z.number().int().min(0).max(10).optional(),
+  complex: z.number().int().min(0).max(10).optional(),
+  negative: z.number().int().min(0).max(10).optional(),
+});
+
+// Optional generation knobs forwarded to the backend generate endpoint.
+export const GenerationOptionsSchema = z.object({
+  caseMix: CaseMixSchema.optional(),
+  varyUserStyles: z.boolean().optional(),
+});
+
+export type GenerationOptions = z.infer<typeof GenerationOptionsSchema>;
+
 // `serverNames` is the optional parallel array that pairs each `serverIds[i]`
 // (the manager key — Convex Id in hosted mode, display name in standalone)
 // with its runtime display name. The backend snapshot/attachment check is
@@ -494,6 +513,7 @@ export const GenerateTestsRequestSchema = z.object({
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
+  generationOptions: GenerationOptionsSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -1697,6 +1717,7 @@ export async function generateEvalTestsWithManager(
     request.convexAuthToken,
     request.serverAttachment,
     request.projectId,
+    request.generationOptions,
   );
 
   return {
