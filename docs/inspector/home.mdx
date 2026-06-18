@@ -75,6 +75,19 @@ The MCPJam Agent is a persistent chat panel that lets you ask questions about do
 - Click the **sparkle (✦) button** in the top-right header bar.
 - Press **⌘\\** (Mac) or **Ctrl+\\** (Windows / Linux) from anywhere in the app. The shortcut is ignored when focus is inside a text input, textarea, or content-editable field.
 
+### What the agent can do
+
+The agent has access to your workspace data and can answer questions or take actions across several areas:
+
+| Area | Example prompts |
+|------|----------------|
+| **Projects** | "List my projects", "What projects do I have?" |
+| **MCP servers** | "List servers in my project", "Diagnose my weather server", "What tools does my server expose?" |
+| **Eval suites** | "List my eval suites", "Run my addition eval suite", "Show me the results of my last eval run" |
+| **Chatboxes** | "List my chatboxes", "Show me chatbox details", "List chat sessions" |
+
+Operations that connect to one of your saved MCP servers (such as calling a tool or reading a resource) respect your project's **Require tool approval** setting. Pure platform reads — listing projects, eval suites, chatboxes, and sessions — never require approval.
+
 ### Using the panel
 
 - **New chat** — Click **New chat** in the panel header to start a fresh conversation.
