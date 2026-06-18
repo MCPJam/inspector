@@ -168,9 +168,28 @@ export type ServerAttachmentInput = {
   resolvedServerNames: string[];
 };
 
+/**
+ * Per-bucket case counts for configurable generation. Field names mirror the
+ * backend `CaseMix`; omitted buckets inherit the backend's default mix.
+ */
+export type CaseMixInput = {
+  simple?: number;
+  multiTool?: number;
+  multiTurn?: number;
+  complex?: number;
+  negative?: number;
+};
+
+/** Optional generation knobs forwarded to the backend generate endpoint. */
+export type GenerationOptions = {
+  caseMix?: CaseMixInput;
+  varyUserStyles?: boolean;
+};
+
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
   serverAttachment?: ServerAttachmentInput;
+  generationOptions?: GenerationOptions;
 };
 
 export type GeneratedEvalTestCase = {

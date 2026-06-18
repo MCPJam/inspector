@@ -113,6 +113,25 @@ describe("eval-edit operation input validation", () => {
     ).toBe(true);
   });
 
+  it("generate_eval_cases accepts a per-bucket caseMix + varyUserStyles", () => {
+    expect(
+      generateEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        caseMix: { simple: 3, negative: 1 },
+        varyUserStyles: true,
+      }).success
+    ).toBe(true);
+  });
+
+  it("generate_eval_cases rejects an out-of-range caseMix bucket", () => {
+    expect(
+      generateEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        caseMix: { simple: 99 },
+      }).success
+    ).toBe(false);
+  });
+
   it("read ops are read-only; writes and deletes are not", () => {
     expect(getEvalSuiteOperation.readOnly).toBe(true);
     expect(getEvalCaseOperation.readOnly).toBe(true);
@@ -180,5 +199,32 @@ describe("eval-edit operation execution", () => {
       mode: "negative",
       caseModels: [{ model: "anthropic/claude-haiku-4.5" }],
     });
+  });
+
+  it("generate_eval_cases forwards caseMix + varyUserStyles into the body", async () => {
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        caseMix: { simple: 3, negative: 1 },
+        varyUserStyles: true,
+      },
+      { client }
+    );
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({
+      caseMix: { simple: 3, negative: 1 },
+      varyUserStyles: true,
+    });
+  });
+
+  it("generate_eval_cases omits varyUserStyles when not enabled", async () => {
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute(
+      { suite: "s1", varyUserStyles: false },
+      { client }
+    );
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({});
   });
 });

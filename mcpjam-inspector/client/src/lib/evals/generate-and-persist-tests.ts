@@ -2,6 +2,7 @@ import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
   type GeneratedEvalTestCase,
+  type GenerationOptions,
   type ServerAttachmentInput,
 } from "@/lib/apis/evals-api";
 import { HOSTED_MODE } from "@/lib/config";
@@ -120,6 +121,11 @@ export type GenerateAndPersistEvalTestsOptions = {
    * cross-server coverage.
    */
   serverAttachment?: ServerAttachmentInput;
+  /**
+   * Optional generation knobs (per-bucket case mix, vary-user-styles) forwarded
+   * to the backend. Absent → today's default generation.
+   */
+  generationOptions?: GenerationOptions;
 };
 
 function getCreatedTestCaseId(created: unknown): string | null {
@@ -159,6 +165,7 @@ export async function generateAndPersistEvalTests(
     isDirectGuest = false,
     listExistingCases,
     serverAttachment,
+    generationOptions,
   } = options;
 
   let existingList: Array<Record<string, unknown>> = [];
@@ -201,6 +208,7 @@ export async function generateAndPersistEvalTests(
     serverIds,
     convexAuthToken: accessToken,
     ...(serverAttachment ? { serverAttachment } : {}),
+    ...(generationOptions ? { generationOptions } : {}),
   });
 
   const tests = result.tests ?? [];

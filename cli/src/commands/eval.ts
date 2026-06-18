@@ -660,6 +660,15 @@ export function registerEvalCommands(program: Command): void {
         "--case-model <id...>",
         "Execution model(s) for the generated cases"
       )
+      .option("--simple <n>", "How many easy, single-tool cases")
+      .option("--multi-tool <n>", "How many medium, 2+ tool cases")
+      .option("--multi-turn <n>", "How many multi-turn follow-up cases")
+      .option("--complex <n>", "How many hard / cross-server cases")
+      .option("--negative <n>", "How many negative (no-tool) cases")
+      .option(
+        "--vary-user-styles",
+        "Vary query phrasing across a realistic range of user styles"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -668,9 +677,29 @@ export function registerEvalCommands(program: Command): void {
         mode?: string;
         server?: string[];
         caseModel?: string[];
+        simple?: string;
+        multiTool?: string;
+        multiTurn?: string;
+        complex?: string;
+        negative?: string;
+        varyUserStyles?: boolean;
       },
       command
     ) => {
+      const caseMix: Record<string, number> = {};
+      for (const key of [
+        "simple",
+        "multiTool",
+        "multiTurn",
+        "complex",
+        "negative",
+      ] as const) {
+        const raw = options[key];
+        if (raw !== undefined) {
+          const parsed = Number.parseInt(raw, 10);
+          if (Number.isFinite(parsed)) caseMix[key] = parsed;
+        }
+      }
       const input = validateOpInput(generateEvalCasesOperation, {
         project: options.project,
         suite: options.suite,
@@ -679,6 +708,8 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseModel
           ? { caseModels: options.caseModel.map((model) => ({ model })) }
           : {}),
+        ...(Object.keys(caseMix).length > 0 ? { caseMix } : {}),
+        ...(options.varyUserStyles ? { varyUserStyles: true } : {}),
       });
       await executeOp(generateEvalCasesOperation, input, options, command);
     }

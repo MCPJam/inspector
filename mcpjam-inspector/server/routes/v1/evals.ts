@@ -913,6 +913,20 @@ const generateCasesSchema = z.object({
       })
     )
     .optional(),
+  // Per-bucket case counts. Omitted buckets inherit the default mix; the
+  // backend bounds each bucket and the total. `caseMix` supersedes `mode`.
+  caseMix: z
+    .object({
+      simple: z.number().int().min(0).max(10).optional(),
+      multiTool: z.number().int().min(0).max(10).optional(),
+      multiTurn: z.number().int().min(0).max(10).optional(),
+      complex: z.number().int().min(0).max(10).optional(),
+      negative: z.number().int().min(0).max(10).optional(),
+    })
+    .optional(),
+  // Condition the generated cases on a realistic range of user styles so the
+  // queries read like different users wrote them.
+  varyUserStyles: z.boolean().optional(),
 });
 
 /**
@@ -2100,6 +2114,14 @@ evals.post(
       { serverNames }
     );
 
+    const generationOptions =
+      body.caseMix || body.varyUserStyles
+        ? {
+            ...(body.caseMix ? { caseMix: body.caseMix } : {}),
+            ...(body.varyUserStyles ? { varyUserStyles: true } : {}),
+          }
+        : undefined;
+
     let drafts: any[];
     try {
       const request = {
@@ -2107,6 +2129,7 @@ evals.post(
         serverNames,
         convexAuthToken: token,
         projectId,
+        ...(generationOptions ? { generationOptions } : {}),
       } as unknown as RunEvalsRequest;
       const result =
         mode === "negative"

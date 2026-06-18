@@ -760,4 +760,57 @@ describe("v1 eval-edit routes", () => {
       { title: "Bad draft", error: expect.any(String) },
     ]);
   });
+
+  it("generate forwards caseMix + varyUserStyles as generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        caseMix: { simple: 3, negative: 1 },
+        varyUserStyles: true,
+      }
+    );
+    expect(res.status).toBe(200);
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { simple: 3, negative: 1 },
+      varyUserStyles: true,
+    });
+  });
+
+  it("generate omits generationOptions when no knobs are provided", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toBeUndefined();
+  });
 });

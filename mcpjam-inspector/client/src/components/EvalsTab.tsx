@@ -19,6 +19,10 @@ import {
   runExcalidrawQuickstart,
   EXCALIDRAW_QUICKSTART_SUITE_NAME,
 } from "@/lib/evals/excalidraw-quickstart";
+import {
+  loadGenerateConfig,
+  toGenerationOptions,
+} from "@/lib/evals/eval-generation-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { isQuickstartSuite } from "./evals/constants";
 import type { ServerFormData } from "@/shared/types.js";
@@ -451,8 +455,15 @@ function EvalsTabContent({
           resolvedServerNames: suiteAttachment.resolvedServerNames,
         }
       : undefined;
+    // Per-suite generation config from the "Generate" popover (count, mix,
+    // vary-user-styles). Defaults reproduce today's behavior, so the one-click
+    // Generate keeps working unchanged when the popover was never touched.
+    const generationOptions = toGenerationOptions(
+      loadGenerateConfig(selectedSuite._id)
+    );
     await handlers.handleGenerateTests(selectedSuite._id, suiteServers, {
       ...(serverAttachment ? { serverAttachment } : {}),
+      generationOptions,
     });
   }, [handlers, selectedSuite]);
 
