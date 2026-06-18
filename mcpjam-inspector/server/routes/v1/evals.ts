@@ -1792,13 +1792,6 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(scheduleSchema, await synthesizeServerBody(c));
-  if (body.enabled && body.intervalMinutes === undefined) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "intervalMinutes is required when enabling scheduled runs."
-    );
-  }
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -1813,6 +1806,20 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     throw error;
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  // Enabling reuses the suite's saved interval when none is supplied (one-click
+  // re-enable after a disable). Only require an interval when there's no saved
+  // one to fall back to.
+  if (
+    body.enabled &&
+    body.intervalMinutes === undefined &&
+    suite?.schedule?.intervalMinutes === undefined
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "intervalMinutes is required to enable scheduled runs (this suite has no saved interval)."
+    );
+  }
   const { convexClient } = createConvexClients(token);
   try {
     await convexClient.mutation("testSuites:setSuiteSchedule" as any, {

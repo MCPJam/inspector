@@ -455,7 +455,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--description <text>", "Suite description")
       .option(
         "--server <name...>",
-        "Replace the suite's server selection (by name/ID)"
+        "Replace the suite's server selection (project server names)"
       )
       .option("--host <name...>", "Replace host attachments (by name/ID)")
       .option("--model <id>", "Execution model id")

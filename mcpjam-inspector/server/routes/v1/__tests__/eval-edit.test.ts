@@ -406,7 +406,27 @@ describe("v1 eval-edit routes", () => {
     expect(body.schedule).toEqual({ enabled: false, intervalMinutes: 60 });
   });
 
-  it("enabling a schedule without interval is a 400", async () => {
+  it("re-enabling without interval reuses the suite's saved interval", async () => {
+    // SUITE_DOC.schedule.intervalMinutes === 60 (e.g. after a disable).
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+      { enabled: true }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:setSuiteSchedule"
+    )![1];
+    // No interval forwarded — the backend reuses the saved one.
+    expect(args).toEqual({ suiteId: "suite_1", enabled: true });
+  });
+
+  it("enabling without interval AND no saved interval is a 400", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, schedule: undefined })
+        : defaultQueryImpl(name)
+    );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/schedule",

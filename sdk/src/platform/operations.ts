@@ -1337,35 +1337,25 @@ export const deleteEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const setEvalSuiteScheduleInput = z
-  .object({
-    project: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe(PROJECT_SELECTOR_DESCRIPTION),
-    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-    enabled: z.boolean().describe("Turn scheduled runs on or off."),
-    intervalMinutes: z
-      .number()
-      .int()
-      .min(5)
-      .max(10080)
-      .optional()
-      .describe("Run interval in minutes (5–10080). Required when enabling."),
-  })
-  .superRefine((input, ctx) => {
-    // Mirror the route invariant so CLI/MCP callers fail fast (before the
-    // network call) instead of getting a 400 back.
-    if (input.enabled && input.intervalMinutes === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["intervalMinutes"],
-        message: "intervalMinutes is required when enabling scheduled runs.",
-      });
-    }
-  });
+const setEvalSuiteScheduleInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  enabled: z.boolean().describe("Turn scheduled runs on or off."),
+  intervalMinutes: z
+    .number()
+    .int()
+    .min(5)
+    .max(10080)
+    .optional()
+    .describe(
+      "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted."
+    ),
+});
 export type SetEvalSuiteScheduleInput = z.infer<
   typeof setEvalSuiteScheduleInput
 >;
