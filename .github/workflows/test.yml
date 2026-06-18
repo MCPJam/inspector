@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
 
+# A newer push to the same ref makes in-flight runs obsolete — cancel them so
+# we don't burn runner minutes finishing tests for superseded commits.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: "24.14.0"
   # No CI job in this workflow launches Electron, so skip the (occasionally
@@ -16,6 +22,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     name: Run Tests
+    # Pinned to the same Playwright version as the `@playwright/test` dependency.
+    # The image ships Chromium + every system library preinstalled, so we skip
+    # the `playwright install --with-deps` step entirely — that apt-driven step
+    # was costing up to ~7 min of variable, sometimes-stalling wall-clock time.
+    # When bumping @playwright/test, bump this tag in lockstep.
+    container: mcr.microsoft.com/playwright:v1.59.1-noble
 
     steps:
       - name: Checkout code
@@ -30,8 +42,14 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Install Playwright Chromium (MCP App browser-render eval harness)
-        run: npx playwright install --with-deps chromium
+      - name: Install ripgrep (repo-guard checks in `npm test`)
+        # GitHub-hosted runners ship ripgrep, but the Playwright image does not.
+        # `npm test` opens with check:mcp-v1-runtime-imports / check:platform-
+        # runtime-safety, which are `! rg -n '...'`. With rg missing the shell
+        # returns 127 and `! 127` evaluates to 0 — the guards would vacuously
+        # pass instead of running. Installing one package is fast (~seconds),
+        # unlike the `--with-deps` browser libs we dropped.
+        run: apt-get update && apt-get install -y ripgrep
 
       - name: Run SDK → CLI → Inspector verification
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
@@ -44,6 +62,8 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     name: E2E Smoke (Playwright)
+    # Same pinned Playwright image — Chromium + system deps are preinstalled.
+    container: mcr.microsoft.com/playwright:v1.59.1-noble
 
     steps:
       - name: Checkout code
@@ -57,9 +77,6 @@ jobs:
 
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
 
       - name: Build inspector
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
