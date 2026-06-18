@@ -793,9 +793,9 @@ export function XAAFlowLogger({
                   Trust MCPJam at your auth server
                 </span>{" "}
                 — MCPJam acts as the identity provider. Register its Issuer and
-                JWKS URLs (the card at the top) so your authorization server
-                accepts the tokens MCPJam signs. Do this first, or the next step
-                gets rejected.
+                JWKS (public signing keys) URLs (the card at the top) so your
+                authorization server accepts the tokens MCPJam signs. Do this
+                first, or the next step gets rejected.
               </li>
               <li>
                 <span className="font-medium text-foreground">
