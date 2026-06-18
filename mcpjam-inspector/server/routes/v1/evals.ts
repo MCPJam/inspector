@@ -2131,8 +2131,12 @@ evals.post(
         projectId,
         ...(generationOptions ? { generationOptions } : {}),
       } as unknown as RunEvalsRequest;
+      // caseMix supersedes mode: an explicit caseMix routes through the
+      // plan-driven generator (which expresses negative-only via its `negative`
+      // bucket and forwards generationOptions). The legacy negative-only
+      // generator is used only when mode is "negative" AND no caseMix was given.
       const result =
-        mode === "negative"
+        mode === "negative" && !body.caseMix
           ? await generateNegativeEvalTestsWithManager(manager, request as any)
           : await generateEvalTestsWithManager(manager, request as any);
       drafts = Array.isArray((result as any).tests)

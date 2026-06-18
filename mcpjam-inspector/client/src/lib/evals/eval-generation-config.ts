@@ -82,6 +82,10 @@ export function loadGenerateConfig(suiteId: string): GenerateCasesConfig {
     if (typeof parsed?.varyUserStyles === "boolean") {
       next.varyUserStyles = parsed.varyUserStyles;
     }
+    // Per-bucket clamping above doesn't bound the aggregate; a stale/tampered
+    // entry could exceed MAX_TOTAL. Fall back to defaults rather than forward an
+    // out-of-range mix the backend would reject.
+    if (totalCases(next) > MAX_TOTAL) return { ...DEFAULT_GENERATE_CONFIG };
     return next;
   } catch {
     return { ...DEFAULT_GENERATE_CONFIG };

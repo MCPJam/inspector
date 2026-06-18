@@ -813,4 +813,35 @@ describe("v1 eval-edit routes", () => {
     const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
     expect(forwarded?.generationOptions).toBeUndefined();
   });
+
+  it("caseMix supersedes mode:negative — uses the plan-driven generator and forwards generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    generateNegativeEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { negative: 4 } }
+    );
+    // Routed to the plan-driven generator, NOT the legacy negative-only one.
+    expect(generateNegativeEvalTestsMock).not.toHaveBeenCalled();
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { negative: 4 },
+    });
+  });
 });

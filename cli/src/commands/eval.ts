@@ -697,7 +697,13 @@ export function registerEvalCommands(program: Command): void {
         const raw = options[key];
         if (raw !== undefined) {
           const parsed = Number.parseInt(raw, 10);
-          if (Number.isFinite(parsed)) caseMix[key] = parsed;
+          if (!Number.isFinite(parsed)) {
+            const flag = key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+            throw usageError(
+              `--${flag} requires a numeric value, got "${raw}".`
+            );
+          }
+          caseMix[key] = parsed;
         }
       }
       const input = validateOpInput(generateEvalCasesOperation, {
