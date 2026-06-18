@@ -51,6 +51,7 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   GUEST_LOCKED_MODEL_REASON,
+  OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
@@ -1352,7 +1353,14 @@ export function useChatSession(
 
       return (
         availableModels.find(
-          (model) => String(model.id) === modelId && !model.disabled
+          (model) =>
+            String(model.id) === modelId &&
+            // Keep an out-of-credits model selected so the existing send →
+            // limit-error → out-of-credits modal still fires. The gray-out
+            // must not silently switch the user off it. Other locks (guest,
+            // ollama-no-tools) stay unselectable.
+            (!model.disabled ||
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
         ) ?? null
       );
     };
