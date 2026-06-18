@@ -518,7 +518,7 @@ export function TestCasesOverview({
                               <span className="inline-flex">
                                 <Button
                                   type="button"
-                                  variant="outline"
+                                  variant="default"
                                   className="h-11 gap-2 px-6 text-sm"
                                   onClick={onGenerateTestCases}
                                   disabled={
@@ -559,7 +559,7 @@ export function TestCasesOverview({
                         {onCreateTestCase ? (
                           <Button
                             type="button"
-                            variant="outline"
+                            variant="default"
                             className="h-11 gap-2 px-6 text-sm"
                             onClick={onCreateTestCase}
                           >
