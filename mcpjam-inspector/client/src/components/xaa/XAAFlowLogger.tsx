@@ -582,7 +582,7 @@ export function XAAFlowLogger({
   };
 
   return (
-    <div className="h-full border-l border-border flex flex-col">
+    <div className="h-full min-w-0 border-l border-border flex flex-col">
       <div className="@container/xaa-run-bar bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         <div className="flex flex-col gap-2 @min-[384px]/xaa-run-bar:flex-row @min-[384px]/xaa-run-bar:items-center">
           <button
