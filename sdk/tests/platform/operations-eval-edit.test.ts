@@ -8,6 +8,7 @@ import {
   getEvalCaseOperation,
   getEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
+  updateEvalCaseOperation,
   updateEvalSuiteOperation,
 } from "../../src/platform/operations.js";
 
@@ -32,6 +33,14 @@ function makeClient(): {
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/eval-suites$/.test(path)) return Response.json({ items: SUITES });
+    // `/cases/generate` must precede the `/cases/:caseId` branch — "generate"
+    // is itself a single path segment that the :caseId regex would match.
+    if (/\/eval-suites\/[^/]+\/cases\/generate$/.test(path))
+      return Response.json({
+        generationModel: "anthropic/claude-haiku-4.5",
+        created: [],
+        counts: {},
+      });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "GET")
       return Response.json({ items: CASES });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "POST")
@@ -43,12 +52,6 @@ function makeClient(): {
       return Response.json({ id: "c2", deleted: true });
     if (/\/eval-suites\/[^/]+\/cases\/[^/]+$/.test(path))
       return Response.json(CASES[1]);
-    if (/\/eval-suites\/[^/]+\/cases\/generate$/.test(path))
-      return Response.json({
-        generationModel: "anthropic/claude-haiku-4.5",
-        created: [],
-        counts: {},
-      });
     if (/\/eval-suites\/[^/]+\/schedule$/.test(path))
       return Response.json({
         id: "s1",
@@ -92,6 +95,15 @@ describe("eval-edit operation input validation", () => {
   });
 
   it("update_eval_case accepts null to clear an override", () => {
+    expect(
+      updateEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        case: "c1",
+        matchOptions: null,
+        checks: null,
+      }).success
+    ).toBe(true);
+    // create accepts null too (treated as "no override").
     expect(
       createEvalCaseOperation.inputSchema.safeParse({
         suite: "s1",

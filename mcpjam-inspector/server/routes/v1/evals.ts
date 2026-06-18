@@ -547,12 +547,20 @@ function toInternalMatchOptions(
 
 function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
   if (!internal || typeof internal !== "object") return null;
+  // `maxExtraToolCalls` is the current field. Older rows carry only the legacy
+  // boolean `allowExtraToolCalls` (the SDK matcher shims true→null, false→0);
+  // honor it so saved settings don't silently read back as "unlimited".
+  let extraToolCalls: "unlimited" | number;
+  if (internal.maxExtraToolCalls != null) {
+    extraToolCalls = Number(internal.maxExtraToolCalls);
+  } else if (typeof internal.allowExtraToolCalls === "boolean") {
+    extraToolCalls = internal.allowExtraToolCalls ? "unlimited" : 0;
+  } else {
+    extraToolCalls = "unlimited";
+  }
   return {
     toolCallOrder: ORDER_TO_PUBLIC[String(internal.toolCallOrder)] ?? "any",
-    extraToolCalls:
-      internal.maxExtraToolCalls == null
-        ? "unlimited"
-        : Number(internal.maxExtraToolCalls),
+    extraToolCalls,
     arguments: ["ignore", "partial", "exact"].includes(
       String(internal.argumentMatching)
     )
@@ -878,6 +886,8 @@ function buildCaseMutationArgs(
   opts: {
     forCreate: boolean;
     defaultModels?: Array<{ model: string; provider: string }>;
+    /** The persisted case's caseType, so a kind-less PATCH keeps its kind. */
+    existingCaseType?: string;
   }
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
@@ -888,7 +898,13 @@ function buildCaseMutationArgs(
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 
-  const isRenderCheck = body.kind === "render-check";
+  // A kind-less PATCH must preserve the existing kind: deriving solely from
+  // `body.kind` would route a `renderCheck`- or `prompt`-only patch to the
+  // wrong branch on an existing render-check case.
+  const isRenderCheck =
+    body.kind !== undefined
+      ? body.kind === "render-check"
+      : opts.existingCaseType === "widget_probe";
   if (body.kind !== undefined)
     args.caseType = isRenderCheck ? "widget_probe" : "prompt";
 
@@ -1789,15 +1805,19 @@ evals.patch(
       await synthesizeServerBody(c)
     );
     const token = await getConvexBearerForRequest(c);
-    await loadCaseInScope(
+    const existing = await loadCaseInScope(
       createConvexReadClient(token),
       projectId,
       suiteId,
       caseId
     );
-    const args = buildCaseMutationArgs(body, { forCreate: false });
+    const args = buildCaseMutationArgs(body, {
+      forCreate: false,
+      existingCaseType:
+        typeof existing.caseType === "string" ? existing.caseType : undefined,
+    });
     const { convexClient } = createConvexClients(token);
-    let updated: CaseDoc;
+    let updated: CaseDoc | null | undefined;
     try {
       updated = await convexClient.mutation(
         "testSuites:updateTestCase" as any,
@@ -1809,6 +1829,16 @@ evals.patch(
       );
     } catch (error) {
       throw translateConvexWriteError(error);
+    }
+    // updateTestCase returns the updated doc, but re-read if a deploy ever
+    // returns void so we never call toCaseDto on undefined (→ 500).
+    if (!updated) {
+      updated = await loadCaseInScope(
+        createConvexReadClient(token),
+        projectId,
+        suiteId,
+        caseId
+      );
     }
     return v1Resource(c, toCaseDto(updated));
   }

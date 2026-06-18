@@ -1337,23 +1337,35 @@ export const deleteEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const setEvalSuiteScheduleInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  enabled: z.boolean().describe("Turn scheduled runs on or off."),
-  intervalMinutes: z
-    .number()
-    .int()
-    .min(5)
-    .max(10080)
-    .optional()
-    .describe("Run interval in minutes (5–10080). Required when enabling."),
-});
+const setEvalSuiteScheduleInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    enabled: z.boolean().describe("Turn scheduled runs on or off."),
+    intervalMinutes: z
+      .number()
+      .int()
+      .min(5)
+      .max(10080)
+      .optional()
+      .describe("Run interval in minutes (5–10080). Required when enabling."),
+  })
+  .superRefine((input, ctx) => {
+    // Mirror the route invariant so CLI/MCP callers fail fast (before the
+    // network call) instead of getting a 400 back.
+    if (input.enabled && input.intervalMinutes === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["intervalMinutes"],
+        message: "intervalMinutes is required when enabling scheduled runs.",
+      });
+    }
+  });
 export type SetEvalSuiteScheduleInput = z.infer<
   typeof setEvalSuiteScheduleInput
 >;
@@ -1641,13 +1653,21 @@ export const generateEvalCasesOperation: PlatformOperation<
       signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    // Resolve server name/id selectors to project server IDs before sending —
+    // the route hands `servers` straight to batch authorization, which expects
+    // IDs. Mirrors run_eval_suite so a `--server <name>` override works.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
     return client.generateEvalCases(
       {
         projectId: project.id,
         suiteId: suite.id,
         body: {
           ...(input.mode ? { mode: input.mode } : {}),
-          ...(input.servers ? { servers: input.servers } : {}),
+          ...(overrideServers
+            ? { servers: overrideServers.map((server) => server.id) }
+            : {}),
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
         },
       },

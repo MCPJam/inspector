@@ -257,7 +257,12 @@ function buildSuiteUpdateInput(
         : Number(options.extraToolCalls);
   if (Object.keys(mo).length > 0) settings.matchOptions = mo;
   const judge = { ...(settings.judge ?? {}) };
-  if (options.judge !== undefined) judge.enabled = options.judge === "on";
+  if (options.judge !== undefined) {
+    if (options.judge !== "on" && options.judge !== "off") {
+      throw usageError('--judge must be "on" or "off".');
+    }
+    judge.enabled = options.judge === "on";
+  }
   if (options.judgeModel !== undefined) judge.model = options.judgeModel;
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;

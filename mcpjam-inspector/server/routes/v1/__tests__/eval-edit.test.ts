@@ -371,6 +371,35 @@ describe("v1 eval-edit routes", () => {
     expect(args.predicates).toBeNull();
   });
 
+  it("PATCH on a render-check case honors a renderCheck-only patch (no kind)", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestCase")
+        return Promise.resolve({
+          ...CASE_DOC,
+          caseType: "widget_probe",
+          query: "",
+          probeConfig: {
+            serverName: "Excalidraw (App)",
+            toolName: "old",
+            arguments: {},
+          },
+        });
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { renderCheck: { server: "Excalidraw (App)", tool: "new_tool" } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase"
+    )![1];
+    // Routed to the render-check branch via the existing case's kind, not as a prompt.
+    expect(args.probeConfig).toMatchObject({ toolName: "new_tool" });
+    expect(args.query).toBe("");
+  });
+
   it("DELETE case returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
