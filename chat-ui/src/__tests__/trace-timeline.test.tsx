@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 
 import { TraceTimeline } from "../internal/trace-timeline/trace-timeline";
 import type { TraceSpan } from "../internal/trace-timeline/eval-trace";
@@ -52,5 +52,30 @@ describe("TraceTimeline (recorded waterfall)", () => {
   it("renders the empty state when there are no recorded spans", () => {
     const { getByText } = render(<TraceTimeline recordedSpans={[]} />);
     getByText(/No timing data recorded/i);
+  });
+
+  it("shows harness metadata (provider/finish) in the detail pane for llm spans", () => {
+    const llmSpans: TraceSpan[] = [
+      {
+        id: "p0-llm",
+        name: "Agent",
+        category: "llm",
+        startMs: 0,
+        endMs: 2420,
+        promptIndex: 0,
+        stepIndex: 0,
+        outputTokens: 50,
+        finishReason: "length",
+        provider: "anthropic",
+      },
+    ];
+    const { getAllByTestId, getByTestId } = render(
+      <TraceTimeline recordedSpans={llmSpans} />,
+    );
+    const labelButtons = getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    const meta = getByTestId("trace-span-metadata");
+    expect(meta.textContent).toContain("anthropic");
+    expect(meta.textContent).toContain("length");
   });
 });

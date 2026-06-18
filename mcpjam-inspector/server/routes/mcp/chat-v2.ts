@@ -210,6 +210,10 @@ function streamDirectChatWithLiveTrace(options: {
     execute: async ({ writer }) => {
       handle = runDirectChatTurn({
         ...turnOptions,
+        // Logical provider for span metadata (OTel gen_ai.provider.name).
+        // Pulled out of `turnOptions` above for error formatting; thread it
+        // back in so llm/step spans carry it.
+        provider,
         abortSignal,
         onPersist,
         onPersistError: (error) => {
@@ -651,6 +655,7 @@ chatV2.post("/", async (c) => {
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
+        provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,

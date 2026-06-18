@@ -37,6 +37,13 @@ export type EvalTraceSpanInput = {
   totalTokens?: number;
   messageStartIndex?: number;
   messageEndIndex?: number;
+  // GenAI harness metadata (step/llm spans). Mirror of inspector
+  // shared/eval-trace.ts EvalTraceSpan; kept in parity via the shared fixture.
+  finishReason?: string;
+  provider?: string;
+  responseId?: string;
+  responseTimestamp?: string;
+  ttfcMs?: number;
 };
 
 export type EvalTraceInput =

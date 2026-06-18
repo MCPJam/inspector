@@ -83,6 +83,7 @@ import {
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -279,6 +280,12 @@ export interface MCPJamEngineErrorEvent {
 export interface MCPJamHandlerOptions {
   messages: ModelMessage[];
   modelId: string;
+  /**
+   * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.
+   * "anthropic"). Threaded from the caller's model config — never derived from
+   * `modelId`. Optional: when omitted, llm/step spans simply lack `provider`.
+   */
+  provider?: string;
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
@@ -451,6 +458,8 @@ interface StepContext {
   chatSessionId?: string;
   sourceType?: string;
   modelId: string;
+  /** Logical provider for span metadata (OTel gen_ai.provider.name). */
+  provider?: string;
   systemPrompt: string;
   temperature?: number;
   mcpClientManager: MCPClientManager;
@@ -496,6 +505,12 @@ interface StreamResult {
   contentParts: PersistedAssistantPart[];
   hasToolCalls: boolean;
   finishChunk: UIMessageChunk | null;
+  /**
+   * Absolute Date.now() of the first emitted stream chunk, for
+   * time-to-first-chunk (OTel gen_ai.response.time_to_first_chunk). Undefined
+   * if the stream produced no chunks.
+   */
+  firstChunkAt?: number;
 }
 
 /**
@@ -683,6 +698,19 @@ function readUsageFromFinishChunk(
   }
 
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/**
+ * Read the model finish reason off a per-step `finish` chunk and normalize it
+ * to the canonical span vocabulary. Returns undefined when absent — span
+ * capture never fabricates one.
+ */
+function readFinishReasonFromChunk(
+  finishChunk: UIMessageChunk | null
+): string | undefined {
+  type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
+  const source = finishChunk as Partial<FinishUIMessageChunk> | null;
+  return normalizeFinishReason(source?.finishReason);
 }
 
 function createClientFinishChunk(
@@ -961,6 +989,7 @@ async function processStream(
   let pendingReasoningId: string | null = null;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
+  let firstChunkAt: number | undefined;
 
   const flushText = () => {
     if (pendingText) {
@@ -1043,6 +1072,10 @@ async function processStream(
         };
         [key: string]: unknown;
       };
+
+      if (firstChunkAt === undefined) {
+        firstChunkAt = Date.now();
+      }
 
       // Skip backend stub tool outputs - we execute tools locally
       if (
@@ -1208,7 +1241,7 @@ async function processStream(
       ? abortSignal.reason
       : Object.assign(new Error("Aborted"), { name: "AbortError" });
   }
-  return { contentParts, hasToolCalls, finishChunk };
+  return { contentParts, hasToolCalls, finishChunk, firstChunkAt };
 }
 
 /**
@@ -1700,6 +1733,7 @@ async function processOneStep(
     accessVersion,
     projectId,
     modelId,
+    provider,
     systemPrompt,
     temperature,
     mcpClientManager,
@@ -1960,7 +1994,7 @@ async function processOneStep(
   }
 
   // Process the stream
-  const { contentParts, finishChunk } = await processStream(
+  const { contentParts, finishChunk, firstChunkAt } = await processStream(
     res.body,
     writer,
     normalizeToolCallId,
@@ -1994,6 +2028,20 @@ async function processOneStep(
   const stepMessageStartIndex =
     stepMessageEndIndex != null ? traceTurn.promptMessageStartIndex : undefined;
   const stepUsage = readUsageFromFinishChunk(finishChunk);
+
+  // GenAI harness metadata for this step's llm/step spans (OTel-aligned).
+  // `finishChunk` is per-step, so `finishReason` is correct per step (e.g.
+  // "tool-calls" on a tool step, "stop"/"length" on the terminal step). TTFC is
+  // first-chunk relative to the LLM request start. Spread into every
+  // pushBackendStepSuccessSpans call below.
+  const harnessSpanMeta = {
+    provider,
+    finishReason: readFinishReasonFromChunk(finishChunk),
+    ttfcMs:
+      typeof firstChunkAt === "number"
+        ? Math.max(0, firstChunkAt - llmStartAbs)
+        : undefined,
+  };
 
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
@@ -2159,6 +2207,7 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           status: "ok",
+          ...harnessSpanMeta,
         }
       );
       setStepSpanMessageRanges(
@@ -2284,6 +2333,7 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndexAfterTools,
           messageEndIndex: stepMessageEndIndexAfterTools,
           status: "ok",
+          ...harnessSpanMeta,
         }
       );
       setStepSpanMessageRanges(
@@ -2402,6 +2452,7 @@ async function processOneStep(
       messageStartIndex: stepMessageStartIndex,
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
+      ...harnessSpanMeta,
     }
   );
   setStepSpanMessageRanges(
@@ -2474,6 +2525,7 @@ export async function runChatEngineLoop(
   const {
     messages,
     modelId,
+    provider,
     systemPrompt,
     temperature,
     tools,
@@ -2725,6 +2777,7 @@ export async function runChatEngineLoop(
             chatSessionId,
             sourceType,
             modelId,
+            provider,
             systemPrompt,
             temperature,
             mcpClientManager,

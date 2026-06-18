@@ -35,6 +35,13 @@ export type TraceSpan = {
   messageStartIndex?: number;
   /** Inclusive index of the last related transcript message. */
   messageEndIndex?: number;
+  // GenAI harness metadata (step/llm spans). Structural subset of the
+  // inspector's EvalTraceSpan; the richer type assigns to this for rendering.
+  finishReason?: string;
+  provider?: string;
+  responseId?: string;
+  responseTimestamp?: string;
+  ttfcMs?: number;
 };
 
 // Internal aliases so the ported timeline keeps its original identifiers

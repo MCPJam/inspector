@@ -14,6 +14,13 @@ type StepSpanMeta = {
   messageStartIndex?: number;
   messageEndIndex?: number;
   status?: EvalTraceSpanStatus;
+  // GenAI harness metadata (step/llm spans). `finishReason` must already be
+  // normalized by the caller (see normalizeFinishReason at the write site).
+  finishReason?: string;
+  provider?: string;
+  responseId?: string;
+  responseTimestamp?: string;
+  ttfcMs?: number;
 };
 
 type ToolSpanMeta = {
@@ -105,6 +112,24 @@ function applyStepMeta(span: EvalTraceSpan, meta?: StepSpanMeta): void {
   }
   if (meta.status) {
     span.status = meta.status;
+  }
+  if (typeof meta.finishReason === "string" && meta.finishReason.length > 0) {
+    span.finishReason = meta.finishReason;
+  }
+  if (typeof meta.provider === "string" && meta.provider.length > 0) {
+    span.provider = meta.provider;
+  }
+  if (typeof meta.responseId === "string" && meta.responseId.length > 0) {
+    span.responseId = meta.responseId;
+  }
+  if (
+    typeof meta.responseTimestamp === "string" &&
+    meta.responseTimestamp.length > 0
+  ) {
+    span.responseTimestamp = meta.responseTimestamp;
+  }
+  if (typeof meta.ttfcMs === "number") {
+    span.ttfcMs = meta.ttfcMs;
   }
 }
 
@@ -315,6 +340,11 @@ export function emitAiSdkOnStepFinish(
     messageStartIndex: spanMeta?.messageStartIndex,
     messageEndIndex: spanMeta?.messageEndIndex,
     status: spanMeta?.status ?? "ok",
+    finishReason: spanMeta?.finishReason,
+    provider: spanMeta?.provider,
+    responseId: spanMeta?.responseId,
+    responseTimestamp: spanMeta?.responseTimestamp,
+    ttfcMs: spanMeta?.ttfcMs,
   });
   ctx.recordedSpans.push(llmSpan);
 
@@ -335,6 +365,11 @@ export function emitAiSdkOnStepFinish(
     messageStartIndex: spanMeta?.messageStartIndex,
     messageEndIndex: spanMeta?.messageEndIndex,
     status: spanMeta?.status ?? "ok",
+    finishReason: spanMeta?.finishReason,
+    provider: spanMeta?.provider,
+    responseId: spanMeta?.responseId,
+    responseTimestamp: spanMeta?.responseTimestamp,
+    ttfcMs: spanMeta?.ttfcMs,
   });
   ctx.recordedSpans.push(stepSpan);
   applyMessageRangeToChildren(ctx.recordedSpans, stepSpanId, {

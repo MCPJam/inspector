@@ -1,12 +1,27 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { ModelMessage } from "ai";
 import {
   appendDedupedModelMessages,
   createOffsetInterval,
   evalTraceBlobV1Z,
+  evalTraceSpanZ,
+  normalizeFinishReason,
   normalizeSpanInterval,
   stepResultHasToolActivity,
 } from "../eval-trace";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+type FixtureRow = { label: string; value: Record<string, unknown> };
+type Fixtures = { __readme: string; accept: FixtureRow[]; reject: FixtureRow[] };
+const traceSpanFixtures: Fixtures = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures/trace-span-parity-fixtures.json"),
+    "utf8",
+  ),
+);
 
 describe("eval-trace helpers", () => {
   it("normalizeSpanInterval bumps zero-duration to 1ms", () => {
@@ -146,5 +161,86 @@ describe("eval-trace helpers", () => {
         widgetHtmlBlobId: "blob-1",
       }),
     );
+  });
+});
+
+describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
+  it("fixture file has accept + reject cohorts and a readme", () => {
+    expect(typeof traceSpanFixtures.__readme).toBe("string");
+    expect(traceSpanFixtures.accept.length).toBeGreaterThan(0);
+    expect(traceSpanFixtures.reject.length).toBeGreaterThan(0);
+  });
+
+  for (const row of traceSpanFixtures.accept) {
+    it(`accepts + preserves harness fields: ${row.label}`, () => {
+      const parsed = evalTraceSpanZ.safeParse(row.value);
+      if (!parsed.success) {
+        throw new Error(
+          `Expected accept for "${row.label}":\n${JSON.stringify(parsed.error.issues, null, 2)}`,
+        );
+      }
+      // Harness metadata must round-trip through the Zod mirror unchanged.
+      for (const field of [
+        "finishReason",
+        "provider",
+        "responseId",
+        "responseTimestamp",
+        "ttfcMs",
+      ] as const) {
+        if (row.value[field] !== undefined) {
+          expect((parsed.data as Record<string, unknown>)[field]).toEqual(
+            row.value[field],
+          );
+        }
+      }
+    });
+  }
+
+  for (const row of traceSpanFixtures.reject) {
+    it(`rejects: ${row.label}`, () => {
+      expect(evalTraceSpanZ.safeParse(row.value).success).toBe(false);
+    });
+  }
+
+  // Inspector-only: optional-field TYPE mismatches. The backend normalizer
+  // leniently drops a bad optional, so these are NOT in the shared reject set;
+  // the strict Zod mirror must still refuse them.
+  it("rejects ttfcMs of the wrong type", () => {
+    expect(
+      evalTraceSpanZ.safeParse({
+        id: "x",
+        name: "LLM",
+        category: "llm",
+        startMs: 0,
+        endMs: 1,
+        ttfcMs: "240",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("normalizeFinishReason", () => {
+  it("folds raw provider aliases to the canonical vocabulary", () => {
+    expect(normalizeFinishReason("content_filter")).toBe("content-filter");
+    expect(normalizeFinishReason("max_tokens")).toBe("length");
+    expect(normalizeFinishReason("end_turn")).toBe("stop");
+    expect(normalizeFinishReason("tool_use")).toBe("tool-calls");
+  });
+
+  it("passes through already-canonical AI SDK values", () => {
+    expect(normalizeFinishReason("length")).toBe("length");
+    expect(normalizeFinishReason("content-filter")).toBe("content-filter");
+    expect(normalizeFinishReason("stop")).toBe("stop");
+  });
+
+  it("returns undefined for missing/empty input (never fabricates)", () => {
+    expect(normalizeFinishReason(undefined)).toBeUndefined();
+    expect(normalizeFinishReason(null)).toBeUndefined();
+    expect(normalizeFinishReason("   ")).toBeUndefined();
+    expect(normalizeFinishReason(42)).toBeUndefined();
+  });
+
+  it("preserves debug fidelity for unrecognized values (lowercased)", () => {
+    expect(normalizeFinishReason("SomethingNew")).toBe("somethingnew");
   });
 });
