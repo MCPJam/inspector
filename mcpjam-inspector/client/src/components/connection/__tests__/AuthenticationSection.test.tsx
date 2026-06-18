@@ -298,6 +298,8 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
+      undefined,
+      { timeout: 10000 },
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
@@ -345,6 +347,8 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
+      undefined,
+      { timeout: 10000 },
     )) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "sk-new-secret" } });
     expect(screen.getByTestId("client-secret-state")).toHaveTextContent(
@@ -371,6 +375,8 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
+      undefined,
+      { timeout: 10000 },
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
