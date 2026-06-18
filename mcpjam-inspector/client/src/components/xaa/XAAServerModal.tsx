@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -312,9 +318,27 @@ export function XAAServerModal({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="xaa-authz-issuer">
-                Authorization Server Issuer
-              </Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="xaa-authz-issuer">
+                  Authorization Server Issuer
+                </Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="How the authorization server issuer is auto-discovered"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent variant="muted" side="top" className="max-w-xs">
+                    Leave blank to read it from the MCP server&apos;s OAuth
+                    metadata (its <code className="font-mono">.well-known</code>{" "}
+                    discovery endpoints).
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <Input
                 id="xaa-authz-issuer"
                 value={authzIssuer}
