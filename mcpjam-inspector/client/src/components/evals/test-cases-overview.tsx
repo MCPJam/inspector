@@ -517,8 +517,7 @@ export function TestCasesOverview({
                                 <Button
                                   type="button"
                                   variant="outline"
-                                  size="sm"
-                                  className="h-8 gap-1.5"
+                                  className="h-11 gap-2 px-6 text-sm"
                                   onClick={onGenerateTestCases}
                                   disabled={
                                     !canGenerateTestCases ||
@@ -528,12 +527,12 @@ export function TestCasesOverview({
                                 >
                                   {isGeneratingTestCases ? (
                                     <Loader2
-                                      className="h-3.5 w-3.5 shrink-0 animate-spin"
+                                      className="h-4 w-4 shrink-0 animate-spin"
                                       aria-hidden
                                     />
                                   ) : (
                                     <Sparkles
-                                      className="h-3.5 w-3.5 shrink-0"
+                                      className="h-4 w-4 shrink-0"
                                       aria-hidden
                                     />
                                   )}
@@ -558,13 +557,12 @@ export function TestCasesOverview({
                         {onCreateTestCase ? (
                           <Button
                             type="button"
-                            size="sm"
                             variant="outline"
-                            className="h-8 gap-1.5"
+                            className="h-11 gap-2 px-6 text-sm"
                             onClick={onCreateTestCase}
                           >
                             <Plus
-                              className="h-3.5 w-3.5 shrink-0"
+                              className="h-4 w-4 shrink-0"
                               aria-hidden
                             />
                             New case
@@ -572,9 +570,6 @@ export function TestCasesOverview({
                         ) : null}
                       </div>
                     ) : null}
-                    <p className="text-sm text-muted-foreground">
-                      No test cases yet.
-                    </p>
                   </div>
                 ) : (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
