@@ -7,9 +7,11 @@ import {
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
   getEvalCaseOperation,
+  getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
+  listEvalRunIterationsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
   runEvalSuiteOperation,
@@ -419,6 +421,77 @@ export function registerEvalCommands(program: Command): void {
   );
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
+
+  // ── Eval run iterations + traces ───────────────────────────────────
+  addPlatformOptions(
+    evals
+      .command("iterations")
+      .description(
+        "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option("--cursor <cursor>", "Pagination cursor from a previous response")
+      .option("--limit <n>", "Max iterations per page (1–200)")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        cursor?: string;
+        limit?: string;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalRunIterationsOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+        ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
+      });
+      await executeOp(listEvalRunIterationsOperation, input, options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("trace")
+      .description(
+        "Fetch the full trace for one eval iteration (large: full message history + spans)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+      },
+      command
+    ) => {
+      await executeOp(
+        getEvalIterationTraceOperation,
+        {
+          project: options.project,
+          runId: options.run,
+          iterationId: options.iteration,
+        },
+        options,
+        command
+      );
+    }
+  );
 
   // ── Suite settings: get / update / delete / schedule ───────────────
   addPlatformOptions(
