@@ -611,7 +611,7 @@ export function XAAFlowTab({
           </div>
         ) : (
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={52} minSize={30}>
+            <ResizablePanel defaultSize={52} minSize={30} className="min-w-0">
               <XAASequenceDiagram
                 flowState={flowState}
                 focusedStep={focusedStep}
@@ -622,7 +622,12 @@ export function XAAFlowTab({
 
             <ResizableHandle withHandle />
 
-            <ResizablePanel defaultSize={48} minSize={24} maxSize={52}>
+            <ResizablePanel
+              defaultSize={48}
+              minSize={24}
+              maxSize={52}
+              className="min-w-0"
+            >
               <XAAFlowLogger
                 flowState={flowState}
                 hasProfile={isTestable}
