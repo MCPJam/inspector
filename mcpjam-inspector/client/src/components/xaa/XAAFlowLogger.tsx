@@ -511,7 +511,6 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
-  const focusedStep = activeStep ?? flowState.currentStep;
   const negativeModeSummary =
     NEGATIVE_TEST_MODE_DETAILS[summary.negativeTestMode];
 
@@ -840,12 +839,7 @@ export function XAAFlowLogger({
                     ref={(el) => {
                       stepRefs.current.set(group.step, el);
                     }}
-                    className={cn(
-                      "bg-background border rounded-lg shadow-sm",
-                      focusedStep === group.step
-                        ? "border-blue-400 ring-1 ring-blue-400/20"
-                        : "border-border"
-                    )}
+                    className="bg-background border border-border rounded-lg shadow-sm"
                   >
                     <button
                       onClick={() => toggleStep(group.step)}
