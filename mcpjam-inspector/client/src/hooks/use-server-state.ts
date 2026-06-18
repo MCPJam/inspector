@@ -46,6 +46,7 @@ import {
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
@@ -174,7 +175,7 @@ function mergeOAuthCallbackServerConfig(
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
- * This persists server URL, scopes, headers, and client credentials.
+ * This persists server URL, scopes, headers, and non-secret client metadata.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (HOSTED_MODE) {
@@ -231,13 +232,10 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     );
   }
 
-  if (formData.clientId || (!HOSTED_MODE && formData.clientSecret)) {
+  if (formData.clientId) {
     const clientInfo: Record<string, string> = {};
     if (formData.clientId) {
       clientInfo.client_id = formData.clientId;
-    }
-    if (!HOSTED_MODE && formData.clientSecret) {
-      clientInfo.client_secret = formData.clientSecret;
     }
     localStorage.setItem(
       `mcp-client-${formData.name}`,
@@ -294,16 +292,19 @@ function readStoredClientCredentials(serverName: string): {
     }
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitized)
+      );
+    }
     return {
       clientId:
         typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
           ? parsed.client_id
-          : undefined,
-      clientSecret:
-        !HOSTED_MODE &&
-        typeof parsed?.client_secret === "string" &&
-        parsed.client_secret.trim() !== ""
-          ? parsed.client_secret
           : undefined,
     };
   } catch {
@@ -379,10 +380,7 @@ function buildResolvedOAuthProfile(input: {
       "",
     clientId:
       existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
-    clientSecret:
-      existingProfile?.clientSecret ??
-      storedClientCredentials.clientSecret ??
-      "",
+    clientSecret: "",
     scopes:
       existingProfile?.scopes ?? storedOAuthConfig.scopes?.join(",") ?? "",
     customHeaders,
@@ -418,9 +416,7 @@ function buildOAuthProfileFromFormData(
     serverUrl: formData.url,
     resourceUrl: existingProfile?.resourceUrl ?? "",
     clientId: formData.clientId ?? existingProfile?.clientId ?? "",
-    clientSecret: HOSTED_MODE
-      ? ""
-      : formData.clientSecret ?? existingProfile?.clientSecret ?? "",
+    clientSecret: "",
     scopes: formData.oauthScopes?.join(",") ?? existingProfile?.scopes ?? "",
     customHeaders,
     protocolVersion,
@@ -1120,27 +1116,10 @@ export function useServerState({
     ]
   );
 
-  const validateForm = (formData: ServerFormData): string | null => {
-    if (formData.type === "stdio") {
-      if (!formData.command || formData.command.trim() === "") {
-        return "Command is required for STDIO connections";
-      }
-      return null;
-    }
-    if (!formData.url || formData.url.trim() === "") {
-      return "URL is required for HTTP connections";
-    }
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(formData.url);
-    } catch (err) {
-      return `Invalid URL format: ${formData.url} ${err}`;
-    }
-    if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
-      return "Hosted mode requires HTTPS server URLs";
-    }
-    return null;
-  };
+  // Shared with the forms that feed this save path (XAAServerModal, ...) so a
+  // form can never pass a config the save path would reject and lose the
+  // user's input. See lib/server-form-validation.
+  const validateForm = validateServerFormData;
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     const connectedNames = Object.entries(appState.servers)
@@ -1267,6 +1246,9 @@ export function useServerState({
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
           storedOAuthConfig.resourceUrl,
+        ...(serverEntry.xaaAuthzIssuer !== undefined
+          ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
+          : {}),
       } as const;
 
       try {
@@ -2322,6 +2304,8 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServerForSave?.hasHeaders,
+        xaaAuthzIssuer:
+          formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2685,6 +2669,8 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServer?.hasHeaders,
+        xaaAuthzIssuer:
+          formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -2782,7 +2768,6 @@ export function useServerState({
           `mcp-client-${serverName}`,
           JSON.stringify({
             client_id: tokens.clientId,
-            client_secret: tokens.clientSecret,
           })
         );
       }
@@ -3443,14 +3428,9 @@ export function useServerState({
             server.oauthFlowProfile?.clientId ??
             storedClientCredentials.clientId,
           clientSecret:
-            server.oauthTokens?.client_secret ??
-            server.oauthFlowProfile?.clientSecret ??
-            storedClientCredentials.clientSecret,
+            undefined,
           hasClientSecret: Boolean(
-            server.oauthTokens?.client_secret ||
-              server.oauthFlowProfile?.clientSecret ||
-              storedClientCredentials.clientSecret ||
-              server.hasClientSecret
+            server.hasClientSecret
           ),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
@@ -4106,6 +4086,8 @@ export function useServerState({
           oauthFlowProfile: originalServer?.oauthFlowProfile,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
+          xaaAuthzIssuer:
+            formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
         } as ServerWithName;
 
         if (!formData.useOAuth) {

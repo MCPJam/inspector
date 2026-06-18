@@ -25,6 +25,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
+  PlatformEvalSuiteCreated,
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
@@ -825,6 +826,220 @@ export const runEvalSuiteOperation: PlatformOperation<
       servers,
       runId: created.runId,
       status: created.status,
+      caseUpsert: created.caseUpsert,
+    };
+  },
+};
+
+const evalCaseInput = z.object({
+  title: z.string().trim().min(1).describe("Short label for the test case."),
+  query: z
+    .string()
+    .trim()
+    .optional()
+    .describe(
+      "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
+    ),
+  runs: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Iterations to run this case per eval run. Defaults to 1."),
+  expectedToolCalls: z
+    .array(
+      z.union([
+        z.string().trim().min(1),
+        z.object({
+          toolName: z.string().trim().min(1),
+          arguments: z.record(z.string(), z.any()).optional(),
+        }),
+      ])
+    )
+    .optional()
+    .describe(
+      "Tools the agent is expected to call. Either a tool name string or { toolName, arguments }. Defaults to none."
+    ),
+  expectedOutput: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Expected final answer or substring to assert against."),
+  isNegativeTest: z
+    .boolean()
+    .optional()
+    .describe("When true, the case passes if the expectation is NOT met."),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Optional scenario/context note for the case."),
+  // Advanced authoring fields. Typed permissively here and validated
+  // authoritatively by the backend route — but declared so they are forwarded
+  // verbatim instead of being stripped as unknown keys.
+  promptTurns: z
+    .array(z.record(z.string(), z.any()))
+    .optional()
+    .describe("Multi-turn prompt sequence for the case (advanced)."),
+  advancedConfig: z
+    .object({
+      system: z.string().optional(),
+      temperature: z.number().optional(),
+      toolChoice: z.any().optional(),
+    })
+    .passthrough()
+    .optional()
+    .describe("Per-case system prompt / temperature / tool-choice overrides."),
+  matchOptions: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case matcher options (advanced)."),
+  predicates: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case success-predicate gate (advanced)."),
+  caseType: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Case type: "prompt" (default) or "widget_probe".'),
+  probeConfig: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      "Widget-probe pinned tool call; required when caseType is widget_probe."
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Per-case model override; defaults to the suite-level model."),
+  provider: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Per-case provider override; defaults to the suite-level provider."),
+}).superRefine((testCase, ctx) => {
+  // Prompt cases need a query; widget_probe cases run a pinned tool call and
+  // carry an empty query (the run schema normalizes to "").
+  if (
+    testCase.caseType !== "widget_probe" &&
+    (testCase.query === undefined || testCase.query.length === 0)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["query"],
+      message: "query is required for prompt cases",
+    });
+  }
+});
+
+const createEvalSuiteInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).describe("Name for the new eval suite."),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Optional human description of what the suite covers."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .describe(
+      "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted."
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      'Suite-level default model applied to every case, e.g. "anthropic/claude-haiku-4.5". Use a hosted model id, or a provider-prefixed id with the matching provider.'
+    ),
+  provider: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Suite-level default provider. Optional when the model id is provider-prefixed (the provider is derived from the first path segment)."
+    ),
+  cases: z
+    .array(evalCaseInput)
+    .min(1)
+    // Mirrors the backend MAX_V1_TESTS cap so a guaranteed-413 payload is
+    // rejected before the network call.
+    .max(100)
+    .describe("Authored test cases (1–100)."),
+});
+
+export type CreateEvalSuiteInput = z.infer<typeof createEvalSuiteInput>;
+
+export type CreateEvalSuiteResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  /** The HTTP servers the suite was configured against. */
+  servers: Array<{ id: string; name?: string }>;
+  caseUpsert: PlatformEvalSuiteCreated["caseUpsert"];
+};
+
+export const createEvalSuiteOperation: PlatformOperation<
+  CreateEvalSuiteInput,
+  CreateEvalSuiteResult
+> = {
+  name: "create_eval_suite",
+  title: "Create MCPJam eval suite",
+  description:
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases (title, query, optional expected tool calls / expected output / negative-test). Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+  readOnly: false,
+  inputSchema: createEvalSuiteInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const servers = await resolveRunServers(
+      client,
+      project,
+      input.servers,
+      signal
+    );
+    const created = await client.createEvalSuite(
+      {
+        projectId: project.id,
+        body: {
+          name: input.name,
+          ...(input.description ? { description: input.description } : {}),
+          serverIds: servers.map((server) => server.id),
+          serverNames: servers.map((server) => server.name),
+          model: input.model,
+          ...(input.provider ? { provider: input.provider } : {}),
+          // Ergonomic case shape; the backend normalizes per-case defaults
+          // (runs, model/provider fill, tool-call mapping) into the run schema.
+          tests: input.cases,
+        },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: created.suiteId, name: created.name ?? input.name },
+      servers: servers.map((server) => ({
+        id: server.id,
+        name: server.name,
+      })),
       caseUpsert: created.caseUpsert,
     };
   },

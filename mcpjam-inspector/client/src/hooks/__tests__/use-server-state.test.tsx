@@ -1528,7 +1528,6 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-client-demo-server",
       JSON.stringify({
         client_id: "asana-client-id",
-        client_secret: "asana-client-secret",
       })
     );
     clearOAuthDataMock.mockImplementationOnce((serverName: string) => {
@@ -1554,7 +1553,8 @@ describe("useServerState OAuth callback failures", () => {
         scopes: ["default"],
         customHeaders: { "X-MCPJam": "yes" },
         clientId: "asana-client-id",
-        clientSecret: "asana-client-secret",
+        clientSecret: undefined,
+        hasClientSecret: false,
         registryServerId: "registry-asana",
         useRegistryOAuthProxy: true,
         protocolVersion: "2025-11-25",
@@ -1587,7 +1587,6 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-client-demo-server",
       JSON.stringify({
         client_id: "stored-client-id",
-        client_secret: "stored-client-secret",
       })
     );
     initiateOAuthMock.mockResolvedValueOnce({ success: true });
@@ -1599,7 +1598,7 @@ describe("useServerState OAuth callback failures", () => {
         serverUrl: "https://example.com/mcp",
         resourceUrl: "https://fresh.example.com",
         clientId: "fresh-client-id",
-        clientSecret: "fresh-client-secret",
+        clientSecret: "",
         scopes: "fresh profile",
         customHeaders: [{ key: "X-Fresh", value: "profile" }],
         protocolVersion: "2025-11-25",
@@ -1626,7 +1625,8 @@ describe("useServerState OAuth callback failures", () => {
         resourceUrl: "https://fresh.example.com",
         customHeaders: { "X-Fresh": "profile" },
         clientId: "fresh-client-id",
-        clientSecret: "fresh-client-secret",
+        clientSecret: undefined,
+        hasClientSecret: false,
         registryServerId: "registry-asana",
         useRegistryOAuthProxy: true,
         protocolMode: "2025-11-25",

@@ -53,6 +53,7 @@ import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countd
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -308,6 +309,27 @@ const signedOutUtilityItems: NavItem[] = [
   },
 ];
 
+// Neutral placeholder shown while auth is resolving, so signed-in users don't
+// see the signed-out nav list flash before their authed items appear.
+function SidebarNavSkeleton() {
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SidebarMenuItem key={i}>
+              <SidebarMenuButton disabled>
+                <Skeleton className="size-4 rounded" />
+                <Skeleton className="h-3.5 w-24 group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
 export function getHostedNavigationSections(
   sections: NavSection[]
 ): NavSection[] {
@@ -534,8 +556,14 @@ export function MCPSidebar({
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
-  const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const { user, isLoading: isWorkOsAuthLoading } = useAuth();
+  // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
+  // (`user` is null and `isAuthenticated` is false even for signed-in users).
+  // Treat that window as "unknown" so the sidebar renders neutral skeletons
+  // instead of flashing the signed-out layout for users who are signed in.
+  const authResolving =
+    HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { status: updateStatus, restartAndInstall } = useUpdateNotification();
@@ -619,7 +647,8 @@ export function MCPSidebar({
 
   // Signed-in users reach Settings/Support via the account menu; only
   // signed-out users (no account menu) get utility icons in the footer.
-  const utilityItems = user ? [] : signedOutUtilityItems;
+  // Suppress them while auth is resolving so they don't flash for signed-in users.
+  const utilityItems = user || authResolving ? [] : signedOutUtilityItems;
 
   const isNavItemActive = (item: NavItem) =>
     normalizeHostedHashTab(
@@ -702,7 +731,7 @@ export function MCPSidebar({
             onSwitchProject={onSwitchProject}
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
-            isLoading={isLoadingProjects}
+            isLoading={isLoadingProjects || authResolving}
             onNavigateToSettings={() => handleNavClick("#project-settings")}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
@@ -733,56 +762,60 @@ export function MCPSidebar({
           )}
         </SidebarHeader>
         <SidebarContent className="gap-0">
-          {visibleNavigationSections.map((section, sectionIndex) => {
-            const rawEvalsEntry = section.items.find(
-              (item) => item.evalsSubnav
-            );
-            // Only render Evaluate through the SidebarEvalsNavGroup wrapper
-            // (which adds its own SidebarGroup padding) when there's actually
-            // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
-            // so it sits flush with Views and matches sibling spacing.
-            const useEvalsSubnavWrapper =
-              !!rawEvalsEntry && evaluateRunsEnabled === true;
-            const evalsEntry = useEvalsSubnavWrapper
-              ? rawEvalsEntry
-              : undefined;
-            const flatItems = section.items.filter(
-              (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
-            );
+          {authResolving ? (
+            <SidebarNavSkeleton />
+          ) : (
+            visibleNavigationSections.map((section, sectionIndex) => {
+              const rawEvalsEntry = section.items.find(
+                (item) => item.evalsSubnav
+              );
+              // Only render Evaluate through the SidebarEvalsNavGroup wrapper
+              // (which adds its own SidebarGroup padding) when there's actually
+              // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
+              // so it sits flush with Views and matches sibling spacing.
+              const useEvalsSubnavWrapper =
+                !!rawEvalsEntry && evaluateRunsEnabled === true;
+              const evalsEntry = useEvalsSubnavWrapper
+                ? rawEvalsEntry
+                : undefined;
+              const flatItems = section.items.filter(
+                (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
+              );
 
-            return (
-              <React.Fragment key={section.id}>
-                <NavMain
-                  items={flatItems.map((item) => ({
-                    ...item,
-                    isActive: isNavItemActive(item),
-                  }))}
-                  onItemClick={handleNavClick}
-                  learnMore={
-                    learnMoreEnabled
-                      ? {
-                          onExpand: learnMore.openExpandedModal,
-                        }
-                      : null
-                  }
-                />
-                {evalsEntry ? (
-                  <SidebarEvalsNavGroup
-                    title={evalsEntry.title}
-                    Icon={evalsEntry.icon}
-                    disabled={evalsEntry.disabled}
-                    disabledTooltip={evalsEntry.disabledTooltip}
-                    activeTab={activeTab}
-                    showRuns={evaluateRunsEnabled === true}
+              return (
+                <React.Fragment key={section.id}>
+                  <NavMain
+                    items={flatItems.map((item) => ({
+                      ...item,
+                      isActive: isNavItemActive(item),
+                    }))}
+                    onItemClick={handleNavClick}
+                    learnMore={
+                      learnMoreEnabled
+                        ? {
+                            onExpand: learnMore.openExpandedModal,
+                          }
+                        : null
+                    }
                   />
-                ) : null}
-                {/* Add subtle divider between sections (except after the last section) */}
-                {sectionIndex < visibleNavigationSections.length - 1 && (
-                  <div className="mx-4 my-1 border-t border-border/50" />
-                )}
-              </React.Fragment>
-            );
-          })}
+                  {evalsEntry ? (
+                    <SidebarEvalsNavGroup
+                      title={evalsEntry.title}
+                      Icon={evalsEntry.icon}
+                      disabled={evalsEntry.disabled}
+                      disabledTooltip={evalsEntry.disabledTooltip}
+                      activeTab={activeTab}
+                      showRuns={evaluateRunsEnabled === true}
+                    />
+                  ) : null}
+                  {/* Add subtle divider between sections (except after the last section) */}
+                  {sectionIndex < visibleNavigationSections.length - 1 && (
+                    <div className="mx-4 my-1 border-t border-border/50" />
+                  )}
+                </React.Fragment>
+              );
+            })
+          )}
         </SidebarContent>
         <SidebarFooter>
           {utilityItems.length > 0 ? (
@@ -831,7 +864,9 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
+          {!user && !authResolving ? (
+            <SidebarCreditUsage className="px-1" includeGuests />
+          ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>

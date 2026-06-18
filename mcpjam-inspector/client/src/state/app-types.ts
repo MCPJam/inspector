@@ -59,6 +59,11 @@ export interface ServerWithName {
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  /**
+   * Optional issuer override for the cross-app authorization test target.
+   * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
+   */
+  xaaAuthzIssuer?: string;
 }
 
 export interface Project {

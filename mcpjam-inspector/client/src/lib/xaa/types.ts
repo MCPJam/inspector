@@ -164,6 +164,12 @@ export interface BaseXAAStateMachineConfig {
    * inline client secret; the server resolves the stored secret and forces
    * the outbound URL to the registration's stored token endpoint. */
   registrationId?: string;
+  /** Server-target confidential runs: sent to the token proxy instead of an
+   * inline client secret or token endpoint. The server resolves the stored
+   * secret AND discovers the token endpoint from the server's own config, so
+   * neither the secret nor the destination rides in from the browser. */
+  serverId?: string;
+  projectId?: string;
 }
 
 export interface XAAStateMachine {

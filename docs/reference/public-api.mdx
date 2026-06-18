@@ -139,9 +139,12 @@ parameters.
 `nextCursor` as `cursor` in the next request (body field on `POST` lists,
 query parameter on `GET` lists). Cursors are opaque — don't parse them.
 
-**Async writes.** `POST /eval-runs` validates and creates the run
-synchronously, then detaches execution and responds `202` with a `runId`.
-Poll `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
+**Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
+(the suite plus its test cases) **synchronously** and responds `201` with the
+`suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
+is the async counterpart: it validates and creates a run synchronously, then
+detaches execution and responds `202` with a `runId`. Poll
+`GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
 `cancelled`.
 
 **IDs.** Every identifier the API takes is discoverable through the API
@@ -223,6 +226,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 | Endpoint | What it does |
 | --- | --- |
+| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Per-test `model`/`provider`/`runs`/`expectedToolCalls` are optional and fall back to suite defaults |
 | `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |

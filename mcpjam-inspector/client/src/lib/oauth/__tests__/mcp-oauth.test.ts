@@ -795,9 +795,8 @@ describe("mcp-oauth", () => {
       });
     });
 
-    it("does not persist hosted preregistered client secrets to localStorage", async () => {
+    it("does not persist preregistered client secrets to localStorage", async () => {
       vi.resetModules();
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
 
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
@@ -824,6 +823,12 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "hosted-client-secret"
       );
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        expect(key ? localStorage.getItem(key) : "").not.toContain(
+          "hosted-client-secret"
+        );
+      }
     });
 
     it("preserves JSON bodies for dynamic client registration requests", async () => {
@@ -1273,7 +1278,10 @@ describe("mcp-oauth", () => {
         "static-client-secret"
       );
 
-      const info = provider.clientInformation() as Record<string, unknown>;
+      const info = (await provider.clientInformation()) as Record<
+        string,
+        unknown
+      >;
       expect(info.client_id).toBe("static-client-id");
       expect(info.client_secret).toBe("static-client-secret");
       expect(info).not.toHaveProperty("token_endpoint_auth_method");
@@ -1303,9 +1311,29 @@ describe("mcp-oauth", () => {
         "static-client-secret"
       );
 
-      const info = provider.clientInformation() as Record<string, unknown>;
+      const info = (await provider.clientInformation()) as Record<
+        string,
+        unknown
+      >;
       expect(info.token_endpoint_auth_method).toBe("client_secret_post");
       expect(info.client_secret).toBe("static-client-secret");
+    });
+
+    it("ignores malformed stored client information", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      localStorage.setItem("mcp-client-asana", "{not-json");
+
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id",
+        "static-client-secret"
+      );
+
+      await expect(provider.clientInformation()).resolves.toMatchObject({
+        client_id: "static-client-id",
+        client_secret: "static-client-secret",
+      });
     });
 
     it("advertises client_secret_basic in clientMetadata when a static secret is configured", async () => {
@@ -2120,6 +2148,104 @@ describe("mcp-oauth", () => {
           token_type: "Bearer",
         })
       );
+    });
+
+    it("loads stored preregistered client secrets from the encrypted server-secret API", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      authFetch.mockResolvedValueOnce(
+        createJsonResponse({
+          success: true,
+          clientSecret: "encrypted-table-secret",
+        })
+      );
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "generic" });
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          kind: "generic",
+          hasClientSecret: true,
+        }
+      );
+
+      const clientInformation = await provider.clientInformation();
+      expect(clientInformation).toMatchObject({
+        client_id: "client-from-arg",
+        client_secret: "encrypted-table-secret",
+      });
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/web/oauth/client-secret",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: "proj_xyz",
+            serverId: "srv_abc",
+          }),
+        })
+      );
+      expect(localStorage.getItem("mcp-client-asana") ?? "").not.toContain(
+        "encrypted-table-secret"
+      );
+
+      await provider.saveTokens({
+        access_token: "freshly-issued",
+        token_type: "Bearer",
+      });
+
+      expect(authFetch).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        clientInformation: {
+          clientId: "client-from-arg",
+          clientSecret: "encrypted-table-secret",
+        },
+      });
+    });
+
+    it("retries stored preregistered client secret fetches after transient failures", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      authFetch
+        .mockRejectedValueOnce(new Error("temporary outage"))
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            success: true,
+            clientSecret: "encrypted-table-secret",
+          })
+        );
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          kind: "generic",
+          hasClientSecret: true,
+        }
+      );
+
+      await expect(provider.clientInformation()).rejects.toThrow(
+        "temporary outage"
+      );
+      await expect(provider.clientInformation()).resolves.toMatchObject({
+        client_id: "client-from-arg",
+        client_secret: "encrypted-table-secret",
+      });
+      expect(authFetch).toHaveBeenCalledTimes(2);
     });
 
     it("falls back to localStorage-only when no binding is provided", async () => {

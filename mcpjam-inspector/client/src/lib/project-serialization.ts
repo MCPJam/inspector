@@ -215,10 +215,7 @@ export function deserializeServersFromConvex(
           ? serverData.oauthScopes.join(",")
           : existingProfile.scopes || "",
         clientId: serverData.clientId || existingProfile.clientId || "",
-        clientSecret:
-          serverData.hasClientSecret === true
-            ? ""
-            : existingProfile.clientSecret || "",
+        clientSecret: "",
         resourceUrl:
           serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
       } as typeof server.oauthFlowProfile;
@@ -341,10 +338,7 @@ export function serversHaveChanged(
               ? remoteServer.oauthScopes.join(",")
               : remoteServer.oauthScopes,
             clientId: remoteServer.clientId,
-            clientSecret:
-              remoteServer.hasClientSecret === true
-                ? ""
-                : remoteServer.oauthFlowProfile?.clientSecret,
+            clientSecret: "",
             resourceUrl:
               remoteServer.oauthResourceUrl ??
               remoteServer.oauthFlowProfile?.resourceUrl,

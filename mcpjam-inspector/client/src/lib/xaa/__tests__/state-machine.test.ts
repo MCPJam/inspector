@@ -151,6 +151,67 @@ describe("createXAAStateMachine", () => {
     );
   });
 
+  it("authenticates with the live config identity, not a stale flow snapshot", async () => {
+    // The flow was built with user-12345 but the simulated identity was later
+    // edited to john; the machine config carries the fresh value. The auth
+    // request must send john, otherwise the ID-JAG mints the wrong sub.
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      userId: "user-12345",
+      email: "stale@example.com",
+      currentStep: "received_authz_metadata",
+    });
+
+    const authBodies: any[] = [];
+    const executor = {
+      externalRequest: vi.fn(),
+      internalRequest: vi.fn(async (path: string, init?: any) => {
+        if (path === "/authenticate") {
+          authBodies.push(JSON.parse(init.body));
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { id_token: "id-token" },
+            ok: true,
+          };
+        }
+        return { status: 200, statusText: "OK", headers: {}, body: {}, ok: true };
+      }),
+    };
+
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+      clientId: "mcpjam-debugger",
+      userId: "john",
+      email: "john@mcpjam.com",
+      scope: "read:tools",
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(authBodies).toHaveLength(1);
+    expect(authBodies[0].userId).toBe("john");
+    expect(authBodies[0].email).toBe("john@mcpjam.com");
+    const assertionLog = state.infoLogs?.find(
+      (log) => log.id === "xaa-identity-assertion"
+    );
+    expect(assertionLog?.data).toMatchObject({
+      userId: "john",
+      email: "john@mcpjam.com",
+    });
+  });
+
   it("sends a configured client secret to /proxy/token but masks it in the logged request", async () => {
     let state: XAAFlowState = createInitialXAAFlowState({
       serverUrl: "https://mcp.example.com",

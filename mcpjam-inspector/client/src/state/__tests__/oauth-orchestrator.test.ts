@@ -148,7 +148,6 @@ describe("ensureAuthorizedForReconnect", () => {
       "mcp-client-asana",
       JSON.stringify({
         client_id: "stored-client-id",
-        client_secret: "stored-client-secret",
       }),
     );
     clearOAuthDataMock.mockImplementationOnce((serverName: string) => {
@@ -185,7 +184,8 @@ describe("ensureAuthorizedForReconnect", () => {
         registryServerId: "registry-asana",
         useRegistryOAuthProxy: true,
         clientId: "stored-client-id",
-        clientSecret: "stored-client-secret",
+        clientSecret: undefined,
+        hasClientSecret: false,
         protocolMode: "2025-11-25",
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",

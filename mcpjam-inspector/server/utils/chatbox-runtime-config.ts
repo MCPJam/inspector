@@ -35,6 +35,10 @@ export type ChatboxRuntimeConfig = {
   // Optional so a backend older than mcpjam-backend PR #484 (which adds
   // the field to runtime-config) returns omitted → no built-in tools.
   builtInToolIds?: string[];
+  // Host harness selector from the pinned HostConfigV2 (mcpjam-backend serves
+  // it on runtime-config). Optional so a backend that predates it returns the
+  // field omitted → the synthetic runner stays on the emulated path.
+  harness?: "claude-code";
   // Personal-computer attachment from the pinned HostConfigV2 (Project
   // Computers, mcpjam-backend PR #494). The RESOURCE only — capabilities
   // (e.g. "bash") ride builtInToolIds. The backend OMITS the field for
