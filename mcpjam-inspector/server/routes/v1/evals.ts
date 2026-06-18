@@ -2114,14 +2114,16 @@ evals.post(
       { serverNames }
     );
 
-    // An empty `caseMix: {}` is treated as absent — same as backend #589, which
-    // ignores a bucketless mix. Without this, `{}` (truthy) would supersede
-    // `mode` here while the backend falls back to the default plan, so e.g.
-    // `{ mode: "negative", caseMix: {} }` would silently become normal
-    // generation.
+    // A caseMix only counts when it requests at least one case (a bucket > 0).
+    // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
+    // as absent — matching backend #589, which reverts a zero-sum mix to the
+    // default plan, and the popover's `total >= 1` guard. Without this, a
+    // truthy-but-empty mix would supersede `mode` here while the backend
+    // ignored it, so e.g. `{ mode: "negative", caseMix: { negative: 0 } }`
+    // would silently become normal generation.
     const hasCaseMix =
       !!body.caseMix &&
-      Object.values(body.caseMix).some((v) => typeof v === "number");
+      Object.values(body.caseMix).some((v) => typeof v === "number" && v > 0);
     const generationOptions =
       hasCaseMix || body.varyUserStyles
         ? {

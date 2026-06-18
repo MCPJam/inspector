@@ -845,36 +845,52 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
-  it("treats an empty caseMix as absent — mode:negative still uses the negative-only generator", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    generateNegativeEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [],
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
-        });
-      return defaultQueryImpl(name);
-    });
+  it.each([
+    { label: "empty {}", caseMix: {} },
+    { label: "zero-sum { negative: 0 }", caseMix: { negative: 0 } },
+    {
+      label: "all-zero buckets",
+      caseMix: {
+        simple: 0,
+        multiTool: 0,
+        multiTurn: 0,
+        complex: 0,
+        negative: 0,
+      },
+    },
+  ])(
+    "treats a bucketless caseMix ($label) as absent — mode:negative still uses the negative-only generator",
+    async ({ caseMix }) => {
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+      });
+      generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+      generateNegativeEvalTestsMock.mockResolvedValue({
+        success: true,
+        tests: [],
+      });
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getSuiteRunServerSelection")
+          return Promise.resolve({
+            serverIds: ["srv_1"],
+            serverNames: ["Excalidraw (App)"],
+          });
+        return defaultQueryImpl(name);
+      });
 
-    await request(
-      "POST",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "negative", caseMix: {} }
-    );
-    // Empty caseMix must not supersede mode: negative-only generator is used,
-    // and no empty generationOptions leaks to the plan-driven generator.
-    expect(generateNegativeEvalTestsMock).toHaveBeenCalled();
-    expect(generateEvalTestsMock).not.toHaveBeenCalled();
-    const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
-    expect(forwarded?.generationOptions).toBeUndefined();
-  });
+      await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+        { mode: "negative", caseMix }
+      );
+      // A caseMix with no bucket > 0 must not supersede mode: the negative-only
+      // generator is used, and no empty generationOptions leaks downstream.
+      expect(generateNegativeEvalTestsMock).toHaveBeenCalled();
+      expect(generateEvalTestsMock).not.toHaveBeenCalled();
+      const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
+      expect(forwarded?.generationOptions).toBeUndefined();
+    }
+  );
 
   it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
     createAuthorizedManagerMock.mockResolvedValue({
