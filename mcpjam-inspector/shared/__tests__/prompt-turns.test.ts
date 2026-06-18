@@ -8,6 +8,7 @@ import {
   legacyProbeToPinnedTurn,
   needsModel,
   resolveIterationDisplayExpectedToolCalls,
+  resolvePromptTurnsWithLegacyProbe,
 } from "../prompt-turns";
 import type { ProbeConfig } from "../probe-config";
 
@@ -157,6 +158,63 @@ describe("pinned-turn selectors", () => {
     it("is model-driven for a hybrid (pinned + prompt) case", () => {
       expect(isPinnedOnly({ promptTurns: [pinnedTurn, promptTurn] })).toBe(false);
       expect(needsModel({ promptTurns: [pinnedTurn, promptTurn] })).toBe(true);
+    });
+
+    it("is model-driven for a widget_probe that carries model prompt turns", () => {
+      // Regression: a hybrid widget_probe must NOT route model-free (would throw
+      // when the loop hits a model turn with no LLM setup).
+      expect(
+        isPinnedOnly({ caseType: "widget_probe", promptTurns: [promptTurn] }),
+      ).toBe(false);
+      expect(
+        needsModel({ caseType: "widget_probe", promptTurns: [promptTurn] }),
+      ).toBe(true);
+    });
+
+    it("is pinned-only for a legacy widget_probe with only empty placeholder turns", () => {
+      // Regression (P3): a pre-migration widget_probe persisted with the
+      // resolvePromptTurns fallback shape [{prompt:"",expectedToolCalls:[]}] is
+      // still a pure probe — must stay model-free, not route to the model path.
+      const placeholder = { id: "turn-1", prompt: "", expectedToolCalls: [] };
+      expect(
+        isPinnedOnly({ caseType: "widget_probe", promptTurns: [placeholder] }),
+      ).toBe(true);
+      // But the same shape WITHOUT widget_probe is an unfilled prompt case.
+      expect(isPinnedOnly({ promptTurns: [placeholder] })).toBe(false);
+    });
+  });
+
+  describe("resolvePromptTurnsWithLegacyProbe", () => {
+    it("surfaces a pure legacy probe's probeConfig as a single pinned turn", () => {
+      const turns = resolvePromptTurnsWithLegacyProbe({
+        caseType: "widget_probe",
+        probeConfig: probe,
+      });
+      expect(turns).toHaveLength(1);
+      expect(turns[0].pinnedToolCall).toEqual(probe);
+    });
+
+    it("does NOT clobber real prompt steps on a widget_probe row", () => {
+      // Regression: a widget_probe that also has authored prompt turns must keep
+      // them, not have the whole list replaced by the legacy pinned turn.
+      const real = {
+        id: "t1",
+        prompt: "do the thing",
+        expectedToolCalls: [{ toolName: "x", arguments: {} }],
+      };
+      const turns = resolvePromptTurnsWithLegacyProbe({
+        caseType: "widget_probe",
+        probeConfig: probe,
+        promptTurns: [real],
+      });
+      expect(turns).toEqual([real]);
+    });
+
+    it("leaves a normal prompt case untouched", () => {
+      const turns = resolvePromptTurnsWithLegacyProbe({
+        promptTurns: [promptTurn],
+      });
+      expect(turns).toEqual([promptTurn]);
     });
   });
 

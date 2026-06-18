@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import posthog from "posthog-js";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   ArrowLeft,
   Code2,
@@ -52,9 +53,9 @@ import {
   flattenAssertedExpectedToolCalls,
   isPinnedOnly,
   isPinnedTurn,
-  legacyProbeToPinnedTurn,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
+  resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
@@ -198,11 +199,21 @@ const validateExpectedToolCalls = (
   return true;
 };
 
-/** When every step has no asserted tool calls, the case expects no tool usage (stored as isNegativeTest). */
+/**
+ * A negative test = the MODEL is expected to call no tools. Pinned
+ * (render-check) turns are model-free and always carry empty
+ * `expectedToolCalls`, so exclude them — otherwise a case containing a pinned
+ * turn (or a pinned-only render check) would be mislabeled negative. A case
+ * with no model turns is not a negative test.
+ */
 function deriveIsNegativeTestFromPromptTurns(
   promptTurns: PromptTurn[]
 ): boolean {
-  return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
+  const modelTurns = promptTurns.filter((turn) => !isPinnedTurn(turn));
+  return (
+    modelTurns.length > 0 &&
+    modelTurns.every((turn) => turn.expectedToolCalls.length === 0)
+  );
 }
 
 /** A render-check (pinned) turn needs a server and a real (non-placeholder) tool. */
@@ -608,16 +619,11 @@ export function TestTemplateEditor({
     }
 
     // Legacy `widget_probe` rows store the pinned call as top-level
-    // `probeConfig` (not a turn). Surface it as a pinned turn so it edits in
-    // the unified editor like any render-check turn. (Post-migration rows
-    // already carry the pinned turn, so this is a no-op for them.)
-    const resolvedTurns = resolvePromptTurns(currentTestCase);
-    const promptTurns =
-      currentTestCase.caseType === "widget_probe" &&
-      currentTestCase.probeConfig &&
-      !resolvedTurns.some(isPinnedTurn)
-        ? [legacyProbeToPinnedTurn(currentTestCase.probeConfig)]
-        : resolvedTurns;
+    // `probeConfig` (not a turn); surface it as a pinned turn so it edits in
+    // the unified editor like any render-check turn. Shared with the runner's
+    // `normalizeTestForPinnedTurns` so the rule lives in one place. No-op for
+    // post-migration rows that already carry the pinned turn.
+    const promptTurns = resolvePromptTurnsWithLegacyProbe(currentTestCase);
     setEditForm({
       title: currentTestCase.title,
       runs: currentTestCase.runs,
@@ -718,7 +724,10 @@ export function TestTemplateEditor({
   };
 
   const currentPromptTurns = useMemo(
-    () => (currentTestCase ? resolvePromptTurns(currentTestCase) : []),
+    // Match how editForm.promptTurns is seeded (legacy widget_probe → pinned
+    // turn) so a freshly-opened legacy render check doesn't read as dirty.
+    () =>
+      currentTestCase ? resolvePromptTurnsWithLegacyProbe(currentTestCase) : [],
     [currentTestCase]
   );
   const currentAdvancedConfig = useMemo(
@@ -786,6 +795,10 @@ export function TestTemplateEditor({
     () => (editForm ? isPinnedOnly({ promptTurns: editForm.promptTurns }) : false),
     [editForm],
   );
+  // Gates the per-turn "Render check" toggle, consistent with the widget-check
+  // gating in ChecksSection. An already-pinned turn always shows its controls
+  // so existing render checks remain editable when the flag is off.
+  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
 
   const arePredicatesValid = useMemo(() => {
     if (!editForm?.predicates) return true;
@@ -825,7 +838,11 @@ export function TestTemplateEditor({
   ]);
 
   const runPrimaryDisabled =
-    (!casePinnedOnly && selectedModelValues.length === 0) ||
+    // A model-free render check has no editor quick-run path — it runs with the
+    // full suite (the compare path below would abort on "no model"). Disable
+    // Run for it with an explanatory tooltip instead of letting it fail.
+    casePinnedOnly ||
+    selectedModelValues.length === 0 ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid;
@@ -834,7 +851,10 @@ export function TestTemplateEditor({
     if (!runPrimaryDisabled) {
       return null;
     }
-    if (!casePinnedOnly && selectedModelValues.length === 0) {
+    if (casePinnedOnly) {
+      return "Render checks run with the full suite, not on their own.";
+    }
+    if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
     }
     if (!canRun) {
@@ -860,6 +880,7 @@ export function TestTemplateEditor({
     return "Run is unavailable for this test right now.";
   }, [
     runPrimaryDisabled,
+    casePinnedOnly,
     selectedModelValues.length,
     canRun,
     missingServers,
@@ -2183,6 +2204,7 @@ export function TestTemplateEditor({
                   }
                   suiteServers={effectiveSuiteServers}
                   projectServers={projectServers}
+                  syntheticMonitorsEnabled={syntheticMonitorsEnabled ?? false}
                 />
               ) : null}
             </div>

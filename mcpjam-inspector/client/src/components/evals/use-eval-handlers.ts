@@ -18,8 +18,7 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
-import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isPinnedOnly, isPinnedTurn } from "@/shared/prompt-turns";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -311,13 +310,23 @@ export function useEvalHandlers({
 
       let probesSkippedMissingConfig = 0;
       for (const testCase of testCases) {
-        // Widget probes carry no models and no prompt — they must never fall
-        // into the LLM fan-out below (a probe with a suite default model
-        // would otherwise run as an empty-prompt LLM case). The sentinel
-        // model/provider strings satisfy the wire schema; the server forks
-        // probes off the LLM path before any model resolution.
-        if (testCase.caseType === "widget_probe") {
-          if (!testCase.probeConfig) {
+        // Model-free render checks (legacy widget_probe OR a unified case whose
+        // turns are all pinned) carry no models — they must never fall into the
+        // LLM fan-out below (a model-free case with a suite default model would
+        // otherwise run as an empty-prompt LLM case). The sentinel
+        // model/provider strings satisfy the wire schema; the server runs them
+        // model-free (routing on the pinned turns / legacy adapter).
+        if (
+          isPinnedOnly({
+            caseType: testCase.caseType,
+            promptTurns: testCase.promptTurns,
+          })
+        ) {
+          const pinnedTurns = Array.isArray(testCase.promptTurns)
+            ? testCase.promptTurns.filter(isPinnedTurn)
+            : [];
+          // Need either the new pinned turns or the legacy probeConfig to run.
+          if (pinnedTurns.length === 0 && !testCase.probeConfig) {
             probesSkippedMissingConfig++;
             continue;
           }
@@ -328,8 +337,15 @@ export function useEvalHandlers({
             model: "widget-probe",
             provider: "none",
             expectedToolCalls: [],
-            caseType: "widget_probe",
-            probeConfig: testCase.probeConfig,
+            ...(pinnedTurns.length > 0
+              ? { promptTurns: testCase.promptTurns }
+              : {}),
+            ...(testCase.caseType === "widget_probe"
+              ? { caseType: "widget_probe" as const }
+              : {}),
+            ...(testCase.probeConfig
+              ? { probeConfig: testCase.probeConfig }
+              : {}),
             testCaseId: testCase._id,
           });
           continue;
@@ -1331,81 +1347,6 @@ export function useEvalHandlers({
   // Created with placeholder probeConfig values the probe editor immediately
   // prompts the user to fix; seeded with a widgetRendered check so an
   // unedited probe still asserts something meaningful.
-  const handleCreateWidgetProbe = useCallback(
-    async (suiteId: string) => {
-      if (isCreatingTestCase) return;
-
-      setIsCreatingTestCase(true);
-
-      try {
-        const suite = await convex.query("testSuites:getTestSuite" as any, {
-          suiteId,
-        });
-        const firstServer: string =
-          (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
-
-        // Unified shape: a render check is a single model-free pinned turn —
-        // no `caseType`/`probeConfig`. The runner detects it via `isPinnedOnly`
-        // (all turns pinned) and the editor dispatches on the same predicate.
-        const testCaseId = await mutations.createTestCaseMutation({
-          suiteId,
-          title: "Untitled render check",
-          query: "",
-          models: [],
-          promptTurns: [
-            {
-              id: "turn-1",
-              prompt: "",
-              expectedToolCalls: [],
-              pinnedToolCall: {
-                serverName: firstServer,
-                toolName: PROBE_TOOL_NAME_PLACEHOLDER,
-                arguments: {},
-              },
-            },
-          ],
-          predicates: {
-            mode: "replace",
-            list: [{ type: "widgetRendered" }],
-          },
-        });
-
-        toast.success("Render check created");
-
-        posthog.capture("eval_test_case_created", {
-          location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suiteId,
-          test_case_id: testCaseId,
-          case_type: "widget_probe",
-        });
-
-        navigateAfterTestCaseMutation({
-          type: "test-edit",
-          suiteId,
-          testId: testCaseId,
-        });
-
-        return testCaseId;
-      } catch (error) {
-        console.error("Failed to create render check:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to create render check")
-        );
-        return null;
-      } finally {
-        setIsCreatingTestCase(false);
-      }
-    },
-    [
-      isCreatingTestCase,
-      mutations.createTestCaseMutation,
-      convex,
-      navigateAfterTestCaseMutation,
-    ]
-  );
-
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback(
     (testCaseId: string, testCaseTitle: string) => {
@@ -1737,7 +1678,6 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
-    handleCreateWidgetProbe,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

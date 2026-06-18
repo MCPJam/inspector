@@ -7,6 +7,7 @@ import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
 import { MonitoringTab } from "./monitoring-tab";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 
 interface RunTrendPoint {
   runId: string;
@@ -96,7 +97,12 @@ export function SuiteDashboard({
   const showMonitoringTab =
     syntheticMonitorsEnabled &&
     (Boolean(suite.schedule) ||
-      cases.some((testCase) => testCase.caseType === "widget_probe"));
+      cases.some((testCase) =>
+        isPinnedOnly({
+          caseType: testCase.caseType,
+          promptTurns: testCase.promptTurns,
+        }),
+      ));
   // A stale "monitoring" selection (flag toggled off, schedule/probes
   // removed) must not strand the tab strip with nothing highlighted —
   // resolve it to the default tab for both highlighting and content.

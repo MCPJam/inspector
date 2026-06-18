@@ -87,6 +87,22 @@ export async function runPinnedTurn(
     };
   }
 
+  // Guard against an unfinished pinned turn reaching the runner (the editor's
+  // save gate normally blocks this): never call executeTool with an empty
+  // tool name — surface a clear content-error instead of a cryptic one.
+  if (!pinned.toolName || pinned.toolName.trim().length === 0) {
+    const toolError: ToolErrorRecord = {
+      toolName: pinned.toolName ?? "",
+      kind: "content-error",
+      message: "Pinned tool call has no tool selected",
+    };
+    return {
+      toolCall: null,
+      toolError,
+      summary: "Pinned tool call has no tool selected",
+    };
+  }
+
   let rawResult: unknown;
   let toolCallOk = false;
   let toolError: ToolErrorRecord | undefined;
