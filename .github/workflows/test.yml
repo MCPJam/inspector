@@ -42,6 +42,15 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install ripgrep (repo-guard checks in `npm test`)
+        # GitHub-hosted runners ship ripgrep, but the Playwright image does not.
+        # `npm test` opens with check:mcp-v1-runtime-imports / check:platform-
+        # runtime-safety, which are `! rg -n '...'`. With rg missing the shell
+        # returns 127 and `! 127` evaluates to 0 — the guards would vacuously
+        # pass instead of running. Installing one package is fast (~seconds),
+        # unlike the `--with-deps` browser libs we dropped.
+        run: apt-get update && apt-get install -y ripgrep
+
       - name: Run SDK → CLI → Inspector verification
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
         # The vitest workspace (server + client + shared) runs concurrently and
