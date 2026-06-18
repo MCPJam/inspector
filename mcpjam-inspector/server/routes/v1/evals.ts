@@ -1542,12 +1542,24 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     const s = body.settings;
     if (s.minimumAccuracy !== undefined)
       updateArgs.defaultPassCriteria = { minimumPassRate: s.minimumAccuracy };
+    // PATCH is merge semantics: updateTestSuite replaces these objects
+    // wholesale, so a partial public field (e.g. only matchOptions.arguments,
+    // or only judge.model) must be layered onto the suite's CURRENT values —
+    // otherwise unmentioned fields (toolCallOrder, judge.enabled, threshold…)
+    // are dropped and silently reset on read.
     if (s.matchOptions !== undefined)
       updateArgs.defaultMatchOptions =
-        s.matchOptions === null ? null : toInternalMatchOptions(s.matchOptions);
+        s.matchOptions === null
+          ? null
+          : {
+              ...(suite!.defaultMatchOptions ?? {}),
+              ...toInternalMatchOptions(s.matchOptions),
+            };
     if (s.checks !== undefined) updateArgs.defaultPredicates = s.checks;
     if (s.judge !== undefined) {
-      const goalCompletion: Record<string, unknown> = {};
+      const goalCompletion: Record<string, unknown> = {
+        ...(suite!.judgeConfig?.goalCompletion ?? {}),
+      };
       if (s.judge.enabled !== undefined)
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined)

@@ -260,7 +260,52 @@ describe("v1 eval-edit routes", () => {
       maxExtraToolCalls: 3,
       argumentMatching: "ignore",
     });
-    expect(args.judgeConfig).toEqual({ goalCompletion: { enabled: false } });
+    // Merge preserves the suite's existing judgeModel while flipping enabled.
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: { enabled: false, judgeModel: "openai/gpt-5-mini" },
+    });
+  });
+
+  it("PATCH partial settings merge onto current values (no field reset)", async () => {
+    // Only judge.model and only matchOptions.arguments — everything else must
+    // be preserved from the suite's current settings.
+    const resJudge = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { model: "openai/gpt-5" } } }
+    );
+    expect(resJudge.status).toBe(200);
+    const judgeArgs = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    // enabled (true) preserved from current; only judgeModel changed.
+    expect(judgeArgs.judgeConfig).toEqual({
+      goalCompletion: { enabled: true, judgeModel: "openai/gpt-5" },
+    });
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name)
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name)
+    );
+
+    const resMatch = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { matchOptions: { arguments: "partial" } } }
+    );
+    expect(resMatch.status).toBe(200);
+    const matchArgs = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    // toolCallOrder (superset) + maxExtraToolCalls (null) preserved.
+    expect(matchArgs.defaultMatchOptions).toEqual({
+      toolCallOrder: "superset",
+      maxExtraToolCalls: null,
+      argumentMatching: "partial",
+    });
   });
 
   it("PATCH suite environment uses bindings, never a live connection", async () => {
