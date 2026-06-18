@@ -193,6 +193,72 @@ export function scrubMetaAndStructuredContentFromToolResult(
 }
 
 /**
+ * Renders a tool's MCP `outputSchema` into a compact, human-readable summary
+ * that can be appended to the model-facing tool description.
+ *
+ * Provider tool definitions (Anthropic, OpenAI, …) only carry an input schema,
+ * so a declared `outputSchema` never reaches the model. Without it the model
+ * sees the raw structured result but has no idea what the individual fields
+ * mean, and silently drops anything that isn't self-explanatory (e.g. a field
+ * named `x` documented only in the output schema). Folding the output shape
+ * into the description gives the model that context back.
+ *
+ * The summary intentionally covers only top-level properties — the common flat
+ * structured-output case — to keep descriptions small; nested object fields are
+ * listed by name/type so the model still knows they exist.
+ *
+ * @param outputSchema - The tool's `outputSchema` (MCP object schema) or undefined
+ * @returns A summary string, or undefined when there is nothing useful to add
+ */
+export function describeOutputSchemaForModel(
+  outputSchema: unknown
+): string | undefined {
+  if (!outputSchema || typeof outputSchema !== "object") return undefined;
+
+  const schema = outputSchema as JSONSchema7;
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object") return undefined;
+
+  const required = new Set(
+    Array.isArray(schema.required) ? schema.required : []
+  );
+
+  const lines: string[] = [];
+  for (const [name, definition] of Object.entries(properties)) {
+    if (definition === true || definition === false) {
+      lines.push(`- ${name}`);
+      continue;
+    }
+
+    const prop = definition as JSONSchema7;
+    const type = Array.isArray(prop.type) ? prop.type.join(" | ") : prop.type;
+    const meta = [type, required.has(name) ? "required" : undefined]
+      .filter(Boolean)
+      .join(", ");
+    const head = meta ? `- ${name} (${meta})` : `- ${name}`;
+    lines.push(prop.description ? `${head}: ${prop.description}` : head);
+  }
+
+  if (lines.length === 0) return undefined;
+
+  return `Returns structured output with the following fields:\n${lines.join("\n")}`;
+}
+
+/**
+ * Builds the model-facing description for a tool, appending a summary of its
+ * `outputSchema` when present. Tools without an output schema are returned
+ * unchanged.
+ */
+export function buildModelFacingDescription(
+  description: string | undefined,
+  outputSchema: unknown
+): string | undefined {
+  const outputSummary = describeOutputSchemaForModel(outputSchema);
+  if (!outputSummary) return description;
+  return description ? `${description}\n\n${outputSummary}` : outputSummary;
+}
+
+/**
  * Converts MCP tools to Vercel AI SDK format.
  *
  * @param listToolsResult - The result from listTools()
@@ -231,6 +297,14 @@ export async function convertMCPToolsToVercelTools(
     const toolMeta = toolDescription._meta as
       | Record<string, unknown>
       | undefined;
+
+    // Provider tool definitions are input-only, so a declared outputSchema
+    // never reaches the model. Fold it into the description so the model can
+    // interpret the structured result it gets back.
+    const modelDescription = buildModelFacingDescription(
+      description,
+      (toolDescription as { outputSchema?: unknown }).outputSchema
+    );
 
     // SEP-1865: hosts that negotiate `io.modelcontextprotocol/ui` MUST NOT
     // include tools whose visibility omits `"model"` in the agent's tool list.
@@ -272,7 +346,7 @@ export async function convertMCPToolsToVercelTools(
       // Automatic mode: normalize the schema and create a dynamic tool
       const normalizedInputSchema = ensureJsonSchemaObject(inputSchema);
       vercelTool = dynamicTool({
-        description,
+        description: modelDescription,
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
@@ -285,7 +359,7 @@ export async function convertMCPToolsToVercelTools(
         continue;
       }
       vercelTool = defineTool<unknown, CallToolResult>({
-        description,
+        description: modelDescription,
         inputSchema: overrides[name].inputSchema,
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
