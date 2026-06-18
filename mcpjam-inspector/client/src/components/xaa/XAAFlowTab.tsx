@@ -74,6 +74,12 @@ interface XAAFlowTabProps {
   // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
   onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
+  /**
+   * Bumped by the shell when the header "Add Server" button is clicked while
+   * this tab is active, so the Configure-Server-to-Test modal opens instead of
+   * the generic Add Server modal. Each new value (not the initial one) opens it.
+   */
+  openServerModalSignal?: number;
 }
 
 export function XAAFlowTab({
@@ -83,10 +89,20 @@ export function XAAFlowTab({
   projectId,
   onSelectServer,
   onSaveServerConfig,
+  openServerModalSignal,
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
+
+  // Open the modal when the shell bumps the signal (header "Add Server"). Skip
+  // the initial value so it doesn't pop open on mount.
+  const prevOpenSignalRef = useRef(openServerModalSignal);
+  useEffect(() => {
+    if (openServerModalSignal === prevOpenSignalRef.current) return;
+    prevOpenSignalRef.current = openServerModalSignal;
+    setIsServerModalOpen(true);
+  }, [openServerModalSignal]);
 
   const selectedServer =
     selectedServerName !== "none"
@@ -609,7 +625,7 @@ export function XAAFlowTab({
               </div>
             </div>
           </div>
-        ) : (
+        ) : isTestable ? (
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={52} minSize={30} className="min-w-0">
               <XAASequenceDiagram
@@ -656,14 +672,27 @@ export function XAAFlowTab({
               />
             </ResizablePanel>
           </ResizablePanelGroup>
+        ) : (
+          // Empty / unconfigured: keep progressive disclosure tight — just the
+          // diagram with its centered "Configure Server to Test" overlay. The
+          // run sidebar and negative-test footer only earn their space once
+          // there's a testable server, so they stay hidden until then.
+          <XAASequenceDiagram
+            flowState={flowState}
+            focusedStep={focusedStep}
+            hasProfile={false}
+            onConfigure={() => setIsServerModalOpen(true)}
+          />
         )}
       </div>
 
-      <NegativeTestScorecard
-        input={scorecard.input}
-        unlocked={positiveRunTargets.has(targetKey)}
-        unavailableReason={scorecard.unavailableReason}
-      />
+      {isTestable && (
+        <NegativeTestScorecard
+          input={scorecard.input}
+          unlocked={positiveRunTargets.has(targetKey)}
+          unavailableReason={scorecard.unavailableReason}
+        />
+      )}
 
       <XAAServerModal
         open={isServerModalOpen}

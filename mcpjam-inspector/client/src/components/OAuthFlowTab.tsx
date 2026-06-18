@@ -89,6 +89,12 @@ interface OAuthFlowTabProps {
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
+  /**
+   * Bumped by the shell when the header "Add Server" button is clicked while
+   * this tab is active, so the Configure-OAuth-Target modal opens instead of
+   * the generic Add Server modal. Each new value (not the initial one) opens it.
+   */
+  openProfileModalSignal?: number;
 }
 
 export const OAuthFlowTab = ({
@@ -98,8 +104,18 @@ export const OAuthFlowTab = ({
   onSaveServerConfig,
   onConnectWithTokens,
   onRefreshTokens,
+  openProfileModalSignal,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // Open the modal when the shell bumps the signal (header "Add Server"). Skip
+  // the initial value so it doesn't pop open on mount.
+  const prevOpenSignalRef = useRef(openProfileModalSignal);
+  useEffect(() => {
+    if (openProfileModalSignal === prevOpenSignalRef.current) return;
+    prevOpenSignalRef.current = openProfileModalSignal;
+    setIsProfileModalOpen(true);
+  }, [openProfileModalSignal]);
   const [pendingServerSelection, setPendingServerSelection] = useState<
     string | null
   >(null);
@@ -507,73 +523,92 @@ export const OAuthFlowTab = ({
   return (
     <div className="h-full flex flex-col bg-background">
       <div className="flex-1 overflow-hidden">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          <ResizablePanel defaultSize={50} minSize={30}>
-            <OAuthSequenceDiagram
-              flowState={oauthFlowState}
-              registrationStrategy={registrationStrategy}
-              protocolVersion={protocolVersion}
-              focusedStep={focusedStep}
-              hasProfile={hasProfile}
-              onConfigure={() => setIsProfileModalOpen(true)}
-            />
-          </ResizablePanel>
+        {hasProfile ? (
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <OAuthSequenceDiagram
+                flowState={oauthFlowState}
+                registrationStrategy={registrationStrategy}
+                protocolVersion={protocolVersion}
+                focusedStep={focusedStep}
+                hasProfile={hasProfile}
+                onConfigure={() => setIsProfileModalOpen(true)}
+              />
+            </ResizablePanel>
 
-          <ResizableHandle withHandle />
+            <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
-            <OAuthFlowLogger
-              oauthFlowState={oauthFlowState}
-              onClearLogs={clearInfoLogs}
-              onClearHttpHistory={clearHttpHistory}
-              activeStep={focusedStep ?? oauthFlowState.currentStep}
-              onFocusStep={setFocusedStep}
-              hasProfile={hasProfile}
-              summary={{
-                label: hasProfile ? serverIdentifier : "No target configured",
-                description: headerDescription,
-                protocol: hasProfile ? protocolVersion : undefined,
-                registration: hasProfile
-                  ? describeRegistrationStrategy(registrationStrategy)
-                  : undefined,
-                step: oauthFlowState.currentStep,
-                serverUrl: hasProfile ? profile.serverUrl : undefined,
-                scopes:
-                  hasProfile && profile.scopes.trim()
-                    ? profile.scopes.trim()
+            <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
+              <OAuthFlowLogger
+                oauthFlowState={oauthFlowState}
+                onClearLogs={clearInfoLogs}
+                onClearHttpHistory={clearHttpHistory}
+                activeStep={focusedStep ?? oauthFlowState.currentStep}
+                onFocusStep={setFocusedStep}
+                hasProfile={hasProfile}
+                summary={{
+                  label: hasProfile
+                    ? serverIdentifier
+                    : "No target configured",
+                  description: headerDescription,
+                  protocol: hasProfile ? protocolVersion : undefined,
+                  registration: hasProfile
+                    ? describeRegistrationStrategy(registrationStrategy)
                     : undefined,
-                clientId:
-                  hasProfile && profile.clientId.trim()
-                    ? profile.clientId.trim()
+                  step: oauthFlowState.currentStep,
+                  serverUrl: hasProfile ? profile.serverUrl : undefined,
+                  scopes:
+                    hasProfile && profile.scopes.trim()
+                      ? profile.scopes.trim()
+                      : undefined,
+                  clientId:
+                    hasProfile && profile.clientId.trim()
+                      ? profile.clientId.trim()
+                      : undefined,
+                  customHeadersCount: hasProfile
+                    ? profile.customHeaders.filter((h) => h.key.trim()).length
                     : undefined,
-                customHeadersCount: hasProfile
-                  ? profile.customHeaders.filter((h) => h.key.trim()).length
-                  : undefined,
-              }}
-              actions={{
-                onConfigure: () => setIsProfileModalOpen(true),
-                onReset: hasProfile ? () => resetOAuthFlow() : undefined,
-                // Hide Continue button when showing Connect/Refresh buttons
-                onContinue:
-                  canApplyTokens || continueDisabled
-                    ? undefined
-                    : handleAdvance,
-                continueLabel,
-                continueDisabled: Boolean(canApplyTokens || continueDisabled),
-                resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
-                onConnectServer:
-                  canApplyTokens && !isServerConnected
-                    ? handleConnectServer
-                    : undefined,
-                onRefreshTokens:
-                  canApplyTokens && isServerConnected
-                    ? () => setIsRefreshTokensModalOpen(true)
-                    : undefined,
-                isApplyingTokens,
-              }}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+                }}
+                actions={{
+                  onConfigure: () => setIsProfileModalOpen(true),
+                  onReset: hasProfile ? () => resetOAuthFlow() : undefined,
+                  // Hide Continue button when showing Connect/Refresh buttons
+                  onContinue:
+                    canApplyTokens || continueDisabled
+                      ? undefined
+                      : handleAdvance,
+                  continueLabel,
+                  continueDisabled: Boolean(
+                    canApplyTokens || continueDisabled
+                  ),
+                  resetDisabled:
+                    !hasProfile || oauthFlowState.isInitiatingAuth,
+                  onConnectServer:
+                    canApplyTokens && !isServerConnected
+                      ? handleConnectServer
+                      : undefined,
+                  onRefreshTokens:
+                    canApplyTokens && isServerConnected
+                      ? () => setIsRefreshTokensModalOpen(true)
+                      : undefined,
+                  isApplyingTokens,
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : (
+          // Empty / unconfigured: keep progressive disclosure tight — just the
+          // diagram with its centered "Configure OAuth Target" overlay. The
+          // logs sidebar only earns its space once a target is configured.
+          <OAuthSequenceDiagram
+            flowState={oauthFlowState}
+            registrationStrategy={registrationStrategy}
+            protocolVersion={protocolVersion}
+            focusedStep={focusedStep}
+            hasProfile={false}
+            onConfigure={() => setIsProfileModalOpen(true)}
+          />
+        )}
       </div>
 
       {oauthFlowState.authorizationUrl && (
