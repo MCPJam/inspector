@@ -573,9 +573,7 @@ export function TestCasesOverview({
                       </div>
                     ) : null}
                     <p className="text-sm text-muted-foreground">
-                      No test cases yet — click{" "}
-                      <span className="text-foreground">Generate</span> or{" "}
-                      <span className="text-foreground">New case</span>.
+                      No test cases yet.
                     </p>
                   </div>
                 ) : (
