@@ -877,6 +877,13 @@ export function SuiteIterationsView({
                     onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                     testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
                     userMap={userMap}
+                    onGenerateTestCases={onGenerateTestCases}
+                    canGenerateTestCases={canGenerateTestCases}
+                    generateTestCasesDisabledReason={
+                      generateTestCasesDisabledReason
+                    }
+                    isGeneratingTestCases={isGeneratingTestCases}
+                    onCreateTestCase={onCreateTestCase}
                   />
                 </motion.div>
               ) : runsViewMode === "runs" ? (

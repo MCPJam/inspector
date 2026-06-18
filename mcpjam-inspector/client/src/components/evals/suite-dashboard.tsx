@@ -50,6 +50,12 @@ export interface SuiteDashboardProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  /** Empty-state CTAs in the Cases tab (Playground) — same actions as the suite header. */
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
+  generateTestCasesDisabledReason?: string;
+  isGeneratingTestCases?: boolean;
+  onCreateTestCase?: () => void;
 }
 
 /**
@@ -76,6 +82,11 @@ export function SuiteDashboard({
   onDeleteTestCasesBatch,
   testCasesClickHint,
   userMap,
+  onGenerateTestCases,
+  canGenerateTestCases,
+  generateTestCasesDisabledReason,
+  isGeneratingTestCases,
+  onCreateTestCase,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
   const hostNamesById = useMemo(() => {
@@ -129,6 +140,11 @@ export function SuiteDashboard({
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
       connectedServerNames={connectedServerNames}
+      onGenerateTestCases={onGenerateTestCases}
+      canGenerateTestCases={canGenerateTestCases}
+      generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+      isGeneratingTestCases={isGeneratingTestCases}
+      onCreateTestCase={onCreateTestCase}
     />
   );
 
