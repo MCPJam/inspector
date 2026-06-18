@@ -3,36 +3,91 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/chat-ui",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add the recorded-trace waterfall as a new `@mcpjam/chat-ui/trace-timeline` subpath.\n\n`TraceTimeline` renders the per-step trace waterfall (per-span latency + token\ncounts, hover for wall-clock start/end) from a `TraceSpan[]`. Tier-A clean:\nprovider-free, no posthog / design-system / convex / widget-runtime imports —\nit reuses the package's own `JsonView` / `Markdown` / `tool-result-text` / `cn`\nplus small local UI shims, and the `trace-waterfall-*` classes + their tokens\nship in `styles.css` scoped under `.mcpjam-chat-ui`. New subpath only; existing\nexports are unchanged.",
+      "id": "chat-ui-trace-timeline"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Support full eval suite/case editing from the CLI `eval` command via the public\nAPI.",
+      "id": "cli-eval-edit"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/inspector",
           "type": "minor"
-        },
+        }
+      ],
+      "summary": "Eval improvements: unify render checks into the prompt-test runner as model-free\nper-turn pinned tool calls, add a run timeout, surface clearer errors when eval\n`tools/list` or setup fails, and expose full eval suite/case editing through the\npublic API. Show per-tool quality badges in the Tools tab. Stop persisting OAuth\nclient secrets in browser storage.",
+      "id": "inspector-evals-and-oauth"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "OAuth and eval polish:\n\n- Stop reconnect from wiping a server's saved OAuth config.\n- Show the full saved OAuth config (clientId, scopes, secret flag, issuer) in the\n  Configure modal, and cleaner client-secret reveal UX.\n- Drop the blue focus ring on flow steps and add an issuer auto-discovery hint;\n  render the IdP header in a flat container; keep ID-JAG lint rows inside the\n  flow panel on narrow widths.\n- Clearer welcome-screen instructions for newcomers.\n- Configurable eval Generate (case count, per-bucket mix, vary user styles) plus\n  assorted eval nits.",
+      "id": "inspector-oauth-ui-fixes"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
         }
       ],
-      "summary": "Unify render checks into a model-free per-turn pinned tool call.\n\n- **@mcpjam/inspector**: replace the standalone `widget_probe` synthetic\n  monitor with a per-turn `pinnedToolCall`. When a turn carries one, it is\n  model-free: the runner executes that exact tool call (fixture input) and\n  renders its widget through the same `browser-session-context`\n  render+observe pipeline the model turns use — no LLM in the loop. The\n  pinned-turn logic lives in one place (`server/services/evals/pinned-turn.ts`)\n  shared by the local AI-SDK, hosted backend, and streaming iteration paths,\n  and the legacy `probe-iteration.ts` / `widget-probe-editor.tsx` are removed.\n  New `prompt-turns` selectors are the single source of truth for \"is this turn\n  model-free?\", reading the per-turn field structurally and falling back to the\n  legacy `caseType === \"widget_probe\"` shape so answers stay correct before any\n  per-turn pinned data exists. A pinned-first turn (empty prompt) synthesizes a\n  stable descriptive query so display, dedup/upsert identity, and query\n  validators keep working. New `pinned-tool-call-fields.tsx` editor surface.\n\n- **@mcpjam/sdk**: `buildIterationTranscript` accepts a new optional\n  `toolErrors` on `BuildTranscriptInput`, merged with trace-derived errors. A\n  model-free pinned tool call has no trace for `extractToolErrors` to read, so\n  its content/protocol errors must be passed explicitly — otherwise\n  `noToolErrors` would pass falsely. Additive and backwards compatible.",
-      "id": "pinned-tool-call-turns"
+      "summary": "Add platform operations for editing eval suites and cases. New additive exports\non the `@mcpjam/sdk` platform client (operations, types) backing the public\neval-editing API; existing signatures are unchanged.",
+      "id": "sdk-platform-eval-edit"
     }
   ],
   "releases": [
     {
+      "name": "@mcpjam/chat-ui",
+      "type": "minor",
+      "oldVersion": "0.1.0",
+      "changesets": [
+        "chat-ui-trace-timeline"
+      ],
+      "newVersion": "0.2.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "minor",
+      "oldVersion": "3.8.0",
+      "changesets": [
+        "cli-eval-edit"
+      ],
+      "newVersion": "3.9.0"
+    },
+    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.14.0",
+      "oldVersion": "2.15.0",
       "changesets": [
-        "pinned-tool-call-turns"
+        "inspector-evals-and-oauth",
+        "inspector-oauth-ui-fixes"
       ],
-      "newVersion": "2.15.0"
+      "newVersion": "2.16.0"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.19.0",
+      "oldVersion": "1.20.0",
       "changesets": [
-        "pinned-tool-call-turns"
+        "sdk-platform-eval-edit"
       ],
-      "newVersion": "1.20.0"
+      "newVersion": "1.21.0"
     },
     {
       "name": "@mcpjam/mcp",
