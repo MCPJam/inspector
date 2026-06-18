@@ -314,6 +314,29 @@ The Playground respects every skill you've configured in the [Skills](/inspector
 
 Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — source server ID, description, arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
 
+## Workspace tools
+
+When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared chatbox sessions.
+
+| Tool | What it does |
+|---|---|
+| `list_project_servers` | List all servers saved in the project with their names, transport types, and enabled status. |
+| `diagnose_server` | Probe a server's URL, connect, initialize, and report its capabilities and any connection errors. Use this when a server won't connect or you want to check its health. |
+| `list_server_tools` | List the tools a server exposes — names, descriptions, and input schemas. Paginated; pass `nextCursor` back as `cursor` for the next page. |
+| `call_server_tool` | Execute a tool on a server and return its result. Runs with your own authorization and may have side effects. Get the tool name and parameter schema from `list_server_tools` first. |
+| `list_server_prompts` | List the prompts a server exposes — names, descriptions, and arguments. Paginated. |
+| `get_server_prompt` | Render a prompt from a server with the given arguments and return its messages. |
+| `list_server_resources` | List the resources a server exposes — URIs, names, and MIME types. Paginated. |
+| `read_server_resource` | Read one resource from a server by URI and return its contents. |
+
+Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
+
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, and `read_server_resource` (the operations that open a live connection) so you can approve or deny each one. Read-only listing tools (`list_project_servers`, `list_server_tools`, `list_server_prompts`, `list_server_resources`) never require approval.
+
+<Note>
+  These tools are only available when you are signed in as a project member. They are not shown to guests or in chatbox sessions.
+</Note>
+
 ## Related Features
 
 - [Views](/inspector/views) — Save tool execution snapshots, edit inputs and outputs, preview widgets offline.
