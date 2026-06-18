@@ -545,14 +545,38 @@ function toInternalMatchOptions(
   return out;
 }
 
+/**
+ * Merge a partial public match-options patch onto the stored (internal) object.
+ * `updateTestSuite`/`updateTestCase` replace the field wholesale, so a partial
+ * patch must layer onto current values. When the patch sets the extra-call
+ * bound, drop the legacy `allowExtraToolCalls` so it can't shadow the modern
+ * `maxExtraToolCalls` on read.
+ */
+function mergeMatchOptions(
+  current: any,
+  patch: PublicMatchOptions
+): Record<string, unknown> {
+  const partial = toInternalMatchOptions(patch);
+  const merged: Record<string, unknown> = {
+    ...(current && typeof current === "object" ? current : {}),
+    ...partial,
+  };
+  if ("maxExtraToolCalls" in partial) delete merged.allowExtraToolCalls;
+  return merged;
+}
+
 function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
   if (!internal || typeof internal !== "object") return null;
-  // `maxExtraToolCalls` is the current field. Older rows carry only the legacy
-  // boolean `allowExtraToolCalls` (the SDK matcher shims true→null, false→0);
-  // honor it so saved settings don't silently read back as "unlimited".
+  // `maxExtraToolCalls` is the current field and is authoritative whenever the
+  // key is PRESENT — including an explicit `null`, which means unlimited. Only
+  // fall back to the legacy boolean `allowExtraToolCalls` when the modern field
+  // is entirely absent (the SDK matcher shims true→null, false→0).
   let extraToolCalls: "unlimited" | number;
-  if (internal.maxExtraToolCalls != null) {
-    extraToolCalls = Number(internal.maxExtraToolCalls);
+  if (internal.maxExtraToolCalls !== undefined) {
+    extraToolCalls =
+      internal.maxExtraToolCalls === null
+        ? "unlimited"
+        : Number(internal.maxExtraToolCalls);
   } else if (typeof internal.allowExtraToolCalls === "boolean") {
     extraToolCalls = internal.allowExtraToolCalls ? "unlimited" : 0;
   } else {
@@ -888,6 +912,8 @@ function buildCaseMutationArgs(
     defaultModels?: Array<{ model: string; provider: string }>;
     /** The persisted case's caseType, so a kind-less PATCH keeps its kind. */
     existingCaseType?: string;
+    /** The persisted case's match options, to merge a partial PATCH onto. */
+    existingMatchOptions?: unknown;
   }
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
@@ -960,7 +986,12 @@ function buildCaseMutationArgs(
     args.matchOptions =
       body.matchOptions === null
         ? null
-        : toInternalMatchOptions(body.matchOptions);
+        : // Create sets a fresh override from the provided fields; update merges
+        // the partial patch onto the case's existing override so unmentioned
+        // fields aren't reset.
+        opts.forCreate
+        ? toInternalMatchOptions(body.matchOptions)
+        : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null
@@ -1551,10 +1582,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs.defaultMatchOptions =
         s.matchOptions === null
           ? null
-          : {
-              ...(suite!.defaultMatchOptions ?? {}),
-              ...toInternalMatchOptions(s.matchOptions),
-            };
+          : mergeMatchOptions(suite!.defaultMatchOptions, s.matchOptions);
     if (s.checks !== undefined) updateArgs.defaultPredicates = s.checks;
     if (s.judge !== undefined) {
       const goalCompletion: Record<string, unknown> = {
@@ -1841,6 +1869,7 @@ evals.patch(
       forCreate: false,
       existingCaseType:
         typeof existing.caseType === "string" ? existing.caseType : undefined,
+      existingMatchOptions: existing.matchOptions,
     });
     const { convexClient } = createConvexClients(token);
     let updated: CaseDoc | null | undefined;

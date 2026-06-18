@@ -415,6 +415,45 @@ describe("v1 eval-edit routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("GET reads explicit null maxExtraToolCalls as unlimited, not the legacy flag", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            // Modern field present (null = unlimited) alongside a stale legacy
+            // boolean — the modern field must win.
+            defaultMatchOptions: {
+              toolCallOrder: "ignore",
+              maxExtraToolCalls: null,
+              allowExtraToolCalls: false,
+              argumentMatching: "partial",
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    const body = (await res.json()) as any;
+    expect(body.settings.matchOptions.extraToolCalls).toBe("unlimited");
+  });
+
+  it("PATCH case merges partial match options onto the existing override", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { matchOptions: { arguments: "exact" } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase"
+    )![1];
+    // CASE_DOC.matchOptions toolCallOrder/maxExtraToolCalls preserved.
+    expect(args.matchOptions).toEqual({
+      toolCallOrder: "ignore",
+      maxExtraToolCalls: null,
+      argumentMatching: "exact",
+    });
+  });
+
   it("DELETE suite returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
