@@ -1,7 +1,6 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
   isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
   type ModelDefinition,
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
@@ -9,6 +8,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
+  isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "./model-helpers";
 
@@ -25,13 +25,16 @@ export const GUEST_LOCKED_MODEL_REASON =
  */
 export function applyGuestModelLocks(
   models: ModelDefinition[],
-  isAuthenticated: boolean,
+  isAuthenticated: boolean
 ): ModelDefinition[] {
   if (isAuthenticated) return models;
 
   return models.map((model) => {
     const modelId = String(model.id);
-    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
+    if (
+      !isMCPJamProvidedModelMenuItem(model) ||
+      isMCPJamGuestAllowedModel(modelId)
+    ) {
       return model;
     }
 
@@ -55,12 +58,12 @@ export const OUT_OF_CREDITS_MODEL_REASON =
  */
 export function applyOutOfCreditsLocks(
   models: ModelDefinition[],
-  outOfCredits: boolean,
+  outOfCredits: boolean
 ): ModelDefinition[] {
   if (!outOfCredits) return models;
 
   return models.map((model) => {
-    if (!isMCPJamProvidedModel(String(model.id))) {
+    if (!isMCPJamProvidedModelMenuItem(model)) {
       return model;
     }
     return {
@@ -78,14 +81,14 @@ export function applyOutOfCreditsLocks(
 export function appendDetectedLocalOllamaModels(
   models: ModelDefinition[],
   isOllamaRunning: boolean,
-  ollamaModels: ModelDefinition[],
+  ollamaModels: ModelDefinition[]
 ): ModelDefinition[] {
   if (!isOllamaRunning || ollamaModels.length === 0) return models;
   return models.concat(
     ollamaModels.filter(
       (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id)),
-    ),
+        !models.some((model) => String(model.id) === String(ollamaModel.id))
+    )
   );
 }
 
@@ -126,11 +129,11 @@ export function composeAvailableModels(params: {
     const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
       orgModels,
       isOllamaRunning,
-      ollamaModels,
+      ollamaModels
     );
     return applyOutOfCreditsLocks(
       applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated),
-      outOfCredits,
+      outOfCredits
     );
   }
 
@@ -144,9 +147,7 @@ export function composeAvailableModels(params: {
   });
   const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
   const visibleModels = HOSTED_MODE
-    ? guestLockedModels.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      )
+    ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
     : guestLockedModels;
   return applyOutOfCreditsLocks(visibleModels, outOfCredits);
 }

@@ -19,7 +19,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@mcpjam/design-system/command";
-import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types.js";
+import { ModelDefinition } from "@/shared/types.js";
 import {
   Tooltip,
   TooltipContent,
@@ -30,6 +30,7 @@ import {
   compactModelLabel,
   getLogoProvider,
   getProviderDisplayName,
+  isMCPJamProvidedModelMenuItem,
 } from "@/components/chat-v2/shared/model-helpers";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -148,6 +149,7 @@ export function ModelSelector({
   const onOpenChangeRef = useRef(onOpenChange);
   const forceConfiguredTabRef = useRef(false);
   const handledProvidersTabNonceRef = useRef(0);
+  const selectedProvidersTabNonceRef = useRef(0);
   const providersTabNonce = useModelPickerIntentStore((state) =>
     respondToProviderTabIntent ? state.openProvidersTabNonce : 0
   );
@@ -171,28 +173,13 @@ export function ModelSelector({
         return;
       }
       setProviderTab(
-        isMCPJamProvidedModel(String(currentModel.id), currentModel.provider)
-          ? "provided"
-          : "configured"
+        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured"
       );
     } else {
       forceConfiguredTabRef.current = false;
       setSearch("");
     }
   }, [isOpen, currentModel]);
-
-  // React to the global "open Your providers tab" intent (out-of-credits
-  // BYOK). Only the opted-in instance subscribes to a live nonce; others read
-  // a constant 0 so this never fires for them.
-  useEffect(() => {
-    if (!respondToProviderTabIntent) return;
-    if (providersTabNonce === 0) return;
-    if (providersTabNonce === handledProvidersTabNonceRef.current) return;
-    handledProvidersTabNonceRef.current = providersTabNonce;
-    forceConfiguredTabRef.current = true;
-    setProviderTab("configured");
-    setIsOpen(true);
-  }, [providersTabNonce, respondToProviderTabIntent]);
 
   useEffect(() => {
     return () => {
@@ -280,7 +267,7 @@ export function ModelSelector({
     for (const provider of sortedProviders) {
       const allModels = groupedModels.get(provider) || [];
       const filtered = hideProvidedModels
-        ? allModels.filter((model) => !isMCPJamProvidedModel(String(model.id)))
+        ? allModels.filter((model) => !isMCPJamProvidedModelMenuItem(model))
         : allModels;
 
       if (filtered.length === 0) {
@@ -288,10 +275,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModel(String(model.id))
+        isMCPJamProvidedModelMenuItem(model)
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModel(String(model.id))
+        (model) => !isMCPJamProvidedModelMenuItem(model)
       );
       const title = getProviderDisplayName(provider);
 
@@ -337,8 +324,43 @@ export function ModelSelector({
     );
     return { provided, configured };
   }, [modelGroups]);
+  const firstEnabledConfiguredModel = useMemo(
+    () =>
+      modelSections.configured
+        .flatMap((group) => group.models)
+        .find((model) => !model.disabled),
+    [modelSections]
+  );
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+
+  // React to the global "open Your providers tab" intent (out-of-credits
+  // BYOK). Only the opted-in instance subscribes to a live nonce; others read
+  // a constant 0 so this never fires for them.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    if (providersTabNonce === 0) return;
+
+    if (providersTabNonce !== handledProvidersTabNonceRef.current) {
+      handledProvidersTabNonceRef.current = providersTabNonce;
+      forceConfiguredTabRef.current = true;
+      setProviderTab("configured");
+      setIsOpen(true);
+    }
+
+    if (
+      providersTabNonce !== selectedProvidersTabNonceRef.current &&
+      firstEnabledConfiguredModel
+    ) {
+      selectedProvidersTabNonceRef.current = providersTabNonce;
+      onModelChange(firstEnabledConfiguredModel);
+    }
+  }, [
+    firstEnabledConfiguredModel,
+    onModelChange,
+    providersTabNonce,
+    respondToProviderTabIntent,
+  ]);
 
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =

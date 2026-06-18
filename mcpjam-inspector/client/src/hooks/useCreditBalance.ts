@@ -1,7 +1,8 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
   /** Shared paid top-up credits currently available to the organization. */
@@ -148,8 +149,8 @@ export function isOutOfCredits(
  * MCPJam-provided models in the picker once the org/guest can no longer
  * spend. Resolves the org from the caller-provided id, falling back to the
  * stored active organization (the same source the limit dialog uses).
- * Returns false while the balance is loading or unavailable so models never
- * flash locked.
+ * Also honors the local limit-hit latch set by failed sends so the picker
+ * locks immediately instead of waiting for the balance query to catch up.
  */
 export function useOutOfCredits(organizationId?: string | null): boolean {
   const { user } = useAuth();
@@ -159,5 +160,29 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
     organizationId: resolvedOrganizationId,
     includeGuests: true,
   });
-  return isOutOfCredits(balance);
+  const balanceOutOfCredits = isOutOfCredits(balance);
+  const outOfCreditsHit = useMCPJamLimitDialogStore(
+    (state) => state.outOfCreditsHit
+  );
+  const locallyLimited = useMCPJamLimitDialogStore((state) => {
+    if (!state.outOfCreditsHit) return false;
+    if (!state.outOfCreditsOrganizationId) return true;
+    if (!resolvedOrganizationId) return true;
+    return state.outOfCreditsOrganizationId === resolvedOrganizationId;
+  });
+  const clearOutOfCreditsHit = useMCPJamLimitDialogStore(
+    (state) => state.clearOutOfCreditsHit
+  );
+
+  useEffect(() => {
+    if (!outOfCreditsHit || !balanceOutOfCredits) return;
+    clearOutOfCreditsHit(resolvedOrganizationId ?? null);
+  }, [
+    balanceOutOfCredits,
+    clearOutOfCreditsHit,
+    outOfCreditsHit,
+    resolvedOrganizationId,
+  ]);
+
+  return balanceOutOfCredits || locallyLimited;
 }
