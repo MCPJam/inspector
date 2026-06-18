@@ -609,7 +609,7 @@ export function XAAFlowTab({
               </div>
             </div>
           </div>
-        ) : (
+        ) : isTestable ? (
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={52} minSize={30} className="min-w-0">
               <XAASequenceDiagram
@@ -656,14 +656,27 @@ export function XAAFlowTab({
               />
             </ResizablePanel>
           </ResizablePanelGroup>
+        ) : (
+          // Empty / unconfigured: keep progressive disclosure tight — just the
+          // diagram with its centered "Configure Server to Test" overlay. The
+          // run sidebar and negative-test footer only earn their space once
+          // there's a testable server, so they stay hidden until then.
+          <XAASequenceDiagram
+            flowState={flowState}
+            focusedStep={focusedStep}
+            hasProfile={false}
+            onConfigure={() => setIsServerModalOpen(true)}
+          />
         )}
       </div>
 
-      <NegativeTestScorecard
-        input={scorecard.input}
-        unlocked={positiveRunTargets.has(targetKey)}
-        unavailableReason={scorecard.unavailableReason}
-      />
+      {isTestable && (
+        <NegativeTestScorecard
+          input={scorecard.input}
+          unlocked={positiveRunTargets.has(targetKey)}
+          unavailableReason={scorecard.unavailableReason}
+        />
+      )}
 
       <XAAServerModal
         open={isServerModalOpen}

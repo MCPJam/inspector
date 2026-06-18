@@ -507,73 +507,92 @@ export const OAuthFlowTab = ({
   return (
     <div className="h-full flex flex-col bg-background">
       <div className="flex-1 overflow-hidden">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          <ResizablePanel defaultSize={50} minSize={30}>
-            <OAuthSequenceDiagram
-              flowState={oauthFlowState}
-              registrationStrategy={registrationStrategy}
-              protocolVersion={protocolVersion}
-              focusedStep={focusedStep}
-              hasProfile={hasProfile}
-              onConfigure={() => setIsProfileModalOpen(true)}
-            />
-          </ResizablePanel>
+        {hasProfile ? (
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <OAuthSequenceDiagram
+                flowState={oauthFlowState}
+                registrationStrategy={registrationStrategy}
+                protocolVersion={protocolVersion}
+                focusedStep={focusedStep}
+                hasProfile={hasProfile}
+                onConfigure={() => setIsProfileModalOpen(true)}
+              />
+            </ResizablePanel>
 
-          <ResizableHandle withHandle />
+            <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
-            <OAuthFlowLogger
-              oauthFlowState={oauthFlowState}
-              onClearLogs={clearInfoLogs}
-              onClearHttpHistory={clearHttpHistory}
-              activeStep={focusedStep ?? oauthFlowState.currentStep}
-              onFocusStep={setFocusedStep}
-              hasProfile={hasProfile}
-              summary={{
-                label: hasProfile ? serverIdentifier : "No target configured",
-                description: headerDescription,
-                protocol: hasProfile ? protocolVersion : undefined,
-                registration: hasProfile
-                  ? describeRegistrationStrategy(registrationStrategy)
-                  : undefined,
-                step: oauthFlowState.currentStep,
-                serverUrl: hasProfile ? profile.serverUrl : undefined,
-                scopes:
-                  hasProfile && profile.scopes.trim()
-                    ? profile.scopes.trim()
+            <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
+              <OAuthFlowLogger
+                oauthFlowState={oauthFlowState}
+                onClearLogs={clearInfoLogs}
+                onClearHttpHistory={clearHttpHistory}
+                activeStep={focusedStep ?? oauthFlowState.currentStep}
+                onFocusStep={setFocusedStep}
+                hasProfile={hasProfile}
+                summary={{
+                  label: hasProfile
+                    ? serverIdentifier
+                    : "No target configured",
+                  description: headerDescription,
+                  protocol: hasProfile ? protocolVersion : undefined,
+                  registration: hasProfile
+                    ? describeRegistrationStrategy(registrationStrategy)
                     : undefined,
-                clientId:
-                  hasProfile && profile.clientId.trim()
-                    ? profile.clientId.trim()
+                  step: oauthFlowState.currentStep,
+                  serverUrl: hasProfile ? profile.serverUrl : undefined,
+                  scopes:
+                    hasProfile && profile.scopes.trim()
+                      ? profile.scopes.trim()
+                      : undefined,
+                  clientId:
+                    hasProfile && profile.clientId.trim()
+                      ? profile.clientId.trim()
+                      : undefined,
+                  customHeadersCount: hasProfile
+                    ? profile.customHeaders.filter((h) => h.key.trim()).length
                     : undefined,
-                customHeadersCount: hasProfile
-                  ? profile.customHeaders.filter((h) => h.key.trim()).length
-                  : undefined,
-              }}
-              actions={{
-                onConfigure: () => setIsProfileModalOpen(true),
-                onReset: hasProfile ? () => resetOAuthFlow() : undefined,
-                // Hide Continue button when showing Connect/Refresh buttons
-                onContinue:
-                  canApplyTokens || continueDisabled
-                    ? undefined
-                    : handleAdvance,
-                continueLabel,
-                continueDisabled: Boolean(canApplyTokens || continueDisabled),
-                resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
-                onConnectServer:
-                  canApplyTokens && !isServerConnected
-                    ? handleConnectServer
-                    : undefined,
-                onRefreshTokens:
-                  canApplyTokens && isServerConnected
-                    ? () => setIsRefreshTokensModalOpen(true)
-                    : undefined,
-                isApplyingTokens,
-              }}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+                }}
+                actions={{
+                  onConfigure: () => setIsProfileModalOpen(true),
+                  onReset: hasProfile ? () => resetOAuthFlow() : undefined,
+                  // Hide Continue button when showing Connect/Refresh buttons
+                  onContinue:
+                    canApplyTokens || continueDisabled
+                      ? undefined
+                      : handleAdvance,
+                  continueLabel,
+                  continueDisabled: Boolean(
+                    canApplyTokens || continueDisabled
+                  ),
+                  resetDisabled:
+                    !hasProfile || oauthFlowState.isInitiatingAuth,
+                  onConnectServer:
+                    canApplyTokens && !isServerConnected
+                      ? handleConnectServer
+                      : undefined,
+                  onRefreshTokens:
+                    canApplyTokens && isServerConnected
+                      ? () => setIsRefreshTokensModalOpen(true)
+                      : undefined,
+                  isApplyingTokens,
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : (
+          // Empty / unconfigured: keep progressive disclosure tight — just the
+          // diagram with its centered "Configure OAuth Target" overlay. The
+          // logs sidebar only earns its space once a target is configured.
+          <OAuthSequenceDiagram
+            flowState={oauthFlowState}
+            registrationStrategy={registrationStrategy}
+            protocolVersion={protocolVersion}
+            focusedStep={focusedStep}
+            hasProfile={false}
+            onConfigure={() => setIsProfileModalOpen(true)}
+          />
+        )}
       </div>
 
       {oauthFlowState.authorizationUrl && (
