@@ -89,6 +89,12 @@ interface OAuthFlowTabProps {
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
+  /**
+   * Bumped by the shell when the header "Add Server" button is clicked while
+   * this tab is active, so the Configure-OAuth-Target modal opens instead of
+   * the generic Add Server modal. Each new value (not the initial one) opens it.
+   */
+  openProfileModalSignal?: number;
 }
 
 export const OAuthFlowTab = ({
@@ -98,8 +104,18 @@ export const OAuthFlowTab = ({
   onSaveServerConfig,
   onConnectWithTokens,
   onRefreshTokens,
+  openProfileModalSignal,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // Open the modal when the shell bumps the signal (header "Add Server"). Skip
+  // the initial value so it doesn't pop open on mount.
+  const prevOpenSignalRef = useRef(openProfileModalSignal);
+  useEffect(() => {
+    if (openProfileModalSignal === prevOpenSignalRef.current) return;
+    prevOpenSignalRef.current = openProfileModalSignal;
+    setIsProfileModalOpen(true);
+  }, [openProfileModalSignal]);
   const [pendingServerSelection, setPendingServerSelection] = useState<
     string | null
   >(null);

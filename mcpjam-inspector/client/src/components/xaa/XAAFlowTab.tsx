@@ -74,6 +74,12 @@ interface XAAFlowTabProps {
   // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
   onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
+  /**
+   * Bumped by the shell when the header "Add Server" button is clicked while
+   * this tab is active, so the Configure-Server-to-Test modal opens instead of
+   * the generic Add Server modal. Each new value (not the initial one) opens it.
+   */
+  openServerModalSignal?: number;
 }
 
 export function XAAFlowTab({
@@ -83,10 +89,20 @@ export function XAAFlowTab({
   projectId,
   onSelectServer,
   onSaveServerConfig,
+  openServerModalSignal,
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
+
+  // Open the modal when the shell bumps the signal (header "Add Server"). Skip
+  // the initial value so it doesn't pop open on mount.
+  const prevOpenSignalRef = useRef(openServerModalSignal);
+  useEffect(() => {
+    if (openServerModalSignal === prevOpenSignalRef.current) return;
+    prevOpenSignalRef.current = openServerModalSignal;
+    setIsServerModalOpen(true);
+  }, [openServerModalSignal]);
 
   const selectedServer =
     selectedServerName !== "none"
