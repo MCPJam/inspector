@@ -52,7 +52,7 @@
             "icon": "plug",
             "pages": [
               "inspector/home",
-              "inspector/clients",
+              "inspector/hosts",
               "inspector/projects",
               "inspector/protocol-versions"
             ]
@@ -202,6 +202,7 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    { "source": "/inspector/clients", "destination": "/inspector/hosts" },
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
     { "source": "/inspector/app-builder", "destination": "/inspector/playground" },

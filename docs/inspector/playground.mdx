@@ -39,7 +39,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 
 ## Getting Started
 
-1. **Connect a server** — Add and connect an MCP server from the [Clients](/inspector/clients) tab (or the **+** button in the chat input).
+1. **Connect a server** — Add and connect an MCP server from the [Hosts](/inspector/hosts) tab (or the **+** button in the chat input).
 2. **Open the Playground** — Switch to the Playground tab.
 3. **Send a message or run a tool** — Either chat with your server from the input bar and let the model call tools, or pick a tool from the left rail and execute it with your own input.
 
@@ -229,7 +229,7 @@ Widgets can request mode changes from their own code; users can exit PiP or Full
 
 All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
+Widget rendering is gated on the active Host's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
 
 ## Per-Widget Debugging
 
@@ -317,6 +317,6 @@ Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Typ
 ## Related Features
 
 - [Views](/inspector/views) — Save tool execution snapshots, edit inputs and outputs, preview widgets offline.
-- [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
+- [Hosts](/inspector/hosts) — Manage MCP host configurations, server connections, and OAuth.
 - [Skills](/inspector/skills) — Configure skills that the Playground can use.
 - [Projects](/inspector/projects) — Organize servers, sessions, and views into shared workspaces.
