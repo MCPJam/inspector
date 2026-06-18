@@ -365,7 +365,9 @@ export function TestCasesOverview({
       {/* Cases List */}
       <div
         className={cn(
-          caseListCardClassName,
+          // Empty state floats with no card border/background; the bordered
+          // card only frames an actual list of cases.
+          testCaseStats.length === 0 ? "flex flex-col" : caseListCardClassName,
           isByHostView ? "min-h-[min(70vh,720px)] flex-1" : "max-h-[600px]"
         )}
       >
