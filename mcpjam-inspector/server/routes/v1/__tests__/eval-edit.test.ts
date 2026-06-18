@@ -844,4 +844,62 @@ describe("v1 eval-edit routes", () => {
       caseMix: { negative: 4 },
     });
   });
+
+  it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    // The plan-driven generator flags each draft; the request still carries
+    // mode:"negative", which must NOT force the positive draft negative.
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Pos",
+          query: "do a thing",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "list", arguments: {} }],
+          isNegativeTest: false,
+        },
+        {
+          title: "Neg",
+          query: "meta question",
+          runs: 1,
+          expectedToolCalls: [],
+          isNegativeTest: true,
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { simple: 1, negative: 1 } }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.counts).toEqual({ normal: 1, negative: 1 });
+
+    const createArgs = convexMutationMock.mock.calls
+      .filter((c) => c[0] === "testSuites:createTestCase")
+      .map((c) => c[1]);
+    const posArgs = createArgs.find((a: any) => a.title === "Pos");
+    const negArgs = createArgs.find((a: any) => a.title === "Neg");
+    // Positive draft keeps its tool calls and is NOT marked negative.
+    expect(posArgs.isNegativeTest).toBeUndefined();
+    expect(posArgs.expectedToolCalls).toEqual([
+      { toolName: "list", arguments: {} },
+    ]);
+    // Negative draft is marked negative with no tool calls.
+    expect(negArgs.isNegativeTest).toBe(true);
+    expect(negArgs.expectedToolCalls).toEqual([]);
+  });
 });

@@ -2122,6 +2122,15 @@ evals.post(
           }
         : undefined;
 
+    // caseMix supersedes mode: an explicit caseMix routes through the
+    // plan-driven generator (which expresses negative-only via its `negative`
+    // bucket and forwards generationOptions) and returns per-case
+    // `isNegativeTest` flags. The legacy negative-only path — which forces every
+    // draft negative — is used only when mode is "negative" AND no caseMix was
+    // given. This same flag gates persistence/counting below so a
+    // `mode: "negative"` + caseMix request doesn't mislabel its positive cases.
+    const legacyNegativeOnly = mode === "negative" && !body.caseMix;
+
     let drafts: any[];
     try {
       const request = {
@@ -2131,14 +2140,9 @@ evals.post(
         projectId,
         ...(generationOptions ? { generationOptions } : {}),
       } as unknown as RunEvalsRequest;
-      // caseMix supersedes mode: an explicit caseMix routes through the
-      // plan-driven generator (which expresses negative-only via its `negative`
-      // bucket and forwards generationOptions). The legacy negative-only
-      // generator is used only when mode is "negative" AND no caseMix was given.
-      const result =
-        mode === "negative" && !body.caseMix
-          ? await generateNegativeEvalTestsWithManager(manager, request as any)
-          : await generateEvalTestsWithManager(manager, request as any);
+      const result = legacyNegativeOnly
+        ? await generateNegativeEvalTestsWithManager(manager, request as any)
+        : await generateEvalTestsWithManager(manager, request as any);
       drafts = Array.isArray((result as any).tests)
         ? (result as any).tests
         : [];
@@ -2153,10 +2157,11 @@ evals.post(
     let normal = 0;
     let negative = 0;
     for (const draft of drafts) {
-      // Negative mode emits only negative cases; normal mode flags them per
-      // case. Negative cases must carry NO expected tool calls (the suite guard
-      // rejects that), so clear them on both the top level and prompt turns.
-      const isNeg = mode === "negative" || draft.isNegativeTest === true;
+      // The legacy negative-only path emits only negative cases; otherwise the
+      // plan-driven generator flags each draft. Negative cases must carry NO
+      // expected tool calls (the suite guard rejects that), so clear them on
+      // both the top level and prompt turns.
+      const isNeg = legacyNegativeOnly || draft.isNegativeTest === true;
       const mapCalls = (
         calls: any
       ): Array<{ toolName: string; arguments: any }> =>
