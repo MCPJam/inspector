@@ -40,6 +40,7 @@ import {
   normalizeImportHostedOAuthTokens,
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -375,6 +376,7 @@ function stripOAuthTraceDataFromFlowState(
 ): OAuthFlowState {
   return {
     ...cloneFlowState(state),
+    clientSecret: undefined,
     httpHistory: [],
     infoLogs: [],
     lastRequest: undefined,
@@ -1906,6 +1908,7 @@ export interface MCPOAuthProviderConvexBinding {
   serverId: string;
   oauthResourceUrl?: string;
   kind: "generic" | "registry";
+  hasClientSecret?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }
@@ -1917,6 +1920,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private customClientId?: string;
   private customClientSecret?: string;
   private convexBinding?: MCPOAuthProviderConvexBinding;
+  private runtimeClientSecret?: string;
+  private storedClientSecretPromise?: Promise<string | undefined>;
 
   constructor(
     serverName: string,
@@ -1947,7 +1952,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // with a secret would tell the server to expect no creds at the token
     // endpoint and the SDK would honor that hint on later exchanges,
     // silently dropping the secret and producing `invalid_client`.
-    const hasSecret = Boolean(this.customClientSecret);
+    const hasSecret = Boolean(
+      this.customClientSecret || this.convexBinding?.hasClientSecret
+    );
     return {
       client_name: `MCPJam - ${this.serverName}`,
       client_uri: "https://github.com/mcpjam/inspector",
@@ -1959,17 +1966,56 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  clientInformation() {
+  private readStoredClientInformation(): Record<string, any> | undefined {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    const storedJson = stored ? JSON.parse(stored) : undefined;
-    const storedClientInformation =
-      HOSTED_MODE && storedJson
-        ? Object.fromEntries(
-            Object.entries(storedJson).filter(
-              ([key]) => key !== "client_secret"
-            )
-          )
-        : storedJson;
+    let storedJson: unknown;
+    try {
+      storedJson = stored ? JSON.parse(stored) : undefined;
+    } catch {
+      return undefined;
+    }
+    if (!storedJson || typeof storedJson !== "object") {
+      return undefined;
+    }
+    const storedClientInformation = Object.fromEntries(
+      Object.entries(storedJson).filter(([key]) => key !== "client_secret")
+    );
+    if ("client_secret" in storedJson) {
+      localStorage.setItem(
+        `mcp-client-${this.serverName}`,
+        JSON.stringify(storedClientInformation)
+      );
+    }
+    return storedClientInformation;
+  }
+
+  private async loadStoredClientSecret(): Promise<string | undefined> {
+    if (this.customClientSecret) {
+      return this.customClientSecret;
+    }
+    if (this.runtimeClientSecret) {
+      return this.runtimeClientSecret;
+    }
+    if (!this.convexBinding?.hasClientSecret) {
+      return undefined;
+    }
+    if (!this.storedClientSecretPromise) {
+      this.storedClientSecretPromise = fetchOAuthClientSecret({
+        projectId: this.convexBinding.projectId,
+        serverId: this.convexBinding.serverId,
+      })
+        .then((result) => result.clientSecret)
+        .catch((error) => {
+          this.storedClientSecretPromise = undefined;
+          throw error;
+        });
+    }
+    return this.storedClientSecretPromise;
+  }
+
+  async clientInformation() {
+    const storedClientInformation = this.readStoredClientInformation();
+    const clientSecret = await this.loadStoredClientSecret();
 
     // If custom client ID is provided, use it
     if (this.customClientId) {
@@ -1980,8 +2026,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
           client_id: this.customClientId,
         };
         // Add client secret if provided
-        if (this.customClientSecret) {
-          result.client_secret = this.customClientSecret;
+        if (clientSecret) {
+          result.client_secret = clientSecret;
           // Drop only the specific `"none"` hint inherited from a prior
           // DCR registration. Our DCR metadata advertises "none" when no
           // secret is set, and servers echo that back into the stored
@@ -2001,18 +2047,31 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         const result: any = {
           client_id: this.customClientId,
         };
-        if (this.customClientSecret) {
-          result.client_secret = this.customClientSecret;
+        if (clientSecret) {
+          result.client_secret = clientSecret;
         }
         return result;
       }
+    }
+    if (storedClientInformation && clientSecret) {
+      const result: any = {
+        ...storedClientInformation,
+        client_secret: clientSecret,
+      };
+      if (result.token_endpoint_auth_method === "none") {
+        delete result.token_endpoint_auth_method;
+      }
+      return result;
     }
     return storedClientInformation;
   }
 
   async saveClientInformation(clientInformation: any) {
+    if (typeof clientInformation?.client_secret === "string") {
+      this.runtimeClientSecret = clientInformation.client_secret;
+    }
     const clientInformationToStore =
-      HOSTED_MODE && clientInformation
+      clientInformation && typeof clientInformation === "object"
         ? Object.fromEntries(
             Object.entries(clientInformation).filter(
               ([key]) => key !== "client_secret"
@@ -2048,7 +2107,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // refresh until Slice 2b purges it.
     const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
     if (this.convexBinding && normalizedTokens) {
-      const stored = this.clientInformation();
+      const stored = await this.clientInformation();
       const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
       if (!clientId) {
         // No clientId means we can't write a usable record; bail loudly so
@@ -2289,14 +2348,18 @@ const oauthBindingStorage = {
 function buildConvexBindingForServer(input: {
   serverName: string;
   oauthResourceUrl?: string;
+  hasClientSecret?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }): MCPOAuthProviderConvexBinding | undefined {
   if (HOSTED_MODE) return undefined;
+  const previousBinding = oauthBindingStorage.get(input.serverName);
   const resolved = tryResolveProjectServer(input.serverName);
   if (resolved) {
     const isRegistry =
       !!input.registryServerId && input.useRegistryOAuthProxy === true;
+    const hasClientSecret =
+      input.hasClientSecret ?? previousBinding?.hasClientSecret;
     const binding: MCPOAuthProviderConvexBinding = {
       projectId: resolved.projectId,
       serverId: resolved.serverId,
@@ -2304,6 +2367,7 @@ function buildConvexBindingForServer(input: {
         ? { oauthResourceUrl: input.oauthResourceUrl }
         : {}),
       kind: isRegistry ? "registry" : "generic",
+      ...(hasClientSecret ? { hasClientSecret: true } : {}),
       ...(isRegistry
         ? {
             registryServerId: input.registryServerId,
@@ -2316,7 +2380,7 @@ function buildConvexBindingForServer(input: {
     oauthBindingStorage.set(input.serverName, binding);
     return binding;
   }
-  return oauthBindingStorage.get(input.serverName);
+  return previousBinding;
 }
 
 /**
@@ -2331,6 +2395,7 @@ function createMCPOAuthProvider(input: {
   serverUrl: string;
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
   oauthConfig: {
     resourceUrl?: string;
     registryServerId?: string;
@@ -2345,6 +2410,7 @@ function createMCPOAuthProvider(input: {
     buildConvexBindingForServer({
       serverName: input.serverName,
       oauthResourceUrl: input.oauthConfig.resourceUrl,
+      hasClientSecret: input.clientSecret ? true : input.hasClientSecret,
       registryServerId: input.oauthConfig.registryServerId,
       useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
     })
@@ -2361,14 +2427,18 @@ function readStoredClientInformation(
     }
 
     const parsed = JSON.parse(stored) as StoredOAuthClientInformation;
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitized)
+      );
+    }
     return {
       client_id:
         typeof parsed.client_id === "string" ? parsed.client_id : undefined,
-      client_secret:
-        !HOSTED_MODE &&
-        typeof parsed.client_secret === "string"
-          ? parsed.client_secret
-          : undefined,
     };
   } catch {
     return {};
@@ -2426,6 +2496,7 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       clientId: options.clientId,
       clientSecret: options.clientSecret,
+      hasClientSecret: options.hasClientSecret,
       oauthConfig: {
         resourceUrl: options.resourceUrl,
         registryServerId: options.registryServerId,
@@ -2481,8 +2552,9 @@ export async function initiateOAuth(
       JSON.stringify(oauthConfig)
     );
 
-    // Store custom client credentials if provided, so they can be retrieved during callback
-    if (options.clientId || (!HOSTED_MODE && options.clientSecret)) {
+    // Store custom client id if provided, so it can be retrieved during callback.
+    // Client secrets are stored in the encrypted backend server-secret table.
+    if (options.clientId) {
       const existingClientInfo = localStorage.getItem(
         `mcp-client-${options.serverName}`
       );
@@ -2494,21 +2566,15 @@ export async function initiateOAuth(
           existingJsonRaw = {};
         }
       }
-      const existingJson =
-        HOSTED_MODE && existingJsonRaw
-          ? Object.fromEntries(
-              Object.entries(existingJsonRaw).filter(
-                ([key]) => key !== "client_secret"
-              )
-            )
-          : existingJsonRaw;
+      const existingJson = Object.fromEntries(
+        Object.entries(existingJsonRaw).filter(
+          ([key]) => key !== "client_secret"
+        )
+      );
 
       const updatedClientInfo: any = { ...existingJson };
       if (options.clientId) {
         updatedClientInfo.client_id = options.clientId;
-      }
-      if (!HOSTED_MODE && options.clientSecret) {
-        updatedClientInfo.client_secret = options.clientSecret;
       }
 
       localStorage.setItem(
@@ -2534,7 +2600,7 @@ export async function initiateOAuth(
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
       loadPreregisteredCredentials: async () => {
-        const clientInformation = provider.clientInformation();
+        const clientInformation = await provider.clientInformation();
         return {
           clientId: clientInformation?.client_id,
           clientSecret: clientInformation?.client_secret,
@@ -3045,19 +3111,13 @@ export async function handleOAuthCallback(
     }
 
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    const customClientId = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_id
-      : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    const storedClientInfo = readStoredClientInformation(serverName);
+    const customClientId = storedClientInfo.client_id;
 
     const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
       clientId: customClientId,
-      clientSecret: customClientSecret,
       oauthConfig,
     });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
@@ -3092,6 +3152,15 @@ export async function handleOAuthCallback(
         authorizationCode,
         error: undefined,
       });
+      const clientInformation = await provider.clientInformation();
+      if (clientInformation?.client_id) {
+        updateState({
+          clientId: clientInformation.client_id,
+          ...(clientInformation.client_secret
+            ? { clientSecret: clientInformation.client_secret }
+            : {}),
+        });
+      }
       emitTraceSnapshot(
         projectOAuthTraceSnapshot({
           state: getState(),
@@ -3111,7 +3180,7 @@ export async function handleOAuthCallback(
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {
-          const clientInformation = provider.clientInformation();
+          const clientInformation = await provider.clientInformation();
           return {
             clientId: clientInformation?.client_id,
             clientSecret: clientInformation?.client_secret,
@@ -3331,6 +3400,19 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
   try {
     const tokensJson = JSON.parse(tokens);
     const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
+    if (
+      clientJson &&
+      typeof clientJson === "object" &&
+      "client_secret" in clientJson
+    ) {
+      const sanitizedClientInfo = Object.fromEntries(
+        Object.entries(clientJson).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitizedClientInfo)
+      );
+    }
 
     // Merge tokens with client_id from client information
     return {
@@ -3413,13 +3495,8 @@ export async function refreshOAuthTokens(
 
   try {
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    const customClientId = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_id
-      : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    const storedClientInfo = readStoredClientInformation(serverName);
+    const customClientId = storedClientInfo.client_id;
 
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
@@ -3435,7 +3512,6 @@ export async function refreshOAuthTokens(
       serverName,
       serverUrl,
       clientId: customClientId,
-      clientSecret: customClientSecret,
       oauthConfig,
     });
     const existingTokens = provider.tokens();

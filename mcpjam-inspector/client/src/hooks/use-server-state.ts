@@ -175,7 +175,7 @@ function mergeOAuthCallbackServerConfig(
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
- * This persists server URL, scopes, headers, and client credentials.
+ * This persists server URL, scopes, headers, and non-secret client metadata.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (HOSTED_MODE) {
@@ -232,13 +232,10 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     );
   }
 
-  if (formData.clientId || (!HOSTED_MODE && formData.clientSecret)) {
+  if (formData.clientId) {
     const clientInfo: Record<string, string> = {};
     if (formData.clientId) {
       clientInfo.client_id = formData.clientId;
-    }
-    if (!HOSTED_MODE && formData.clientSecret) {
-      clientInfo.client_secret = formData.clientSecret;
     }
     localStorage.setItem(
       `mcp-client-${formData.name}`,
@@ -295,16 +292,19 @@ function readStoredClientCredentials(serverName: string): {
     }
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitized)
+      );
+    }
     return {
       clientId:
         typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
           ? parsed.client_id
-          : undefined,
-      clientSecret:
-        !HOSTED_MODE &&
-        typeof parsed?.client_secret === "string" &&
-        parsed.client_secret.trim() !== ""
-          ? parsed.client_secret
           : undefined,
     };
   } catch {
@@ -380,10 +380,7 @@ function buildResolvedOAuthProfile(input: {
       "",
     clientId:
       existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
-    clientSecret:
-      existingProfile?.clientSecret ??
-      storedClientCredentials.clientSecret ??
-      "",
+    clientSecret: "",
     scopes:
       existingProfile?.scopes ?? storedOAuthConfig.scopes?.join(",") ?? "",
     customHeaders,
@@ -419,9 +416,7 @@ function buildOAuthProfileFromFormData(
     serverUrl: formData.url,
     resourceUrl: existingProfile?.resourceUrl ?? "",
     clientId: formData.clientId ?? existingProfile?.clientId ?? "",
-    clientSecret: HOSTED_MODE
-      ? ""
-      : formData.clientSecret ?? existingProfile?.clientSecret ?? "",
+    clientSecret: "",
     scopes: formData.oauthScopes?.join(",") ?? existingProfile?.scopes ?? "",
     customHeaders,
     protocolVersion,
@@ -2773,7 +2768,6 @@ export function useServerState({
           `mcp-client-${serverName}`,
           JSON.stringify({
             client_id: tokens.clientId,
-            client_secret: tokens.clientSecret,
           })
         );
       }
@@ -3434,14 +3428,9 @@ export function useServerState({
             server.oauthFlowProfile?.clientId ??
             storedClientCredentials.clientId,
           clientSecret:
-            server.oauthTokens?.client_secret ??
-            server.oauthFlowProfile?.clientSecret ??
-            storedClientCredentials.clientSecret,
+            undefined,
           hasClientSecret: Boolean(
-            server.oauthTokens?.client_secret ||
-              server.oauthFlowProfile?.clientSecret ||
-              storedClientCredentials.clientSecret ||
-              server.hasClientSecret
+            server.hasClientSecret
           ),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
