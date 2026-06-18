@@ -299,15 +299,41 @@ export function hasPinnedTurn(promptTurns: unknown): boolean {
   return rawTurns(promptTurns).some(isPinnedTurn);
 }
 
+/** True when a turn actually drives the model: a non-empty prompt or asserted
+ *  tool calls. An empty placeholder turn (`{prompt:"",expectedToolCalls:[]}`)
+ *  does NOT. */
+function turnHasModelContent(turn: unknown): boolean {
+  const t = turn as { prompt?: unknown; expectedToolCalls?: unknown };
+  return (
+    (typeof t.prompt === "string" && t.prompt.trim().length > 0) ||
+    (Array.isArray(t.expectedToolCalls) && t.expectedToolCalls.length > 0)
+  );
+}
+
 /**
- * True when the case requires no model: a legacy widget probe, or a case whose
- * (non-empty) turn list is entirely pinned. The empty-list guard prevents a
- * vacuous `[].every()` from classifying a fresh/model case as pinned-only.
+ * True when the case is entirely model-free (no model turns).
+ *
+ * - No authored turns: a legacy `widget_probe`'s `probeConfig` IS the single
+ *   model-free pinned call, so it's pinned-only; any other empty case is a
+ *   model case.
+ * - Authored turns: pinned-only iff EVERY turn is pinned. This intentionally
+ *   does NOT short-circuit on `caseType === "widget_probe"` — a widget_probe
+ *   that also carries model prompt turns (a hybrid) must be treated as
+ *   model-driven, or it would route model-free and then throw when the loop
+ *   reaches a model turn with no LLM setup.
+ * - Edge: a legacy `widget_probe` persisted with only EMPTY placeholder turns
+ *   (e.g. `[{prompt:"",expectedToolCalls:[]}]`, the `resolvePromptTurns`
+ *   fallback shape) is still a pure probe — classify it model-free so it isn't
+ *   mis-routed to the model path before migration converts it.
  */
 export function isPinnedOnly(input: PinnedCaseInput): boolean {
-  if (input.caseType === "widget_probe") return true;
   const turns = rawTurns(input.promptTurns);
-  return turns.length > 0 && turns.every(isPinnedTurn);
+  if (turns.length === 0) return input.caseType === "widget_probe";
+  if (turns.every(isPinnedTurn)) return true;
+  if (input.caseType === "widget_probe") {
+    return !turns.some(turnHasModelContent);
+  }
+  return false;
 }
 
 /** True when at least one turn needs the model (the inverse of pinned-only). */
@@ -334,4 +360,35 @@ export function legacyProbeToPinnedTurn(
     expectedToolCalls: [],
     pinnedToolCall: { ...probeConfig },
   };
+}
+
+/**
+ * Resolve a case's turns, surfacing a legacy `widget_probe` row's top-level
+ * `probeConfig` as a single pinned turn so callers see ONE shape. No-op for
+ * already-pinned / prompt cases. Shared by the editor (editForm seeding) and
+ * the runner (`normalizeTestForPinnedTurns`) so the legacy-detection rule lives
+ * in one place.
+ */
+export function resolvePromptTurnsWithLegacyProbe(
+  input: {
+    caseType?: string | null;
+    probeConfig?: ProbeConfig;
+  } & Parameters<typeof resolvePromptTurns>[0],
+): PromptTurn[] {
+  const turns = resolvePromptTurns(input);
+  // Only surface the legacy probeConfig as a pinned turn when the case carries
+  // NO real authored turn — i.e. a pure legacy probe (empty prompt, no expected
+  // calls, none already pinned). A widget_probe that also has real prompt steps
+  // must keep them; replacing the whole list would silently drop them in the
+  // editor and at run time.
+  const hasRealTurn = turns.some(
+    (t) =>
+      isPinnedTurn(t) ||
+      t.prompt.trim().length > 0 ||
+      t.expectedToolCalls.length > 0,
+  );
+  if (input.caseType === "widget_probe" && input.probeConfig && !hasRealTurn) {
+    return [legacyProbeToPinnedTurn(input.probeConfig)];
+  }
+  return turns;
 }

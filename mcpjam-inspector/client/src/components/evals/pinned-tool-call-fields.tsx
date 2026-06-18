@@ -134,7 +134,15 @@ export function PinnedToolCallFields({
         <div className="space-y-1">
           <Label className="text-[11px]">Server</Label>
           {suiteServers.length > 0 ? (
-            <Select value={serverName || undefined} onValueChange={setServerName}>
+            <Select
+              value={serverName || undefined}
+              onValueChange={(nextServer) => {
+                // Switching servers invalidates a tool picked from the old
+                // server — clear it so we never emit a server-B + tool-A pair.
+                if (nextServer !== serverName) setToolName("");
+                setServerName(nextServer);
+              }}
+            >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue placeholder="Pick a server…" />
               </SelectTrigger>

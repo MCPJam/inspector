@@ -80,9 +80,9 @@ import {
   deriveLegacyPromptFields,
   isPinnedOnly,
   isPinnedTurn,
-  legacyProbeToPinnedTurn,
   needsModel,
   resolvePromptTurns,
+  resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PinnedToolCall,
   type PromptTurn,
@@ -480,17 +480,13 @@ function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
  * for them. Idempotent.
  */
 function normalizeTestForPinnedTurns(test: EvalTestCase): EvalTestCase {
-  if (
-    test.caseType === "widget_probe" &&
-    test.probeConfig &&
-    !resolvePromptTurns(test).some(isPinnedTurn)
-  ) {
-    return {
-      ...test,
-      promptTurns: [legacyProbeToPinnedTurn(test.probeConfig as PinnedToolCall)],
-    };
+  if (test.caseType !== "widget_probe" || !test.probeConfig) {
+    return test;
   }
-  return test;
+  // Shared with the editor's editForm seeding so the legacy-detection rule
+  // lives in one place.
+  const turns = resolvePromptTurnsWithLegacyProbe(test);
+  return turns.some(isPinnedTurn) ? { ...test, promptTurns: turns } : test;
 }
 
 /**
@@ -1066,12 +1062,18 @@ const runIterationWithAiSdk = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -1084,12 +1086,18 @@ const runIterationWithAiSdk = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -1175,20 +1183,29 @@ const runIterationWithAiSdk = async ({
   }
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
-    testCaseSnapshot: {
-      title: test.title,
-      query,
-      provider: test.provider,
-      model: test.model,
-      runs: test.runs,
-      expectedToolCalls,
-      isNegativeTest: test.isNegativeTest,
-      expectedOutput,
-      promptTurns,
-      advancedConfig,
-      matchOptions: test.matchOptions,
-      hostConfigOverride: test.hostConfigOverride,
-    },
+    // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
+    // recorder pairs the pre-created row by testCaseId + iterationNumber. The
+    // snapshot's query is synthesized ("Pinned tool call: …") and would never
+    // match the pre-created row's stored query, leaving the row unpaired and
+    // perpetually pending. Mirrors the old probe path, which passed no snapshot.
+    ...(caseNeedsModel
+      ? {
+          testCaseSnapshot: {
+            title: test.title,
+            query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput,
+            promptTurns,
+            advancedConfig,
+            matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
+          },
+        }
+      : {}),
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
@@ -1247,6 +1264,11 @@ const runIterationWithAiSdk = async ({
   // shape now matches pre-4d (system is the first message in
   // `messages`) while the wire shape stays chat-aligned.
   let enhancedSystemPromptForPersist: string | undefined = undefined;
+  // True when a pinned turn's server wasn't connected (a setup failure, not an
+  // assertion failure). Unlike the model path's failure detection — which
+  // deliberately records `status:"completed"` + `error` — this finalizes
+  // `status:"failed"`, matching the legacy probe's not-connected behavior.
+  let pinnedSetupFailure = false;
 
   // Browser-rendered MCP App eval (PR 5): render MCP App tool results in the
   // headless-Chromium harness and (for models with vision + tool calling) drive
@@ -1340,12 +1362,17 @@ const runIterationWithAiSdk = async ({
     // shape: drop the iteration entirely (no record).
     const localIsAborted = () => abortSignal?.aborted === true;
     const returnLocalCancelled = () => ({
-      evaluation: evaluateMultiTurnResults(
-        promptTurns,
-        toolsCalledByPrompt,
-        test.isNegativeTest,
-        test.matchOptions
-      ),
+      // Aborted mid-iteration — never score as passed (a pinned-only case would
+      // otherwise short-circuit to passed:true).
+      evaluation: {
+        ...evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+          test.matchOptions
+        ),
+        passed: false,
+      },
       iterationId: undefined,
     });
 
@@ -1392,6 +1419,7 @@ const runIterationWithAiSdk = async ({
         }
         if (pinnedResult.iterationError && !iterationError) {
           iterationError = pinnedResult.iterationError;
+          pinnedSetupFailure = true;
         }
         continue;
       }
@@ -1691,7 +1719,7 @@ const runIterationWithAiSdk = async ({
           effectivePredicates
         )
       : [];
-    const passed = finalizePassedForEval({
+    let passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       // PR 4b (mirrors PR 3 invariant): if the per-turn loop set
@@ -1703,6 +1731,14 @@ const runIterationWithAiSdk = async ({
       failOnToolError,
       predicateResults,
     });
+    // A pinned (model-free) tool call's error never enters the trace, so
+    // `finalizePassedForEval`'s `failOnToolError` gate (which inspects the
+    // trace) is blind to it. Apply the gate explicitly to pinned tool errors
+    // so a failing pinned call can't pass when tool-error gating is on and no
+    // widget/`noToolErrors` predicate happened to catch it.
+    if (passed && failOnToolError && pinnedToolErrors.length > 0) {
+      passed = false;
+    }
     // Reflect the gated verdict (match AND tool-error gate AND predicates) in
     // the returned evaluation so totals built from `evaluation.passed` agree
     // with the persisted iteration result.
@@ -1750,7 +1786,7 @@ const runIterationWithAiSdk = async ({
       ...(browser.browserInteractionSteps.length
         ? { browserInteractionSteps: browser.browserInteractionSteps }
         : {}),
-      status: "completed" as const,
+      status: pinnedSetupFailure ? ("failed" as const) : ("completed" as const),
       startedAt: runStartedAt,
       ...(iterationError ? { error: iterationError } : {}),
       ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -1784,14 +1820,19 @@ const runIterationWithAiSdk = async ({
     // Check if request was aborted
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] iteration aborted due to cancellation");
-      // Don't record anything for aborted iterations
+      // Don't record anything for aborted iterations; force passed:false so an
+      // all-pinned case (which evaluateMultiTurnResults scores passed:true with
+      // no calls) can't inflate the suite's passed count on abort.
       return {
-        evaluation: evaluateMultiTurnResults(
-          promptTurns,
-          toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions
-        ),
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions
+          ),
+          passed: false,
+        },
         iterationId: undefined,
       };
     }
@@ -1987,12 +2028,18 @@ const runIterationViaBackendWithBrowser = async (
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -2005,12 +2052,18 @@ const runIterationViaBackendWithBrowser = async (
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -2511,8 +2564,7 @@ const runTestCase = async (params: {
   // locally-executed pinned turn. Local BYOK hybrids work (the pinned branch
   // lives in runIterationWithAiSdk). Fail loudly rather than silently send a
   // pinned turn's empty prompt to the model.
-  const caseHasPinnedTurn = normalizedTest.promptTurns?.some(isPinnedTurn) ||
-    resolveEvalTestCase(normalizedTest).promptTurns.some(isPinnedTurn);
+  const caseHasPinnedTurn = resolvePromptTurns(normalizedTest).some(isPinnedTurn);
 
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
@@ -2827,7 +2879,11 @@ export const runEvalSuiteWithAiSdk = async ({
         environment: config.environment,
       });
     const testPromises = tests.map((test) =>
-      test.caseType === "widget_probe"
+      // Cap concurrent headless browsers for every model-free render check
+      // (legacy widget_probe OR a unified case whose turns are all pinned),
+      // not just the legacy discriminator — otherwise a monitoring suite of
+      // new pinned-only cases launches one Chromium per case at once.
+      isPinnedOnly({ caseType: test.caseType, promptTurns: test.promptTurns })
         ? renderCheckLimit(() => runOne(test))
         : runOne(test)
     );
@@ -3008,12 +3064,18 @@ const streamIterationWithAiSdk = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -3025,12 +3087,18 @@ const streamIterationWithAiSdk = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -3116,20 +3184,29 @@ const streamIterationWithAiSdk = async ({
   }
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
-    testCaseSnapshot: {
-      title: test.title,
-      query,
-      provider: test.provider,
-      model: test.model,
-      runs: test.runs,
-      expectedToolCalls,
-      isNegativeTest: test.isNegativeTest,
-      expectedOutput,
-      promptTurns,
-      advancedConfig,
-      matchOptions: test.matchOptions,
-      hostConfigOverride: test.hostConfigOverride,
-    },
+    // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
+    // recorder pairs the pre-created row by testCaseId + iterationNumber. The
+    // snapshot's query is synthesized ("Pinned tool call: …") and would never
+    // match the pre-created row's stored query, leaving the row unpaired and
+    // perpetually pending. Mirrors the old probe path, which passed no snapshot.
+    ...(caseNeedsModel
+      ? {
+          testCaseSnapshot: {
+            title: test.title,
+            query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput,
+            promptTurns,
+            advancedConfig,
+            matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
+          },
+        }
+      : {}),
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
@@ -3269,12 +3346,17 @@ const streamIterationWithAiSdk = async ({
     // record without persisting cancelled state.
     const localIsAborted = () => abortSignal?.aborted === true;
     const returnLocalCancelled = () => ({
-      evaluation: evaluateMultiTurnResults(
-        promptTurns,
-        toolsCalledByPrompt,
-        test.isNegativeTest,
-        test.matchOptions
-      ),
+      // Aborted mid-iteration — never score as passed (a pinned-only case would
+      // otherwise short-circuit to passed:true).
+      evaluation: {
+        ...evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+          test.matchOptions
+        ),
+        passed: false,
+      },
       iterationId: undefined,
     });
 
@@ -3775,13 +3857,18 @@ const streamIterationWithAiSdk = async ({
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
+      // Force passed:false (see the non-stream runner) so an all-pinned case
+      // can't score a pass on abort.
       return {
-        evaluation: evaluateMultiTurnResults(
-          promptTurns,
-          toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions
-        ),
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions
+          ),
+          passed: false,
+        },
         iterationId: undefined,
       };
     }
@@ -4004,12 +4091,18 @@ const streamIterationViaBackendWithBrowser = async (
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -4021,12 +4114,18 @@ const streamIterationViaBackendWithBrowser = async (
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateMultiTurnResults(
-            resolvedTest.promptTurns,
-            [],
-            test.isNegativeTest,
-            test.matchOptions
-          ),
+          // A cancelled / deleted-run iteration never executed — never score it
+          // as passed. evaluateMultiTurnResults returns passed:true for an
+          // all-pinned case with no calls, so override explicitly.
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions
+            ),
+            passed: false,
+          },
           iterationId: undefined,
         };
       }
@@ -4698,8 +4797,10 @@ export const streamTestCase = async (params: {
   // Streaming quick-run does not yet execute pinned (model-free) turns: the
   // SSE loop has no pinned branch and builds the model eagerly. Pinned-only
   // render checks run via the suite path (`runTestCase`); reject a pinned case
-  // here rather than send an empty prompt to the model.
-  if (resolveEvalTestCase(test).promptTurns.some(isPinnedTurn)) {
+  // here rather than send an empty prompt (or the sentinel model) to streamText.
+  // Use the legacy-probe-aware resolver so a PURE legacy widget_probe (whose
+  // probeConfig only becomes a pinned turn after the adapter) is caught too.
+  if (resolvePromptTurnsWithLegacyProbe(test).some(isPinnedTurn)) {
     throw new Error(
       "Pinned tool-call turns are not yet supported in streaming quick-run. Run the case as part of a suite."
     );
