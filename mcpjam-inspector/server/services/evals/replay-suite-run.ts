@@ -1,6 +1,9 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
-import { startSuiteRunWithRecorder } from "./recorder.js";
+import {
+  startSuiteRunWithRecorder,
+  type SuiteRunRecorder,
+} from "./recorder.js";
 import {
   buildReplayManager,
   captureToolSnapshotForEvalAuthoring,
@@ -36,12 +39,22 @@ export type ExecuteSuiteReplayFromRunResult = {
   message: string;
 };
 
+export type PreparedSuiteReplayFromRunResult = {
+  suiteId: string;
+  runId: string;
+  sourceRunId: string;
+  recorder: SuiteRunRecorder;
+  execute: () => Promise<void>;
+  cleanup: () => Promise<void>;
+};
+
 /**
- * Full suite replay used by `/replay-run` and trace repair.
+ * Prepare a replay run through run creation. The returned cleanup keeps replay
+ * MCP connections alive while detached execution continues after HTTP response.
  */
-export async function executeSuiteReplayFromRun(
+export async function prepareSuiteReplayFromRun(
   params: ExecuteSuiteReplayFromRunParams,
-): Promise<ExecuteSuiteReplayFromRunResult> {
+): Promise<PreparedSuiteReplayFromRunResult> {
   const {
     convexClient,
     convexAuthToken,
@@ -69,14 +82,14 @@ export async function executeSuiteReplayFromRun(
   }
 
   const replayManager = buildReplayManager(replayConfig);
-  await connectReplayManagerServers(replayManager, replayConfig);
-  const replayServerIds = replayConfig.servers.map((server) => server.serverId);
-  const { toolSnapshot, toolSnapshotDebug } =
-    await captureToolSnapshotForEvalAuthoring(replayManager, replayServerIds, {
-      logPrefix: "evals.replay",
-    });
-
   try {
+    await connectReplayManagerServers(replayManager, replayConfig);
+    const replayServerIds = replayConfig.servers.map((server) => server.serverId);
+    const { toolSnapshot, toolSnapshotDebug } =
+      await captureToolSnapshotForEvalAuthoring(replayManager, replayServerIds, {
+        logPrefix: "evals.replay",
+      });
+
     const {
       runId,
       recorder,
@@ -148,29 +161,52 @@ export async function executeSuiteReplayFromRun(
       }
     }
 
-    await runEvalSuiteWithAiSdk({
-      suiteId: replayMetadata.suiteId,
-      runId,
-      config,
-      modelApiKeys: resolvedModelApiKeys ?? undefined,
-      orgModelConfig: resolvedOrgModelConfig,
-      orgModelConfigTarget: replayOrgConfigTarget,
-      convexClient,
-      convexHttpUrl,
-      convexAuthToken,
-      mcpClientManager: replayManager,
-      recorder,
-      suiteInjectOpenAiCompat,
-    });
-
     return {
-      success: true,
       suiteId: replayMetadata.suiteId,
       runId,
       sourceRunId,
+      recorder,
+      execute: async () => {
+        await runEvalSuiteWithAiSdk({
+          suiteId: replayMetadata.suiteId,
+          runId,
+          config,
+          modelApiKeys: resolvedModelApiKeys ?? undefined,
+          orgModelConfig: resolvedOrgModelConfig,
+          orgModelConfigTarget: replayOrgConfigTarget,
+          convexClient,
+          convexHttpUrl,
+          convexAuthToken,
+          mcpClientManager: replayManager,
+          recorder,
+          suiteInjectOpenAiCompat,
+        });
+      },
+      cleanup: () => replayManager.disconnectAllServers(),
+    };
+  } catch (error) {
+    await replayManager.disconnectAllServers();
+    throw error;
+  }
+}
+
+/**
+ * Full suite replay used by synchronous `/replay-run` callers and trace repair.
+ */
+export async function executeSuiteReplayFromRun(
+  params: ExecuteSuiteReplayFromRunParams,
+): Promise<ExecuteSuiteReplayFromRunResult> {
+  const prepared = await prepareSuiteReplayFromRun(params);
+  try {
+    await prepared.execute();
+    return {
+      success: true,
+      suiteId: prepared.suiteId,
+      runId: prepared.runId,
+      sourceRunId: prepared.sourceRunId,
       message: "Replay completed successfully.",
     };
   } finally {
-    await replayManager.disconnectAllServers();
+    await prepared.cleanup();
   }
 }

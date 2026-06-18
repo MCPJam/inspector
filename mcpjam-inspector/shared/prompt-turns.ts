@@ -1,13 +1,32 @@
+import type { ProbeConfig } from "./probe-config";
+
 export type PromptTurnToolCall = {
   toolName: string;
   arguments: Record<string, any>;
 };
+
+/**
+ * A pinned tool call attached to a turn. When present, the turn is model-free:
+ * the runner executes this exact call (fixture input) instead of asking the
+ * model. Same shape as a legacy widget-probe's {@link ProbeConfig}; the field
+ * is wired onto {@link PromptTurn} in a later PR (Convex validator mirrored at
+ * the same time). Selectors below read it structurally so they compile before
+ * the typed field exists.
+ */
+export type PinnedToolCall = ProbeConfig;
 
 export type PromptTurn = {
   id: string;
   prompt: string;
   expectedToolCalls: PromptTurnToolCall[];
   expectedOutput?: string;
+  /**
+   * When present, this turn is model-free: the runner executes this exact tool
+   * call (fixture input) and renders its widget, with no LLM in the loop. The
+   * Convex validator + write paths are wired in a later PR; the type lands here
+   * so the runner and selectors can read it.
+   */
+  pinnedToolCall?: PinnedToolCall;
 };
 
 function normalizeToolCalls(value: unknown): PromptTurnToolCall[] {
@@ -40,6 +59,7 @@ function normalizePromptTurn(value: unknown, index: number): PromptTurn | null {
   }
 
   const raw = value as Record<string, unknown>;
+  const pinnedToolCall = raw.pinnedToolCall;
   return {
     id:
       typeof raw.id === "string" && raw.id.trim().length > 0
@@ -49,6 +69,12 @@ function normalizePromptTurn(value: unknown, index: number): PromptTurn | null {
     expectedToolCalls: normalizeToolCalls(raw.expectedToolCalls),
     expectedOutput:
       typeof raw.expectedOutput === "string" ? raw.expectedOutput : undefined,
+    // Preserve a pinned tool call through normalization (round-tripped from
+    // storage and synthesized from legacy probes). Structurally validated by
+    // the route/Convex layer, not here.
+    ...(pinnedToolCall && typeof pinnedToolCall === "object"
+      ? { pinnedToolCall: pinnedToolCall as PinnedToolCall }
+      : {}),
   };
 }
 
@@ -146,8 +172,17 @@ export function deriveLegacyPromptFields(promptTurns: PromptTurn[]): {
     expectedToolCalls: [],
   };
 
+  // A pinned-first turn has an empty `prompt`, which would leave the legacy
+  // `query` empty — breaking display, dedup/upsert identity, and validators
+  // that require a non-empty query. Synthesize a stable descriptive query
+  // from the pinned call instead.
+  const query =
+    firstTurn.prompt.trim().length === 0 && firstTurn.pinnedToolCall
+      ? `Pinned tool call: ${firstTurn.pinnedToolCall.toolName} on "${firstTurn.pinnedToolCall.serverName}"`
+      : firstTurn.prompt;
+
   return {
-    query: firstTurn.prompt,
+    query,
     expectedToolCalls: firstTurn.expectedToolCalls,
     expectedOutput: firstTurn.expectedOutput,
   };
@@ -220,4 +255,83 @@ export function hasMultipleTurns(input: {
 
 export function countAssertedTurns(promptTurns: PromptTurn[]): number {
   return promptTurns.filter((turn) => turn.expectedToolCalls.length > 0).length;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pinned-turn selectors
+//
+// A "pinned tool call" turn is model-free: the runner executes a fixed tool
+// call and renders its widget, with no LLM in the loop. These selectors are
+// the single source of truth for "is this model-free?" across the server
+// runner, the route-level cap math, and the client. They read the per-turn
+// `pinnedToolCall` field structurally (it lands as a typed field in a later
+// PR) and fall back to the legacy `caseType === "widget_probe"` representation
+// so they return correct answers today — before any per-turn pinned data
+// exists. Once the legacy shape is retired, the `caseType` branch is the only
+// thing that needs removing.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Minimal structural view of a turn for pinned detection. */
+type MaybePinnedTurn = { pinnedToolCall?: unknown };
+
+/** Minimal structural view of a case for the case-level selectors. */
+export type PinnedCaseInput = {
+  /** Legacy discriminator; `"widget_probe"` ⇒ a single pinned tool call. */
+  caseType?: string | null;
+  /** Turn list (raw wire/snapshot shape; not necessarily normalized). */
+  promptTurns?: unknown;
+};
+
+/** Raw turn list without dropping unknown fields like `pinnedToolCall`. */
+function rawTurns(promptTurns: unknown): MaybePinnedTurn[] {
+  return Array.isArray(promptTurns)
+    ? (promptTurns as MaybePinnedTurn[])
+    : [];
+}
+
+/** True when this turn carries a pinned tool call (model-free). */
+export function isPinnedTurn(turn: unknown): boolean {
+  return !!(turn && (turn as MaybePinnedTurn).pinnedToolCall);
+}
+
+/** True when any turn in the list is pinned. */
+export function hasPinnedTurn(promptTurns: unknown): boolean {
+  return rawTurns(promptTurns).some(isPinnedTurn);
+}
+
+/**
+ * True when the case requires no model: a legacy widget probe, or a case whose
+ * (non-empty) turn list is entirely pinned. The empty-list guard prevents a
+ * vacuous `[].every()` from classifying a fresh/model case as pinned-only.
+ */
+export function isPinnedOnly(input: PinnedCaseInput): boolean {
+  if (input.caseType === "widget_probe") return true;
+  const turns = rawTurns(input.promptTurns);
+  return turns.length > 0 && turns.every(isPinnedTurn);
+}
+
+/** True when at least one turn needs the model (the inverse of pinned-only). */
+export function needsModel(input: PinnedCaseInput): boolean {
+  return !isPinnedOnly(input);
+}
+
+/** Number of model-driven (non-pinned) turns — the unit the LLM-call cap counts. */
+export function countModelTurns(promptTurns: unknown): number {
+  return rawTurns(promptTurns).filter((turn) => !isPinnedTurn(turn)).length;
+}
+
+/**
+ * Adapt a legacy {@link ProbeConfig} into the single pinned turn it is
+ * equivalent to. Used by the runner to route widget-probe rows through the
+ * unified engine before the data model is migrated.
+ */
+export function legacyProbeToPinnedTurn(
+  probeConfig: ProbeConfig,
+): PromptTurn & { pinnedToolCall: PinnedToolCall } {
+  return {
+    id: "turn-1",
+    prompt: "",
+    expectedToolCalls: [],
+    pinnedToolCall: { ...probeConfig },
+  };
 }

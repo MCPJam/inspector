@@ -11,7 +11,9 @@
  * is not a real Convex id, so it must never be handed to a Convex query.
  */
 
-export type DraftCaseKind = "prompt" | "widget_probe";
+// Render checks were unified into pinned prompt turns (created inside the
+// editor), so the only top-level draft kind is a prompt test case.
+export type DraftCaseKind = "prompt";
 
 const DRAFT_TEST_CASE_PREFIX = "draft:";
 
@@ -28,7 +30,7 @@ export function parseDraftTestCaseId(
     return null;
   }
   const kind = id.slice(DRAFT_TEST_CASE_PREFIX.length);
-  return kind === "prompt" || kind === "widget_probe" ? kind : null;
+  return kind === "prompt" ? kind : null;
 }
 
 export function isDraftTestCaseId(id: string | null | undefined): boolean {

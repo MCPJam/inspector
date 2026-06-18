@@ -19,6 +19,7 @@ import type {
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
 import { draftTestCaseId } from "./draft-test-case";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -499,7 +500,7 @@ export function useEvalHandlers({
           );
         }
 
-        toast.success("Replay completed!", {
+        toast.success("Replay started!", {
           id: replayToastId,
         });
       } catch (error) {
@@ -747,7 +748,7 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
         });
 
-        posthog.capture("eval_suite_run_completed", {
+        posthog.capture("eval_suite_run_start_requests_completed", {
           location: "evals_tab",
           platform: detectPlatform(),
           environment: detectEnvironment(),
@@ -765,7 +766,7 @@ export function useEvalHandlers({
           toast.success(
             runPlans.length > 1
               ? `All ${runPlans.length} host runs started.`
-              : "Eval run completed!",
+              : "Eval run started!",
           );
 
           // Drop the user on the new run's detail page so they can see
@@ -856,7 +857,7 @@ export function useEvalHandlers({
       // run-test-case endpoints only execute model-driven cases, and probes
       // intentionally carry no models. Without this branch the model guard
       // below would surface a misleading "Add a model first".
-      if (testCase.caseType === "widget_probe") {
+      if (isPinnedOnly(testCase)) {
         toast.info("Render checks run with the full suite or on its schedule.");
         return null;
       }
@@ -1273,17 +1274,6 @@ export function useEvalHandlers({
     [navigateAfterTestCaseMutation]
   );
 
-  const handleCreateWidgetProbe = useCallback(
-    (suiteId: string) => {
-      navigateAfterTestCaseMutation({
-        type: "test-edit",
-        suiteId,
-        testId: draftTestCaseId("widget_probe"),
-      });
-    },
-    [navigateAfterTestCaseMutation]
-  );
-
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback(
     (testCaseId: string, testCaseTitle: string) => {
@@ -1615,7 +1605,6 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
-    handleCreateWidgetProbe,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

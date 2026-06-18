@@ -3,15 +3,8 @@ import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
 import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@mcpjam/design-system/dropdown-menu";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
@@ -115,7 +108,6 @@ interface TestCasesOverviewProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
-  onCreateWidgetProbe?: () => void;
 }
 
 export function TestCasesOverview({
@@ -141,10 +133,8 @@ export function TestCasesOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onCreateTestCase,
-  onCreateWidgetProbe,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
-  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
@@ -566,50 +556,19 @@ export function TestCasesOverview({
                           </Tooltip>
                         ) : null}
                         {onCreateTestCase ? (
-                          syntheticMonitorsEnabled && onCreateWidgetProbe ? (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 gap-1.5"
-                                >
-                                  <Plus
-                                    className="h-3.5 w-3.5 shrink-0"
-                                    aria-hidden
-                                  />
-                                  New case
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="center">
-                                <DropdownMenuItem
-                                  onSelect={() => onCreateTestCase()}
-                                >
-                                  Prompt test
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() => onCreateWidgetProbe()}
-                                >
-                                  Render check
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-8 gap-1.5"
-                              onClick={onCreateTestCase}
-                            >
-                              <Plus
-                                className="h-3.5 w-3.5 shrink-0"
-                                aria-hidden
-                              />
-                              New case
-                            </Button>
-                          )
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5"
+                            onClick={onCreateTestCase}
+                          >
+                            <Plus
+                              className="h-3.5 w-3.5 shrink-0"
+                              aria-hidden
+                            />
+                            New case
+                          </Button>
                         ) : null}
                       </div>
                     ) : null}

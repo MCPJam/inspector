@@ -1,16 +1,19 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
-import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
+import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
+  createManualHostedConnection,
   handleRoute,
   parseWithSchema,
   readJsonBody,
   withEphemeralConnection,
+  mcpProtocolVersionsByServerIdSchema,
 } from "./auth.js";
 import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
 import {
@@ -20,7 +23,8 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
-  runEvalsWithManager,
+  prepareEvalRun,
+  type PreparedEvalRun,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
@@ -32,6 +36,15 @@ const hostedBatchSchema = z.object({
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).min(1).optional(),
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
+  clientInfo: z
+    .object({
+      name: z.string().min(1).optional(),
+      version: z.string().min(1).optional(),
+    })
+    .passthrough()
+    .optional(),
+  supportedProtocolVersions: z.array(z.string().min(1)).optional(),
+  mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   chatboxId: z.string().min(1).optional(),
@@ -93,15 +106,48 @@ const hostedTraceRepairStopSchema = z.object({
 });
 
 evals.post("/run", async (c) =>
-  withEphemeralConnection(
+  handleRoute(
     c,
-    hostedRunEvalsSchema,
-    (manager, body) =>
-      runEvalsWithManager(manager, {
-        ...body,
-        convexAuthToken: assertBearerToken(c),
-      }),
-    { rpcLogs: false },
+    async () => {
+      const connection = await createManualHostedConnection(
+        c,
+        await readJsonBody<Record<string, unknown>>(c),
+        hostedRunEvalsSchema,
+      );
+      const { manager, body, convexAuthToken } = connection;
+      let prepared: PreparedEvalRun;
+
+      try {
+        prepared = await prepareEvalRun(manager, {
+          ...body,
+          convexAuthToken,
+        });
+      } catch (error) {
+        await manager.disconnectAllServers().catch(() => {});
+        throw error;
+      }
+
+      detachPreparedEvalRun({
+        prepared,
+        convexAuthToken,
+        logPrefix: "[web evals]",
+        logContext: {
+          route: "/api/web/evals/run",
+          projectId: body.projectId,
+        },
+        cleanup: () => manager.disconnectAllServers(),
+      });
+
+      return {
+        success: true,
+        suiteId: prepared.suiteId,
+        runId: prepared.runId,
+        status: "running",
+        message: "Eval run started. Results will appear shortly.",
+        caseUpsert: prepared.caseUpsert,
+      };
+    },
+    202,
   ),
 );
 
@@ -260,30 +306,54 @@ evals.post("/trace-repair/stop", async (c) =>
 );
 
 evals.post("/replay-run", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(hostedReplayRunSchema, await readJsonBody(c));
-    const convexAuthToken = assertBearerToken(c);
-    const convexClient = createConvexClient(convexAuthToken);
-    try {
-      return await executeSuiteReplayFromRun({
-        convexClient,
-        convexAuthToken,
-        sourceRunId: body.runId,
-        modelApiKeys: body.modelApiKeys,
-        notes: body.notes,
-        passCriteria: body.passCriteria,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        message.includes("stored replay config") ||
-        message.includes("No replay configuration")
-      ) {
-        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
+  handleRoute(
+    c,
+    async () => {
+      const body = parseWithSchema(hostedReplayRunSchema, await readJsonBody(c));
+      const convexAuthToken = assertBearerToken(c);
+      const convexClient = createConvexClient(convexAuthToken);
+      try {
+        const prepared = await prepareSuiteReplayFromRun({
+          convexClient,
+          convexAuthToken,
+          sourceRunId: body.runId,
+          modelApiKeys: body.modelApiKeys,
+          notes: body.notes,
+          passCriteria: body.passCriteria,
+        });
+
+        detachPreparedEvalRun({
+          prepared,
+          convexAuthToken,
+          logPrefix: "[web evals.replay]",
+          logContext: {
+            route: "/api/web/evals/replay-run",
+            sourceRunId: body.runId,
+          },
+          cleanup: prepared.cleanup,
+        });
+
+        return {
+          success: true,
+          suiteId: prepared.suiteId,
+          runId: prepared.runId,
+          sourceRunId: prepared.sourceRunId,
+          status: "running",
+          message: "Replay started. Results will appear shortly.",
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          message.includes("stored replay config") ||
+          message.includes("No replay configuration")
+        ) {
+          throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
+        }
+        throw err;
       }
-      throw err;
-    }
-  }),
+    },
+    202,
+  ),
 );
 
 export default evals;
