@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Card } from "@mcpjam/design-system/card";
 import {
   HoverCard,
   HoverCardContent,
@@ -178,7 +177,7 @@ export function XAAIdpCard() {
   }, []);
 
   return (
-    <Card className="mx-3 mt-3 mb-1 gap-0 p-3">
+    <div className="border-b border-border bg-background px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex shrink-0 items-center gap-1.5">
           <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -204,6 +203,6 @@ export function XAAIdpCard() {
           </span>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
