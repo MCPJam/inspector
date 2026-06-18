@@ -430,13 +430,16 @@ export function registerEvalCommands(program: Command): void {
         "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .option("--project <id-or-name>", PROJECT_OPT)
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
       .option("--cursor <cursor>", "Pagination cursor from a previous response")
       .option("--limit <n>", "Max iterations per page (1–200)")
   ).action(
     async (
       options: PlatformOptions & {
-        project?: string;
+        project: string;
         run: string;
         cursor?: string;
         limit?: string;
@@ -464,11 +467,14 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
   ).action(
     async (
       options: PlatformOptions & {
-        project?: string;
+        project: string;
         run: string;
         iteration: string;
       },
