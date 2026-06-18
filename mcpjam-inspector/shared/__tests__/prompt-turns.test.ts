@@ -170,6 +170,18 @@ describe("pinned-turn selectors", () => {
         needsModel({ caseType: "widget_probe", promptTurns: [promptTurn] }),
       ).toBe(true);
     });
+
+    it("is pinned-only for a legacy widget_probe with only empty placeholder turns", () => {
+      // Regression (P3): a pre-migration widget_probe persisted with the
+      // resolvePromptTurns fallback shape [{prompt:"",expectedToolCalls:[]}] is
+      // still a pure probe — must stay model-free, not route to the model path.
+      const placeholder = { id: "turn-1", prompt: "", expectedToolCalls: [] };
+      expect(
+        isPinnedOnly({ caseType: "widget_probe", promptTurns: [placeholder] }),
+      ).toBe(true);
+      // But the same shape WITHOUT widget_probe is an unfilled prompt case.
+      expect(isPinnedOnly({ promptTurns: [placeholder] })).toBe(false);
+    });
   });
 
   describe("resolvePromptTurnsWithLegacyProbe", () => {

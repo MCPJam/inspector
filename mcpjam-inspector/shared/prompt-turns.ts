@@ -299,6 +299,17 @@ export function hasPinnedTurn(promptTurns: unknown): boolean {
   return rawTurns(promptTurns).some(isPinnedTurn);
 }
 
+/** True when a turn actually drives the model: a non-empty prompt or asserted
+ *  tool calls. An empty placeholder turn (`{prompt:"",expectedToolCalls:[]}`)
+ *  does NOT. */
+function turnHasModelContent(turn: unknown): boolean {
+  const t = turn as { prompt?: unknown; expectedToolCalls?: unknown };
+  return (
+    (typeof t.prompt === "string" && t.prompt.trim().length > 0) ||
+    (Array.isArray(t.expectedToolCalls) && t.expectedToolCalls.length > 0)
+  );
+}
+
 /**
  * True when the case is entirely model-free (no model turns).
  *
@@ -310,11 +321,19 @@ export function hasPinnedTurn(promptTurns: unknown): boolean {
  *   that also carries model prompt turns (a hybrid) must be treated as
  *   model-driven, or it would route model-free and then throw when the loop
  *   reaches a model turn with no LLM setup.
+ * - Edge: a legacy `widget_probe` persisted with only EMPTY placeholder turns
+ *   (e.g. `[{prompt:"",expectedToolCalls:[]}]`, the `resolvePromptTurns`
+ *   fallback shape) is still a pure probe — classify it model-free so it isn't
+ *   mis-routed to the model path before migration converts it.
  */
 export function isPinnedOnly(input: PinnedCaseInput): boolean {
   const turns = rawTurns(input.promptTurns);
   if (turns.length === 0) return input.caseType === "widget_probe";
-  return turns.every(isPinnedTurn);
+  if (turns.every(isPinnedTurn)) return true;
+  if (input.caseType === "widget_probe") {
+    return !turns.some(turnHasModelContent);
+  }
+  return false;
 }
 
 /** True when at least one turn needs the model (the inverse of pinned-only). */
