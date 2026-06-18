@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isPinnedOnly, isPinnedTurn } from "@/shared/prompt-turns";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -310,13 +310,23 @@ export function useEvalHandlers({
 
       let probesSkippedMissingConfig = 0;
       for (const testCase of testCases) {
-        // Widget probes carry no models and no prompt — they must never fall
-        // into the LLM fan-out below (a probe with a suite default model
-        // would otherwise run as an empty-prompt LLM case). The sentinel
-        // model/provider strings satisfy the wire schema; the server forks
-        // probes off the LLM path before any model resolution.
-        if (testCase.caseType === "widget_probe") {
-          if (!testCase.probeConfig) {
+        // Model-free render checks (legacy widget_probe OR a unified case whose
+        // turns are all pinned) carry no models — they must never fall into the
+        // LLM fan-out below (a model-free case with a suite default model would
+        // otherwise run as an empty-prompt LLM case). The sentinel
+        // model/provider strings satisfy the wire schema; the server runs them
+        // model-free (routing on the pinned turns / legacy adapter).
+        if (
+          isPinnedOnly({
+            caseType: testCase.caseType,
+            promptTurns: testCase.promptTurns,
+          })
+        ) {
+          const pinnedTurns = Array.isArray(testCase.promptTurns)
+            ? testCase.promptTurns.filter(isPinnedTurn)
+            : [];
+          // Need either the new pinned turns or the legacy probeConfig to run.
+          if (pinnedTurns.length === 0 && !testCase.probeConfig) {
             probesSkippedMissingConfig++;
             continue;
           }
@@ -327,8 +337,15 @@ export function useEvalHandlers({
             model: "widget-probe",
             provider: "none",
             expectedToolCalls: [],
-            caseType: "widget_probe",
-            probeConfig: testCase.probeConfig,
+            ...(pinnedTurns.length > 0
+              ? { promptTurns: testCase.promptTurns }
+              : {}),
+            ...(testCase.caseType === "widget_probe"
+              ? { caseType: "widget_probe" as const }
+              : {}),
+            ...(testCase.probeConfig
+              ? { probeConfig: testCase.probeConfig }
+              : {}),
             testCaseId: testCase._id,
           });
           continue;

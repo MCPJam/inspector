@@ -28,6 +28,7 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -118,7 +119,12 @@ export function TestCaseListSidebar({
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
-  const selectedCaseIsProbe = selectedTestCase?.caseType === "widget_probe";
+  const selectedCaseIsProbe = selectedTestCase
+    ? isPinnedOnly({
+        caseType: selectedTestCase.caseType,
+        promptTurns: selectedTestCase.promptTurns,
+      })
+    : false;
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
     !selectedCaseIsProbe &&

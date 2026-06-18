@@ -4731,8 +4731,10 @@ export const streamTestCase = async (params: {
   // Streaming quick-run does not yet execute pinned (model-free) turns: the
   // SSE loop has no pinned branch and builds the model eagerly. Pinned-only
   // render checks run via the suite path (`runTestCase`); reject a pinned case
-  // here rather than send an empty prompt to the model.
-  if (resolveEvalTestCase(test).promptTurns.some(isPinnedTurn)) {
+  // here rather than send an empty prompt (or the sentinel model) to streamText.
+  // Use the legacy-probe-aware resolver so a PURE legacy widget_probe (whose
+  // probeConfig only becomes a pinned turn after the adapter) is caught too.
+  if (resolvePromptTurnsWithLegacyProbe(test).some(isPinnedTurn)) {
     throw new Error(
       "Pinned tool-call turns are not yet supported in streaming quick-run. Run the case as part of a suite."
     );
