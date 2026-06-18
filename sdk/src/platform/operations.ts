@@ -1623,6 +1623,54 @@ const generateEvalCasesInput = z.object({
     .array(caseModelSchema)
     .optional()
     .describe("Execution models to set on the generated cases."),
+  caseMix: z
+    .object({
+      simple: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Easy, single-tool, single-turn cases."),
+      multiTool: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Medium, 2+ tools, single-turn cases."),
+      multiTurn: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Medium, multi-turn follow-up cases."),
+      complex: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Hard, multi-turn, 3+ tools / cross-server cases."),
+      negative: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Cases that should NOT trigger any tools."),
+    })
+    .optional()
+    .describe(
+      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side."
+    ),
+  varyUserStyles: z
+    .boolean()
+    .optional()
+    .describe(
+      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them."
+    ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
@@ -1659,6 +1707,8 @@ export const generateEvalCasesOperation: PlatformOperation<
             ? { servers: overrideServers.map((server) => server.id) }
             : {}),
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+          ...(input.caseMix ? { caseMix: input.caseMix } : {}),
+          ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
         },
       },
       { signal }

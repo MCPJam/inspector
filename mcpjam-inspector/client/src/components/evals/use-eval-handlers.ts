@@ -29,6 +29,7 @@ import {
   getEvalApiEndpoints,
   runEvals,
   runEvalTestCase,
+  type GenerationOptions,
 } from "@/lib/apis/evals-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
@@ -165,6 +166,11 @@ export type HandleGenerateEvalTestsOptions = {
     name?: string;
     resolvedServerNames: string[];
   };
+  /**
+   * Optional generation knobs (per-bucket case mix, vary-user-styles) forwarded
+   * to the backend. Absent → today's default generation.
+   */
+  generationOptions?: GenerationOptions;
 };
 
 interface UseEvalHandlersProps {
@@ -1483,6 +1489,9 @@ export function useEvalHandlers({
             }) as Promise<Array<Record<string, unknown>>>,
           ...(postOptions?.serverAttachment
             ? { serverAttachment: postOptions.serverAttachment }
+            : {}),
+          ...(postOptions?.generationOptions
+            ? { generationOptions: postOptions.generationOptions }
             : {}),
         });
 

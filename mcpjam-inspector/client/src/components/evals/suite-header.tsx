@@ -44,6 +44,7 @@ import { useMutation } from "convex/react";
 import { toast } from "sonner";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { GenerateCasesConfigPopover } from "./generate-cases-config-popover";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { ValidatorsSection } from "./validators-section";
 import {
@@ -772,48 +773,59 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-l border-border/40 pl-3">
             {overviewRunAllCta}
             {showTestCaseCtas && onGenerateTestCases ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5"
-                      onClick={onGenerateTestCases}
-                      disabled={!canGenerateTestCases || isGeneratingTestCases}
-                      aria-busy={isGeneratingTestCases}
-                    >
-                      {isGeneratingTestCases ? (
-                        <Loader2
-                          className="h-3.5 w-3.5 shrink-0 animate-spin"
-                          aria-hidden
-                        />
-                      ) : (
-                        <Sparkles
-                          className="h-3.5 w-3.5 shrink-0"
-                          aria-hidden
-                        />
-                      )}
-                      Generate
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  side="bottom"
-                  align="start"
-                  sideOffset={8}
-                  className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-                >
-                  {isGeneratingTestCases
-                    ? "Generating test cases…"
-                    : !canGenerateTestCases
-                    ? generateTestCasesDisabledReason ??
-                      "Configure suite servers before generating cases."
-                    : "Generate suggested cases from your server's tools."}
-                </TooltipContent>
-              </Tooltip>
+              <div className="inline-flex items-center">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 rounded-r-none"
+                        onClick={onGenerateTestCases}
+                        disabled={
+                          !canGenerateTestCases || isGeneratingTestCases
+                        }
+                        aria-busy={isGeneratingTestCases}
+                      >
+                        {isGeneratingTestCases ? (
+                          <Loader2
+                            className="h-3.5 w-3.5 shrink-0 animate-spin"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Sparkles
+                            className="h-3.5 w-3.5 shrink-0"
+                            aria-hidden
+                          />
+                        )}
+                        Generate
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                    className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
+                  >
+                    {isGeneratingTestCases
+                      ? "Generating test cases…"
+                      : !canGenerateTestCases
+                      ? generateTestCasesDisabledReason ??
+                        "Configure suite servers before generating cases."
+                      : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+                  </TooltipContent>
+                </Tooltip>
+                <GenerateCasesConfigPopover
+                  suiteId={suite._id}
+                  onGenerate={onGenerateTestCases}
+                  disabled={!canGenerateTestCases}
+                  isGenerating={isGeneratingTestCases}
+                  disabledReason={generateTestCasesDisabledReason}
+                />
+              </div>
             ) : null}
             {showTestCaseCtas && onCreateTestCase ? (
               // One case type now. A render check is just a case whose turn is

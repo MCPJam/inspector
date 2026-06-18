@@ -760,4 +760,193 @@ describe("v1 eval-edit routes", () => {
       { title: "Bad draft", error: expect.any(String) },
     ]);
   });
+
+  it("generate forwards caseMix + varyUserStyles as generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        caseMix: { simple: 3, negative: 1 },
+        varyUserStyles: true,
+      }
+    );
+    expect(res.status).toBe(200);
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { simple: 3, negative: 1 },
+      varyUserStyles: true,
+    });
+  });
+
+  it("generate omits generationOptions when no knobs are provided", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toBeUndefined();
+  });
+
+  it("caseMix supersedes mode:negative — uses the plan-driven generator and forwards generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    generateNegativeEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { negative: 4 } }
+    );
+    // Routed to the plan-driven generator, NOT the legacy negative-only one.
+    expect(generateNegativeEvalTestsMock).not.toHaveBeenCalled();
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { negative: 4 },
+    });
+  });
+
+  it.each([
+    { label: "empty {}", caseMix: {} },
+    { label: "zero-sum { negative: 0 }", caseMix: { negative: 0 } },
+    {
+      label: "all-zero buckets",
+      caseMix: {
+        simple: 0,
+        multiTool: 0,
+        multiTurn: 0,
+        complex: 0,
+        negative: 0,
+      },
+    },
+  ])(
+    "treats a bucketless caseMix ($label) as absent — mode:negative still uses the negative-only generator",
+    async ({ caseMix }) => {
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+      });
+      generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+      generateNegativeEvalTestsMock.mockResolvedValue({
+        success: true,
+        tests: [],
+      });
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getSuiteRunServerSelection")
+          return Promise.resolve({
+            serverIds: ["srv_1"],
+            serverNames: ["Excalidraw (App)"],
+          });
+        return defaultQueryImpl(name);
+      });
+
+      await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+        { mode: "negative", caseMix }
+      );
+      // A caseMix with no bucket > 0 must not supersede mode: the negative-only
+      // generator is used, and no empty generationOptions leaks downstream.
+      expect(generateNegativeEvalTestsMock).toHaveBeenCalled();
+      expect(generateEvalTestsMock).not.toHaveBeenCalled();
+      const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
+      expect(forwarded?.generationOptions).toBeUndefined();
+    }
+  );
+
+  it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    // The plan-driven generator flags each draft; the request still carries
+    // mode:"negative", which must NOT force the positive draft negative.
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Pos",
+          query: "do a thing",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "list", arguments: {} }],
+          isNegativeTest: false,
+        },
+        {
+          title: "Neg",
+          query: "meta question",
+          runs: 1,
+          expectedToolCalls: [],
+          isNegativeTest: true,
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { simple: 1, negative: 1 } }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.counts).toEqual({ normal: 1, negative: 1 });
+
+    const createArgs = convexMutationMock.mock.calls
+      .filter((c) => c[0] === "testSuites:createTestCase")
+      .map((c) => c[1]);
+    const posArgs = createArgs.find((a: any) => a.title === "Pos");
+    const negArgs = createArgs.find((a: any) => a.title === "Neg");
+    // Positive draft keeps its tool calls and is NOT marked negative.
+    expect(posArgs.isNegativeTest).toBeUndefined();
+    expect(posArgs.expectedToolCalls).toEqual([
+      { toolName: "list", arguments: {} },
+    ]);
+    // Negative draft is marked negative with no tool calls.
+    expect(negArgs.isNegativeTest).toBe(true);
+    expect(negArgs.expectedToolCalls).toEqual([]);
+  });
 });
