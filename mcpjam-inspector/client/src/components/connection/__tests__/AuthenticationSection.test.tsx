@@ -2,15 +2,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AuthenticationSection } from "../shared/AuthenticationSection";
-import { fetchHostedOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
-  fetchHostedOAuthClientSecret: vi.fn(),
+  fetchOAuthClientSecret: vi.fn(),
 }));
 
-const fetchHostedOAuthClientSecretMock = vi.mocked(
-  fetchHostedOAuthClientSecret,
-);
+const fetchOAuthClientSecretMock = vi.mocked(fetchOAuthClientSecret);
 
 const hostedSecretProps = {
   serverUrl: "https://example.com/mcp",
@@ -282,7 +280,7 @@ describe("AuthenticationSection", () => {
   });
 
   it("reveals the saved secret into an editable box that replaces on edit", async () => {
-    fetchHostedOAuthClientSecretMock.mockResolvedValue({
+    fetchOAuthClientSecretMock.mockResolvedValue({
       clientSecret: "sk-stored-secret",
     });
     const onClientSecretChange = vi.fn();
@@ -298,8 +296,6 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
-      undefined,
-      { timeout: 10000 },
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
@@ -315,7 +311,7 @@ describe("AuthenticationSection", () => {
   });
 
   it("clears a pending replacement when Clear is clicked", async () => {
-    fetchHostedOAuthClientSecretMock.mockResolvedValue({
+    fetchOAuthClientSecretMock.mockResolvedValue({
       clientSecret: "sk-stored-secret",
     });
 
@@ -347,8 +343,6 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
-      undefined,
-      { timeout: 10000 },
     )) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "sk-new-secret" } });
     expect(screen.getByTestId("client-secret-state")).toHaveTextContent(
@@ -362,7 +356,7 @@ describe("AuthenticationSection", () => {
   });
 
   it("forgets a revealed secret when the hosted server context changes", async () => {
-    fetchHostedOAuthClientSecretMock.mockResolvedValue({
+    fetchOAuthClientSecretMock.mockResolvedValue({
       clientSecret: "sk-stored-secret",
     });
 
@@ -375,8 +369,6 @@ describe("AuthenticationSection", () => {
 
     const input = (await screen.findByTestId(
       "revealed-client-secret",
-      undefined,
-      { timeout: 10000 },
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
