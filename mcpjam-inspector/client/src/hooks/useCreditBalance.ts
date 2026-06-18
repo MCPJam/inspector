@@ -1,6 +1,7 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
+import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 
 export interface CreditBalanceState {
   /** Shared paid top-up credits currently available to the organization. */
@@ -119,4 +120,44 @@ export function useCreditBalance({
     isAuthenticated: hasConvexIdentity,
     hasWorkOsUser,
   };
+}
+
+/**
+ * True when the org (or guest) has no spendable MCPJam credits left — the
+ * state that makes MCPJam-provided ("free") models unusable. Mirrors the
+ * sidebar's daily-vs-monthly split: monthly teams spend their monthly
+ * allowance then shared paid top-ups; everyone else spends the free daily
+ * bucket then paid top-ups. Wallet-lock (spending paused for review) is
+ * deliberately NOT folded in here — that's a separate state with its own
+ * backend handling.
+ */
+export function isOutOfCredits(
+  balance: CreditBalanceState | undefined
+): boolean {
+  if (!balance) return false;
+  const paidRemaining = balance.paidCreditsRemaining;
+  if (balance.billingModel === "monthly_per_seat") {
+    return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
+  }
+  return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+}
+
+/**
+ * Convenience hook over useCreditBalance that returns just the "out of
+ * credits" boolean for the active organization — used to gray out
+ * MCPJam-provided models in the picker once the org/guest can no longer
+ * spend. Resolves the org from the caller-provided id, falling back to the
+ * stored active organization (the same source the limit dialog uses).
+ * Returns false while the balance is loading or unavailable so models never
+ * flash locked.
+ */
+export function useOutOfCredits(organizationId?: string | null): boolean {
+  const { user } = useAuth();
+  const resolvedOrganizationId =
+    organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null);
+  const { balance } = useCreditBalance({
+    organizationId: resolvedOrganizationId,
+    includeGuests: true,
+  });
+  return isOutOfCredits(balance);
 }

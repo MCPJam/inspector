@@ -31,6 +31,7 @@ import {
   getLogoProvider,
   getProviderDisplayName,
 } from "@/components/chat-v2/shared/model-helpers";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -60,6 +61,12 @@ interface ModelSelectorProps {
    * clean.
    */
   analyticsLocation?: string;
+  /**
+   * When true, this picker listens for the global "open Your providers tab"
+   * intent (fired by the out-of-credits dialog's BYOK action) and pops open
+   * on the configured tab. Only the chat-input instance opts in.
+   */
+  respondToProviderTabIntent?: boolean;
 }
 
 type GroupKey = string;
@@ -125,6 +132,7 @@ export function ModelSelector({
   maxSelectedModels = 3,
   align = "start",
   analyticsLocation = "chat_input",
+  respondToProviderTabIntent = false,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -138,6 +146,11 @@ export function ModelSelector({
   >(null);
   const posthog = usePostHog();
   const onOpenChangeRef = useRef(onOpenChange);
+  const forceConfiguredTabRef = useRef(false);
+  const handledProvidersTabNonceRef = useRef(0);
+  const providersTabNonce = useModelPickerIntentStore((state) =>
+    respondToProviderTabIntent ? state.openProvidersTabNonce : 0
+  );
 
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
@@ -149,15 +162,37 @@ export function ModelSelector({
 
   useEffect(() => {
     if (isOpen) {
+      if (forceConfiguredTabRef.current) {
+        // A caller forced the "Your providers" tab (BYOK from the
+        // out-of-credits dialog). Keep it instead of resetting to the current
+        // model's tab; consume the flag so the next manual open resolves
+        // normally.
+        forceConfiguredTabRef.current = false;
+        return;
+      }
       setProviderTab(
         isMCPJamProvidedModel(String(currentModel.id), currentModel.provider)
           ? "provided"
           : "configured"
       );
     } else {
+      forceConfiguredTabRef.current = false;
       setSearch("");
     }
   }, [isOpen, currentModel]);
+
+  // React to the global "open Your providers tab" intent (out-of-credits
+  // BYOK). Only the opted-in instance subscribes to a live nonce; others read
+  // a constant 0 so this never fires for them.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    if (providersTabNonce === 0) return;
+    if (providersTabNonce === handledProvidersTabNonceRef.current) return;
+    handledProvidersTabNonceRef.current = providersTabNonce;
+    forceConfiguredTabRef.current = true;
+    setProviderTab("configured");
+    setIsOpen(true);
+  }, [providersTabNonce, respondToProviderTabIntent]);
 
   useEffect(() => {
     return () => {

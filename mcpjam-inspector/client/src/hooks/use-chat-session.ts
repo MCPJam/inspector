@@ -53,6 +53,7 @@ import {
   GUEST_LOCKED_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
+import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
@@ -1291,6 +1292,7 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (chatbox embeds resolve a host-provided project context).
+  const outOfCredits = useOutOfCredits();
   const availableModels = useMemo(
     () =>
       composeAvailableModels({
@@ -1302,6 +1304,7 @@ export function useChatSession(
         getOpenRouterSelectedModels,
         getAzureBaseUrl,
         customProviders,
+        outOfCredits,
       }),
     [
       hasToken,
@@ -1312,6 +1315,7 @@ export function useChatSession(
       isAuthenticated,
       customProviders,
       hostedOrgModelConfig,
+      outOfCredits,
     ]
   );
 
