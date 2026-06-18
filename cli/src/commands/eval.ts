@@ -443,19 +443,13 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
-      await executeOp(
-        listEvalRunIterationsOperation,
-        {
-          project: options.project,
-          runId: options.run,
-          ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-          ...(options.limit !== undefined
-            ? { limit: Number(options.limit) }
-            : {}),
-        },
-        options,
-        command
-      );
+      const input = validateOpInput(listEvalRunIterationsOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+        ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
+      });
+      await executeOp(listEvalRunIterationsOperation, input, options, command);
     }
   );
 
