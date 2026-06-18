@@ -77,6 +77,8 @@ import {
 } from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "./helpers";
+import { parseDraftTestCaseId } from "./draft-test-case";
+import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
   ChatboxHostStyleProvider,
@@ -170,6 +172,37 @@ interface TestTemplateEditorProps {
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   projectServers?: RemoteServer[];
+  /**
+   * Called after an unsaved draft case is persisted for the first time, with the
+   * new Convex id, so the parent can swap the `draft:<kind>` route for the real
+   * one. Only relevant when `selectedTestCaseId` is a draft sentinel.
+   */
+  onDraftSaved?: (newTestCaseId: string) => void;
+}
+
+/**
+ * In-memory shape for an unsaved ("draft") case, so the editor can render it
+ * before anything is written to Convex. Mirrors the fields the old eager-create
+ * handlers inserted. `_id` is the route sentinel (`draft:<kind>`), not a real
+ * Convex id — Save swaps the eager update for a `createTestCase` insert.
+ */
+function buildDraftTestCase(
+  id: string,
+  suiteTestCases: any[] | undefined
+): any {
+  const collected = collectUniqueModelsFromTestCases(suiteTestCases ?? []);
+  const models =
+    collected.length > 0
+      ? collected
+      : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
+  return {
+    _id: id,
+    title: "Untitled test case",
+    query: "",
+    runs: 1,
+    models,
+    caseType: "prompt",
+  };
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -450,12 +483,16 @@ export function TestTemplateEditor({
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
+  onDraftSaved,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Guards the first-Save insert of a prompt draft so a double-click can't
+  // create the case twice while createTestCase is in flight.
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
   );
@@ -513,15 +550,27 @@ export function TestTemplateEditor({
     testCaseId: string;
     [key: string]: unknown;
   }) => Promise<unknown>;
+  const createTestCaseMutation = useMutation(
+    "testSuites:createTestCase" as any
+  ) as unknown as (args: Record<string, unknown>) => Promise<string>;
+
+  // A draft (`draft:<kind>` sentinel) is a brand-new case the user is
+  // configuring but has not saved. It is NOT in Convex yet, so we synthesize it
+  // locally and only persist on Save. See ./draft-test-case.ts.
+  const draftKind = parseDraftTestCaseId(selectedTestCaseId);
+  const isDraft = draftKind !== null;
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
     suiteId,
   }) as any[] | undefined;
 
   const currentTestCase = useMemo(() => {
+    if (draftKind) {
+      return buildDraftTestCase(selectedTestCaseId, testCases);
+    }
     if (!testCases) return null;
     return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
-  }, [testCases, selectedTestCaseId]);
+  }, [draftKind, testCases, selectedTestCaseId]);
 
   const routeCompareAnchorIteration = useQuery(
     "testSuites:getTestIteration" as any,
@@ -813,7 +862,10 @@ export function TestTemplateEditor({
   }, [editForm?.predicates]);
 
   const savePrimaryDisabled =
-    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
+    !arePromptTurnsValid ||
+    !arePredicatesValid ||
+    isRunningCompare ||
+    isSavingDraft;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -838,6 +890,7 @@ export function TestTemplateEditor({
   ]);
 
   const runPrimaryDisabled =
+    isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
     // full suite (the compare path below would abort on "no model"). Disable
     // Run for it with an explanatory tooltip instead of letting it fail.
@@ -850,6 +903,9 @@ export function TestTemplateEditor({
   const runDisabledTooltip = useMemo(() => {
     if (!runPrimaryDisabled) {
       return null;
+    }
+    if (isDraft) {
+      return "Save this test case before you can run it.";
     }
     if (casePinnedOnly) {
       return "Render checks run with the full suite, not on their own.";
@@ -888,6 +944,7 @@ export function TestTemplateEditor({
     arePromptTurnsValid,
     editForm,
     ensureServersReady,
+    isDraft,
   ]);
 
   const updatePromptTurn = (
@@ -1023,7 +1080,53 @@ export function TestTemplateEditor({
     });
   };
 
+  // First Save of a prompt draft: insert into Convex (instead of updating a
+  // record that does not exist yet), then hand the new id to the parent so it
+  // can swap the `draft:<kind>` route for the real one.
+  const handleCreateFromDraft = async () => {
+    if (!editForm || isSavingDraft) return;
+
+    if (!validatePromptTurns(editForm.promptTurns)) {
+      toast.error(
+        getPromptTurnBlockReason(editForm.promptTurns) ??
+          "Fix the test configuration before saving."
+      );
+      return;
+    }
+
+    setIsSavingDraft(true);
+    try {
+      const savePayload = buildSavePayload(editForm);
+      const newTestCaseId = await createTestCaseMutation({
+        suiteId,
+        models: currentTestCase?.models ?? [],
+        ...savePayload,
+      });
+      posthog.capture("eval_test_case_created", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId ?? null,
+        test_case_id: newTestCaseId,
+        num_models: currentTestCase?.models?.length ?? 0,
+        num_prompt_turns: editForm.promptTurns?.length ?? 0,
+      });
+      toast.success("Test case created");
+      onDraftSaved?.(newTestCaseId);
+    } catch (error) {
+      console.error("Failed to create test case:", error);
+      toast.error(getBillingErrorMessage(error, "Failed to create test case"));
+      throw error;
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (isDraft) {
+      await handleCreateFromDraft();
+      return;
+    }
     if (!editForm || !currentTestCase) return;
 
     if (!validatePromptTurns(editForm.promptTurns)) {
@@ -1327,6 +1430,11 @@ export function TestTemplateEditor({
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
   }) => {
+    // A draft has no Convex id to attach iterations to — Run is disabled in the
+    // UI until the user saves; this guards the programmatic paths too.
+    if (isDraft) {
+      return;
+    }
     if (!currentTestCase || !suite || !editForm) {
       return;
     }
