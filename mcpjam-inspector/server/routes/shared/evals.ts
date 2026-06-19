@@ -52,6 +52,7 @@ import {
   resolveMatchOptions,
   resolveCaseSuccessPredicates,
   casePredicatesSchema,
+  predicateSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
 
@@ -77,6 +78,10 @@ export const promptTurnSchema = z.object({
   // call and renders its widget (the per-turn successor to a `widget_probe`'s
   // top-level `probeConfig`). Reuses the same pinned-call shape.
   pinnedToolCall: probeConfigSchema.optional(),
+  // Per-turn deterministic checks. Without this, Zod strips the unknown key and
+  // turn checks are silently dropped before reaching Convex / the runner.
+  // Semantic + turn-scopable validation happens at the Convex mutation boundary.
+  checks: z.array(predicateSchema).optional(),
 });
 
 export const RunEvalsRequestSchema = z.object({
