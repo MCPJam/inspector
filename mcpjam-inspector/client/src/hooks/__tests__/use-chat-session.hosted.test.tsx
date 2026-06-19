@@ -103,6 +103,9 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
     guestModel,
   ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
+  isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
+    String(model.id).includes("/")
+  ),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
