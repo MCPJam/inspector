@@ -1,0 +1,78 @@
+---
+title: "Computer"
+description: "A personal cloud Linux workstation for your project — open a live terminal, manage its lifecycle, and delete it when you're done"
+icon: "monitor"
+---
+
+<Note>
+The Computer tab is available to accounts where the feature has been enabled. If you don't see a **Computer** entry in the `Servers | Host | Compare` strip, the feature is not yet active on your account.
+</Note>
+
+The **Computer** tab gives you a personal Linux workstation scoped to your project. It is shared across all computer-enabled hosts in that project — one machine per (project, user). From the tab you can check the machine's status, open a live terminal session, and delete the machine when you no longer need it.
+
+## Opening the Computer tab
+
+The Computer tab appears as a fourth option in the Connect strip (`Servers | Host | Compare | Computer`) at the top of the Connect view. Click **Computer** to navigate to `/computer`.
+
+If the feature is not enabled on your account, the tab is hidden and navigating directly to `/computer` redirects you to `/servers`.
+
+## Status chip
+
+The header shows a live status chip that reflects the machine's current lifecycle state:
+
+| Status | Chip label |
+|--------|-----------|
+| Requested / Provisioning | Starting… |
+| Waking | Waking… |
+| Ready | Ready |
+| Hibernating | Asleep |
+| Deleting / Deleted | Deleting… / Deleted |
+| Error | Error |
+
+The chip updates automatically as the machine transitions between states. While the status is loading, the chip shows **Loading…**. If you have no computer yet, it shows **No computer**.
+
+## Opening a terminal
+
+Click **Open terminal** to start a session. If the machine is not yet running, MCPJam provisions or wakes it automatically (provision-on-first-use). The terminal pane shows a spinner while the machine starts up.
+
+Once the machine reports **Ready**, a full-featured terminal opens in the pane. The terminal:
+
+- Connects over a short-lived token that is minted fresh on every (re)connect — no credentials are stored in the browser.
+- Resizes automatically when you resize the window.
+- Sends a keepalive ping every 30 seconds to keep the connection alive.
+- Shows a **Reconnect** button if the connection drops, so you can resume without reloading the page.
+
+### Reconnecting
+
+If the terminal disconnects (network blip, session expiry, etc.), an overlay appears with a **Reconnect** button. Click it to mint a new token and re-establish the session. Any work already on disk persists — only the terminal session itself is re-established.
+
+### Session expiry
+
+If the token expires mid-session (close code `4401`), the overlay message reads *"Session expired — reconnect to continue."* Click **Reconnect** to get a fresh token.
+
+## Deleting the computer
+
+<Warning>
+Deleting the computer permanently destroys the machine and all files on it. This cannot be undone.
+</Warning>
+
+When a computer exists (status is not **No computer**, **Deleting…**, or **Deleted**), a **Delete** button appears in the header. Clicking it shows a confirmation row:
+
+> Delete this computer?  **Delete**  Cancel
+
+Click the red **Delete** button to confirm. The machine is torn down and the terminal pane closes automatically. The status chip transitions to **Deleting…** and then **Deleted**.
+
+## Error states
+
+If the machine hits an error, the status chip shows **Error** and any error message from the provider appears in a highlighted banner below the description. The terminal pane shows a **Try again** button (which re-runs the reserve/wake flow) and a **Close** button.
+
+## Relationship to hosts
+
+The computer is shared across all computer-enabled hosts in the project — it is not tied to a single host configuration. This is why it lives at the project level (the Computer tab) rather than inside an individual host's editor.
+
+When a host has a computer attached, a toggle in the host's **Behavior** settings controls whether that host uses the project computer. This toggle is only visible when the Computer feature is enabled on your account.
+
+## What's next
+
+- [Clients](/inspector/clients) — configure host settings including the computer attachment toggle
+- [Projects](/inspector/projects) — manage the project your computer is scoped to
