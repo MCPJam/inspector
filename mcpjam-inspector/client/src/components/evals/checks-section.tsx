@@ -134,6 +134,12 @@ export interface ChecksSectionProps {
   description?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
+  /**
+   * Restrict the Add-check menu to these kinds. Used for per-turn checks, which
+   * only allow turn-scopable kinds (`TURN_SCOPABLE_PREDICATE_KINDS`). Existing
+   * rows of other kinds still render — only the menu is filtered.
+   */
+  allowedKinds?: readonly Predicate["type"][];
 }
 
 export function ChecksSection({
@@ -145,6 +151,7 @@ export function ChecksSection({
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
+  allowedKinds,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
@@ -197,24 +204,32 @@ export function ChecksSection({
         </ul>
       )}
 
-      {!readOnly && !hideAddButton ? <AddCheckMenu onAdd={addOfKind} /> : null}
+      {!readOnly && !hideAddButton ? (
+        <AddCheckMenu onAdd={addOfKind} allowedKinds={allowedKinds} />
+      ) : null}
     </div>
   );
 }
 
 export function AddCheckMenu({
   onAdd,
+  allowedKinds,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
+  /** When set, restrict the menu to these kinds (e.g. turn-scopable only). */
+  allowedKinds?: readonly Predicate["type"][];
 }) {
   // A controlled Select where picking a value fires `onAdd` and resets to
   // the placeholder — simpler than a popover menu and reuses design-system
   // primitives that already render correctly inside dialogs/sheets.
   const [open, setOpen] = useState(false);
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const kinds = syntheticMonitorsEnabled
-    ? KIND_ORDER
-    : KIND_ORDER.filter((kind) => !SYNTHETIC_MONITOR_KINDS.has(kind));
+  const allowed = allowedKinds ? new Set(allowedKinds) : null;
+  const kinds = KIND_ORDER.filter(
+    (kind) =>
+      (syntheticMonitorsEnabled || !SYNTHETIC_MONITOR_KINDS.has(kind)) &&
+      (!allowed || allowed.has(kind)),
+  );
   return (
     <div className="flex items-center gap-2">
       <Select

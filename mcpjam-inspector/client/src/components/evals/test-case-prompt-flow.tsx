@@ -12,10 +12,12 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { isPinnedTurn, type PromptTurn } from "@/shared/prompt-turns";
+import { TURN_SCOPABLE_PREDICATE_KINDS } from "@/shared/eval-matching";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { cn } from "@/lib/utils";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
 import { PinnedToolCallFields } from "./pinned-tool-call-fields";
+import { ChecksSection } from "./checks-section";
 
 type AvailableTool = {
   name: string;
@@ -423,6 +425,39 @@ export function TestCasePromptFlow({
                                   </section>
                                 </>
                               )}
+
+                              {/* Per-turn checks: deterministic assertions
+                                  evaluated against THIS turn's slice of the
+                                  transcript (not the whole iteration). Restricted
+                                  to turn-scopable kinds. Shown for both prompt and
+                                  render-check turns. */}
+                              <section className="space-y-2">
+                                <Label className="text-xs font-medium text-foreground">
+                                  Checks
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Evaluated against this turn only.
+                                </p>
+                                <ChecksSection
+                                  value={turn.checks ?? []}
+                                  onChange={(next) =>
+                                    updatePromptTurn(index, (currentTurn) => {
+                                      if (next.length === 0) {
+                                        const { checks: _omit, ...rest } =
+                                          currentTurn;
+                                        return rest;
+                                      }
+                                      return { ...currentTurn, checks: next };
+                                    })
+                                  }
+                                  availableTools={availableTools.map(
+                                    (t) => t.name,
+                                  )}
+                                  allowedKinds={TURN_SCOPABLE_PREDICATE_KINDS}
+                                  title=""
+                                  hideEmptyState
+                                />
+                              </section>
                             </div>
                           </motion.div>
                         )}

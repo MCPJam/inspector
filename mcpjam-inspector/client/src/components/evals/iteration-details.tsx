@@ -805,14 +805,22 @@ export function IterationDetails({
     () => parseIterationPredicates(iteration.metadata),
     [iteration.metadata],
   );
-  const predicatesSection = predicates ? (
-    <div className="space-y-2" data-testid="iteration-predicates-section">
-      <div className="flex items-center justify-between border-b border-border/40 pb-2">
-        <div className="text-xs font-semibold">Predicate Gate</div>
+  // Case-level checks only — per-turn checks (scope.kind === "turn") render
+  // under their turn in the per-turn summary list below, so they aren't
+  // duplicated here.
+  const caseLevelPredicates = useMemo(
+    () => (predicates ? predicates.filter((p) => !p.scope) : null),
+    [predicates],
+  );
+  const predicatesSection =
+    caseLevelPredicates && caseLevelPredicates.length > 0 ? (
+      <div className="space-y-2" data-testid="iteration-predicates-section">
+        <div className="flex items-center justify-between border-b border-border/40 pb-2">
+          <div className="text-xs font-semibold">Predicate Gate</div>
+        </div>
+        <PredicatesList predicates={caseLevelPredicates} />
       </div>
-      <PredicatesList predicates={predicates} />
-    </div>
-  ) : null;
+    ) : null;
 
   // Widget probes get an artifacts-first layout: checks + the rendered
   // widget. Tool-call diff (expected vs actual is meaningless for a pinned
@@ -975,6 +983,14 @@ export function IterationDetails({
                   )}
                 </div>
               ) : null}
+              {(() => {
+                const turnChecks = predicates?.filter(
+                  (p) => p.scope?.promptIndex === summary.promptIndex,
+                );
+                return turnChecks && turnChecks.length > 0 ? (
+                  <PredicatesList predicates={turnChecks} />
+                ) : null;
+              })()}
             </div>
           ))}
         </div>
