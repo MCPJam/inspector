@@ -151,7 +151,7 @@ When two or more host configurations are attached to a suite, a **By case / By h
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
+- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a tool call fails at the MCP protocol level, the detail pane shows an **MCP error** line with the JSON-RPC code and its name (e.g. `-32602 · Invalid params`). Negative codes are MCP/JSON-RPC errors; the label distinguishes server-returned errors from client-side transport failures like `-32001 · Request timeout`.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
