@@ -44,6 +44,9 @@ export type EvalTraceSpanInput = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  // MCP server-contract metadata (tool spans). JSON-RPC error code from a
+  // failed tools/call (OTel rpc.response.status_code).
+  mcpErrorCode?: number;
 };
 
 export type EvalTraceInput =

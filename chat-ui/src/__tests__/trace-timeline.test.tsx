@@ -78,4 +78,27 @@ describe("TraceTimeline (recorded waterfall)", () => {
     expect(meta.textContent).toContain("anthropic");
     expect(meta.textContent).toContain("length");
   });
+
+  it("shows the JSON-RPC error code on a failed tool span", () => {
+    const spans: TraceSpan[] = [
+      {
+        id: "p0-tool",
+        name: "create_view",
+        category: "tool",
+        startMs: 0,
+        endMs: 96,
+        promptIndex: 0,
+        status: "error",
+        toolCallId: "tc1",
+        toolName: "create_view",
+        mcpErrorCode: -32602,
+      },
+    ];
+    const { getAllByTestId, getByTestId } = render(
+      <TraceTimeline recordedSpans={spans} />,
+    );
+    const labelButtons = getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    expect(getByTestId("trace-mcp-error-code").textContent).toContain("-32602");
+  });
 });

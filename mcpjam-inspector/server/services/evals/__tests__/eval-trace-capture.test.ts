@@ -371,4 +371,64 @@ describe("eval-trace-capture", () => {
       }),
     ]);
   });
+
+  it("captures the JSON-RPC error code when a backend tool throws with .code", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    const rpcError = Object.assign(new Error("Invalid params"), {
+      code: -32602,
+    });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        create_view: {
+          execute: async () => {
+            throw rpcError;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.create_view.execute({}, { toolCallId: "call-err" }),
+    ).rejects.toBe(rpcError);
+
+    // Both the tool span and the synthesized error span carry the code.
+    const toolSpan = spans.find((s) => s.category === "tool");
+    const errSpan = spans.find((s) => s.category === "error");
+    expect(toolSpan?.status).toBe("error");
+    expect(toolSpan?.mcpErrorCode).toBe(-32602);
+    expect(errSpan?.mcpErrorCode).toBe(-32602);
+  });
+
+  it("leaves mcpErrorCode unset when a thrown error has no numeric code", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        boom: {
+          execute: async () => {
+            throw new Error("plain failure");
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.boom.execute({}, { toolCallId: "call-plain" }),
+    ).rejects.toThrow("plain failure");
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.status).toBe("error");
+    expect(toolSpan?.mcpErrorCode).toBeUndefined();
+  });
 });

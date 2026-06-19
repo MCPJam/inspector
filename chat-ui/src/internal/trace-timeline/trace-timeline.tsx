@@ -1674,6 +1674,20 @@ function TimelineDetailPane({
                 {toolErrorExcerpt}
               </pre>
             ) : null}
+            {typeof row.span.mcpErrorCode === "number" ? (
+              <div
+                data-testid="trace-mcp-error-code"
+                className="text-[11px] tabular-nums text-muted-foreground"
+                title="JSON-RPC error code returned by the MCP server (rpc.response.status_code) — a protocol contract violation"
+              >
+                <span className="text-muted-foreground/70">
+                  JSON-RPC error code:{" "}
+                </span>
+                <span className="font-medium text-foreground">
+                  {row.span.mcpErrorCode}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

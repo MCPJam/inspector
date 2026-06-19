@@ -6,6 +6,17 @@ import {
 } from "@/shared/eval-trace";
 import type { ModelMessage } from "ai";
 
+/**
+ * Pull the JSON-RPC error code off a thrown MCP tool error (OTel
+ * `rpc.response.status_code`). Present only on protocol-level failures — a
+ * `tools/call` that returns `isError: true` (domain error) has no code per the
+ * MCP spec. Returns undefined for anything without a numeric `.code`.
+ */
+function extractMcpErrorCode(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "number" && Number.isFinite(code) ? code : undefined;
+}
+
 type StepSpanMeta = {
   modelId?: string;
   inputTokens?: number;
@@ -251,6 +262,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
+        let mcpErrorCode: number | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
@@ -259,6 +271,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           return result;
         } catch (err) {
           success = false;
+          mcpErrorCode = extractMcpErrorCode(err);
           throw err;
         } finally {
           const toolFinishedAt = Date.now();
@@ -274,6 +287,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId,
             status: success ? "ok" : "error",
+            ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(
               ctx.runStartedAt,
               toolStartedAt,
@@ -292,6 +306,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId,
               status: "error",
+              ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
                 ctx.runStartedAt,
                 toolStartedAt,
@@ -758,6 +773,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             ? options.toolCallId
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
+        let mcpErrorCode: number | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
@@ -766,6 +782,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
           return result;
         } catch (error) {
           success = false;
+          mcpErrorCode = extractMcpErrorCode(error);
           throw error;
         } finally {
           const finishedAt = Date.now();
@@ -783,6 +800,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId: raw._serverId,
             status: success ? "ok" : "error",
+            ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
           });
           if (!success) {
@@ -800,6 +818,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId: raw._serverId,
               status: "error",
+              ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
                 params.runStartedAt,
                 startedAt,

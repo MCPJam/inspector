@@ -179,13 +179,15 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
           `Expected accept for "${row.label}":\n${JSON.stringify(parsed.error.issues, null, 2)}`,
         );
       }
-      // Harness metadata must round-trip through the Zod mirror unchanged.
+      // OTel metadata (harness gen_ai.* + mcp.* tool fields) must round-trip
+      // through the Zod mirror unchanged.
       for (const field of [
         "finishReason",
         "provider",
         "responseId",
         "responseTimestamp",
         "ttfcMs",
+        "mcpErrorCode",
       ] as const) {
         if (row.value[field] !== undefined) {
           expect((parsed.data as Record<string, unknown>)[field]).toEqual(

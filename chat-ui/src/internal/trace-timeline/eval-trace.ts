@@ -42,6 +42,8 @@ export type TraceSpan = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  // MCP server-contract metadata (tool spans).
+  mcpErrorCode?: number;
 };
 
 // Internal aliases so the ported timeline keeps its original identifiers

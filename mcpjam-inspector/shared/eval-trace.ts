@@ -43,6 +43,14 @@ export type EvalTraceSpan = {
   responseTimestamp?: string;
   /** Time to first streamed chunk, ms. OTel `gen_ai.response.time_to_first_chunk` (seconds — export as ttfcMs/1000). Undefined on non-streaming paths; advisory only. */
   ttfcMs?: number;
+  // ── MCP server-contract metadata (tool spans) ──
+  /**
+   * JSON-RPC error code from a failed `tools/call` (OTel
+   * `rpc.response.status_code`, e.g. -32602 invalid params). Present only on
+   * protocol-level failures — a tool returning `isError: true` (domain error)
+   * has no code per the MCP spec. Surfaces a server contract violation.
+   */
+  mcpErrorCode?: number;
 };
 
 /**
@@ -103,6 +111,9 @@ export const OTEL_ATTR = {
   modelId: "gen_ai.request.model",
   inputTokens: "gen_ai.usage.input_tokens",
   outputTokens: "gen_ai.usage.output_tokens",
+  // MCP tool-span fields. `rpc.response.status_code` is a string at export →
+  // String(mcpErrorCode).
+  mcpErrorCode: "rpc.response.status_code",
 } as const;
 
 export type PromptTraceSummary = {
@@ -382,6 +393,8 @@ export const evalTraceSpanZ = z.object({
   responseId: z.string().optional(),
   responseTimestamp: z.string().optional(),
   ttfcMs: z.number().optional(),
+  // MCP server-contract metadata (tool spans).
+  mcpErrorCode: z.number().optional(),
 });
 
 const traceToolCallZ = z.object({

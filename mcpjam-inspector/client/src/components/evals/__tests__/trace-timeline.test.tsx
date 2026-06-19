@@ -119,6 +119,56 @@ describe("harness span metadata", () => {
     fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
     expect(screen.queryByText(/tok\/s/)).toBeNull();
   });
+
+  it("shows the JSON-RPC error code on a failed tool span", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "create_view",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        status: "error",
+        toolCallId: "c1",
+        toolName: "create_view",
+        mcpErrorCode: -32602,
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("create_view"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.getByTestId("trace-mcp-error-code").textContent).toContain(
+      "-32602",
+    );
+  });
+
+  it("omits the error-code line when no mcpErrorCode is present", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "c1",
+        toolName: "read_me",
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByTestId("trace-mcp-error-code")).toBeNull();
+  });
 });
 
 describe("selectAxisTickPercents", () => {
