@@ -31,6 +31,9 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformHost,
+  PlatformHostDeleted,
+  PlatformHostDetail,
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
@@ -2215,5 +2218,258 @@ export const listChatSessionsOperation: PlatformOperation<
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
+  },
+};
+
+// ── Hosts ──────────────────────────────────────────────────────────────────
+
+const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+
+/** Built-in host templates (kept in sync with @mcpjam/sdk/host-config/templates). */
+const HOST_TEMPLATE_IDS = [
+  "mcpjam",
+  "claude",
+  "claude-code",
+  "chatgpt",
+  "mistral",
+  "cursor",
+  "codex",
+  "copilot",
+  "vscode",
+  "agentcore",
+  "n8n",
+  "perplexity",
+] as const;
+
+async function resolveHost(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformHost> {
+  const page = await client.listHosts({ projectId: project.id }, { signal });
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Host",
+    `project "${project.name}"`
+  );
+}
+
+export type ListHostsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformHost[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listHostsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListHostsResult
+> = {
+  name: "list_hosts",
+  title: "List MCPJam hosts",
+  description:
+    "List the hosts saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listHosts({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+});
+export type GetHostInput = z.infer<typeof getHostInput>;
+
+export const getHostOperation: PlatformOperation<
+  GetHostInput,
+  PlatformHostDetail
+> = {
+  name: "get_host",
+  title: "Show an MCPJam host",
+  description:
+    "Show one host's full settings, including its resolved host config (model, capabilities, host context).",
+  readOnly: true,
+  inputSchema: getHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal }
+    );
+  },
+};
+
+const createHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).describe("Display name for the new host."),
+    template: z
+      .enum(HOST_TEMPLATE_IDS)
+      .optional()
+      .describe(
+        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor)."
+      ),
+    theme: z
+      .enum(["light", "dark"])
+      .optional()
+      .describe("Theme stamped into the seeded host config (template only)."),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe("Full host config v2 to use verbatim (alternative to template)."),
+  })
+  .refine(
+    (value) =>
+      (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
+    { message: "Provide exactly one of `template` or `config`." }
+  );
+export type CreateHostInput = z.infer<typeof createHostInput>;
+
+export const createHostOperation: PlatformOperation<
+  CreateHostInput,
+  PlatformHostDetail
+> = {
+  name: "create_host",
+  title: "Create an MCPJam host",
+  description:
+    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`). Returns the created host.",
+  readOnly: false,
+  inputSchema: createHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.template) {
+      body.template = input.template;
+      if (input.theme) body.theme = input.theme;
+    }
+    if (input.config) body.config = input.config;
+    return client.createHost({ projectId: project.id, body }, { signal });
+  },
+};
+
+const updateHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the host."),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe("Replacement host config v2."),
+  })
+  .refine((value) => value.name !== undefined || value.config !== undefined, {
+    message: "Provide at least one of `name` or `config` to update.",
+  });
+export type UpdateHostInput = z.infer<typeof updateHostInput>;
+
+export const updateHostOperation: PlatformOperation<
+  UpdateHostInput,
+  PlatformHostDetail
+> = {
+  name: "update_host",
+  title: "Update an MCPJam host",
+  description:
+    "Edit a host's display name and/or its host config. Only the fields you pass change.",
+  readOnly: false,
+  inputSchema: updateHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    const body: Record<string, unknown> = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.config !== undefined) body.config = input.config;
+    return client.updateHost(
+      { projectId: project.id, hostId: host.id, body },
+      { signal }
+    );
+  },
+};
+
+const deleteHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  force: z
+    .boolean()
+    .optional()
+    .describe("Delete even if the host is still referenced (e.g. by suites)."),
+});
+export type DeleteHostInput = z.infer<typeof deleteHostInput>;
+
+export const deleteHostOperation: PlatformOperation<
+  DeleteHostInput,
+  PlatformHostDeleted
+> = {
+  name: "delete_host",
+  title: "Delete an MCPJam host",
+  description:
+    "Permanently delete a host from a project. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.deleteHost(
+      {
+        projectId: project.id,
+        hostId: host.id,
+        body: input.force ? { force: true } : {},
+      },
+      { signal }
+    );
   },
 };
