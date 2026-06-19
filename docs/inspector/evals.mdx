@@ -102,6 +102,8 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, a connected server is missing or no models are selected. The header pickers will tell you which.
 </Tip>
 
+While a suite run is in progress, **Run all** is replaced by a **Stop** button. Clicking it cancels the run and marks it `Cancelled`. If a run exceeds 20 minutes, or a single iteration exceeds 10 minutes, the run is automatically stopped and marked **Timed out** — distinct from `Failed` and `Cancelled` in the UI.
+
 ### Frozen execution snapshots
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
