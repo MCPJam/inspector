@@ -13,6 +13,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import type { HostThemeMode } from "@/lib/client-styles";
 import {
   fieldDiverges,
   groupHostConfigFields,
@@ -33,6 +34,7 @@ interface HostConfigComparisonMatrixProps {
   showDescriptions?: boolean;
   /** Remove a column; omitted when only one host remains. */
   onRemoveHost?: (hostId: string) => void;
+  themeMode?: HostThemeMode;
 }
 
 /**
@@ -48,6 +50,7 @@ export function HostConfigComparisonMatrix({
   divergingOnly = false,
   showDescriptions = false,
   onRemoveHost,
+  themeMode = "light",
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -95,6 +98,7 @@ export function HostConfigComparisonMatrix({
                 key={s.hostId}
                 subject={s}
                 onRemove={onRemoveHost}
+                themeMode={themeMode}
               />
             ))}
           </tr>
@@ -481,13 +485,16 @@ function TriStateCellValue({
 function HostColumnHeader({
   subject,
   onRemove,
+  themeMode,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
+  themeMode: HostThemeMode;
 }) {
   const logoSrc = getChatboxHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
+    themeMode,
   );
   const reduceMotion = useReducedMotion();
 

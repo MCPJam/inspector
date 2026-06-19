@@ -262,6 +262,7 @@ export function HostConfigCompareView({
                   subjects={orderedSubjects}
                   divergingOnly={divergingOnly}
                   showDescriptions={showDescriptions}
+                  themeMode={themeMode}
                   onRemoveHost={
                     selectedHostIdSet.size > 1 ? handleToggleHost : undefined
                   }
