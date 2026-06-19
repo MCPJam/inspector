@@ -2,10 +2,28 @@ import { describe, expect, it } from "vitest";
 import {
   buildAvailableModelsFromOrgConfig,
   buildModelMenuGroups,
+  getDefaultModel,
   isOrgProviderAvailable,
 } from "../model-helpers";
 
 describe("org model helpers", () => {
+  it("prefers Mistral Small 4 as the MCPJam default model", () => {
+    expect(
+      getDefaultModel([
+        {
+          id: "anthropic/claude-haiku-4.5",
+          name: "Claude Haiku 4.5",
+          provider: "anthropic",
+        },
+        {
+          id: "mistralai/mistral-small-2603",
+          name: "Mistral Small 4",
+          provider: "mistral",
+        },
+      ]).id,
+    ).toBe("mistralai/mistral-small-2603");
+  });
+
   it("includes enabled custom providers that do not require an API key", () => {
     const orgConfig = {
       providers: [
