@@ -1259,19 +1259,6 @@ function setMcpAppsOverridesOnDraft(
   };
 }
 
-function onlyEmptyExtensions(
-  caps: Record<string, unknown> | undefined
-): boolean {
-  if (!caps) return false;
-  const keys = Object.keys(caps);
-  return (
-    keys.length === 1 &&
-    keys[0] === "extensions" &&
-    isRecord(caps.extensions) &&
-    Object.keys(caps.extensions).length === 0
-  );
-}
-
 type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
   "availableDisplayModes" | "widgetDisplayModeRequests"
@@ -1488,18 +1475,6 @@ function McpAppsCapabilityMatrix({
   // Add the MCP UI client extension so the host advertises MCP App
   // support. Shared by the master Switch and the build-from-off path.
   const withMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
-    // Le Chat's native capture reports base `clientCapabilities: {}` while
-    // still rendering MCP Apps through `ui/initialize`. If the user toggled
-    // support off in the editor, we wrote an inert `extensions: {}` marker
-    // (see withoutMcpUiExtension). Toggling back on should restore the
-    // faithful native empty shape instead of inventing an MCP UI extension
-    // Le Chat does not send.
-    if (
-      prev.hostStyle === "mistral" &&
-      onlyEmptyExtensions(prev.clientCapabilities)
-    ) {
-      return { ...prev, clientCapabilities: {} };
-    }
     const nextCaps: Record<string, unknown> = {
       ...(prev.clientCapabilities ?? {}),
     };
@@ -1542,10 +1517,12 @@ function McpAppsCapabilityMatrix({
     } else {
       delete nextCaps.extensions;
     }
-    // Le Chat's exact empty capability blob means "native MCP Apps host" in
-    // MCPJam. When the user explicitly turns that support off, keep a tiny
-    // inert marker so the switch can represent off without adding unrelated
-    // capabilities.
+    // Mistral's normalized template starts from `clientCapabilities: {}`
+    // evidence but advertises the standard MCP UI extension because Le Chat
+    // demonstrated Apps rendering. When the user explicitly turns support
+    // off, keep a tiny inert marker so the switch can represent "off" without
+    // adding unrelated capabilities. Toggling back on flows through
+    // withMcpUiExtension above and restores the standard MCP UI extension.
     if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
       nextCaps.extensions = {};
     }
