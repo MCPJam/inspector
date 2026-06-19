@@ -208,6 +208,7 @@ export function evaluateHostCompat(
     hostId: profile.id,
     hostLabel: profile.label,
     logoSrc: profile.logoSrc,
+    logoSrcByTheme: profile.logoSrcByTheme,
     verdict,
     provenance: profile.provenance,
     findings,

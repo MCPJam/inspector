@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 const INLINE_CHIP_LIMIT = 6;
 
@@ -47,6 +48,7 @@ export function HostCompareSelector({
   const selectedSet = new Set(selectedHostIds);
   const inlineHosts = hosts.slice(0, INLINE_CHIP_LIMIT);
   const overflowHosts = hosts.slice(INLINE_CHIP_LIMIT);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -58,6 +60,7 @@ export function HostCompareSelector({
           selected={selectedSet.has(host.hostId)}
           onToggle={() => onToggleHost(host.hostId)}
           disabled={disabled}
+          themeMode={themeMode}
         />
       ))}
 
@@ -68,6 +71,7 @@ export function HostCompareSelector({
           subjectsByHost={subjectsByHost}
           onToggleHost={onToggleHost}
           disabled={disabled}
+          themeMode={themeMode}
         />
       ) : null}
 
@@ -99,18 +103,21 @@ function HostCompareChip({
   selected,
   onToggle,
   disabled,
+  themeMode,
 }: {
   host: HostListItem;
   subject?: HostComparisonSubject;
   selected: boolean;
   onToggle: () => void;
   disabled?: boolean;
+  themeMode: "light" | "dark";
 }) {
   const logoSrc =
     subject !== undefined
       ? getChatboxHostLogo(
           subject.hostStyle,
           subject.config.chatUiOverride,
+          themeMode
         )
       : null;
   const reduceMotion = useReducedMotion();
@@ -129,7 +136,7 @@ function HostCompareChip({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         selected
           ? "border-primary/35 bg-primary/8 text-foreground shadow-xs"
-          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
       )}
       whileHover={reduceMotion || disabled ? undefined : { scale: 1.04 }}
       whileTap={reduceMotion || disabled ? undefined : { scale: 0.94 }}
@@ -138,12 +145,13 @@ function HostCompareChip({
       onClick={onToggle}
     >
       {logoSrc ? (
-        <img src={logoSrc} alt="" className="size-3.5 shrink-0 object-contain" />
-      ) : (
-        <span
-          aria-hidden
-          className="size-3.5 shrink-0 rounded-full bg-muted"
+        <img
+          src={logoSrc}
+          alt=""
+          className="size-3.5 shrink-0 object-contain"
         />
+      ) : (
+        <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
       )}
       <span className="truncate">{host.name}</span>
     </motion.button>
@@ -156,15 +164,17 @@ function HostCompareOverflowMenu({
   subjectsByHost,
   onToggleHost,
   disabled,
+  themeMode,
 }: {
   hosts: ReadonlyArray<HostListItem>;
   selectedSet: ReadonlySet<string>;
   subjectsByHost: Readonly<Record<string, HostComparisonSubject>>;
   onToggleHost: (hostId: string) => void;
   disabled?: boolean;
+  themeMode: "light" | "dark";
 }) {
   const selectedOverflowCount = hosts.filter((h) =>
-    selectedSet.has(h.hostId),
+    selectedSet.has(h.hostId)
   ).length;
 
   return (
@@ -200,6 +210,7 @@ function HostCompareOverflowMenu({
                   ? getChatboxHostLogo(
                       subject.hostStyle,
                       subject.config.chatUiOverride,
+                      themeMode
                     )
                   : null;
 
@@ -228,9 +239,7 @@ function HostCompareOverflowMenu({
                   <span
                     className={cn(
                       "text-[11px]",
-                      selected
-                        ? "text-foreground"
-                        : "text-muted-foreground",
+                      selected ? "text-foreground" : "text-muted-foreground"
                     )}
                   >
                     {selected ? "Shown" : "Hidden"}

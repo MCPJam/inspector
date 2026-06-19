@@ -2,7 +2,8 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
-import gooseLogo from "/goose_logo.svg";
+import gooseLogoDark from "/goose_logo_dark.png";
+import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -51,6 +52,7 @@ import {
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
+import { GooseIconIndicator } from "./indicators/goose-icon";
 import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
@@ -437,10 +439,14 @@ export const GOOSE_HOST_STYLE: HostStyleDefinition = {
     label: "Goose",
     shortLabel: "Goose-style host",
     pickerDescription: "Goose Desktop host",
-    logoSrc: gooseLogo,
+    logoSrc: gooseLogoLight,
+    logoSrcByTheme: {
+      light: gooseLogoLight,
+      dark: gooseLogoDark,
+    },
     family: "chatgpt",
     resolveChatBackground: (theme) => GOOSE_CHAT_BACKGROUND[theme],
-    loadingIndicator: ChatGptDotIndicator,
+    loadingIndicator: GooseIconIndicator,
   },
 };
 

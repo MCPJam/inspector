@@ -63,7 +63,11 @@ const MARKET_HOSTS: readonly MarketHost[] = [
   {
     id: "goose",
     label: "Goose",
-    logoSrc: "/goose_logo.svg",
+    logoSrc: "/goose_logo_light.png",
+    logoSrcByTheme: {
+      light: "/goose_logo_light.png",
+      dark: "/goose_logo_dark.png",
+    },
     provenance: "probe",
     rendersMcpApps: true,
   },

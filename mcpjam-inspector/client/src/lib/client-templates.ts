@@ -28,7 +28,8 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
-import gooseLogo from "/goose_logo.svg";
+import gooseLogoDark from "/goose_logo_dark.png";
+import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -49,7 +50,7 @@ const LOGO_BY_ID: Record<HostTemplateId, string> = {
   "claude-code": claudeCodeLogo,
   chatgpt: openaiLogo,
   mistral: mistralLogo,
-  goose: gooseLogo,
+  goose: gooseLogoLight,
   cursor: cursorLogo,
   codex: codexLogo,
   copilot: copilotLogo,
@@ -59,12 +60,31 @@ const LOGO_BY_ID: Record<HostTemplateId, string> = {
   perplexity: perplexityLogo,
 };
 
+const LOGO_BY_ID_AND_THEME: Partial<
+  Record<HostTemplateId, { light: string; dark: string }>
+> = {
+  goose: {
+    light: gooseLogoLight,
+    dark: gooseLogoDark,
+  },
+};
+
 export interface HostTemplate {
   id: HostTemplateId;
   label: string;
   description: string;
   logoSrc: string;
+  logoSrcByTheme?: { light: string; dark: string };
   seed: (opts?: SeedHostTemplateOptions) => HostConfigInputV2;
+}
+
+export function getHostTemplateLogoSrc(
+  template: Pick<HostTemplate, "logoSrc" | "logoSrcByTheme">,
+  themeMode?: "light" | "dark" | null
+): string {
+  return themeMode
+    ? template.logoSrcByTheme?.[themeMode] ?? template.logoSrc
+    : template.logoSrc;
 }
 
 /**
@@ -74,7 +94,7 @@ export interface HostTemplate {
  */
 export function seedFromHostTemplate(
   id: HostTemplateId,
-  opts?: SeedHostTemplateOptions,
+  opts?: SeedHostTemplateOptions
 ): HostConfigInputV2 {
   return seedHostTemplate(id, {
     ...opts,
@@ -88,7 +108,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = SDK_HOST_TEMPLATES.map(
     label: template.label,
     description: template.description,
     logoSrc: LOGO_BY_ID[template.id],
+    logoSrcByTheme: LOGO_BY_ID_AND_THEME[template.id],
     seed: (opts?: SeedHostTemplateOptions) =>
       seedFromHostTemplate(template.id, opts),
-  }),
+  })
 );

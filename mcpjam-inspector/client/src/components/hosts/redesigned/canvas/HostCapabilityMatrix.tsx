@@ -4,7 +4,8 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
-import gooseLogo from "/goose_logo.svg";
+import gooseLogoDark from "/goose_logo_dark.png";
+import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -28,19 +29,23 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { SandboxProxyIframeCard } from "./sandbox-config-grid";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 function getClientLogo(
   clientInfoName: string | undefined,
   hostName: string | undefined,
+  themeMode: "light" | "dark"
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
-  if (haystack.includes("mcpjam") || haystack.includes("mcp-jam")) return mcpjamLogo;
+  if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
+    return mcpjamLogo;
   if (haystack.includes("claude-code") || haystack.includes("claude code"))
     return claudeCodeLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;
-  if (haystack.includes("goose")) return gooseLogo;
+  if (haystack.includes("goose"))
+    return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
@@ -58,7 +63,11 @@ function getClientLogo(
     return bedrockLogo;
   if (haystack.includes("n8n")) return n8nLogo;
   if (haystack.includes("perplexity")) return perplexityLogo;
-  if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
+  if (
+    haystack.includes("openai") ||
+    haystack.includes("chatgpt") ||
+    haystack.includes("gpt")
+  )
     return openaiLogo;
   return null;
 }
@@ -127,12 +136,13 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const connectedClientCaps = clientCaps.filter((row) => row.on);
 
   const timeoutLeaf = protocolBand.find((l) => l.leafKey === "timeout");
   const clientInfoLeaf = protocolBand.find((l) => l.leafKey === "clientInfo");
   const protocolVersionLeaf = protocolBand.find(
-    (l) => l.leafKey === "protocolVersion",
+    (l) => l.leafKey === "protocolVersion"
   );
 
   return (
@@ -153,18 +163,18 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             // and substring-matches against the combined haystack, so any
             // pre-tokenization here just hides keywords that don't sit at
             // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
-            const clientLogo = getClientLogo(clientInfoLeaf?.value, hostName);
+            const clientLogo = getClientLogo(
+              clientInfoLeaf?.value,
+              hostName,
+              themeMode
+            );
             return (
               <span
                 className={cn("hp-glyph", clientLogo && "hp-glyph--logo")}
                 aria-hidden
               >
                 {clientLogo ? (
-                  <img
-                    src={clientLogo}
-                    alt=""
-                    className="hp-glyph-img"
-                  />
+                  <img src={clientLogo} alt="" className="hp-glyph-img" />
                 ) : (
                   (agent?.modelProvider?.charAt(0) ?? "?").toUpperCase()
                 )}
@@ -206,7 +216,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                   <span
                     className={cn(
                       "hp-host-sub-stat",
-                      timeoutLeaf.isChanged && "host-matrix-changed",
+                      timeoutLeaf.isChanged && "host-matrix-changed"
                     )}
                   >
                     <span className="hp-host-sub-stat-label">Timeout</span>
@@ -262,7 +272,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 className={cn(
                   "hp-cap",
                   row.isChanged && !row.isNewlyOn && "host-matrix-changed",
-                  row.isNewlyOn && "host-matrix-newly",
+                  row.isNewlyOn && "host-matrix-newly"
                 )}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -309,7 +319,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                       !row.on && "hp-cap--off",
                       isSelected && "hp-cap--selected",
                       row.isChanged && !row.isNewlyOn && "host-matrix-changed",
-                      row.isNewlyOn && "host-matrix-newly",
+                      row.isNewlyOn && "host-matrix-newly"
                     )}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -340,11 +350,10 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             onViewTitleClick={() => onSelectNode(APPS_HUB_NODE_ID)}
             selectedSubKey={(() => {
               const prefix = "sandbox-cfg:";
-              if (
-                selectedNodeId &&
-                selectedNodeId.startsWith(prefix)
-              ) {
-                return selectedNodeId.slice(prefix.length) as SandboxConfigSubKey;
+              if (selectedNodeId && selectedNodeId.startsWith(prefix)) {
+                return selectedNodeId.slice(
+                  prefix.length
+                ) as SandboxConfigSubKey;
               }
               return null;
             })()}
@@ -359,7 +368,6 @@ export const HostMatrixCard = memo(function HostMatrixCard({
               />
             }
           />
-
         ) : null}
       </div>
     </article>
@@ -410,8 +418,8 @@ function ViewIframeInjectedGlobals({
   const openaiSubtitle = compatRuntime.hasMethodOverrides
     ? `${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods`
     : compatRuntime.fromOverride
-      ? "overridden"
-      : null;
+    ? "overridden"
+    : null;
   const mcpAppsSubtitle = mcpAppsBridge.hasOverrides
     ? `${mcpAppsBridge.overrideCount} ${
         mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
@@ -449,7 +457,9 @@ function ViewIframeInjectedGlobals({
         }}
         title={
           mcpAppsBridge.hasOverrides
-            ? `SEP-1865 app.* spec bridge with ${mcpAppsBridge.overrideCount} sparse ${
+            ? `SEP-1865 app.* spec bridge with ${
+                mcpAppsBridge.overrideCount
+              } sparse ${
                 mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
               } on top of the host preset (e.g. Copilot's M365-published subset). Click to view the matrix.`
             : "SEP-1865 app.* spec bridge — primary MCP Apps protocol surface, always present. Click to view the per-dimension matrix."
@@ -490,10 +500,7 @@ function ClickableRegion({
         onSelectNode(id);
       }}
       style={style}
-      className={cn(
-        className,
-        selectedNodeId === id && "hp-region--selected",
-      )}
+      className={cn(className, selectedNodeId === id && "hp-region--selected")}
     >
       {children}
     </button>
