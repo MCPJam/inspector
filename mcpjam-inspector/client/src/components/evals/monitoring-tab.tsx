@@ -23,8 +23,14 @@ import { formatRunId } from "./helpers";
 
 export type ScheduledRunStat = {
   runId: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
+  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
   summary: {
     total: number;
     passed: number;
@@ -52,6 +58,7 @@ function segmentClass(stat: ScheduledRunStat): string {
   }
   if (stat.result === "passed") return "bg-success/70 hover:bg-success";
   if (stat.result === "failed") return "bg-destructive/70 hover:bg-destructive";
+  if (stat.result === "timed_out") return "bg-warning/70 hover:bg-warning";
   return "bg-muted-foreground/30 hover:bg-muted-foreground/50";
 }
 
@@ -72,7 +79,10 @@ export function MonitoringTab({
     [stats],
   );
   const lastFailure = useMemo(
-    () => stats?.find((stat) => stat.result === "failed") ?? null,
+    () =>
+      stats?.find(
+        (stat) => stat.result === "failed" || stat.result === "timed_out",
+      ) ?? null,
     [stats],
   );
   const latencyTrend = useMemo(
@@ -112,7 +122,10 @@ export function MonitoringTab({
 
   const passed = stats.filter((stat) => stat.result === "passed").length;
   const terminal = stats.filter(
-    (stat) => stat.result === "passed" || stat.result === "failed",
+    (stat) =>
+      stat.result === "passed" ||
+      stat.result === "failed" ||
+      stat.result === "timed_out",
   ).length;
   const passRatePct =
     terminal > 0 ? Math.round((passed / terminal) * 100) : null;

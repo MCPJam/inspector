@@ -333,20 +333,27 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
-  it("keeps Run all disabled while the latest suite run is still running", async () => {
+  it("shows Stop in the playground header for an active suite run", async () => {
     const user = userEvent.setup();
-    const onRerun = vi.fn();
+    const onCancelRun = vi.fn();
+    const activeRun = {
+      ...baseRun,
+      _id: "run-active",
+      status: "running" as const,
+      completedAt: null,
+    };
 
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        onRerun={onRerun}
-        runs={[{ ...baseRun, status: "running", completedAt: undefined }]}
+        runs={[activeRun]}
+        onCancelRun={onCancelRun}
         runsViewMode="runs"
         hideRunActions
         unifiedSuiteDashboard
+        readOnlyConfig={false}
         onCreateTestCase={vi.fn()}
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
@@ -360,12 +367,14 @@ describe("SuiteHeader", () => {
       />
     );
 
-    const runAll = screen.getByRole("button", {
-      name: /Run all cases in this suite/i,
-    });
-    expect(runAll).toBeDisabled();
-    await user.click(runAll);
-    expect(onRerun).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", {
+        name: /Run all cases in this suite/i,
+      })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Stop suite run" }));
+    expect(onCancelRun).toHaveBeenCalledWith("run-active");
   });
 
   it("forwards iterationOverride on Run all even without a match-options override", async () => {

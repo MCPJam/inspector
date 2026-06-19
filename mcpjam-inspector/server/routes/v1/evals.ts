@@ -427,7 +427,12 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
 
 /**
  * Whether the run record already reached a terminal status. Used by the
@@ -470,6 +475,8 @@ function toRunDto(run: RunDoc) {
     notes: run.notes ?? null,
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+    stoppedAt: run.stoppedAt ?? null,
+    stopReason: run.stopReason ?? null,
   };
 }
 
@@ -480,7 +487,8 @@ function toIterationDto(iteration: IterationDoc) {
   const isTerminal =
     iteration.status === "completed" ||
     iteration.status === "failed" ||
-    iteration.status === "cancelled";
+    iteration.status === "cancelled" ||
+    iteration.status === "timed_out";
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -1392,7 +1400,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled).
+// (completed | failed | cancelled | timed_out).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");

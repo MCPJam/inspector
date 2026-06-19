@@ -245,6 +245,66 @@ describe("startSuiteRunWithRecorder", () => {
       },
     );
   });
+
+  it("surfaces eval iteration quota failures instead of the generic precreate error", async () => {
+    const billingError = new Error(
+      `Uncaught ConvexError: ${JSON.stringify({
+        code: "billing_limit_reached",
+        message:
+          'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+        limit: "maxEvalIterationsPerMonth",
+        gateKey: "maxEvalIterationsPerMonth",
+        plan: "free",
+        currentValue: 31,
+        allowedValue: 25,
+        resetsAt: Date.UTC(2026, 5, 19, 17, 0),
+        windowKind: "day",
+      })}`,
+    );
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runId: "run-1",
+        testCases: [
+          {
+            _id: "tc-1",
+            title: "Quota setup",
+            query: "Try setup",
+            model: "gpt-5",
+            provider: "openai",
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ],
+      })
+      .mockRejectedValueOnce(billingError)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation: mutationMock } as any,
+        suiteId: "suite-1",
+        serverIds: ["alpha"],
+      }),
+    ).rejects.toThrow(
+      /^This organization has reached its eval iteration limit \(25\)\. Resets /,
+    );
+
+    expect(mutationMock).toHaveBeenNthCalledWith(
+      4,
+      "testSuites:updateTestSuiteRun",
+      {
+        runId: "run-1",
+        status: "failed",
+        summary: undefined,
+        notes: expect.stringMatching(
+          /^This organization has reached its eval iteration limit \(25\)\. Resets /,
+        ),
+        stopReason: undefined,
+      },
+    );
+  });
 });
 
 describe("createSuiteRunRecorder", () => {

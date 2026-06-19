@@ -32,6 +32,9 @@ export function getIterationResultDisplayLabel(iteration: EvalIteration) {
   if (result === "pending") {
     return iteration.status === "running" ? "Running" : "Pending";
   }
+  if (result === "timed_out") {
+    return "Timed out";
+  }
   return result.charAt(0).toUpperCase() + result.slice(1);
 }
 
@@ -43,6 +46,9 @@ export function getIterationResultBadgeClass(iteration: EvalIteration) {
   }
   if (result === "failed") {
     return EVAL_FAILED_BADGE_CLASS;
+  }
+  if (result === "timed_out") {
+    return "bg-warning/50 text-foreground";
   }
   if (result === "cancelled") {
     return "bg-muted text-muted-foreground";

@@ -28,7 +28,7 @@ interface RunAccordionViewProps {
 interface RunTestCase {
   testCaseId: string;
   title: string;
-  result: "passed" | "failed" | "pending" | "cancelled";
+  result: "passed" | "failed" | "pending" | "cancelled" | "timed_out";
   duration: number;
   model?: string;
 }
@@ -93,7 +93,13 @@ export function RunAccordionView({
       }));
       // Sort: failed first, then passed, then pending
       testCases.sort((a, b) => {
-        const order = { failed: 0, pending: 1, cancelled: 2, passed: 3 };
+        const order = {
+          failed: 0,
+          timed_out: 0,
+          pending: 1,
+          cancelled: 2,
+          passed: 3,
+        };
         return (order[a.result] ?? 4) - (order[b.result] ?? 4);
       });
       map.set(run._id, testCases);
@@ -115,7 +121,9 @@ export function RunAccordionView({
         const isExpanded = expandedRunIds.has(run._id);
         const testCases = runTestCases.get(run._id) ?? [];
         const passed = testCases.filter((t) => t.result === "passed").length;
-        const failed = testCases.filter((t) => t.result === "failed").length;
+        const failed = testCases.filter(
+          (t) => t.result === "failed" || t.result === "timed_out",
+        ).length;
         const total = passed + failed;
         const passRate = total > 0 ? Math.round((passed / total) * 100) : null;
 
@@ -127,7 +135,9 @@ export function RunAccordionView({
               : "failed"
             : run.status === "cancelled"
               ? "cancelled"
-              : "pending");
+              : run.status === "timed_out"
+                ? "timed_out"
+                : "pending");
         const runAccent = evalStatusLeftBorderClasses(
           run.status === "running" || run.status === "pending"
             ? "running"
@@ -143,6 +153,17 @@ export function RunAccordionView({
 
         const timestamp = run.completedAt ?? run.createdAt;
         const timeAgo = timestamp ? formatTimeAgo(timestamp) : null;
+        const stopLabel =
+          run.stopReason === "run_timeout"
+            ? "20m limit"
+            : run.stopReason === "iteration_timeout"
+              ? "iteration limit"
+              : run.stopReason === "stale_worker"
+                ? "worker stale"
+                : run.stopReason === "user_cancelled"
+                  ? "user cancelled"
+                  : null;
+        const stoppedAgo = run.stoppedAt ? formatTimeAgo(run.stoppedAt) : null;
 
         const creator = run.createdBy && userMap?.get(run.createdBy);
         const isReplayingRun = replayingRunId === run._id;
@@ -252,6 +273,22 @@ export function RunAccordionView({
                     </span>
                   )}
 
+                  {run.status === "cancelled" && (
+                    <span className="text-xs text-muted-foreground font-medium shrink-0">
+                      Cancelled
+                      {stopLabel ? ` - ${stopLabel}` : ""}
+                      {stoppedAgo ? ` - ${stoppedAgo}` : ""}
+                    </span>
+                  )}
+
+                  {run.status === "timed_out" && (
+                    <span className="text-xs text-warning font-medium shrink-0">
+                      Timed out
+                      {stopLabel ? ` - ${stopLabel}` : ""}
+                      {stoppedAgo ? ` - ${stoppedAgo}` : ""}
+                    </span>
+                  )}
+
                   {creator && (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -329,7 +366,9 @@ export function RunAccordionView({
                                 ? "Failed"
                                 : tc.result === "cancelled"
                                   ? "Cancelled"
-                                  : "Pending"
+                                  : tc.result === "timed_out"
+                                    ? "Timed out"
+                                    : "Pending"
                           }
                           className={cn(
                             "flex w-full items-center gap-3 border-l-2 py-2 pl-[2.75rem] pr-4 text-left transition-colors hover:bg-muted/50",

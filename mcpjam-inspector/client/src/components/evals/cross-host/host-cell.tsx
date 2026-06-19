@@ -43,7 +43,7 @@ function stableOrder(iterations: EvalIteration[]): EvalIteration[] {
 function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
   const result = computeIterationResult(iteration);
   if (result === "passed") return "pass";
-  if (result === "failed") return "fail";
+  if (result === "failed" || result === "timed_out") return "fail";
   if (result === "cancelled") return "cancelled";
   return "pending";
 }
