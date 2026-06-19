@@ -92,6 +92,12 @@ export type DirectTurnOptions = {
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
   onStepFinish?: RunDirectChatTurnOptions["onStepFinish"];
   onEngineError?: RunDirectChatTurnOptions["onEngineError"];
+  // TODO(PR 3 — local eval migration): local STREAMING eval still depends on the
+  // direct engine's `traceEvents` (`onStepSnapshot`, `onToolResultChunk`) to emit
+  // its SSE. Before PR 3 deletes `stream-adapter.ts`, expose normalized
+  // `onToolCall`/`onToolResult` (+ snapshot) callbacks here and prove byte-shape
+  // parity against `stream-adapter.test.ts`. This facade is NOT yet the full eval
+  // streaming turn API.
 } & Pick<
   RunDirectChatTurnOptions,
   | "systemPrompt"
@@ -104,6 +110,7 @@ export type DirectTurnOptions = {
   | "progressivePlan"
   | "discoveryState"
   | "prepareAdvertisedTools"
+  | "experimentalTelemetry"
 >;
 
 export type RunUnifiedAssistantTurnOptions = HostedTurnOptions | DirectTurnOptions;
@@ -175,6 +182,7 @@ export async function runUnifiedAssistantTurn(
     progressivePlan: opts.progressivePlan,
     discoveryState: opts.discoveryState,
     prepareAdvertisedTools: opts.prepareAdvertisedTools,
+    experimentalTelemetry: opts.experimentalTelemetry,
     onLiveTextDelta: opts.onLiveTextDelta,
     onStepFinish: opts.onStepFinish,
     onEngineError: opts.onEngineError,
