@@ -80,7 +80,18 @@ export type DirectTurnOptions = {
   streamSink: RunAssistantTurnStreamSink;
   /** Input history; `newMessages` are appended onto this for `messages`. */
   messages: ModelMessage[];
+  /**
+   * Live callbacks forwarded to the direct engine. `onEngineError` matters for
+   * correctness: streamText provider/guardrail failures surface through it (the
+   * engine does NOT throw), and the chat local-org wrapper gates persistence on
+   * it. Forward it so a migrated direct caller can't record a mid-stream engine
+   * failure as a successful turn. (Eval additionally detects this via the error
+   * span in `turnTrace.spans`.) Full cross-runtime callback normalization —
+   * onToolCall/onToolResult mapping for eval SSE — lands with PR 3/PR 5.
+   */
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
+  onStepFinish?: RunDirectChatTurnOptions["onStepFinish"];
+  onEngineError?: RunDirectChatTurnOptions["onEngineError"];
 } & Pick<
   RunDirectChatTurnOptions,
   | "systemPrompt"
@@ -165,6 +176,8 @@ export async function runUnifiedAssistantTurn(
     discoveryState: opts.discoveryState,
     prepareAdvertisedTools: opts.prepareAdvertisedTools,
     onLiveTextDelta: opts.onLiveTextDelta,
+    onStepFinish: opts.onStepFinish,
+    onEngineError: opts.onEngineError,
   });
   const headless = await consumeDirectChatTurnHeadless(handle);
   // Direct's `response.messages` IS this turn's response slice.

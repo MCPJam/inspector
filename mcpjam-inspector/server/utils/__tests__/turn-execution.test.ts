@@ -176,4 +176,31 @@ describe("runUnifiedAssistantTurn", () => {
       expect.objectContaining({ onLiveTextDelta }),
     );
   });
+
+  it("direct: forwards onEngineError so engine failures aren't lost (chat persistence gate)", async () => {
+    runDirectChatTurnMock.mockReturnValue({ handle: true });
+    consumeDirectChatTurnHeadlessMock.mockResolvedValue({
+      messages: [],
+      steps: [],
+      totalUsage: {},
+      finishReason: "error",
+      spans: [],
+      turnTrace: { spans: [], usage: {} },
+      aborted: false,
+    });
+    const onEngineError = vi.fn();
+
+    await runUnifiedAssistantTurn({
+      runtime: { kind: "direct", llmModel: {}, modelId: "m1" },
+      streamSink: "none",
+      messages: [userMsg],
+      systemPrompt: "sys",
+      tools: {},
+      onEngineError,
+    } as never);
+
+    expect(runDirectChatTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ onEngineError }),
+    );
+  });
 });
