@@ -20,10 +20,7 @@
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
-import {
-  DEFAULT_REQUEST_TIMEOUT_MS,
-  stableStringifyJson,
-} from "@/lib/client-config";
+import { stableStringifyJson } from "@/lib/client-config";
 import {
   buildHostCapabilities,
   findHostStyle,
@@ -41,7 +38,9 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+// Single source of truth for the empty host-config builder: the same
+// Node-safe function the server `--template` resolver and the CLI use.
+import { emptyHostConfigInputV2 as sdkEmptyHostConfigInputV2 } from "@mcpjam/sdk/host-config/templates";
 // Shareable host-config primitives + the portable protocol-version resolver
 // live in @mcpjam/sdk/host-config/internal — single source of truth for the
 // backend canonicalizer and the inspector client. Re-exported below so the
@@ -252,103 +251,13 @@ export type HostConfigDtoV2 = {
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 
-export function emptyHostConfigInputV2(
-  partial: Partial<HostConfigInputV2> = {}
-): HostConfigInputV2 {
-  // Clone every caller-provided array/record so the returned config can
-  // be mutated freely without aliasing the input. Matches the cloning
-  // behavior of hostConfigDtoToInput.
-  return {
-    hostStyle: partial.hostStyle ?? DEFAULT_HOST_STYLE_V2,
-    modelId: partial.modelId ?? "",
-    systemPrompt: partial.systemPrompt ?? "",
-    temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
-    requireToolApproval: partial.requireToolApproval ?? false,
-    // Default ON: every new config respects SEP-1865 visibility filtering
-    // unless the template (e.g. Cursor) explicitly opts out. Matches the
-    // spec-default behavior.
-    respectToolVisibility: partial.respectToolVisibility ?? true,
-    // Brand-new inputs default to explicit Off. The orchestrator still
-    // reads `undefined` as "auto policy" (existing rows surfaced by
-    // `hostConfigDtoToInput` round-trip verbatim), but creating a fresh
-    // host shouldn't silently opt into auto: a user who hasn't touched
-    // the toggle should not see progressive mode trip on a large
-    // catalog without an explicit choice. They can pick Auto if they
-    // want the auto policy.
-    progressiveToolDiscovery: partial.progressiveToolDiscovery ?? false,
-    serverIds: partial.serverIds ? [...partial.serverIds] : [],
-    optionalServerIds: partial.optionalServerIds
-      ? [...partial.optionalServerIds]
-      : [],
-    builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
-    computer: partial.computer
-      ? {
-          kind: "personal",
-          ...(partial.computer.workdir
-            ? { workdir: partial.computer.workdir }
-            : {}),
-        }
-      : undefined,
-    connectionDefaults: {
-      headers: partial.connectionDefaults?.headers
-        ? { ...partial.connectionDefaults.headers }
-        : {},
-      requestTimeout:
-        partial.connectionDefaults?.requestTimeout ??
-        DEFAULT_REQUEST_TIMEOUT_MS,
-    },
-    // Seed with the SDK's default capabilities (which include the MCP UI
-    // extension and any other built-ins) so a brand-new project/chatbox/
-    // eval host config keeps advertising them. The legacy
-    // ProjectClientConfig path also seeds from getDefaultClientCapabilities;
-    // an empty {} here would silently drop MCP Apps support until the
-    // user manually edited the capability JSON.
-    //
-    // Deep-clone — clientCapabilities and hostContext can be nested
-    // (e.g. extensions.mimeTypes arrays). A shallow spread would alias
-    // the inner trees with the partial/source, allowing later mutations
-    // to leak through.
-    clientCapabilities: partial.clientCapabilities
-      ? deepCloneJsonRecord(partial.clientCapabilities)
-      : deepCloneJsonRecord(
-          getDefaultClientCapabilities() as Record<string, unknown>
-        ),
-    hostContext: partial.hostContext
-      ? deepCloneJsonRecord(partial.hostContext)
-      : {},
-    hostCapabilitiesOverride: partial.hostCapabilitiesOverride
-      ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
-      : undefined,
-    chatUiOverride: partial.chatUiOverride
-      ? cloneChatUiOverride(partial.chatUiOverride)
-      : undefined,
-    // Same `undefined`-preservation rule as hostCapabilitiesOverride.
-    // Backend distinguishes `undefined` (use SDK defaults) from
-    // `{ profileVersion: 1 }` (empty envelope) on the hash, so a brand-new
-    // input MUST stay undefined until the user opts in via the editor.
-    mcpProfile: partial.mcpProfile
-      ? cloneMcpProfile(partial.mcpProfile)
-      : undefined,
-    serverConnectionOverrides: partial.serverConnectionOverrides
-      ? Object.fromEntries(
-          Object.entries(partial.serverConnectionOverrides).map(([k, v]) => [
-            k,
-            {
-              ...(v.headersOverride !== undefined
-                ? { headersOverride: { ...v.headersOverride } }
-                : {}),
-              ...(v.requestTimeoutOverride !== undefined
-                ? { requestTimeoutOverride: v.requestTimeoutOverride }
-                : {}),
-              ...(v.mcpProtocolVersionOverride !== undefined
-                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
-                : {}),
-            },
-          ])
-        )
-      : undefined,
-  };
-}
+// Delegates to the Node-safe SDK builder so the empty-config defaults have a
+// single source of truth shared with the server `--template` resolver and the
+// CLI. Cast to the strict client aggregate — the runtime object is
+// field-identical (guarded by host-template-seed-parity.test.ts).
+export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
+  partial?: Partial<HostConfigInputV2>,
+) => HostConfigInputV2;
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and

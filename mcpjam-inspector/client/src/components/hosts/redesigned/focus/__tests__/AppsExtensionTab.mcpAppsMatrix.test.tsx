@@ -10,6 +10,7 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { seedFromHostTemplate } from "@/lib/client-templates";
 import { AppsExtensionTab } from "../AppsExtensionTab";
 
 /**
@@ -317,6 +318,23 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
       name: "Advertise MCP App support",
     });
     await user.click(toggle); // off
+    await user.click(toggle); // back on
+    expect(draftRef.current.clientCapabilities).toEqual(original);
+  });
+
+  it("toggling Mistral MCP App support off then on restores the normalized MCP UI extension", async () => {
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix(seedFromHostTemplate("mistral"));
+    const original = JSON.parse(
+      JSON.stringify(draftRef.current.clientCapabilities ?? {}),
+    );
+    const toggle = screen.getByRole("switch", {
+      name: "Advertise MCP App support",
+    });
+
+    await user.click(toggle); // off
+    expect(draftRef.current.clientCapabilities).toEqual({ extensions: {} });
+
     await user.click(toggle); // back on
     expect(draftRef.current.clientCapabilities).toEqual(original);
   });

@@ -39,10 +39,12 @@ export function detectInlineImageProtocol(
     return "kitty";
   }
 
-  // iTerm2 inline-image protocol: iTerm2 and WezTerm.
+  // iTerm2 inline-image protocol: iTerm2, WezTerm, and Warp (which renders
+  // OSC 1337 images for normal command output).
   if (
     termProgram === "iTerm.app" ||
     termProgram === "WezTerm" ||
+    termProgram === "WarpTerminal" ||
     env.LC_TERMINAL === "iTerm2"
   ) {
     return "iterm";

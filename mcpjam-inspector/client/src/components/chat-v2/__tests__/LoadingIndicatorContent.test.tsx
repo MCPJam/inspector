@@ -29,18 +29,18 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
     expect(
-      screen.getByTestId("loading-indicator-claude-static"),
+      screen.getByTestId("loading-indicator-claude-static")
     ).not.toHaveAttribute("hidden");
     expect(
-      screen.getByTestId("loading-indicator-claude-strip-900"),
+      screen.getByTestId("loading-indicator-claude-strip-900")
     ).toHaveAttribute("hidden");
     expect(
-      screen.getByTestId("loading-indicator-claude-strip-800"),
+      screen.getByTestId("loading-indicator-claude-strip-800")
     ).toHaveAttribute("hidden");
   });
 
@@ -64,17 +64,17 @@ describe("LoadingIndicatorContent", () => {
 
     expect(screen.getByTestId("loading-indicator-claude")).toHaveAttribute(
       "data-claude-mode",
-      "static",
+      "static"
     );
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("loading-indicator-claude-static"),
+      screen.getByTestId("loading-indicator-claude-static")
     ).not.toHaveAttribute("hidden");
     expect(
-      screen.getByTestId("loading-indicator-claude-strip-900"),
+      screen.getByTestId("loading-indicator-claude-strip-900")
     ).toHaveAttribute("hidden");
     expect(
-      screen.getByTestId("loading-indicator-claude-strip-800"),
+      screen.getByTestId("loading-indicator-claude-strip-800")
     ).toHaveAttribute("hidden");
   });
 
@@ -82,7 +82,7 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
@@ -92,14 +92,14 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="claude-code">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(
-      screen.getByTestId("loading-indicator-claude-code-cli"),
+      screen.getByTestId("loading-indicator-claude-code-cli")
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("loading-indicator-claude"),
+      screen.queryByTestId("loading-indicator-claude")
     ).not.toBeInTheDocument();
   });
 
@@ -107,7 +107,7 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
@@ -132,12 +132,12 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="mcpjam">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-mcpjam")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("loading-indicator-claude"),
+      screen.queryByTestId("loading-indicator-claude")
     ).not.toBeInTheDocument();
   });
 
@@ -145,10 +145,12 @@ describe("LoadingIndicatorContent", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <LoadingIndicatorContent modelProvider="openai" />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
-    expect(screen.queryByTestId("loading-indicator-dot")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-dot")
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -163,5 +165,12 @@ describe("inline streaming footer host helpers", () => {
   it("excludes Claude Code from the Claude mark footer (CLI agent, own spinner)", () => {
     expect(usesClaudeInlineStreamingFooter("claude-code")).toBe(false);
     expect(usesMcpjamInlineStreamingFooter("claude-code")).toBe(false);
+  });
+
+  it("excludes AgentCore from the Claude mark footer (text-only runtime, generic shimmer)", () => {
+    // AgentCore borrows the "claude" bubble family but must not paint the
+    // Anthropic mark while streaming — it shows the generic Codex shimmer.
+    expect(usesClaudeInlineStreamingFooter("agentcore")).toBe(false);
+    expect(usesMcpjamInlineStreamingFooter("agentcore")).toBe(false);
   });
 });

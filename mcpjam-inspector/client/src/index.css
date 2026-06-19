@@ -89,6 +89,35 @@
     display: none;
   }
 
+  .bg-brand-500 {
+    background-color: var(
+      --bg-brand-500,
+      var(--bg-basic-orange-strong, #ff8a00)
+    );
+  }
+
+  .text-white-default {
+    color: var(--text-white-default, #ffffff);
+  }
+
+  /* Mistral "M" mark colors — consumed by MistralStaticAvatar
+     (`mistral-avatar.tsx`) via `--mistral-spinner-{brand,white}`. The old
+     `.mistral-spinner-indicator` selector and `--mistral-spinner-{badge,strong}`
+     vars fed the retired avatar-ring spinner; the thinking indicator is now
+     Le Chat's SMIL five-square loader (`mistral-spinner.tsx`), which carries
+     its own brand hex, so those are dropped. */
+  .mistral-mark-colors {
+    --mistral-spinner-brand: #fa500e;
+    --mistral-spinner-white: #ffffff;
+  }
+
+  .dark .mistral-mark-colors,
+  .app-theme-scope.dark .mistral-mark-colors,
+  [data-thread-theme="dark"] .mistral-mark-colors {
+    --mistral-spinner-brand: #fa500f;
+    --mistral-spinner-white: #ffffff;
+  }
+
   /* Trace timeline waterfall — category bar fills */
   .trace-waterfall-bar-prompt {
     background-color: var(--trace-waterfall-bar-prompt);
@@ -110,8 +139,7 @@
   .trace-waterfall-bar-tool,
   .trace-waterfall-bar-step,
   .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28),
       0 1px 3px rgb(15 23 42 / 0.08);
   }
   .dark .trace-waterfall-bar-prompt,
@@ -124,8 +152,7 @@
   .app-theme-scope.dark .trace-waterfall-bar-tool,
   .app-theme-scope.dark .trace-waterfall-bar-step,
   .app-theme-scope.dark .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12),
       0 1px 4px rgb(0 0 0 / 0.26);
   }
   .trace-waterfall-row-selected {
@@ -351,6 +378,140 @@
   }
 }
 
+/* n8n thinking indicator — MCPJam's three-dot bounce wave recolored to n8n's
+   coral brand red (#FF6D5A, the n8n logo fill). Shares the
+   `mcpjam-mark-dot-wave` keyframes and reduced-motion fallback. */
+.n8n-mark-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.25rem;
+}
+
+.n8n-mark-indicator__dot {
+  display: inline-block;
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 9999px;
+  background-color: #ff6d5a;
+  animation: mcpjam-mark-dot-wave 1.25s ease-in-out infinite;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.n8n-mark-indicator__dot--1 {
+  animation-delay: 0ms;
+}
+
+.n8n-mark-indicator__dot--2 {
+  animation-delay: 160ms;
+}
+
+.n8n-mark-indicator__dot--3 {
+  animation-delay: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .n8n-mark-indicator__dot {
+    animation: thinking-dot-pulse 1.5s ease-in-out infinite;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Perplexity thinking indicator — captured verbatim from perplexity.ai. A 20px
+   overflow-hidden window onto a wide SVG (`viewBox 0 0 1248 24`) holding the
+   Perplexity mark drawn as 52 progressive rotation frames. The strip steps left
+   one frame at a time (`translate 0% → -100%`, `steps(52)`), so a single mark
+   sits in the window and flips frame-to-frame in place. Stroke is `currentColor`;
+   the component sets a themed foreground tone. */
+@keyframes perplexity-indicator {
+  0% {
+    transform: translateZ(0) translate(0%);
+  }
+  100% {
+    transform: translateZ(0) translate(-100%);
+  }
+}
+
+.perplexity-indicator__strip {
+  height: 100%;
+  width: auto;
+  flex-shrink: 0;
+  /* Sprite sheet: 52 mark frames tiled across the strip, each exactly the width
+     of the 20px window. `steps(52)` snaps the strip one whole frame at a time so
+     a single mark sits in the window and flips frame-to-frame (a page-flip / in-
+     place rotation). `linear` here is wrong — it slides the strip continuously,
+     so several marks sweep across the window at once. 3s ≈ 17fps reads as a calm
+     morph; tweak the duration to taste. */
+  animation: perplexity-indicator 3s steps(52) infinite;
+  animation-fill-mode: both;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .perplexity-indicator__strip {
+    /* Freeze on the first frame (the full symmetric mark) instead of looping. */
+    animation: none;
+    transform: translate(0%);
+  }
+}
+
+/* Mistral Le Chat "Thinking" shimmer label — verbatim port of Le Chat's
+   `animate-shimmer-text` rule (captured from chat.mistral.ai DevTools). A
+   200%-wide gradient clips to the glyphs and a bright stripe sweeps
+   150% → -50% over 2s ease-in-out infinite. Pairs with the SMIL five-square
+   loader in `indicators/mistral-spinner.tsx`.
+
+   `--mistral-shimmer-{base,highlight}` derive the two tones so `data-theme`
+   can swap them. Dark mode is the verbatim capture (base
+   rgba(255,255,255,.498), highlight #fff); the light override inverts to a
+   dark base/highlight below. */
+.mistral-shimmer-text {
+  --mistral-shimmer-base: rgba(255, 255, 255, 0.498);
+  --mistral-shimmer-highlight: #ffffff;
+  background-image: linear-gradient(
+    90deg,
+    var(--mistral-shimmer-base) 0%,
+    var(--mistral-shimmer-base) 40%,
+    var(--mistral-shimmer-highlight) 50%,
+    var(--mistral-shimmer-base) 60%,
+    var(--mistral-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mistral-shimmer-text 2s ease-in-out infinite;
+  will-change: background-position;
+}
+
+/* Light mode: Le Chat's capture was dark-theme; mirror it on light with a
+   dark base + near-black highlight so the bright stripe still reads. */
+.mistral-shimmer-text[data-theme="light"] {
+  --mistral-shimmer-base: rgba(0, 0, 0, 0.498);
+  --mistral-shimmer-highlight: #000000;
+}
+
+@keyframes mistral-shimmer-text {
+  0%,
+  20% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mistral-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
 .claude-loading-indicator__stage {
   isolation: isolate;
 }
@@ -376,14 +537,12 @@
 }
 
 .claude-loading-indicator__strip--900 {
-  animation:
-    claude-strip-900-position 1.7s linear infinite,
+  animation: claude-strip-900-position 1.7s linear infinite,
     claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
-  animation:
-    claude-strip-800-position 1.7s linear infinite,
+  animation: claude-strip-800-position 1.7s linear infinite,
     claude-strip-800-visibility 1.7s step-end infinite;
 }
 
@@ -1067,7 +1226,6 @@
  * utility. Falls back to the system mono stack offline.
  */
 @theme {
-  --font-metric:
-    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }

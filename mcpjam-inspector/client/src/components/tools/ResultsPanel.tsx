@@ -9,6 +9,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
@@ -61,8 +62,10 @@ export function ResultsPanel({
   // serverId the resolver looks up. The tools tab is single-server per
   // panel, so one lookup per render is all we need.
   const resolveHostCaps = useActiveHostCapsResolver();
+  const hostStyle = useChatboxHostStyle();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
-    resolveHostCaps(serverName)
+    resolveHostCaps(serverName),
+    { hostStyle },
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);

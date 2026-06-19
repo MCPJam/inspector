@@ -21,6 +21,7 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
+import { MistralStaticAvatar } from "@/lib/client-styles/mistral-avatar";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -204,7 +205,9 @@ function MessageViewImpl({
     themeMode: chatboxHostTheme ?? themeMode,
     chatboxHostStyle,
   });
-  const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  const shouldRenderMistralAssistantAvatar = chatboxHostStyle === "mistral";
+  const shouldRenderAssistantAvatar =
+    chatboxHostStyle === null || shouldRenderMistralAssistantAvatar;
   // Copilot mimics show their own "Copilot + mascot" row above the
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
@@ -314,7 +317,12 @@ function MessageViewImpl({
           : "w-full min-w-0"
       }
     >
-      {shouldRenderAssistantAvatar ? (
+      {shouldRenderMistralAssistantAvatar ? (
+        <MistralStaticAvatar
+          ariaLabel="Mistral assistant"
+          className="mt-1 size-7 shrink-0 self-start"
+        />
+      ) : shouldRenderAssistantAvatar ? (
         <div
           className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
           aria-label={assistantAvatar.ariaLabel}

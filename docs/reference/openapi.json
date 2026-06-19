@@ -18,6 +18,10 @@
   "security": [{ "bearerAuth": [] }],
   "tags": [
     {
+      "name": "Hosts",
+      "description": "Project hosts: named model + capability profiles you run chats and eval suites against."
+    },
+    {
       "name": "Server diagnostics",
       "description": "Connect-level health checks against a saved MCP server."
     },
@@ -55,6 +59,148 @@
     }
   ],
   "paths": {
+    "/projects/{projectId}/hosts": {
+      "get": {
+        "operationId": "listHosts",
+        "tags": ["Hosts"],
+        "summary": "List a project's hosts",
+        "description": "The hosts saved in the project — the named model + capability profiles you attach to chats and eval suites. Returns the `id`s the host detail/update/delete routes take.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's hosts.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "post": {
+        "operationId": "createHost",
+        "tags": ["Hosts"],
+        "summary": "Create a host (from a template or a full config)",
+        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the same presets the inspector UI uses, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HostCreateRequest" },
+              "example": { "name": "Claude", "template": "claude", "theme": "dark" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The host was created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/hosts/{hostId}": {
+      "get": {
+        "operationId": "getHost",
+        "tags": ["Hosts"],
+        "summary": "Get a host",
+        "description": "One host's full settings, including its resolved host config. A host that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host settings.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "patch": {
+        "operationId": "updateHost",
+        "tags": ["Hosts"],
+        "summary": "Update a host",
+        "description": "Edit a host's display name and/or its host config. Only the fields you pass change. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HostUpdateRequest" },
+              "example": { "name": "Claude (renamed)" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated host settings.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteHost",
+        "tags": ["Hosts"],
+        "summary": "Delete a host",
+        "description": "Permanently delete a host from the project. Pass `{ \"force\": true }` to delete a host that is still referenced (e.g. by an eval suite). Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": { "type": "boolean", "description": "Delete even if the host is still referenced." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The host was deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDeleted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}/validate": {
       "post": {
         "operationId": "validateServer",
@@ -1102,6 +1248,13 @@
         "in": "path",
         "required": true,
         "description": "Chatbox ID, as returned by the project's chatbox list.",
+        "schema": { "type": "string" }
+      },
+      "hostId": {
+        "name": "hostId",
+        "in": "path",
+        "required": true,
+        "description": "Host ID, as returned by the project's host list.",
         "schema": { "type": "string" }
       }
     },
@@ -2343,6 +2496,70 @@
         "properties": {
           "serverId": { "type": "string" },
           "status": { "type": "string", "enum": ["closed"] }
+        }
+      },
+      "Host": {
+        "type": "object",
+        "description": "A host in a project, as returned by the host list.",
+        "required": ["id", "name", "hostConfigId", "modelId", "serverCount", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "hostConfigId": { "type": "string", "description": "ID of the content-addressed host config this host points at." },
+          "modelId": { "type": "string", "description": "Resolved model id, e.g. `anthropic/claude-haiku-4.5`." },
+          "serverCount": { "type": "integer", "description": "Number of MCP servers attached to the host config." },
+          "createdAt": { "type": "number", "description": "Unix epoch milliseconds." },
+          "updatedAt": { "type": "number", "description": "Unix epoch milliseconds." }
+        }
+      },
+      "HostPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Host" } }
+        }
+      },
+      "HostDetail": {
+        "type": "object",
+        "description": "A host plus its resolved host config (model, capabilities, host context, MCP profile).",
+        "required": ["id", "name", "config"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "config": { "type": "object", "additionalProperties": true, "description": "Host config v2 DTO. Opaque object; shape mirrors the inspector's host editor." }
+        }
+      },
+      "HostCreateRequest": {
+        "type": "object",
+        "description": "Create a host from a built-in template OR a full host config. Exactly one of `template` or `config` is required.",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "Display name for the new host." },
+          "template": {
+            "type": "string",
+            "description": "Built-in template id to seed the host config from.",
+            "enum": ["mcpjam", "claude", "claude-code", "chatgpt", "mistral", "cursor", "codex", "copilot", "vscode", "agentcore", "n8n", "perplexity"]
+          },
+          "theme": { "type": "string", "enum": ["light", "dark"], "description": "Theme stamped into the seeded config (template only)." },
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Full host config v2, used verbatim (alternative to `template`)." }
+        },
+        "oneOf": [{ "required": ["template"] }, { "required": ["config"] }]
+      },
+      "HostUpdateRequest": {
+        "type": "object",
+        "description": "Edit a host. Provide at least one of `name` or `config`; only the fields you pass change.",
+        "properties": {
+          "name": { "type": "string", "description": "New display name." },
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Replacement host config v2." }
+        },
+        "anyOf": [{ "required": ["name"] }, { "required": ["config"] }]
+      },
+      "HostDeleted": {
+        "type": "object",
+        "required": ["id", "deleted"],
+        "properties": {
+          "id": { "type": "string" },
+          "deleted": { "type": "boolean", "enum": [true] }
         }
       }
     },
