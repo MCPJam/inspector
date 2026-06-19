@@ -166,7 +166,7 @@ function SectionRows({
         <th
           colSpan={colSpan}
           scope="colgroup"
-          className="sticky top-[64px] z-20 bg-secondary border-y border-border px-5 py-2 text-left"
+          className="sticky top-[64px] z-20 bg-muted border-y border-border px-5 py-2 text-left"
         >
           <motion.div
             className="flex items-baseline gap-3"
@@ -238,7 +238,7 @@ function SubsectionRows({
       <tr>
         <td
           colSpan={colSpan}
-          className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
+          className="px-5 pt-5 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
         >
           {label}
         </td>
