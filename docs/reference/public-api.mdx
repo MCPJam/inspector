@@ -283,7 +283,7 @@ RUN_ID=$(curl -fsS -X POST \
     }]
   }' | jq -er .runId)
 
-# 2. Poll until status is completed | failed | cancelled
+# 2. Poll until status is completed | failed | cancelled | timed_out
 curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 
