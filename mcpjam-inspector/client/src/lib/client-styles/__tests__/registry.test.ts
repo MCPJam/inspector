@@ -6,6 +6,7 @@ import {
   CODEX_HOST_STYLE,
   COPILOT_HOST_STYLE,
   DEFAULT_HOST_STYLE,
+  GOOSE_HOST_STYLE,
   MCPJAM_HOST_STYLE,
   N8N_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
@@ -24,6 +25,7 @@ describe("host-styles registry", () => {
     expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
+    expect(findHostStyle("goose")).toBe(GOOSE_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
     expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
@@ -48,6 +50,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("mcpjam")).toBe(true);
     expect(isKnownHostStyleId("claude")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
+    expect(isKnownHostStyleId("goose")).toBe(true);
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
     expect(isKnownHostStyleId("claude-code")).toBe(true);
@@ -63,6 +66,7 @@ describe("host-styles registry", () => {
     expect(ids).toContain("mcpjam");
     expect(ids).toContain("claude");
     expect(ids).toContain("chatgpt");
+    expect(ids).toContain("goose");
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
     expect(ids).toContain("claude-code");
@@ -72,6 +76,7 @@ describe("host-styles registry", () => {
     // of pickers.
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
+    expect(ids.indexOf("mistral")).toBeLessThan(ids.indexOf("goose"));
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
@@ -159,6 +164,12 @@ describe("host-styles registry", () => {
   it("advertises no MCP Apps host capabilities for headless client styles", () => {
     expect(getHostCapabilitiesForStyle("n8n")).toEqual({});
     expect(getHostCapabilitiesForStyle("perplexity")).toEqual({});
+  });
+
+  it("keeps Goose to its probed openLinks-only advertised surface", () => {
+    expect(getHostCapabilitiesForStyle("goose")).toEqual({
+      openLinks: {},
+    });
   });
 
   it("rejects duplicate host style ids", async () => {

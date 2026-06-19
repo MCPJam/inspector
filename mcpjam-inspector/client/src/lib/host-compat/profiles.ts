@@ -23,7 +23,7 @@ import type { CompatProvenance, HostCompatProfile } from "./types";
  * serverResources, message, sandbox, …) still come live from the registry,
  * so the report never drifts from the playground's emulation.
  *
- * Provenance: probe = captured from a real host (Cursor 3.4.17);
+ * Provenance: probe = captured from a real host;
  * vendor-doc = published vendor table (Copilot; ChatGPT's OpenAI surface);
  * assumed = best-effort preset, unverified.
  */
@@ -57,6 +57,13 @@ const MARKET_HOSTS: readonly MarketHost[] = [
     id: "mistral",
     label: "Mistral",
     logoSrc: "/mistral_logo.png",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "goose",
+    label: "Goose",
+    logoSrc: "/goose_logo.svg",
     provenance: "probe",
     rendersMcpApps: true,
   },

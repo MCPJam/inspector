@@ -1,6 +1,5 @@
 /**
- * Node-safe host-template seeds (9 templates: mcpjam, claude, claude-code,
- * chatgpt, cursor, codex, copilot, vscode, agentcore).
+ * Node-safe host-template seeds for built-in MCPJam host presets.
  *
  * GENERATED-FROM (verbatim port): inspector client
  * `client/src/lib/client-templates.ts`. Moved into the SDK so the server's
@@ -28,6 +27,11 @@ import {
   getMcpJamStyleVariables,
 } from "./mcpjam-style.js";
 import { getMistralStyleVariables } from "./mistral-style.js";
+import {
+  GOOSE_FONT_CSS,
+  GOOSE_PLATFORM,
+  getGooseStyleVariables,
+} from "./goose-style.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -234,6 +238,7 @@ export const HOST_TEMPLATE_IDS = [
   "claude-code",
   "chatgpt",
   "mistral",
+  "goose",
   "cursor",
   "codex",
   "copilot",
@@ -988,6 +993,114 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             permissions: {
               mode: "custom",
               allow: { clipboardWrite: true },
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "goose",
+    label: "Goose",
+    description:
+      "Goose Desktop. MCP Apps rendering, no OpenAI compatibility shim.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "goose",
+        // Goose Desktop is model-provider agnostic. Use MCPJam's smallest
+        // hosted model so the simulated chat runs before a user wires their
+        // own Goose-like model stack.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+
+      // Captured from Goose Desktop 1.38.0: the client advertises MCP UI
+      // support plus roots, sampling, and elicitation. Preserve the raw
+      // empty-object shapes instead of normalizing elicitation to
+      // `{ form: {} }` so the MCP initialize layer stays faithful.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+        roots: {},
+        sampling: {},
+        elicitation: {},
+      };
+
+      // Goose's captured `ui/initialize` response only advertised
+      // `openLinks`. It rendered the View and supplied rich HostContext,
+      // but did not claim serverTools, resources, logging, message, or
+      // updateModelContext.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+      };
+
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: { width: 1274 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Goose/1.38.0 Chrome/146.0.7680.65 Electron/41.0.0 Safari/537.36",
+        platform: GOOSE_PLATFORM,
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: getGooseStyleVariables(theme),
+          css: { fonts: GOOSE_FONT_CSS },
+        },
+      };
+
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26"],
+          clientInfo: { name: "goose-desktop", version: "1.38.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "MCP-UI Host", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "font-src": ["https://cash-f.squarecdn.com"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
             },
             sandboxAttrs: ["allow-forms"],
           },

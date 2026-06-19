@@ -2,6 +2,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
+import gooseLogo from "/goose_logo.svg";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -41,6 +42,12 @@ import {
   MISTRAL_PLATFORM,
   getMistralStyleVariables,
 } from "@/config/mistral-client-context";
+import {
+  GOOSE_CHAT_BACKGROUND,
+  GOOSE_FONT_CSS,
+  GOOSE_PLATFORM,
+  getGooseStyleVariables,
+} from "@/config/goose-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
@@ -235,6 +242,34 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   widgetDisplayModeRequests: "accept",
 };
 
+/**
+ * Goose Desktop 1.38.0 captured MCP Apps surface. Goose renders MCP Apps and
+ * exposes a rich HostContext (theme, display modes, style variables), but the
+ * captured `ui/initialize.hostCapabilities` only advertised `openLinks`.
+ * Keep the rest off until a probe demonstrates those bridge methods.
+ */
+export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: false,
+  serverResources: false,
+  logging: false,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+  downloadFile: false,
+  requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
+};
+
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
 // when behavior matters, and refine as the inspector's enforcement layer
@@ -380,6 +415,32 @@ export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
     family: "chatgpt",
     resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],
     loadingIndicator: MistralSpinnerIndicator,
+  },
+};
+
+/**
+ * Goose Desktop host style. Captured from Goose 1.38.0: base MCP advertises
+ * `io.modelcontextprotocol/ui`, the iframe completes `ui/initialize`, and the
+ * host provides Cash Sans style variables. It does not expose `window.openai`,
+ * so Apps SDK widgets need an MCP Apps bridge or text fallback.
+ */
+export const GOOSE_HOST_STYLE: HostStyleDefinition = {
+  id: "goose",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: GOOSE_PLATFORM,
+    fontCss: GOOSE_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_GOOSE_SURFACE,
+    resolveStyleVariables: getGooseStyleVariables,
+  },
+  chatUi: {
+    label: "Goose",
+    shortLabel: "Goose-style host",
+    pickerDescription: "Goose Desktop host",
+    logoSrc: gooseLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => GOOSE_CHAT_BACKGROUND[theme],
+    loadingIndicator: ChatGptDotIndicator,
   },
 };
 
@@ -711,6 +772,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
   MISTRAL_HOST_STYLE,
+  GOOSE_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,

@@ -28,6 +28,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
+import gooseLogo from "/goose_logo.svg";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -48,6 +49,7 @@ const LOGO_BY_ID: Record<HostTemplateId, string> = {
   "claude-code": claudeCodeLogo,
   chatgpt: openaiLogo,
   mistral: mistralLogo,
+  goose: gooseLogo,
   cursor: cursorLogo,
   codex: codexLogo,
   copilot: copilotLogo,

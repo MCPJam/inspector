@@ -12,6 +12,7 @@ const ALL_IDS: HostTemplateId[] = [
   "claude-code",
   "chatgpt",
   "mistral",
+  "goose",
   "cursor",
   "codex",
   "copilot",

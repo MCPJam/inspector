@@ -246,6 +246,24 @@ describe("evaluateAllHosts (real registry)", () => {
     expect(chatgpt?.verdict).toBe("works");
   });
 
+  it("renders MCP Apps widgets in Goose but reports scanned bridge gaps", () => {
+    const clean = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const gooseClean = clean.reports.find((r) => r.hostId === "goose");
+    expect(
+      gooseClean?.findings.some((f) => /fall back to text/.test(f.title)),
+    ).toBe(false);
+    expect(gooseClean?.verdict).toBe("works");
+
+    const scanned = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {
+      message: ["w"],
+    });
+    const gooseScanned = scanned.reports.find((r) => r.hostId === "goose");
+    expect(gooseScanned?.verdict).toBe("degraded");
+    expect(
+      gooseScanned?.findings.some((f) => /ui\/message/.test(f.detail)),
+    ).toBe(true);
+  });
+
   it("surfaces Cursor's follow-up gap only for a widget that actually uses it", () => {
     const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {
       message: ["w"],
