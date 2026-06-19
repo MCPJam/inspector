@@ -1661,6 +1661,20 @@ const runIterationWithAiSdk = async ({
         );
         recordedSpans.push(...activeTraceCtx.recordedSpans);
         toolsCalledByPrompt.push([]);
+        // Per-turn signals for this (failed) turn so per-turn checks evaluate
+        // against the real partial transcript rather than an empty slice — an
+        // empty-response turn has no assistant text but its spans may carry
+        // tool errors that `noToolErrors` must see.
+        assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+          promptResponseMessages
+        );
+        toolErrorsByPrompt[promptIndex] = extractToolErrors({
+          spans: activeTraceCtx.recordedSpans,
+          messages: promptResponseMessages as Array<{
+            role: string;
+            content: unknown;
+          }>,
+        });
         break;
       }
       const stepErrorSpan = activeTraceCtx.recordedSpans.find(
@@ -1691,6 +1705,19 @@ const runIterationWithAiSdk = async ({
             messages: promptResponseMessages,
           })
         );
+        // Per-turn signals for this (failed) turn so per-turn checks see the
+        // partial transcript + any tool errors from the error span, not an
+        // unset slice. Mirrors the normal-completion capture below.
+        assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+          promptResponseMessages
+        );
+        toolErrorsByPrompt[promptIndex] = extractToolErrors({
+          spans: activeTraceCtx.recordedSpans,
+          messages: promptResponseMessages as Array<{
+            role: string;
+            content: unknown;
+          }>,
+        });
         // PR 4b review fix (Cursor "Step error drops assistant
         // transcript"): merge the partial response into
         // `conversationMessages` so persisted iterations include
