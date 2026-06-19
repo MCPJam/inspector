@@ -3335,6 +3335,10 @@ const streamIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for per-turn checks (parallel to toolsCalledByPrompt,
+  // assigned by promptIndex). See runIterationWithAiSdk for the rationale.
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   const accumulatedUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -3718,6 +3722,16 @@ const streamIterationWithAiSdk = async ({
           );
           recordedSpans.push(...activeTraceCtx.recordedSpans);
           toolsCalledByPrompt.push([]);
+          assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+            promptResponseMessages
+          );
+          toolErrorsByPrompt[promptIndex] = extractToolErrors({
+            spans: activeTraceCtx.recordedSpans,
+            messages: promptResponseMessages as Array<{
+              role: string;
+              content: unknown;
+            }>,
+          });
           // Cursor PR 5a review fix (Medium "Soft failure skips streaming
           // error events"): emit the failure trace_snapshot + error event
           // before `break` so live SSE consumers see the failure signal
@@ -3770,6 +3784,16 @@ const streamIterationWithAiSdk = async ({
               messages: promptResponseMessages,
             })
           );
+          assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+            promptResponseMessages
+          );
+          toolErrorsByPrompt[promptIndex] = extractToolErrors({
+            spans: activeTraceCtx.recordedSpans,
+            messages: promptResponseMessages as Array<{
+              role: string;
+              content: unknown;
+            }>,
+          });
           // PR 4b review fix (Cursor "Step error drops assistant
           // transcript"): merge the partial response into
           // `conversationMessages` so persisted iterations include
@@ -3806,6 +3830,16 @@ const streamIterationWithAiSdk = async ({
           messages: promptResponseMessages,
         });
         toolsCalledByPrompt.push(promptToolsCalled);
+        assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+          promptResponseMessages
+        );
+        toolErrorsByPrompt[promptIndex] = extractToolErrors({
+          spans: activeTraceCtx.recordedSpans,
+          messages: promptResponseMessages as Array<{
+            role: string;
+            content: unknown;
+          }>,
+        });
         recordedSpans.push(...activeTraceCtx.recordedSpans);
 
         conversationMessages = [
@@ -3851,7 +3885,17 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions
     );
-    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+    // Per-turn checks: each turn's `checks` evaluated against its own slice.
+    const turnCheckResults = buildTurnCheckResults(promptTurns, {
+      toolsCalledByPrompt,
+      assistantMessageByPrompt,
+      toolErrorsByPrompt,
+      renderObservations: browser.widgetRenderObservations,
+    });
+    const promptTraceSummaries = buildPromptTraceSummaries(
+      evaluation,
+      turnCheckResults
+    );
 
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -3866,7 +3910,7 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    const predicateResults = test.successPredicates?.length
+    const casePredicateResults = test.successPredicates?.length
       ? evaluatePredicates(
           buildIterationTranscript({
             trace: traceForGate,
@@ -3881,6 +3925,9 @@ const streamIterationWithAiSdk = async ({
           test.successPredicates
         )
       : [];
+    // Case-level + per-turn (scope-tagged) results gate the verdict and
+    // persist together.
+    const predicateResults = [...casePredicateResults, ...turnCheckResults];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
