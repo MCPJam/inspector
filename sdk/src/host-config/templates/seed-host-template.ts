@@ -897,10 +897,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
-        // Le Chat's MCP/App captures identify the host and MCP client, not
-        // the backing model. Keep this empty so the template doesn't imply
-        // unobserved evidence such as "Mistral Large".
-        modelId: "",
+        // Default the Mistral host to Mistral Large 3 2512 (MCPJam-hosted).
+        modelId: "mistralai/mistral-large-2512",
         temperature: 0.7,
         requireToolApproval: false,
       });
