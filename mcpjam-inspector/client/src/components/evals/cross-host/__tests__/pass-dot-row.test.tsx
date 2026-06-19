@@ -6,7 +6,7 @@ import { PassDotRow } from "../pass-dot-row";
 function makeIter(
   id: string,
   iterationNumber: number,
-  result: "passed" | "failed" | "pending" | "cancelled",
+  result: "passed" | "failed" | "pending" | "cancelled" | "timed_out",
   createdAt = iterationNumber * 1000,
 ): EvalIteration {
   return {
@@ -15,7 +15,12 @@ function makeIter(
     createdAt,
     updatedAt: createdAt,
     iterationNumber,
-    status: result === "pending" ? "pending" : "completed",
+    status:
+      result === "pending"
+        ? "pending"
+        : result === "timed_out"
+          ? "timed_out"
+          : "completed",
     result,
     resultSource: "reported",
     actualToolCalls: [],
@@ -84,6 +89,24 @@ describe("PassDotRow", () => {
       "aria-label",
       "1 passed, 0 failed, 2 pending or cancelled out of 3",
     );
+  });
+
+  it("counts timed-out iterations as failed with warning dots", () => {
+    const { container } = render(
+      <PassDotRow
+        iterations={[
+          makeIter("i1", 1, "passed"),
+          makeIter("i2", 2, "timed_out"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "1 passed, 1 failed out of 2",
+    );
+    const dots = container.querySelectorAll("span[aria-hidden]");
+    expect(dots[1]).toHaveClass("bg-warning/50");
   });
 
   it("renders an empty-state aria-label when no iterations", () => {

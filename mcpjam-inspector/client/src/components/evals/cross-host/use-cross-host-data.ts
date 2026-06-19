@@ -67,7 +67,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   for (const iter of iterations) {
     const result = computeIterationResult(iter);
     if (result === "passed") passCount++;
-    else if (result === "failed") failCount++;
+    else if (result === "failed" || result === "timed_out") failCount++;
     else pendingCount++;
 
     totalTokens += iter.tokensUsed || 0;

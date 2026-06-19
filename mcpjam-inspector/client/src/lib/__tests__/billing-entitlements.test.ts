@@ -101,7 +101,9 @@ describe("getBillingErrorMessage", () => {
       "fallback"
     );
 
-    expect(message).toMatch(/^Eval iteration limit reached\. Resets /);
+    expect(message).toMatch(
+      /^This organization has reached its eval iteration limit \(25\)\. Resets /
+    );
   });
 
   it("formats backend limit payloads for project chatboxes", () => {

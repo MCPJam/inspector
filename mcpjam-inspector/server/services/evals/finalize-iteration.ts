@@ -23,7 +23,7 @@ import {
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+type IterationStatus = "completed" | "failed" | "cancelled" | "timed_out";
 
 const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
 
@@ -131,9 +131,9 @@ export async function finalizeEvalIteration(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (iteration?.status === "cancelled") {
+    if (iteration?.status === "cancelled" || iteration?.status === "timed_out") {
       logger.debug(
-        "[evals] Skipping update for cancelled iteration:",
+        "[evals] Skipping update for terminal iteration:",
         iterationId,
       );
       return;
@@ -144,7 +144,12 @@ export async function finalizeEvalIteration(
 
   const iterationStatus =
     status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
-  const result = passed ? "passed" : "failed";
+  const result =
+    iterationStatus === "timed_out"
+      ? "timed_out"
+      : passed
+        ? "passed"
+        : "failed";
 
   // PR-2 eval→chatSessions fanout: write the transcript as per-turn rows
   // BEFORE calling updateTestIteration. The fanout no longer fires the
@@ -179,7 +184,7 @@ export async function finalizeEvalIteration(
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
-      : isCycleFailure
+      : iterationStatus === "timed_out" || isCycleFailure
         ? "eval_failed"
         : "eval_completed";
 

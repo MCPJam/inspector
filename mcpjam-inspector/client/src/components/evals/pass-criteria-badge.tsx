@@ -5,7 +5,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, CircleSlash, Clock3, XCircle } from "lucide-react";
 import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { suitePassCriteriaCompactBadgeClassNames } from "./iteration-result-presentation";
 import { EvalSuiteRun } from "./types";
@@ -31,6 +31,8 @@ export function PassCriteriaBadge({
     rawPassRate <= 1 && rawPassRate > 0 ? rawPassRate * 100 : rawPassRate;
 
   const passed = result === "passed";
+  const cancelled = result === "cancelled" || status === "cancelled";
+  const timedOut = result === "timed_out" || status === "timed_out";
   const isRunning = status === "running" || status === "pending";
   const failedCount = run.summary?.failed ?? 0;
   const passedWithFailures = passed && failedCount > 0;
@@ -41,6 +43,24 @@ export function PassCriteriaBadge({
   }
 
   if (variant === "compact") {
+    if (cancelled || timedOut) {
+      const badgeLabel = timedOut ? "Timed out" : "Cancelled";
+      const ariaOutcome = timedOut ? "Suite timed out" : "Suite cancelled";
+      return (
+        <span
+          className={cn(
+            "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium",
+            timedOut
+              ? "bg-warning/50 text-foreground"
+              : "bg-muted text-muted-foreground",
+          )}
+          aria-label={ariaOutcome}
+        >
+          {badgeLabel}
+        </span>
+      );
+    }
+
     const outcome = passedWithFailures
       ? "passed_with_failures"
       : passed
@@ -91,13 +111,23 @@ export function PassCriteriaBadge({
   return (
     <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
       <div className="flex items-center gap-2">
-        {passed ? (
+        {cancelled ? (
+          <CircleSlash className="h-5 w-5 text-muted-foreground" />
+        ) : timedOut ? (
+          <Clock3 className="h-5 w-5 text-warning" />
+        ) : passed ? (
           <CheckCircle2 className="h-5 w-5 text-success" />
         ) : (
           <XCircle className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)} />
         )}
         <h3 className="text-sm font-medium">
-          {passed ? "Suite Passed" : "Suite Failed"}
+          {cancelled
+            ? "Suite Cancelled"
+            : timedOut
+              ? "Suite Timed Out"
+              : passed
+                ? "Suite Passed"
+                : "Suite Failed"}
         </h3>
       </div>
 

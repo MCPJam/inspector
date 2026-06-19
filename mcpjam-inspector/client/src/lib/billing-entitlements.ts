@@ -292,7 +292,7 @@ export function formatBillingLimitReachedMessage(
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(options.resetsAt));
-      return `Eval iteration limit reached. Resets ${resetTime}.`;
+      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`

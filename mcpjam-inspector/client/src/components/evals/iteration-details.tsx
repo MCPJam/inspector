@@ -3,10 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
-import {
-  PredicatesList,
-  parseIterationPredicates,
-} from "./predicates-list";
+import { PredicatesList, parseIterationPredicates } from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import {
@@ -24,6 +21,7 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { computeIterationResult } from "./pass-criteria";
 import {
   Collapsible,
   CollapsibleContent,
@@ -36,7 +34,11 @@ import {
 } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
   isPinnedOnly,
@@ -48,10 +50,53 @@ const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
 const EMPTY_SERVER_NAMES: string[] = [];
 
+type PromptSummaryResult =
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "timed_out"
+  | "pending";
+
+type PromptSummary = {
+  promptIndex: number;
+  prompt: string;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
+  actualToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
+  expectedOutput?: string;
+  passed: boolean;
+  result: PromptSummaryResult;
+  missing: Array<{ toolName: string; arguments: Record<string, any> }>;
+  unexpected: Array<{ toolName: string; arguments: Record<string, any> }>;
+  argumentMismatches: Array<{
+    toolName: string;
+    expectedArgs: Record<string, any>;
+    actualArgs: Record<string, any>;
+  }>;
+};
+
+function promptSummaryResultLabel(result: PromptSummaryResult): string {
+  if (result === "timed_out") return "Timed out";
+  return result.charAt(0).toUpperCase() + result.slice(1);
+}
+
+function promptSummaryBadgeClass(result: PromptSummaryResult): string {
+  if (result === "passed") return "bg-success/50 text-foreground";
+  if (result === "failed") return "bg-destructive/50 text-foreground";
+  if (result === "timed_out") return "bg-warning/50 text-foreground";
+  if (result === "cancelled") return "bg-muted text-muted-foreground";
+  return "bg-warning/50 text-foreground";
+}
+
 function formatToolCallsSummary(
   expected: Array<{ toolName: string }>,
   actual: Array<{ toolName: string }>,
-  maxLen = TOOL_CALLS_SUMMARY_MAX_LEN,
+  maxLen = TOOL_CALLS_SUMMARY_MAX_LEN
 ): string {
   const expPart =
     expected.length === 0 ? "—" : expected.map((t) => t.toolName).join(", ");
@@ -129,7 +174,7 @@ function stringifyToolArgumentValue(value: unknown): string {
 }
 
 export function resolveFormattedArgumentValue(
-  value: unknown,
+  value: unknown
 ):
   | { kind: "structured"; value: unknown }
   | { kind: "text"; value: string; renderAsBlock: boolean } {
@@ -162,7 +207,7 @@ function normalizeModelProvider(provider?: string): ModelProvider {
 
 function resolveTraceModel(
   iteration: EvalIteration,
-  testCase: EvalCase | null,
+  testCase: EvalCase | null
 ): ModelDefinition {
   const snapshotProvider = iteration.testCaseSnapshot?.provider;
   const snapshotModel = iteration.testCaseSnapshot?.model;
@@ -253,7 +298,7 @@ export function IterationDetails({
   caseInsightSlot?: ReactNode;
 }) {
   const getBlob = useAction(
-    "testSuites:getTestIterationBlob" as any,
+    "testSuites:getTestIterationBlob" as any
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
@@ -263,7 +308,7 @@ export function IterationDetails({
   const [isBlobErrorDetailsOpen, setIsBlobErrorDetailsOpen] = useState(false);
   const prevBlobIdRef = useRef<string | undefined>(undefined);
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
-    "formatted",
+    "formatted"
   );
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, any>>
@@ -274,7 +319,7 @@ export function IterationDetails({
     Record<string, { name: string; inputSchema?: any }>
   >({});
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
-    layoutMode === "full" ? iteration.result !== "passed" : true,
+    layoutMode === "full" ? iteration.result !== "passed" : true
   );
 
   // Source-aware trace identity. New iterations carry `chatSessionId`
@@ -345,56 +390,54 @@ export function IterationDetails({
 
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
-        .then(
-          (result: ListToolsResultWithMetadata) => {
-            if (cancelled) return;
+        .then((result: ListToolsResultWithMetadata) => {
+          if (cancelled) return;
 
-            setConnectedServerIds((prev) =>
-              prev.includes(serverId) ? prev : [...prev, serverId],
-            );
+          setConnectedServerIds((prev) =>
+            prev.includes(serverId) ? prev : [...prev, serverId]
+          );
 
-            if (result.tools?.length) {
-              setToolsWithSchema((prev) => {
-                const next = { ...prev };
-                for (const tool of result.tools ?? []) {
-                  next[tool.name] = {
-                    name: tool.name,
-                    inputSchema: tool.inputSchema,
-                  };
-                }
-                return next;
-              });
+          if (result.tools?.length) {
+            setToolsWithSchema((prev) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = {
+                  name: tool.name,
+                  inputSchema: tool.inputSchema,
+                };
+              }
+              return next;
+            });
 
-              setToolServerMap((prev: ToolServerMap) => {
-                const next = { ...prev };
-                for (const tool of result.tools ?? []) {
-                  next[tool.name] = serverId;
-                }
-                return next;
-              });
-            }
+            setToolServerMap((prev: ToolServerMap) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = serverId;
+              }
+              return next;
+            });
+          }
 
-            if (result.toolsMetadata) {
-              setToolsMetadata((prev) => ({
-                ...prev,
-                ...Object.fromEntries(
-                  Object.entries(result.toolsMetadata ?? {}).map(
-                    ([toolName, meta]) => [
-                      toolName,
-                      meta as Record<string, unknown>,
-                    ],
-                  ),
-                ),
-              }));
-            }
-          },
-        )
+          if (result.toolsMetadata) {
+            setToolsMetadata((prev) => ({
+              ...prev,
+              ...Object.fromEntries(
+                Object.entries(result.toolsMetadata ?? {}).map(
+                  ([toolName, meta]) => [
+                    toolName,
+                    meta as Record<string, unknown>,
+                  ]
+                )
+              ),
+            }));
+          }
+        })
         .catch((loadError: unknown) => {
           if (cancelled) return;
 
           console.warn(
             `Failed to fetch tools for server ${serverId}:`,
-            loadError,
+            loadError
           );
         });
     });
@@ -406,16 +449,16 @@ export function IterationDetails({
 
   const traceModel = useMemo(
     () => resolveTraceModel(iteration, testCase),
-    [iteration, testCase],
+    [iteration, testCase]
   );
 
   const estimatedDurationMs = useMemo(
     () =>
       Math.max(
         iteration.updatedAt - (iteration.startedAt ?? iteration.createdAt),
-        0,
+        0
       ),
-    [iteration.updatedAt, iteration.startedAt, iteration.createdAt],
+    [iteration.updatedAt, iteration.startedAt, iteration.createdAt]
   );
   const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
   const traceEndedAtMs = iteration.updatedAt;
@@ -423,32 +466,25 @@ export function IterationDetails({
   // Aggregate expected tools across turns for display (snapshot wins over draft case).
   const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
     iteration.testCaseSnapshot,
-    testCase,
+    testCase
   );
   const actualToolCalls = iteration.actualToolCalls || [];
-  const promptSummaries = useMemo(() => {
+  const promptSummaries = useMemo<PromptSummary[]>(() => {
+    const iterationResult = computeIterationResult(iteration);
     if (Array.isArray(blob?.prompts) && blob.prompts.length > 0) {
-      return blob.prompts as Array<{
-        promptIndex: number;
-        prompt: string;
-        expectedToolCalls: Array<{
-          toolName: string;
-          arguments: Record<string, any>;
-        }>;
-        actualToolCalls: Array<{
-          toolName: string;
-          arguments: Record<string, any>;
-        }>;
-        expectedOutput?: string;
-        passed: boolean;
-        missing: Array<{ toolName: string; arguments: Record<string, any> }>;
-        unexpected: Array<{ toolName: string; arguments: Record<string, any> }>;
-        argumentMismatches: Array<{
-          toolName: string;
-          expectedArgs: Record<string, any>;
-          actualArgs: Record<string, any>;
-        }>;
-      }>;
+      return (blob.prompts as Array<Omit<PromptSummary, "result">>).map(
+        (summary) => ({
+          ...summary,
+          result:
+            iterationResult === "cancelled" ||
+            iterationResult === "timed_out" ||
+            iterationResult === "pending"
+              ? iterationResult
+              : summary.passed
+              ? "passed"
+              : "failed",
+        })
+      );
     }
 
     const promptTurns = resolvePromptTurns({
@@ -464,7 +500,8 @@ export function IterationDetails({
       expectedToolCalls: turn.expectedToolCalls,
       actualToolCalls: promptIndex === 0 ? actualToolCalls : [],
       expectedOutput: turn.expectedOutput,
-      passed: iteration.result === "passed",
+      passed: iterationResult === "passed",
+      result: iterationResult,
       missing: [],
       unexpected: [],
       argumentMismatches: [],
@@ -472,7 +509,7 @@ export function IterationDetails({
   }, [
     actualToolCalls,
     blob?.prompts,
-    iteration.result,
+    iteration,
     iteration.testCaseSnapshot?.expectedOutput,
     iteration.testCaseSnapshot?.expectedToolCalls,
     iteration.testCaseSnapshot?.promptTurns,
@@ -481,7 +518,10 @@ export function IterationDetails({
   const firstFailedTurnIndex =
     typeof iteration.metadata?.firstFailedTurnIndex === "number"
       ? iteration.metadata.firstFailedTurnIndex
-      : promptSummaries.findIndex((summary) => !summary.passed);
+      : promptSummaries.findIndex(
+          (summary) =>
+            summary.result === "failed" || summary.result === "timed_out"
+        );
 
   // Helper to format type information
   const formatType = (type: any): string => {
@@ -565,7 +605,7 @@ export function IterationDetails({
 
   const renderRawToolCalls = (
     toolCalls: Array<{ toolName: string; arguments: Record<string, any> }>,
-    emptyMessage: string,
+    emptyMessage: string
   ) => {
     if (toolCalls.length === 0) {
       return (
@@ -608,7 +648,7 @@ export function IterationDetails({
   const traceFirst = layoutMode === "full" && hasTrace;
   const toolCallsSummary = formatToolCallsSummary(
     expectedToolCalls,
-    actualToolCalls,
+    actualToolCalls
   );
 
   /**
@@ -625,7 +665,7 @@ export function IterationDetails({
       expectedToolCalls,
       actualToolCalls,
       iteration.testCaseSnapshot?.isNegativeTest,
-    ],
+    ]
   );
 
   const toolCallsGrids =
@@ -803,7 +843,7 @@ export function IterationDetails({
 
   const predicates = useMemo(
     () => parseIterationPredicates(iteration.metadata),
-    [iteration.metadata],
+    [iteration.metadata]
   );
   // Case-level checks only — per-turn checks (scope.kind === "turn") render
   // under their turn in the per-turn summary list below, so they aren't
@@ -875,7 +915,7 @@ export function IterationDetails({
       className={cn(
         "flex flex-col",
         layoutMode === "full" && "min-h-0 flex-1",
-        layoutMode === "full" ? "gap-1" : "gap-1.5",
+        layoutMode === "full" ? "gap-1" : "gap-1.5"
       )}
       data-testid="iteration-trace-section"
     >
@@ -892,7 +932,7 @@ export function IterationDetails({
           layoutMode === "full" &&
             error &&
             !loading &&
-            "min-h-[320px] flex flex-col justify-center",
+            "min-h-[320px] flex flex-col justify-center"
         )}
       >
         {loading ? (
@@ -959,12 +999,10 @@ export function IterationDetails({
                 <div
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                    summary.passed
-                      ? "bg-success/50 text-foreground"
-                      : "bg-destructive/50 text-foreground",
+                    promptSummaryBadgeClass(summary.result)
                   )}
                 >
-                  {summary.passed ? "Passed" : "Failed"}
+                  {promptSummaryResultLabel(summary.result)}
                 </div>
               </div>
               <div className="text-xs text-muted-foreground whitespace-pre-wrap">
@@ -974,12 +1012,12 @@ export function IterationDetails({
                 Expected {summary.expectedToolCalls.length} · Actual{" "}
                 {summary.actualToolCalls.length}
               </div>
-              {!summary.passed ? (
+              {summary.result === "failed" || summary.result === "timed_out" ? (
                 <div className="text-[10px] text-destructive">
                   {formatToolCallsSummary(
                     summary.expectedToolCalls,
                     summary.actualToolCalls,
-                    120,
+                    120
                   )}
                 </div>
               ) : null}
@@ -1002,7 +1040,7 @@ export function IterationDetails({
       className={cn(
         "flex flex-col",
         layoutMode === "full" && "min-h-0 flex-1",
-        layoutMode === "full" ? "gap-3" : "gap-4 py-2",
+        layoutMode === "full" ? "gap-3" : "gap-4 py-2"
       )}
     >
       {/* Error Display */}

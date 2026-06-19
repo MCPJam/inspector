@@ -50,6 +50,7 @@ export const RESULT_STATUS = {
   PASSED: "passed",
   FAILED: "failed",
   CANCELLED: "cancelled",
+  TIMED_OUT: "timed_out",
   PENDING: "pending",
 } as const;
 
@@ -61,6 +62,7 @@ export const RUN_STATUS = {
   RUNNING: "running",
   COMPLETED: "completed",
   CANCELLED: "cancelled",
+  TIMED_OUT: "timed_out",
 } as const;
 
 export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
@@ -105,6 +107,7 @@ export const UI_CONFIG = {
     FAILED: "var(--color-destructive)",
     PENDING: "var(--color-warning)",
     CANCELLED: "var(--color-muted-foreground)",
+    TIMED_OUT: "var(--color-warning)",
   },
 } as const;
 
