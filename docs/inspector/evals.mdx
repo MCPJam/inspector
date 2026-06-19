@@ -58,6 +58,16 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Final message non-empty** | The model produced a final assistant message. |
 | **Token budget under N** | Total token usage stayed below the cap. |
 
+### Per-turn checks
+
+In addition to case-level checks, you can add checks scoped to a single turn. Expand any prompt turn in the case editor and use the **Checks** section that appears beneath it. These checks are evaluated against only that turn's slice of the transcript, not the full iteration.
+
+Per-turn checks are useful when you want to assert on an intermediate step — for example, "turn 2's response contains the word 'confirmed'" — without that assertion applying to every turn.
+
+<Note>
+  The **Add check** menu inside a turn only shows check kinds that can be scoped to a single turn. Check kinds that require the full iteration context are not available here.
+</Note>
+
 ### Argument matching
 
 Tool-call argument comparison runs in one of three modes, configured at the suite:
