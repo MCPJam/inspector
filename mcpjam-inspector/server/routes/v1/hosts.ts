@@ -4,10 +4,10 @@
  * Hosts are project-scoped identity rows that point at a content-addressed
  * host config (model + capabilities + host context). These routes are thin
  * proxies over the same Convex `hosts:*` functions the hosted UI uses, called
- * with the request's Convex bearer (Convex enforces project membership). Each
- * mutating/detail route additionally cross-checks the host against the path's
- * projectId (by listing the project's hosts) so a valid id from another
- * project reads as NOT_FOUND.
+ * with the request's Convex bearer (Convex enforces project membership). The
+ * detail/update/delete `hosts:*` functions take the path's projectId and scope
+ * the host to it inside Convex, so a valid id from another of the caller's
+ * projects reads as NOT_FOUND.
  *
  * `create` seeds the host config two ways: from a built-in template
  * (resolved server-side via `@mcpjam/sdk/host-config/templates` — the same
@@ -111,44 +111,20 @@ function translateConvexWriteError(error: unknown): WebRouteError {
   );
 }
 
-/**
- * List the project's hosts and return the row matching `hostId`. Throws 404
- * when the host doesn't exist in this project — the per-request project-scope
- * guard for detail/update/delete (Convex `hosts:getHost` is keyed by hostId
- * alone, so a bare getHost would leak a host from another of the caller's
- * projects under this path).
- */
-async function requireHostInProject(
-  readClient: ConvexHttpClient,
-  projectId: string,
-  hostId: string
-): Promise<HostListRow> {
-  let rows: HostListRow[] | null | undefined;
-  try {
-    rows = (await readClient.query("hosts:listHosts" as any, {
-      projectId,
-    } as any)) as HostListRow[] | null | undefined;
-  } catch (error) {
-    throw translateConvexWriteError(error);
-  }
-  const match = (rows ?? []).find((row) => row.hostId === hostId);
-  if (!match) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Host not found");
-  }
-  return match;
-}
-
 async function readHostDetail(
   convexAuthToken: string,
   projectId: string,
   hostId: string
 ): Promise<HostDetailRow> {
   const readClient = createConvexReadClient(convexAuthToken);
-  await requireHostInProject(readClient, projectId, hostId);
   let detail: HostDetailRow | null;
   try {
+    // Convex `hosts:getHost` enforces project scope: passing `projectId` means
+    // a host id from another of the caller's projects returns null (→ 404
+    // below) instead of leaking across projects.
     detail = (await readClient.query("hosts:getHost" as any, {
       hostId,
+      projectId,
     } as any)) as HostDetailRow | null;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -189,11 +165,6 @@ const updateHostSchema = z
   .refine((value) => value.name !== undefined || value.config !== undefined, {
     message: "Provide at least one of `name` or `config` to update.",
   });
-
-// Delete takes no body. A strict empty schema means a stray field (e.g. a
-// legacy `{ "force": true }`) is rejected as VALIDATION_ERROR rather than
-// silently accepted and dropped.
-const deleteHostSchema = z.object({}).strict();
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -257,10 +228,10 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   const hostId = c.req.param("hostId");
   const body = parseWithSchema(updateHostSchema, await synthesizeServerBody(c));
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
-  await requireHostInProject(readClient, projectId, hostId);
 
-  const updateArgs: Record<string, unknown> = { hostId };
+  // `hosts:updateHost` enforces project scope from `projectId` (a host from
+  // another project throws not-found → 404), so there is no separate preflight.
+  const updateArgs: Record<string, unknown> = { hostId, projectId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.config !== undefined) updateArgs.input = body.config;
   const { convexClient } = createConvexClients(token);
@@ -276,13 +247,30 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
 hosts.delete("/projects/:projectId/hosts/:hostId", async (c) => {
   const projectId = c.req.param("projectId");
   const hostId = c.req.param("hostId");
-  parseWithSchema(deleteHostSchema, await synthesizeServerBody(c));
+  // Delete takes no body. `synthesizeServerBody` merges the path's
+  // projectId/serverId in, so strip those and reject anything left over
+  // (e.g. a legacy `force`) as VALIDATION_ERROR rather than dropping it.
+  const deleteBody = await synthesizeServerBody(c);
+  const strayDeleteFields = Object.keys(deleteBody).filter(
+    (key) => key !== "projectId" && key !== "serverId"
+  );
+  if (strayDeleteFields.length > 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Unexpected field(s) in delete body: ${strayDeleteFields
+        .sort()
+        .join(", ")}`
+    );
+  }
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
-  await requireHostInProject(readClient, projectId, hostId);
+  // `hosts:deleteHost` enforces project scope from `projectId`.
   const { convexClient } = createConvexClients(token);
   try {
-    await convexClient.mutation("hosts:deleteHost" as any, { hostId });
+    await convexClient.mutation("hosts:deleteHost" as any, {
+      hostId,
+      projectId,
+    });
   } catch (error) {
     throw translateConvexWriteError(error);
   }
