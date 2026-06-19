@@ -91,6 +91,34 @@ export type Predicate =
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
 
+/**
+ * Predicate kinds that may be authored on an individual prompt turn (evaluated
+ * against that turn's slice of the transcript). Every kind is turn-scopable
+ * EXCEPT `tokenBudgetUnder`: per-turn token usage is not reliably captured, so
+ * a token budget is a whole-iteration (case-level) concern.
+ *
+ * Mirrored in `mcpjam-backend/convex/lib/predicates.ts`
+ * (`TURN_SCOPABLE_PREDICATE_KINDS`). Used by the per-turn "Add check" menu and
+ * the backend write-time guard.
+ */
+export const TURN_SCOPABLE_PREDICATE_KINDS = [
+  "toolCalledWith",
+  "toolCalledAtLeastOnce",
+  "toolNeverCalled",
+  "firstToolWas",
+  "responseContains",
+  "responseMatches",
+  "noToolErrors",
+  "finalAssistantMessageNonEmpty",
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+] as const satisfies readonly PredicateType[];
+
+export function isTurnScopablePredicateKind(kind: string): boolean {
+  return (TURN_SCOPABLE_PREDICATE_KINDS as readonly string[]).includes(kind);
+}
+
 // ─── Zod schemas ──────────────────────────────────────────────────────────
 //
 // The predicate union is the wire shape both the inspector forms and the
@@ -308,10 +336,29 @@ export type IterationTranscript = {
   renderObservations?: RenderObservationSummary[];
 };
 
+/**
+ * Where a check runs ("scope"). Absent ⇒ the check is case-level (evaluated
+ * against the whole-iteration transcript). `{ kind: "turn", promptIndex }`
+ * marks a check authored on a single prompt turn and evaluated against that
+ * turn's slice of the transcript. An object (not a bare index) so future scope
+ * kinds can be added without a wire break.
+ *
+ * Mirrored in `mcpjam-backend/convex/lib/predicates.ts` (`PredicateScope`).
+ */
+export type PredicateScope = { kind: "turn"; promptIndex: number };
+
+/** Zod schema for {@link PredicateScope}. */
+export const predicateScopeSchema = z.object({
+  kind: z.literal("turn"),
+  promptIndex: z.number().int().nonnegative(),
+});
+
 /** Per-predicate verdict row, persisted to `testIteration.metadata.predicates`. */
 export type PredicateResult = {
   predicate: Predicate;
   passed: boolean;
   /** Structured, deterministic explanation — names the expected vs actual on failure. */
   reason: string;
+  /** Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn. */
+  scope?: PredicateScope;
 };
