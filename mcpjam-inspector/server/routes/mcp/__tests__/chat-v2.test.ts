@@ -426,6 +426,26 @@ describe("POST /api/mcp/chat-v2", () => {
       });
     });
 
+    // PR 4 (chat SSE wire-parity net): the test above checks presence + relative
+    // order via arrayContaining; this snapshots the EXACT ordered trace-event
+    // sequence so the upcoming facade migration (PR 5) can't change the wire
+    // shape unnoticed. Direct (user-key) path — whose facade `direct + ui` path
+    // is brand-new, so the highest-risk half to protect.
+    it("direct path: exact trace-event sequence is stable (wire parity)", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+
+      const traceEventSequence = capturedStreamEvents
+        .filter((event) => event?.type === "data-trace-event")
+        .map((event) => event.data?.type);
+      expect(traceEventSequence).toMatchSnapshot();
+    });
+
     it("uses provided temperature", async () => {
       const { streamText } = await import("ai");
 
