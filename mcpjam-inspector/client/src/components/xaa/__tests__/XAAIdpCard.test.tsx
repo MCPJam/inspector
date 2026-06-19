@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAIdpCard } from "../XAAIdpCard";
@@ -35,16 +35,14 @@ describe("XAAIdpCard", () => {
     expect(
       screen.getByText("MCPJam is your identity provider")
     ).toBeInTheDocument();
-    expect(screen.getByText(issuer)).toBeInTheDocument();
-    expect(
-      screen.getByText(`${issuer}/.well-known/jwks.json`)
-    ).toBeInTheDocument();
+    // The chips show only a label; the full URL lives in the title attribute
+    // (and is copied on click) to keep the bar compact.
     expect(
       screen.getByRole("button", { name: /copy issuer url/i })
-    ).toBeInTheDocument();
+    ).toHaveAttribute("title", issuer);
     expect(
       screen.getByRole("button", { name: /copy jwks url/i })
-    ).toBeInTheDocument();
+    ).toHaveAttribute("title", `${issuer}/.well-known/jwks.json`);
   });
 
   it("copies a URL and shows inline confirmation", async () => {
@@ -101,10 +99,16 @@ describe("XAAIdpCard", () => {
 
     render(<XAAIdpCard />);
 
-    expect(await screen.findByText(serverIssuer)).toBeInTheDocument();
+    // The card swaps in the server-advertised issuer once discovery resolves;
+    // the URL surfaces via the chip's title attribute.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /copy issuer url/i })
+      ).toHaveAttribute("title", serverIssuer);
+    });
     expect(
-      screen.getByText(`${serverIssuer}/.well-known/jwks.json`)
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: /copy jwks url/i })
+    ).toHaveAttribute("title", `${serverIssuer}/.well-known/jwks.json`);
   });
 });
 

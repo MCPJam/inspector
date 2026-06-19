@@ -550,6 +550,7 @@ export function ConvertChatSessionDialog({
                           projectId={effectiveProjectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          onClearSelection={() => setServerAttachmentId(null)}
                           disabled={isSubmitting}
                         />
                       </div>

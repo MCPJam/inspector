@@ -11,9 +11,11 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { isPinnedTurn, type PromptTurn } from "@/shared/prompt-turns";
+import type { RemoteServer } from "@/hooks/useProjects";
 import { cn } from "@/lib/utils";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
+import { PinnedToolCallFields } from "./pinned-tool-call-fields";
 
 type AvailableTool = {
   name: string;
@@ -51,6 +53,13 @@ type TestCasePromptFlowProps = {
    * so the per-leaf placeholder picker offers the right options (Phase 3).
    */
   argumentMatching?: "exact" | "partial" | "ignore";
+  /** Effective suite server names — for the pinned (render-check) turn picker. */
+  suiteServers: string[];
+  /** Project servers, to resolve a display name to a stable id for pinning. */
+  projectServers?: RemoteServer[];
+  /** Gates the per-turn "Render check" toggle (an already-pinned turn always
+   *  shows its controls so existing render checks stay editable). */
+  syntheticMonitorsEnabled: boolean;
 };
 
 export function TestCasePromptFlow({
@@ -66,6 +75,9 @@ export function TestCasePromptFlow({
   movePromptTurn,
   togglePromptTurnExpanded,
   argumentMatching,
+  suiteServers,
+  projectServers,
+  syntheticMonitorsEnabled,
 }: TestCasePromptFlowProps) {
   const multi = promptTurns.length > 1;
 
@@ -115,6 +127,7 @@ export function TestCasePromptFlow({
               {promptTurns.map((turn, index) => {
                 const isExpanded =
                   !multi || expandedPromptTurnIds.includes(turn.id);
+                const pinned = isPinnedTurn(turn);
                 const promptEmpty = isStepPromptEmpty(turn);
                 const toolsAttention = stepExpectedToolsNeedAttention(turn);
                 const stepNeedsAttention = promptEmpty || toolsAttention;
@@ -176,7 +189,9 @@ export function TestCasePromptFlow({
                             </span>
                             <span className="mx-1.5 text-border">·</span>
                             <span className="font-normal">
-                              {formatPromptPreview(turn.prompt)}
+                              {pinned
+                                ? `Render check · ${turn.pinnedToolCall?.toolName || "pick a tool"}`
+                                : formatPromptPreview(turn.prompt)}
                             </span>
                           </button>
                           <div className="flex shrink-0 items-center gap-0.5">
@@ -262,72 +277,152 @@ export function TestCasePromptFlow({
                                 multi && "border-border/30 bg-background/30",
                               )}
                             >
-                              <section className="space-y-2">
-                                <Label className="text-xs font-medium text-foreground">
-                                  User prompt
-                                </Label>
-                                <Textarea
-                                  value={turn.prompt}
-                                  onChange={(
-                                    event: ChangeEvent<HTMLTextAreaElement>,
-                                  ) =>
-                                    updatePromptTurn(index, (currentTurn) => ({
-                                      ...currentTurn,
-                                      prompt: event.target.value,
-                                    }))
-                                  }
-                                  rows={multi ? 4 : 5}
-                                  placeholder={
-                                    multi
-                                      ? `Prompt for turn ${index + 1}…`
-                                      : "Enter the user prompt…"
-                                  }
-                                  aria-invalid={promptEmpty}
-                                  aria-describedby={
-                                    promptEmpty
-                                      ? `prompt-turn-${index}-hint`
-                                      : undefined
-                                  }
-                                  className={cn(
-                                    "resize-none font-mono text-sm leading-relaxed",
-                                    multi
-                                      ? "min-h-[96px] bg-background"
-                                      : "bg-muted/30",
-                                    promptEmpty && evalValidationBorderClass,
-                                  )}
-                                />
-                                {promptEmpty ? (
-                                  <p
-                                    id={`prompt-turn-${index}-hint`}
-                                    className="text-xs text-muted-foreground"
+                              {/* Per-turn input mode: a normal model prompt,
+                                  or a model-free pinned tool call (render
+                                  check). Gated by the synthetic-monitors flag,
+                                  but an already-pinned turn always shows it so
+                                  existing render checks stay editable. */}
+                              {syntheticMonitorsEnabled || pinned ? (
+                                <div className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-0.5">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={pinned ? "ghost" : "secondary"}
+                                    className="h-6 px-2 text-[11px]"
+                                    onClick={() =>
+                                      updatePromptTurn(index, (currentTurn) => {
+                                        if (!isPinnedTurn(currentTurn))
+                                          return currentTurn;
+                                        const { pinnedToolCall, ...rest } =
+                                          currentTurn;
+                                        return rest;
+                                      })
+                                    }
                                   >
-                                    Required before run or save.
-                                  </p>
-                                ) : null}
-                              </section>
+                                    Prompt
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={pinned ? "secondary" : "ghost"}
+                                    className="h-6 px-2 text-[11px]"
+                                    onClick={() =>
+                                      updatePromptTurn(index, (currentTurn) => ({
+                                        ...currentTurn,
+                                        pinnedToolCall:
+                                          currentTurn.pinnedToolCall ?? {
+                                            serverName: suiteServers[0] ?? "",
+                                            toolName: "",
+                                            arguments: {},
+                                          },
+                                      }))
+                                    }
+                                  >
+                                    Render check
+                                  </Button>
+                                </div>
+                              ) : null}
 
-                              <section className="space-y-2">
-                                <Label className="text-xs font-medium text-foreground">
-                                  Expected tool calls
-                                </Label>
-                                <ExpectedToolsEditor
-                                  toolCalls={turn.expectedToolCalls}
-                                  onChange={(toolCalls) =>
-                                    updatePromptTurn(index, (currentTurn) => ({
-                                      ...currentTurn,
-                                      expectedToolCalls: toolCalls,
-                                    }))
-                                  }
-                                  availableTools={availableTools}
-                                  argumentMatching={argumentMatching}
-                                />
-                                {toolsAttention ? (
+                              {pinned ? (
+                                <section className="space-y-2">
+                                  <Label className="text-xs font-medium text-foreground">
+                                    Pinned tool call
+                                  </Label>
+                                  <PinnedToolCallFields
+                                    seedKey={turn.id}
+                                    value={turn.pinnedToolCall}
+                                    onChange={(cfg) =>
+                                      updatePromptTurn(index, (currentTurn) => ({
+                                        ...currentTurn,
+                                        pinnedToolCall: cfg,
+                                      }))
+                                    }
+                                    suiteServers={suiteServers}
+                                    availableTools={availableTools}
+                                    projectServers={projectServers}
+                                  />
                                   <p className="text-xs text-muted-foreground">
-                                    Finish tool names and parameters, or remove
-                                    incomplete rows.
+                                    No model — this turn calls the tool and
+                                    renders its widget. Add widget checks under
+                                    Pass criteria.
                                   </p>
-                                ) : null}
-                              </section>
+                                </section>
+                              ) : (
+                                <>
+                                  <section className="space-y-2">
+                                    <Label className="text-xs font-medium text-foreground">
+                                      User prompt
+                                    </Label>
+                                    <Textarea
+                                      value={turn.prompt}
+                                      onChange={(
+                                        event: ChangeEvent<HTMLTextAreaElement>,
+                                      ) =>
+                                        updatePromptTurn(
+                                          index,
+                                          (currentTurn) => ({
+                                            ...currentTurn,
+                                            prompt: event.target.value,
+                                          }),
+                                        )
+                                      }
+                                      rows={multi ? 4 : 5}
+                                      placeholder={
+                                        multi
+                                          ? `Prompt for turn ${index + 1}…`
+                                          : "Enter the user prompt…"
+                                      }
+                                      aria-invalid={promptEmpty}
+                                      aria-describedby={
+                                        promptEmpty
+                                          ? `prompt-turn-${index}-hint`
+                                          : undefined
+                                      }
+                                      className={cn(
+                                        "resize-none font-mono text-sm leading-relaxed",
+                                        multi
+                                          ? "min-h-[96px] bg-background"
+                                          : "bg-muted/30",
+                                        promptEmpty && evalValidationBorderClass,
+                                      )}
+                                    />
+                                    {promptEmpty ? (
+                                      <p
+                                        id={`prompt-turn-${index}-hint`}
+                                        className="text-xs text-muted-foreground"
+                                      >
+                                        Required before run or save.
+                                      </p>
+                                    ) : null}
+                                  </section>
+
+                                  <section className="space-y-2">
+                                    <Label className="text-xs font-medium text-foreground">
+                                      Expected tool calls
+                                    </Label>
+                                    <ExpectedToolsEditor
+                                      toolCalls={turn.expectedToolCalls}
+                                      onChange={(toolCalls) =>
+                                        updatePromptTurn(
+                                          index,
+                                          (currentTurn) => ({
+                                            ...currentTurn,
+                                            expectedToolCalls: toolCalls,
+                                          }),
+                                        )
+                                      }
+                                      availableTools={availableTools}
+                                      argumentMatching={argumentMatching}
+                                    />
+                                    {toolsAttention ? (
+                                      <p className="text-xs text-muted-foreground">
+                                        Finish tool names and parameters, or
+                                        remove incomplete rows.
+                                      </p>
+                                    ) : null}
+                                  </section>
+                                </>
+                              )}
                             </div>
                           </motion.div>
                         )}

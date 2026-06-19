@@ -69,16 +69,20 @@ function sanitizeOAuthSetupHeaders(
 
 function readStoredClientInfo(serverName: string): {
   client_id?: string;
-  client_secret?: string;
 } {
   try {
     const raw = localStorage.getItem(`mcp-client-${serverName}`);
     if (!raw) return {};
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify({ client_id: nonEmptyString(parsed?.client_id) }),
+      );
+    }
     return {
       client_id: nonEmptyString(parsed?.client_id),
-      client_secret: nonEmptyString(parsed?.client_secret),
     };
   } catch {
     return {};
@@ -153,10 +157,8 @@ function buildReconnectOAuthOptions(
       nonEmptyString(profile?.clientId) ??
       nonEmptyString(storedTokens?.client_id) ??
       storedClientInfo.client_id,
-    clientSecret:
-      nonEmptyString(server.oauthTokens?.client_secret) ??
-      nonEmptyString(profile?.clientSecret) ??
-      storedClientInfo.client_secret,
+    clientSecret: undefined,
+    hasClientSecret: Boolean(server.hasClientSecret),
     protocolMode,
     protocolVersion:
       protocolMode !== "auto"

@@ -42,7 +42,11 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
-import { type PromptTurn } from "@/shared/prompt-turns";
+import {
+  type PromptTurn,
+  countModelTurns,
+  isPinnedOnly,
+} from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
@@ -69,6 +73,10 @@ export const promptTurnSchema = z.object({
     }),
   ),
   expectedOutput: z.string().optional(),
+  // When present, this turn is model-free: the runner executes the pinned tool
+  // call and renders its widget (the per-turn successor to a `widget_probe`'s
+  // top-level `probeConfig`). Reuses the same pinned-call shape.
+  pinnedToolCall: probeConfigSchema.optional(),
 });
 
 export const RunEvalsRequestSchema = z.object({
@@ -304,9 +312,12 @@ export function assertSuiteRunWithinCap(
   // zero model calls and are excluded entirely.
   const totalCalls =
     request.tests.reduce((sum, t) => {
-      if (t.caseType === "widget_probe") return sum;
+      if (isPinnedOnly(t)) return sum;
       const iterations = override ?? t.runs ?? 0;
-      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      // Count only model-driven turns — pinned (render-check) turns issue no
+      // LLM call, so a hybrid case shouldn't over-count its budget. Floor at 1
+      // for legacy single-turn cases that carry no promptTurns array.
+      const turns = Math.max(countModelTurns(t.promptTurns), 1);
       return sum + iterations * turns;
     }, 0) * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
@@ -344,10 +355,8 @@ export function buildCapEntriesFromPersistedCases(
     const promptTurns = Array.isArray(testCase.promptTurns)
       ? (testCase.promptTurns as RunEvalsRequest["tests"][number]["promptTurns"])
       : undefined;
-    const fanout =
-      testCase.caseType === "widget_probe"
-        ? 1
-        : Math.max(testCase.models?.length ?? 0, 1);
+    const pinnedOnly = isPinnedOnly(testCase);
+    const fanout = pinnedOnly ? 1 : Math.max(testCase.models?.length ?? 0, 1);
     for (let i = 0; i < fanout; i++) {
       entries.push({
         title: testCase.title ?? "",
@@ -357,9 +366,9 @@ export function buildCapEntriesFromPersistedCases(
         provider: "none",
         expectedToolCalls: [],
         ...(promptTurns ? { promptTurns } : {}),
-        ...(testCase.caseType === "widget_probe"
-          ? { caseType: "widget_probe" as const }
-          : {}),
+        // Preserve the discriminator the cap reducer (`isPinnedOnly`) reads to
+        // exclude model-free cases from the LLM-call budget.
+        ...(pinnedOnly ? { caseType: "widget_probe" as const } : {}),
       });
     }
   }
@@ -398,13 +407,17 @@ export function assertBareRerunCasesRunnable(
         model?: string;
         provider?: string;
         caseType?: string;
+        promptTurns?: unknown;
       }>
     | null,
 ): void {
   const unrunnable = (cases ?? [])
     .filter(
       (c) =>
-        c.caseType !== "widget_probe" &&
+        // Model-free pinned cases (legacy widget_probe OR a unified case whose
+        // turns are all pinned) need no model and ARE runnable — don't flag
+        // them as unrunnable prompt cases.
+        !isPinnedOnly({ caseType: c.caseType, promptTurns: c.promptTurns }) &&
         !(c.models && c.models.length > 0) &&
         !(c.model && c.provider),
     )
@@ -465,6 +478,25 @@ export type ServerAttachmentInput = z.infer<
   typeof ServerAttachmentInputSchema
 >;
 
+// Per-bucket case counts for configurable generation. Field names mirror the
+// backend `CaseMix`. Each bucket is bounded; the backend additionally caps the
+// total. Omitted buckets inherit the backend's mode default.
+export const CaseMixSchema = z.object({
+  simple: z.number().int().min(0).max(10).optional(),
+  multiTool: z.number().int().min(0).max(10).optional(),
+  multiTurn: z.number().int().min(0).max(10).optional(),
+  complex: z.number().int().min(0).max(10).optional(),
+  negative: z.number().int().min(0).max(10).optional(),
+});
+
+// Optional generation knobs forwarded to the backend generate endpoint.
+export const GenerationOptionsSchema = z.object({
+  caseMix: CaseMixSchema.optional(),
+  varyUserStyles: z.boolean().optional(),
+});
+
+export type GenerationOptions = z.infer<typeof GenerationOptionsSchema>;
+
 // `serverNames` is the optional parallel array that pairs each `serverIds[i]`
 // (the manager key — Convex Id in hosted mode, display name in standalone)
 // with its runtime display name. The backend snapshot/attachment check is
@@ -481,6 +513,7 @@ export const GenerateTestsRequestSchema = z.object({
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
+  generationOptions: GenerationOptionsSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -581,7 +614,8 @@ export function resolveServerIdsOrThrow(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        `Server '${requestedId}' not found`,
+        `Could not start eval because "${requestedId}" is not connected. Reconnect the server and try again.`,
+        { serverId: requestedId },
       );
     }
 
@@ -1683,6 +1717,7 @@ export async function generateEvalTestsWithManager(
     request.convexAuthToken,
     request.serverAttachment,
     request.projectId,
+    request.generationOptions,
   );
 
   return {

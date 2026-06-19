@@ -976,6 +976,7 @@ export function OAuthFlowRoute() {
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    oauthServerModalNonce,
     posthog,
   } = useAppRouteContext();
 
@@ -1031,6 +1032,7 @@ export function OAuthFlowRoute() {
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
         onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+        openProfileModalSignal={oauthServerModalNonce}
       />
     </ErrorBoundary>
   );
@@ -1040,10 +1042,12 @@ export function XAAFlowRoute() {
   const {
     xaaEnabled,
     appState,
+    displayServerConfigs,
     activeOrganizationId,
     convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
+    xaaServerModalNonce,
   } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
@@ -1056,12 +1060,17 @@ export function XAAFlowRoute() {
       }
     >
       <XAAFlowTab
-        serverConfigs={appState.servers}
+        // The saved project catalog (clientId, scopes, hasClientSecret,
+        // xaaAuthzIssuer), not the runtime connection entries — the latter
+        // drop the persisted OAuth config, so the Configure modal and the
+        // runner saw a confidential server as a public client with no issuer.
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
+        openServerModalSignal={xaaServerModalNonce}
       />
     </ErrorBoundary>
   );
@@ -1237,6 +1246,11 @@ export default function App() {
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
+  // Bumped to ask the active debugger route to open its own "configure server"
+  // modal (XAA / OAuth) instead of the generic Add Server modal — see the
+  // onAddServerRequested wiring on the header server picker below.
+  const [xaaServerModalNonce, setXaaServerModalNonce] = useState(0);
+  const [oauthServerModalNonce, setOauthServerModalNonce] = useState(0);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -2973,6 +2987,17 @@ export default function App() {
                 }
               : handleConnect,
           onReconnect: handleReconnect,
+          // The XAA / OAuth debuggers add servers through their own purpose-built
+          // modals (target URL + client credentials + simulated identity), not
+          // the generic Add Server modal. Route the header "Add Server" click to
+          // the active debugger's modal so it matches the in-canvas "Configure"
+          // button; other tabs fall back to the generic modal (prop omitted).
+          onAddServerRequested:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? () => setXaaServerModalNonce((n) => n + 1)
+              : activeTab === "oauth-flow"
+                ? () => setOauthServerModalNonce((n) => n + 1)
+                : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -3116,6 +3141,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    xaaServerModalNonce,
+    oauthServerModalNonce,
   };
 
   const appContent = (

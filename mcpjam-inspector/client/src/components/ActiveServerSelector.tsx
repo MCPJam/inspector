@@ -39,6 +39,12 @@ export interface ActiveServerSelectorProps {
    */
   onSelectMultipleServers?: (serverNames: string[]) => void;
   onConnect: (formData: ServerFormData) => void;
+  /**
+   * Override the "Add Server" click. When provided, the button calls this
+   * instead of opening the generic Add Server modal — used by the XAA / OAuth
+   * debuggers to open their own purpose-built "configure server" modals.
+   */
+  onAddServerRequested?: () => void;
   onReconnect?: (serverName: string) => Promise<void>;
   /** Disconnect a connected server (Playground toggle off = unplug). */
   onDisconnect?: (serverName: string) => void;
@@ -94,6 +100,7 @@ export function ActiveServerSelector({
   onServerChange,
   onMultiServerToggle,
   onConnect,
+  onAddServerRequested,
   onReconnect,
   showOnlyOAuthServers = false,
   showOnlyServersWithViews = false,
@@ -316,6 +323,10 @@ export function ActiveServerSelector({
           {/* Add Server Button */}
           <button
             onClick={() => {
+              if (onAddServerRequested) {
+                onAddServerRequested();
+                return;
+              }
               setIsAddModalOpen(true);
             }}
             className={cn(

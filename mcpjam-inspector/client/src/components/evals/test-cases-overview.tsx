@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { Loader2, Play, Puzzle, Trash2 } from "lucide-react";
+import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -31,6 +31,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
@@ -97,6 +98,17 @@ interface TestCasesOverviewProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** When true, the surrounding view is the direct-guest eval playground. */
   isDirectGuest?: boolean;
+  /**
+   * Empty-state CTAs (Playground). When provided, the "No test cases yet" empty
+   * state shows Generate / New case buttons above the message — the same actions
+   * as the suite header, surfaced where the user is looking.
+   */
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
+  /** Why Generate is disabled (shown in its tooltip), mirroring the suite header. */
+  generateTestCasesDisabledReason?: string;
+  isGeneratingTestCases?: boolean;
+  onCreateTestCase?: () => void;
 }
 
 export function TestCasesOverview({
@@ -117,6 +129,11 @@ export function TestCasesOverview({
   runTestCaseDisabledReason = null,
   connectedServerNames,
   isDirectGuest = false,
+  onGenerateTestCases,
+  canGenerateTestCases = false,
+  generateTestCasesDisabledReason,
+  isGeneratingTestCases = false,
+  onCreateTestCase,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
@@ -349,7 +366,9 @@ export function TestCasesOverview({
       {/* Cases List */}
       <div
         className={cn(
-          caseListCardClassName,
+          // Empty state floats with no card border/background; the bordered
+          // card only frames an actual list of cases.
+          testCaseStats.length === 0 ? "flex flex-col" : caseListCardClassName,
           isByHostView ? "min-h-[min(70vh,720px)] flex-1" : "max-h-[600px]"
         )}
       >
@@ -478,20 +497,82 @@ export function TestCasesOverview({
 
             <div className="divide-y overflow-y-auto">
               {testCaseStats.length === 0 ? (
-                showDisconnectedPlaygroundEmptyState ? (
+                isGeneratingTestCases ? (
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 px-4 py-12 text-sm text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+                    <span>Generating test cases…</span>
+                  </div>
+                ) : showDisconnectedPlaygroundEmptyState ? (
                   <EmptyState
                     icon={Puzzle}
-                    title={`Start ${disconnectedPlaygroundServerName} to generate tests`}
+                    title={`Connect to "${disconnectedPlaygroundServerName}" server to generate tests`}
                     description="Playground can automatically generate test cases once a server is connected."
                     className="h-auto min-h-[240px]"
                   />
                 ) : hideViewModeSelect ? (
-                  <div className="flex min-h-[200px] items-center justify-center px-4 py-12">
-                    <p className="text-sm text-muted-foreground">
-                      No test cases yet — click{" "}
-                      <span className="text-foreground">Generate</span> or{" "}
-                      <span className="text-foreground">New case</span>.
-                    </p>
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-4 px-4 py-12">
+                    {onGenerateTestCases || onCreateTestCase ? (
+                      <div className="flex items-center gap-2">
+                        {onGenerateTestCases ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  className="h-11 gap-2 px-6 text-sm"
+                                  onClick={onGenerateTestCases}
+                                  disabled={
+                                    !canGenerateTestCases ||
+                                    isGeneratingTestCases
+                                  }
+                                  aria-busy={isGeneratingTestCases}
+                                >
+                                  {isGeneratingTestCases ? (
+                                    <Loader2
+                                      className="h-4 w-4 shrink-0 animate-spin"
+                                      aria-hidden
+                                    />
+                                  ) : (
+                                    <Sparkles
+                                      className="h-4 w-4 shrink-0"
+                                      aria-hidden
+                                    />
+                                  )}
+                                  Generate
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              variant="muted"
+                              side="bottom"
+                              sideOffset={6}
+                            >
+                              {isGeneratingTestCases
+                                ? "Generating test cases…"
+                                : !canGenerateTestCases
+                                ? generateTestCasesDisabledReason ??
+                                  "Configure suite servers before generating cases."
+                                : "Generate suggested cases from your server's tools."}
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                        {onCreateTestCase ? (
+                          <Button
+                            type="button"
+                            variant="default"
+                            className="h-11 gap-2 px-6 text-sm"
+                            onClick={onCreateTestCase}
+                          >
+                            <Plus
+                              className="h-4 w-4 shrink-0"
+                              aria-hidden
+                            />
+                            New case
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -508,9 +589,14 @@ export function TestCasesOverview({
                           (serverName) => !connectedServerNames.has(serverName)
                         );
                   const hasModels = Boolean(testCase.models?.length);
-                  // Probes have no quick-run path (suite/schedule only); keep
-                  // the gate explicit rather than riding on their empty models.
-                  const isProbeCase = testCase.caseType === "widget_probe";
+                  // Render checks have no quick-run path (suite/schedule only);
+                  // keep the gate explicit rather than riding on their empty
+                  // models. Detect both legacy widget_probe and new unified
+                  // pinned-only cases.
+                  const isProbeCase = isPinnedOnly({
+                    caseType: testCase.caseType,
+                    promptTurns: testCase.promptTurns,
+                  });
                   const isThisCaseRunning = runningTestCaseId === testCase._id;
                   const isAnotherCaseRunning =
                     runningTestCaseId != null &&

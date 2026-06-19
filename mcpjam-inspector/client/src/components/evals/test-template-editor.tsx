@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import posthog from "posthog-js";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   ArrowLeft,
   Code2,
@@ -50,11 +51,15 @@ import {
 import {
   deriveLegacyPromptFields,
   flattenAssertedExpectedToolCalls,
+  isPinnedOnly,
+  isPinnedTurn,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
+  resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
+import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveMatchOptions,
@@ -72,6 +77,8 @@ import {
 } from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "./helpers";
+import { parseDraftTestCaseId } from "./draft-test-case";
+import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
   ChatboxHostStyleProvider,
@@ -119,7 +126,6 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { WidgetProbeEditor } from "./widget-probe-editor";
 
 interface TestTemplate {
   title: string;
@@ -166,6 +172,37 @@ interface TestTemplateEditorProps {
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   projectServers?: RemoteServer[];
+  /**
+   * Called after an unsaved draft case is persisted for the first time, with the
+   * new Convex id, so the parent can swap the `draft:<kind>` route for the real
+   * one. Only relevant when `selectedTestCaseId` is a draft sentinel.
+   */
+  onDraftSaved?: (newTestCaseId: string) => void;
+}
+
+/**
+ * In-memory shape for an unsaved ("draft") case, so the editor can render it
+ * before anything is written to Convex. Mirrors the fields the old eager-create
+ * handlers inserted. `_id` is the route sentinel (`draft:<kind>`), not a real
+ * Convex id — Save swaps the eager update for a `createTestCase` insert.
+ */
+function buildDraftTestCase(
+  id: string,
+  suiteTestCases: any[] | undefined
+): any {
+  const collected = collectUniqueModelsFromTestCases(suiteTestCases ?? []);
+  const models =
+    collected.length > 0
+      ? collected
+      : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
+  return {
+    _id: id,
+    title: "Untitled test case",
+    query: "",
+    runs: 1,
+    models,
+    caseType: "prompt",
+  };
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -195,11 +232,32 @@ const validateExpectedToolCalls = (
   return true;
 };
 
-/** When every step has no asserted tool calls, the case expects no tool usage (stored as isNegativeTest). */
+/**
+ * A negative test = the MODEL is expected to call no tools. Pinned
+ * (render-check) turns are model-free and always carry empty
+ * `expectedToolCalls`, so exclude them — otherwise a case containing a pinned
+ * turn (or a pinned-only render check) would be mislabeled negative. A case
+ * with no model turns is not a negative test.
+ */
 function deriveIsNegativeTestFromPromptTurns(
   promptTurns: PromptTurn[]
 ): boolean {
-  return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
+  const modelTurns = promptTurns.filter((turn) => !isPinnedTurn(turn));
+  return (
+    modelTurns.length > 0 &&
+    modelTurns.every((turn) => turn.expectedToolCalls.length === 0)
+  );
+}
+
+/** A render-check (pinned) turn needs a server and a real (non-placeholder) tool. */
+function isPinnedTurnIncomplete(turn: PromptTurn): boolean {
+  const p = turn.pinnedToolCall;
+  return (
+    !p ||
+    !p.serverName?.trim() ||
+    !p.toolName?.trim() ||
+    p.toolName === PROBE_TOOL_NAME_PLACEHOLDER
+  );
 }
 
 const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
@@ -207,16 +265,28 @@ const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
     return false;
   }
 
-  if (promptTurns.some((turn) => !turn.prompt.trim())) {
-    return false;
+  // Pinned (render-check) turns need a server + tool, not a prompt.
+  for (const turn of promptTurns) {
+    if (isPinnedTurn(turn)) {
+      if (isPinnedTurnIncomplete(turn)) return false;
+    } else if (!turn.prompt.trim()) {
+      return false;
+    }
   }
 
-  const isNegativeTest = deriveIsNegativeTestFromPromptTurns(promptTurns);
+  // Negative/asserted-tool logic applies only to model (non-pinned) turns.
+  const modelTurns = promptTurns.filter((turn) => !isPinnedTurn(turn));
+  if (modelTurns.length === 0) {
+    // Pinned-only case (render check): all pinned turns validated above.
+    return true;
+  }
+
+  const isNegativeTest = deriveIsNegativeTestFromPromptTurns(modelTurns);
   if (isNegativeTest) {
     return true;
   }
 
-  const assertedTurns = promptTurns.filter(
+  const assertedTurns = modelTurns.filter(
     (turn) => turn.expectedToolCalls.length > 0
   );
   if (assertedTurns.length === 0) {
@@ -236,8 +306,21 @@ export function getPromptTurnBlockReason(
     return "Configure at least one prompt step.";
   }
 
+  const incompletePinned = promptTurns
+    .map((turn, i) =>
+      isPinnedTurn(turn) && isPinnedTurnIncomplete(turn) ? i + 1 : null
+    )
+    .filter((n): n is number => n !== null);
+  if (incompletePinned.length > 0) {
+    return promptTurns.length === 1
+      ? "Pick a server and tool for the render check."
+      : `Pick a server and tool for render-check turn(s) ${incompletePinned.join(", ")}.`;
+  }
+
   const emptySteps = promptTurns
-    .map((turn, i) => (!turn.prompt.trim() ? i + 1 : null))
+    .map((turn, i) =>
+      !isPinnedTurn(turn) && !turn.prompt.trim() ? i + 1 : null
+    )
     .filter((n): n is number => n !== null);
 
   if (emptySteps.length > 0) {
@@ -255,6 +338,8 @@ export function getPromptTurnBlockReason(
 }
 
 function isStepPromptEmpty(turn: PromptTurn | undefined): boolean {
+  // A pinned (render-check) turn needs no prompt, so it's never "empty".
+  if (turn && isPinnedTurn(turn)) return false;
   return !(turn?.prompt ?? "").trim();
 }
 
@@ -398,12 +483,16 @@ export function TestTemplateEditor({
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
+  onDraftSaved,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Guards the first-Save insert of a prompt draft so a double-click can't
+  // create the case twice while createTestCase is in flight.
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
   );
@@ -461,15 +550,27 @@ export function TestTemplateEditor({
     testCaseId: string;
     [key: string]: unknown;
   }) => Promise<unknown>;
+  const createTestCaseMutation = useMutation(
+    "testSuites:createTestCase" as any
+  ) as unknown as (args: Record<string, unknown>) => Promise<string>;
+
+  // A draft (`draft:<kind>` sentinel) is a brand-new case the user is
+  // configuring but has not saved. It is NOT in Convex yet, so we synthesize it
+  // locally and only persist on Save. See ./draft-test-case.ts.
+  const draftKind = parseDraftTestCaseId(selectedTestCaseId);
+  const isDraft = draftKind !== null;
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
     suiteId,
   }) as any[] | undefined;
 
   const currentTestCase = useMemo(() => {
+    if (draftKind) {
+      return buildDraftTestCase(selectedTestCaseId, testCases);
+    }
     if (!testCases) return null;
     return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
-  }, [testCases, selectedTestCaseId]);
+  }, [draftKind, testCases, selectedTestCaseId]);
 
   const routeCompareAnchorIteration = useQuery(
     "testSuites:getTestIteration" as any,
@@ -566,7 +667,12 @@ export function TestTemplateEditor({
       return;
     }
 
-    const promptTurns = resolvePromptTurns(currentTestCase);
+    // Legacy `widget_probe` rows store the pinned call as top-level
+    // `probeConfig` (not a turn); surface it as a pinned turn so it edits in
+    // the unified editor like any render-check turn. Shared with the runner's
+    // `normalizeTestForPinnedTurns` so the rule lives in one place. No-op for
+    // post-migration rows that already carry the pinned turn.
+    const promptTurns = resolvePromptTurnsWithLegacyProbe(currentTestCase);
     setEditForm({
       title: currentTestCase.title,
       runs: currentTestCase.runs,
@@ -667,7 +773,10 @@ export function TestTemplateEditor({
   };
 
   const currentPromptTurns = useMemo(
-    () => (currentTestCase ? resolvePromptTurns(currentTestCase) : []),
+    // Match how editForm.promptTurns is seeded (legacy widget_probe → pinned
+    // turn) so a freshly-opened legacy render check doesn't read as dirty.
+    () =>
+      currentTestCase ? resolvePromptTurnsWithLegacyProbe(currentTestCase) : [],
     [currentTestCase]
   );
   const currentAdvancedConfig = useMemo(
@@ -729,6 +838,17 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
+  // A case whose every turn is a pinned render check needs no model — hide the
+  // model picker and drop the "select a model" run gate for it.
+  const casePinnedOnly = useMemo(
+    () => (editForm ? isPinnedOnly({ promptTurns: editForm.promptTurns }) : false),
+    [editForm],
+  );
+  // Gates the per-turn "Render check" toggle, consistent with the widget-check
+  // gating in ChecksSection. An already-pinned turn always shows its controls
+  // so existing render checks remain editable when the flag is off.
+  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
+
   const arePredicatesValid = useMemo(() => {
     if (!editForm?.predicates) return true;
     // In `inherit` mode the case's `list` is semantically ignored by the
@@ -742,7 +862,10 @@ export function TestTemplateEditor({
   }, [editForm?.predicates]);
 
   const savePrimaryDisabled =
-    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
+    !arePromptTurnsValid ||
+    !arePredicatesValid ||
+    isRunningCompare ||
+    isSavingDraft;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -767,6 +890,11 @@ export function TestTemplateEditor({
   ]);
 
   const runPrimaryDisabled =
+    isDraft ||
+    // A model-free render check has no editor quick-run path — it runs with the
+    // full suite (the compare path below would abort on "no model"). Disable
+    // Run for it with an explanatory tooltip instead of letting it fail.
+    casePinnedOnly ||
     selectedModelValues.length === 0 ||
     isRunningCompare ||
     !canRun ||
@@ -775,6 +903,12 @@ export function TestTemplateEditor({
   const runDisabledTooltip = useMemo(() => {
     if (!runPrimaryDisabled) {
       return null;
+    }
+    if (isDraft) {
+      return "Save this test case before you can run it.";
+    }
+    if (casePinnedOnly) {
+      return "Render checks run with the full suite, not on their own.";
     }
     if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
@@ -802,6 +936,7 @@ export function TestTemplateEditor({
     return "Run is unavailable for this test right now.";
   }, [
     runPrimaryDisabled,
+    casePinnedOnly,
     selectedModelValues.length,
     canRun,
     missingServers,
@@ -809,6 +944,7 @@ export function TestTemplateEditor({
     arePromptTurnsValid,
     editForm,
     ensureServersReady,
+    isDraft,
   ]);
 
   const updatePromptTurn = (
@@ -944,7 +1080,53 @@ export function TestTemplateEditor({
     });
   };
 
+  // First Save of a prompt draft: insert into Convex (instead of updating a
+  // record that does not exist yet), then hand the new id to the parent so it
+  // can swap the `draft:<kind>` route for the real one.
+  const handleCreateFromDraft = async () => {
+    if (!editForm || isSavingDraft) return;
+
+    if (!validatePromptTurns(editForm.promptTurns)) {
+      toast.error(
+        getPromptTurnBlockReason(editForm.promptTurns) ??
+          "Fix the test configuration before saving."
+      );
+      return;
+    }
+
+    setIsSavingDraft(true);
+    try {
+      const savePayload = buildSavePayload(editForm);
+      const newTestCaseId = await createTestCaseMutation({
+        suiteId,
+        models: currentTestCase?.models ?? [],
+        ...savePayload,
+      });
+      posthog.capture("eval_test_case_created", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId ?? null,
+        test_case_id: newTestCaseId,
+        num_models: currentTestCase?.models?.length ?? 0,
+        num_prompt_turns: editForm.promptTurns?.length ?? 0,
+      });
+      toast.success("Test case created");
+      onDraftSaved?.(newTestCaseId);
+    } catch (error) {
+      console.error("Failed to create test case:", error);
+      toast.error(getBillingErrorMessage(error, "Failed to create test case"));
+      throw error;
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (isDraft) {
+      await handleCreateFromDraft();
+      return;
+    }
     if (!editForm || !currentTestCase) return;
 
     if (!validatePromptTurns(editForm.promptTurns)) {
@@ -1248,6 +1430,11 @@ export function TestTemplateEditor({
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
   }) => {
+    // A draft has no Convex id to attach iterations to — Run is disabled in the
+    // UI until the user saves; this guards the programmatic paths too.
+    if (isDraft) {
+      return;
+    }
     if (!currentTestCase || !suite || !editForm) {
       return;
     }
@@ -1868,22 +2055,9 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
-  // Widget probes get a dedicated, much smaller editor — none of the
-  // prompt-turn / model / compare machinery below applies to them. Placed
-  // after every hook call so both editors share identical hook order.
-  if (currentTestCase?.caseType === "widget_probe") {
-    return (
-      <WidgetProbeEditor
-        testCase={currentTestCase}
-        suiteServers={effectiveSuiteServers}
-        availableTools={availableTools}
-        projectServers={projectServers}
-        onBackToList={onBackToList}
-        updateTestCase={updateTestCaseMutation}
-      />
-    );
-  }
-
+  // Render checks are no longer a separate editor — a case whose turns are all
+  // pinned renders here like any other, just with the model-only UI hidden
+  // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
@@ -2136,6 +2310,9 @@ export function TestTemplateEditor({
                       editForm.matchOptions,
                     ).argumentMatching
                   }
+                  suiteServers={effectiveSuiteServers}
+                  projectServers={projectServers}
+                  syntheticMonitorsEnabled={syntheticMonitorsEnabled ?? false}
                 />
               ) : null}
             </div>

@@ -651,9 +651,30 @@ export class HostRunner implements HostExecutor {
       }
     }
 
+    // Logical provider for span metadata (OTel gen_ai.provider.name). Read from
+    // the explicit `provider/model` namespace of the model spec — NOT guessed
+    // from a bare model id. Best-effort: a parse failure must not break span
+    // capture (the model itself is constructed below and will surface errors).
+    let spanProvider: string | undefined;
+    try {
+      const customNames = this.customProviders
+        ? new Set(
+            this.customProviders instanceof Map
+              ? this.customProviders.keys()
+              : Object.keys(this.customProviders)
+          )
+        : undefined;
+      const parsed = parseLLMString(this.model, customNames);
+      spanProvider =
+        parsed.type === "custom" ? parsed.providerName : parsed.provider;
+    } catch {
+      spanProvider = undefined;
+    }
+
     const spanIntegration = createEvalSpanIntegration({
       rel: () => Date.now() - startTime,
       serverIdByTool,
+      provider: spanProvider,
     });
 
     try {

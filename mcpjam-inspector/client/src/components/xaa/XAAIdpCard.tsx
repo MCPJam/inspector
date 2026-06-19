@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
-import { Card } from "@mcpjam/design-system/card";
 import {
   HoverCard,
   HoverCardContent,
@@ -11,9 +9,9 @@ import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
 import { fetchXaaIdpUrls, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 
-// Inline label + value + copy button, sized to share one horizontal bar with
-// the sibling field. The URL is truncated (the copy button carries the full
-// value); the native title surfaces it on hover for a quick read.
+// A compact click-to-copy chip: shows only the label to keep the bar minimal —
+// the long URL stays hidden (revealed on hover via the native title) and the
+// whole chip copies the full value. The icon flips to a check on copy.
 function CopyField({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
@@ -43,32 +41,20 @@ function CopyField({ label, value }: { label: string; value: string }) {
   }, []);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="shrink-0 text-xs font-medium text-muted-foreground">
-        {label}
-      </span>
-      <div
-        className="min-w-0 flex-1 truncate rounded-md border border-border bg-muted/30 px-2.5 py-1.5 font-mono text-xs"
-        title={value}
-      >
-        {value}
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="shrink-0"
-        onClick={handleCopy}
-        aria-label={`Copy ${label}`}
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-        <span className="ml-1">{copied ? "Copied" : "Copy"}</span>
-      </Button>
-    </div>
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={value}
+      aria-label={`Copy ${label}`}
+      className="group inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span>{copied ? "Copied" : label}</span>
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-emerald-500" />
+      ) : (
+        <Copy className="h-3.5 w-3.5 opacity-60 transition-opacity group-hover:opacity-100" />
+      )}
+    </button>
   );
 }
 
@@ -162,7 +148,7 @@ export function XAAIdpCard() {
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
   const [urls, setUrls] = useState(() => getXaaIdpUrls());
-  const { issuerBaseUrl, jwksUrl } = urls;
+  const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
   // Resolve the real issuer from the server's discovery doc once on mount —
   // the URLs are always visible now, so there's no expand to defer it to.
@@ -178,7 +164,7 @@ export function XAAIdpCard() {
   }, []);
 
   return (
-    <Card className="mx-3 mt-3 mb-1 gap-0 p-3">
+    <div className="border-b border-border bg-background px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex shrink-0 items-center gap-1.5">
           <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -187,8 +173,9 @@ export function XAAIdpCard() {
           </span>
           <IdpInfo />
         </div>
-        <div className="flex min-w-[20rem] flex-[1_1_24rem] flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CopyField label="Issuer URL" value={issuerBaseUrl} />
+          <CopyField label="OpenID Config" value={openidConfigUrl} />
           <CopyField label="JWKS URL" value={jwksUrl} />
         </div>
       </div>
@@ -204,6 +191,6 @@ export function XAAIdpCard() {
           </span>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

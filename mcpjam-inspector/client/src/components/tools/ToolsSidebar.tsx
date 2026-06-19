@@ -11,7 +11,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { Input } from "@mcpjam/design-system/input";
-import { ToolItem } from "./ToolItem";
+import { ToolItem, type ToolQualityInfo } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -25,6 +25,8 @@ interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
   onChangeTab: (tab: "tools" | "saved") => void;
   tools: Record<string, Tool>;
+  /** Per-tool quality findings keyed by tool name (optional). */
+  toolQuality?: Map<string, ToolQualityInfo>;
   toolNames: string[];
   filteredToolNames: string[];
   selectedToolName?: string;
@@ -66,6 +68,7 @@ export function ToolsSidebar({
   activeTab,
   onChangeTab,
   tools,
+  toolQuality,
   toolNames,
   filteredToolNames,
   selectedToolName,
@@ -426,6 +429,7 @@ export function ToolsSidebar({
                               name={name}
                               isSelected={selectedToolName === name}
                               onClick={() => onSelectTool(name)}
+                              quality={toolQuality?.get(name)}
                             />
                           ))}
                       </div>

@@ -1,75 +1,104 @@
-diff --git a/.changeset/cli-apps-session.md b/.changeset/cli-apps-session.md
+diff --git a/.changeset/chat-ui-trace-timeline.md b/.changeset/chat-ui-trace-timeline.md
 deleted file mode 100644
-index ca9715d94..000000000
---- a/.changeset/cli-apps-session.md
+index 1f8a421e9..000000000
+--- a/.changeset/chat-ui-trace-timeline.md
 +++ /dev/null
-@@ -1,8 +0,0 @@
+@@ -1,13 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/chat-ui": minor
+----
+-
+-Add the recorded-trace waterfall as a new `@mcpjam/chat-ui/trace-timeline` subpath.
+-
+-`TraceTimeline` renders the per-step trace waterfall (per-span latency + token
+-counts, hover for wall-clock start/end) from a `TraceSpan[]`. Tier-A clean:
+-provider-free, no posthog / design-system / convex / widget-runtime imports —
+-it reuses the package's own `JsonView` / `Markdown` / `tool-result-text` / `cn`
+-plus small local UI shims, and the `trace-waterfall-*` classes + their tokens
+-ship in `styles.css` scoped under `.mcpjam-chat-ui`. New subpath only; existing
+-exports are unchanged.
+diff --git a/.changeset/cli-eval-edit.md b/.changeset/cli-eval-edit.md
+deleted file mode 100644
+index f43e7d7cb..000000000
+--- a/.changeset/cli-eval-edit.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
 -"@mcpjam/cli": minor
 ----
 -
--New `mcpjam apps session start|action|close` drives an MCP App widget interactively, headlessly: `start` renders a widget and keeps it mounted (a live Chromium tab), `action` steps it with a Computer-Use action (click/type/scroll/…) and reports the post-action frame plus any widget→host `tools/call`s it triggered, and `close` disposes it. The CLI exposes the session; the external agent drives the steps (no LLM is embedded).
--
--Backed by a new local-only Inspector surface (`POST /api/mcp/widget-session`, `POST /api/mcp/widget-session/:id/action`, `DELETE /api/mcp/widget-session/:id`) over a session registry with strict browser lifecycle — max concurrent sessions cap, idle TTL refreshed on each action, a periodic sweep, and dispose-all on process shutdown — so a mounted tab can't leak. The gate-first render flow (listTools → renderability gate → executeTool → render) is shared with `apps render` via a common core. Same output conventions as `apps render`: screenshot to a file by default (`--screenshot-out`), inline base64 opt-in (`--screenshot-base64`).
-diff --git a/.changeset/create-eval-suite.md b/.changeset/create-eval-suite.md
+-Support full eval suite/case editing from the CLI `eval` command via the public
+-API.
+diff --git a/.changeset/inspector-evals-and-oauth.md b/.changeset/inspector-evals-and-oauth.md
 deleted file mode 100644
-index cb41b0a8b..000000000
---- a/.changeset/create-eval-suite.md
+index 11ffcb103..000000000
+--- a/.changeset/inspector-evals-and-oauth.md
 +++ /dev/null
-@@ -1,21 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
-----
--
--Add `create_eval_suite`: author runnable eval suites from the CLI and MCP.
--
--- **@mcpjam/sdk**: new `createEvalSuiteOperation` platform operation plus
--  `PlatformApiClient.createEvalSuite` and the `PlatformEvalSuiteCreated` type.
--  Resolves the project selector and HTTP-only servers like `run_eval_suite`,
--  and forwards the full case shape (expected tool calls, expected output,
--  advanced config, prompt turns, match options, predicates, widget probes).
--- **@mcpjam/cli**: new `mcpjam eval` command group (`create` / `list` / `run` /
--  `status`). `create` accepts a JSON suite definition via `--file`/`--json`
--  with `--name`/`--model`/`--provider`/`--server`/`--project` overrides and
--  authors a suite without running it.
--- **@mcpjam/inspector**: new author-only `POST /api/v1/projects/:projectId/eval-suites`
--  endpoint that creates a runnable suite from test-case definitions (extracted
--  from the eval-run path, which is unchanged). The v1 guest gate is now
--  method-aware: `GET /eval-suites` stays guest-allowed, `POST` is denied.
-diff --git a/.changeset/nux-signup-routing.md b/.changeset/nux-signup-routing.md
-deleted file mode 100644
-index 6e1991183..000000000
---- a/.changeset/nux-signup-routing.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 ----
 -
--Route brand-new signups to the Playground on first load while keeping returning users on Home. Onboarding state now distinguishes a first-ever session from a returning one so the initial destination matches the user's intent.
-diff --git a/.changeset/sidebar-auth-flash.md b/.changeset/sidebar-auth-flash.md
+-Eval improvements: unify render checks into the prompt-test runner as model-free
+-per-turn pinned tool calls, add a run timeout, surface clearer errors when eval
+-`tools/list` or setup fails, and expose full eval suite/case editing through the
+-public API. Show per-tool quality badges in the Tools tab. Stop persisting OAuth
+-client secrets in browser storage.
+diff --git a/.changeset/inspector-oauth-ui-fixes.md b/.changeset/inspector-oauth-ui-fixes.md
 deleted file mode 100644
-index 0859f5391..000000000
---- a/.changeset/sidebar-auth-flash.md
+index 0c15098fe..000000000
+--- a/.changeset/inspector-oauth-ui-fixes.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,15 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix the sidebar flashing a signed-out layout while authentication is still resolving. The sidebar and user section now hold their rendering until auth state settles, avoiding a brief flicker on load.
+-OAuth and eval polish:
+-
+-- Stop reconnect from wiping a server's saved OAuth config.
+-- Show the full saved OAuth config (clientId, scopes, secret flag, issuer) in the
+-  Configure modal, and cleaner client-secret reveal UX.
+-- Drop the blue focus ring on flow steps and add an issuer auto-discovery hint;
+-  render the IdP header in a flat container; keep ID-JAG lint rows inside the
+-  flow panel on narrow widths.
+-- Clearer welcome-screen instructions for newcomers.
+-- Configurable eval Generate (case count, per-bucket mix, vary user styles) plus
+-  assorted eval nits.
+diff --git a/.changeset/sdk-platform-eval-edit.md b/.changeset/sdk-platform-eval-edit.md
+deleted file mode 100644
+index 43b65eb89..000000000
+--- a/.changeset/sdk-platform-eval-edit.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add platform operations for editing eval suites and cases. New additive exports
+-on the `@mcpjam/sdk` platform client (operations, types) backing the public
+-eval-editing API; existing signatures are unchanged.
+diff --git a/chat-ui/package.json b/chat-ui/package.json
+index da9418bd1..ef05a916b 100644
+--- a/chat-ui/package.json
++++ b/chat-ui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/chat-ui",
+-  "version": "0.1.0",
++  "version": "0.2.0",
+   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
+   "license": "MIT",
+   "type": "module",
 diff --git a/cli/package.json b/cli/package.json
-index fa23a15f9..d563cba8d 100644
+index d563cba8d..91d09b66e 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.7.0",
-+  "version": "3.8.0",
+-  "version": "3.8.0",
++  "version": "3.9.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -77,46 +106,55 @@ index fa23a15f9..d563cba8d 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^1.18.0",
-+    "@mcpjam/sdk": "^1.19.0",
+-    "@mcpjam/sdk": "^1.19.0",
++    "@mcpjam/sdk": "^1.21.0",
      "@modelcontextprotocol/server": "^2.0.0-alpha.2",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index ac4a51cbc..d73da8ce7 100644
+index 168a1649f..d4081cdab 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.13.0",
-+  "version": "2.14.0",
+-  "version": "2.15.0",
++  "version": "2.16.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -127,7 +127,7 @@
+@@ -129,7 +129,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.18.0",
-+    "@mcpjam/sdk": "^1.19.0",
+-    "@mcpjam/sdk": "^1.20.0",
++    "@mcpjam/sdk": "^1.21.0",
      "@modelcontextprotocol/client": "^2.0.0-alpha.2",
      "@modelcontextprotocol/ext-apps": "^1.7.2",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 9bef76c35..8cdb3330e 100644
+index eb5771e35..f12f81066 100644
 --- a/package-lock.json
 +++ b/package-lock.json
+@@ -27,7 +27,7 @@
+     },
+     "chat-ui": {
+       "name": "@mcpjam/chat-ui",
+-      "version": "0.1.0",
++      "version": "0.2.0",
+       "license": "MIT",
+       "dependencies": {
+         "clsx": "^2.1.1",
 @@ -58,9 +58,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.7.0",
-+      "version": "3.8.0",
+-      "version": "3.8.0",
++      "version": "3.9.0",
        "dependencies": {
--        "@mcpjam/sdk": "^1.18.0",
-+        "@mcpjam/sdk": "^1.19.0",
+-        "@mcpjam/sdk": "^1.19.0",
++        "@mcpjam/sdk": "^1.21.0",
          "@modelcontextprotocol/server": "^2.0.0-alpha.2",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -124,38 +162,38 @@ index 9bef76c35..8cdb3330e 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.13.0",
-+      "version": "2.14.0",
+-      "version": "2.15.0",
++      "version": "2.16.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -357,7 +357,7 @@
+@@ -359,7 +359,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.18.0",
-+        "@mcpjam/sdk": "^1.19.0",
+-        "@mcpjam/sdk": "^1.20.0",
++        "@mcpjam/sdk": "^1.21.0",
          "@modelcontextprotocol/client": "^2.0.0-alpha.2",
          "@modelcontextprotocol/ext-apps": "^1.7.2",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -36585,7 +36585,7 @@
+@@ -36879,7 +36879,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.18.0",
-+      "version": "1.19.0",
+-      "version": "1.20.0",
++      "version": "1.21.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 4b9bca356..7fafd3546 100644
+index bac20213e..bdbdc91f3 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.18.0",
-+  "version": "1.19.0",
+-  "version": "1.20.0",
++  "version": "1.21.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

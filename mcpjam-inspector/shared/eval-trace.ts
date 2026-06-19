@@ -27,7 +27,128 @@ export type EvalTraceSpan = {
   messageStartIndex?: number;
   /** Inclusive index of the last related trace message in the stored blob. */
   messageEndIndex?: number;
+  // ── GenAI harness metadata (step/llm spans). OTel mapping in OTEL_ATTR. ──
+  /**
+   * Why the model stopped, normalized to a canonical vocabulary via
+   * `normalizeFinishReason()` at the write site. OTel
+   * `gen_ai.response.finish_reasons` (array; we emit singular per-span, n=1).
+   * Advisory display only — never feed a gate/predicate.
+   */
+  finishReason?: string;
+  /** Logical provider (e.g. "anthropic"). OTel `gen_ai.provider.name`. Threaded from config, never derived from modelId. */
+  provider?: string;
+  /** Provider completion id. OTel `gen_ai.response.id`. */
+  responseId?: string;
+  /** ISO-8601 UTC response timestamp. No direct OTel attr (informs span end time on export). Stored, not surfaced in v1 UI. */
+  responseTimestamp?: string;
+  /** Time to first streamed chunk, ms. OTel `gen_ai.response.time_to_first_chunk` (seconds — export as ttfcMs/1000). Undefined on non-streaming paths; advisory only. */
+  ttfcMs?: number;
+  // ── MCP error metadata (tool spans) ──
+  /**
+   * MCP-layer error code from a failed `tools/call` (negative integer). Covers
+   * both server JSON-RPC error responses (e.g. -32602 invalid params) and
+   * SDK-local lifecycle failures (-32001 request timeout, -32000 connection
+   * closed) — we can't distinguish source by code, so the UI labels it
+   * neutrally as an "MCP error" rather than claiming the server returned it.
+   * Absent for `isError: true` domain errors (no code per spec). See
+   * `mcpErrorCodeLabel`.
+   */
+  mcpErrorCode?: number;
 };
+
+/**
+ * Error-code names. Source of truth = the MCP SDK `ErrorCode` enum
+ * (@modelcontextprotocol/sdk types.ts). Of these:
+ *   - -32700/-32600/-32601/-32602/-32603 are JSON-RPC 2.0 spec standard errors
+ *     (MCP is built on JSON-RPC 2.0, so it inherits them);
+ *   - -32000 (connection closed), -32001 (request timeout), -32042 (url
+ *     elicitation required) are MCP-SDK additions, NOT the JSON-RPC spec.
+ *     -32000/-32001 are client-side transport/lifecycle conditions, not server
+ *     faults.
+ * Unmapped codes fall back to the raw number (see mcpErrorCodeLabel), so this
+ * map drifting behind the SDK degrades to "show the code", never a wrong name.
+ */
+const MCP_ERROR_CODE_NAMES: Record<number, string> = {
+  [-32700]: "Parse error",
+  [-32600]: "Invalid request",
+  [-32601]: "Method not found",
+  [-32602]: "Invalid params",
+  [-32603]: "Internal error",
+  [-32000]: "Connection closed",
+  [-32001]: "Request timeout",
+  [-32042]: "URL elicitation required",
+};
+
+/** Human label for an MCP error code, e.g. "-32602 · Invalid params" (or just the code when unknown). */
+export function mcpErrorCodeLabel(code: number): string {
+  const name = MCP_ERROR_CODE_NAMES[code];
+  return name ? `${code} · ${name}` : String(code);
+}
+
+/**
+ * Canonical finish-reason vocabulary. The AI SDK already normalizes to most of
+ * these; `normalizeFinishReason` additionally folds raw provider aliases
+ * (`content_filter`, `max_tokens`, `end_turn`, …) so the badge's exact-match
+ * check (`=== "content-filter"`) can't silently miss across capture paths.
+ */
+const FINISH_REASON_ALIASES: Record<string, string> = {
+  stop: "stop",
+  end_turn: "stop",
+  stop_sequence: "stop",
+  length: "length",
+  max_tokens: "length",
+  model_length: "length",
+  "content-filter": "content-filter",
+  content_filter: "content-filter",
+  "tool-calls": "tool-calls",
+  tool_calls: "tool-calls",
+  tool_use: "tool-calls",
+  function_call: "tool-calls",
+  error: "error",
+  other: "other",
+  unknown: "unknown",
+};
+
+/**
+ * Normalize a raw finish reason to the canonical vocabulary. Returns
+ * `undefined` for empty/missing input (never fabricates). Unrecognized
+ * non-empty values pass through lowercased — we keep debug fidelity rather
+ * than collapsing to "other"; only the badge-relevant values are guaranteed
+ * canonical. Apply at the write site (see feedback_normalize_at_write_site).
+ */
+export function normalizeFinishReason(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const key = trimmed.toLowerCase();
+  return FINISH_REASON_ALIASES[key] ?? key;
+}
+
+/**
+ * Mapping from internal span field → OpenTelemetry semantic-convention
+ * attribute name. The seam a future OTLP exporter consumes; nothing in this
+ * PR serializes. Verified against the live spec 2026-06-18.
+ *
+ * Conversions the exporter must apply:
+ * - `finishReason` → `gen_ai.response.finish_reasons` is a string[]; emit `[finishReason]` (n=1 per span).
+ * - `ttfcMs` → `gen_ai.response.time_to_first_chunk` is seconds (double); emit `ttfcMs / 1000`.
+ * - `responseTimestamp` has no attribute — it informs the span end time.
+ */
+export const OTEL_ATTR = {
+  finishReason: "gen_ai.response.finish_reasons",
+  provider: "gen_ai.provider.name",
+  responseId: "gen_ai.response.id",
+  responseTimestamp: null,
+  ttfcMs: "gen_ai.response.time_to_first_chunk",
+  modelId: "gen_ai.request.model",
+  inputTokens: "gen_ai.usage.input_tokens",
+  outputTokens: "gen_ai.usage.output_tokens",
+  // MCP tool-span fields. `rpc.response.status_code` (string at export) applies
+  // to genuine JSON-RPC *responses*; SDK-local codes (-32000/-32001) are
+  // transport/lifecycle errors and would map to span status / error.type
+  // instead. The exporter (deferred) must branch on that.
+  mcpErrorCode: "rpc.response.status_code",
+} as const;
 
 export type PromptTraceSummary = {
   promptIndex: number;
@@ -300,6 +421,14 @@ export const evalTraceSpanZ = z.object({
   totalTokens: z.number().optional(),
   messageStartIndex: z.number().optional(),
   messageEndIndex: z.number().optional(),
+  // GenAI harness metadata — see EvalTraceSpan + OTEL_ATTR.
+  finishReason: z.string().optional(),
+  provider: z.string().optional(),
+  responseId: z.string().optional(),
+  responseTimestamp: z.string().optional(),
+  ttfcMs: z.number().optional(),
+  // MCP server-contract metadata (tool spans).
+  mcpErrorCode: z.number().optional(),
 });
 
 const traceToolCallZ = z.object({

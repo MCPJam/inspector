@@ -333,6 +333,41 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
+  it("keeps Run all disabled while the latest suite run is still running", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        onRerun={onRerun}
+        runs={[{ ...baseRun, status: "running", completedAt: undefined }]}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    const runAll = screen.getByRole("button", {
+      name: /Run all cases in this suite/i,
+    });
+    expect(runAll).toBeDisabled();
+    await user.click(runAll);
+    expect(onRerun).not.toHaveBeenCalled();
+  });
+
   it("forwards iterationOverride on Run all even without a match-options override", async () => {
     const user = userEvent.setup();
     const onRerun = vi.fn();

@@ -35,30 +35,30 @@ import {
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    buildServerBatchRequestMock.mockImplementation(
-      (serverNames: string[]) => {
-        const serverIds = serverNames.map((serverName) =>
-          serverName === "Server A"
-            ? "srv_a"
-            : serverName === "Server B"
-              ? "srv_b"
-              : serverName,
-        );
+    buildServerBatchRequestMock.mockImplementation((serverNames: string[]) => {
+      const serverIds = serverNames.map((serverName) =>
+        serverName === "Server A"
+          ? "srv_a"
+          : serverName === "Server B"
+          ? "srv_b"
+          : serverName
+      );
 
-        return {
-          projectId: "project-1",
-          serverIds,
-          oauthTokens: serverIds.includes("srv_a")
-            ? { srv_a: "oauth-token-a" }
-            : undefined,
-          clientCapabilities: { sampling: true },
-        };
-      },
-    );
+      return {
+        projectId: "project-1",
+        serverIds,
+        oauthTokens: serverIds.includes("srv_a")
+          ? { srv_a: "oauth-token-a" }
+          : undefined,
+        clientCapabilities: { sampling: true },
+      };
+    });
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
     useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
       hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -83,7 +83,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/run",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -104,14 +104,12 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
-      "Guest Server",
-    ]);
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith(["Guest Server"]);
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/run",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -136,7 +134,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -158,7 +156,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-negative-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -183,7 +181,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/run-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -204,8 +202,8 @@ describe("evals-api hosted mode", () => {
           code: "mcpjam_rate_limit",
           error: "Daily usage limit reached.",
         },
-        429,
-      ),
+        429
+      )
     );
 
     await expect(
@@ -216,7 +214,7 @@ describe("evals-api hosted mode", () => {
         provider: "openai",
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
-      }),
+      })
     ).rejects.toThrow("Daily usage limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
@@ -226,6 +224,8 @@ describe("evals-api hosted mode", () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",
       hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -238,8 +238,8 @@ describe("evals-api hosted mode", () => {
           error: "Daily credit limit reached.",
           limitKind: "total",
         },
-        429,
-      ),
+        429
+      )
     );
 
     await expect(
@@ -250,7 +250,7 @@ describe("evals-api hosted mode", () => {
         provider: "openai",
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
-      }),
+      })
     ).rejects.toThrow("Daily credit limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
@@ -267,9 +267,7 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
-      "Guest Server",
-    ]);
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith(["Guest Server"]);
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
@@ -295,7 +293,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -319,7 +317,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-negative-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -344,8 +342,8 @@ describe("evals-api hosted mode", () => {
                   "",
                   'data: {"type":"complete","iteration":{"_id":"iter-1"}}',
                   "",
-                ].join("\n"),
-              ),
+                ].join("\n")
+              )
             );
             controller.close();
           },
@@ -353,8 +351,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     const events: unknown[] = [];
@@ -369,14 +367,14 @@ describe("evals-api hosted mode", () => {
       },
       (event) => {
         events.push(event);
-      },
+      }
     );
 
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/stream-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -410,17 +408,15 @@ describe("evals-api hosted mode", () => {
       new Response(
         new ReadableStream({
           start(controller) {
-            controller.enqueue(
-              encoder.encode('data: {"type":"complete"}\n\n'),
-            );
+            controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
             controller.close();
           },
         }),
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     await streamEvalTestCase(
@@ -433,14 +429,14 @@ describe("evals-api hosted mode", () => {
         convexAuthToken: "guest-convex-token",
         compareRunId: "cmp_guest",
       },
-      () => {},
+      () => {}
     );
 
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/stream-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -466,8 +462,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 429,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     await expect(
@@ -480,8 +476,8 @@ describe("evals-api hosted mode", () => {
           serverIds: ["Server A"],
           convexAuthToken: "convex-token",
         },
-        () => {},
-      ),
+        () => {}
+      )
     ).rejects.toThrow("Daily usage limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
@@ -498,8 +494,8 @@ describe("evals-api hosted mode", () => {
                 [
                   'data: {"type":"error","message":"Backend stream error: 429","details":"{\\"code\\":\\"mcpjam_rate_limit\\",\\"error\\":\\"Daily usage limit reached.\\"}"}',
                   "",
-                ].join("\n"),
-              ),
+                ].join("\n")
+              )
             );
             controller.close();
           },
@@ -507,8 +503,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     const events: unknown[] = [];
@@ -521,7 +517,7 @@ describe("evals-api hosted mode", () => {
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
       },
-      (event) => events.push(event),
+      (event) => events.push(event)
     );
 
     expect(events).toEqual([
@@ -557,8 +553,8 @@ describe("evals-api hosted mode", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual(["tool_a", "tool_b"]);
     expect(
       authFetchMock.mock.calls.some(
-        (call) => typeof call[0] === "string" && call[0].includes("/api/mcp/"),
-      ),
+        (call) => typeof call[0] === "string" && call[0].includes("/api/mcp/")
+      )
     ).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
 import { MonitoringTab } from "./monitoring-tab";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import { isPinnedOnly } from "@/shared/prompt-turns";
 
 interface RunTrendPoint {
   runId: string;
@@ -50,6 +51,12 @@ export interface SuiteDashboardProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  /** Empty-state CTAs in the Cases tab (Playground) — same actions as the suite header. */
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
+  generateTestCasesDisabledReason?: string;
+  isGeneratingTestCases?: boolean;
+  onCreateTestCase?: () => void;
 }
 
 /**
@@ -76,6 +83,11 @@ export function SuiteDashboard({
   onDeleteTestCasesBatch,
   testCasesClickHint,
   userMap,
+  onGenerateTestCases,
+  canGenerateTestCases,
+  generateTestCasesDisabledReason,
+  isGeneratingTestCases,
+  onCreateTestCase,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
   const hostNamesById = useMemo(() => {
@@ -96,7 +108,12 @@ export function SuiteDashboard({
   const showMonitoringTab =
     syntheticMonitorsEnabled &&
     (Boolean(suite.schedule) ||
-      cases.some((testCase) => testCase.caseType === "widget_probe"));
+      cases.some((testCase) =>
+        isPinnedOnly({
+          caseType: testCase.caseType,
+          promptTurns: testCase.promptTurns,
+        }),
+      ));
   // A stale "monitoring" selection (flag toggled off, schedule/probes
   // removed) must not strand the tab strip with nothing highlighted —
   // resolve it to the default tab for both highlighting and content.
@@ -129,6 +146,11 @@ export function SuiteDashboard({
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
       connectedServerNames={connectedServerNames}
+      onGenerateTestCases={onGenerateTestCases}
+      canGenerateTestCases={canGenerateTestCases}
+      generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+      isGeneratingTestCases={isGeneratingTestCases}
+      onCreateTestCase={onCreateTestCase}
     />
   );
 

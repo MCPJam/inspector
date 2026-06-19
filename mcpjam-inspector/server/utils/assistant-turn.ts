@@ -323,6 +323,7 @@ function buildHandlerOptions(
   const handlerOptions: MCPJamHandlerOptions = {
     messages: opts.messages,
     modelId: String(opts.modelDefinition.id),
+    provider: opts.modelDefinition.provider,
     systemPrompt: opts.systemPrompt,
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,

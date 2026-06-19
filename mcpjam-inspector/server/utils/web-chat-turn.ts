@@ -444,6 +444,7 @@ export async function streamWebChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
+    provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,

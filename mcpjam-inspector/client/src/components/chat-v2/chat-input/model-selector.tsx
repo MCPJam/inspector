@@ -19,7 +19,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@mcpjam/design-system/command";
-import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types.js";
+import { ModelDefinition } from "@/shared/types.js";
 import {
   Tooltip,
   TooltipContent,
@@ -30,7 +30,9 @@ import {
   compactModelLabel,
   getLogoProvider,
   getProviderDisplayName,
+  isMCPJamProvidedModelMenuItem,
 } from "@/components/chat-v2/shared/model-helpers";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -60,6 +62,12 @@ interface ModelSelectorProps {
    * clean.
    */
   analyticsLocation?: string;
+  /**
+   * When true, this picker listens for the global "open Your providers tab"
+   * intent (fired by the out-of-credits dialog's BYOK action) and pops open
+   * on the configured tab. Only the chat-input instance opts in.
+   */
+  respondToProviderTabIntent?: boolean;
 }
 
 type GroupKey = string;
@@ -125,6 +133,7 @@ export function ModelSelector({
   maxSelectedModels = 3,
   align = "start",
   analyticsLocation = "chat_input",
+  respondToProviderTabIntent = false,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -138,6 +147,12 @@ export function ModelSelector({
   >(null);
   const posthog = usePostHog();
   const onOpenChangeRef = useRef(onOpenChange);
+  const forceConfiguredTabRef = useRef(false);
+  const handledProvidersTabNonceRef = useRef(0);
+  const selectedProvidersTabNonceRef = useRef(0);
+  const providersTabNonce = useModelPickerIntentStore((state) =>
+    respondToProviderTabIntent ? state.openProvidersTabNonce : 0
+  );
 
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
@@ -149,12 +164,19 @@ export function ModelSelector({
 
   useEffect(() => {
     if (isOpen) {
+      if (forceConfiguredTabRef.current) {
+        // A caller forced the "Your providers" tab (BYOK from the
+        // out-of-credits dialog). Keep it instead of resetting to the current
+        // model's tab; consume the flag so the next manual open resolves
+        // normally.
+        forceConfiguredTabRef.current = false;
+        return;
+      }
       setProviderTab(
-        isMCPJamProvidedModel(String(currentModel.id), currentModel.provider)
-          ? "provided"
-          : "configured"
+        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured"
       );
     } else {
+      forceConfiguredTabRef.current = false;
       setSearch("");
     }
   }, [isOpen, currentModel]);
@@ -245,7 +267,7 @@ export function ModelSelector({
     for (const provider of sortedProviders) {
       const allModels = groupedModels.get(provider) || [];
       const filtered = hideProvidedModels
-        ? allModels.filter((model) => !isMCPJamProvidedModel(String(model.id)))
+        ? allModels.filter((model) => !isMCPJamProvidedModelMenuItem(model))
         : allModels;
 
       if (filtered.length === 0) {
@@ -253,10 +275,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModel(String(model.id))
+        isMCPJamProvidedModelMenuItem(model)
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModel(String(model.id))
+        (model) => !isMCPJamProvidedModelMenuItem(model)
       );
       const title = getProviderDisplayName(provider);
 
@@ -302,8 +324,43 @@ export function ModelSelector({
     );
     return { provided, configured };
   }, [modelGroups]);
+  const firstEnabledConfiguredModel = useMemo(
+    () =>
+      modelSections.configured
+        .flatMap((group) => group.models)
+        .find((model) => !model.disabled),
+    [modelSections]
+  );
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+
+  // React to the global "open Your providers tab" intent (out-of-credits
+  // BYOK). Only the opted-in instance subscribes to a live nonce; others read
+  // a constant 0 so this never fires for them.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    if (providersTabNonce === 0) return;
+
+    if (providersTabNonce !== handledProvidersTabNonceRef.current) {
+      handledProvidersTabNonceRef.current = providersTabNonce;
+      forceConfiguredTabRef.current = true;
+      setProviderTab("configured");
+      setIsOpen(true);
+    }
+
+    if (
+      providersTabNonce !== selectedProvidersTabNonceRef.current &&
+      firstEnabledConfiguredModel
+    ) {
+      selectedProvidersTabNonceRef.current = providersTabNonce;
+      onModelChange(firstEnabledConfiguredModel);
+    }
+  }, [
+    firstEnabledConfiguredModel,
+    onModelChange,
+    providersTabNonce,
+    respondToProviderTabIntent,
+  ]);
 
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =

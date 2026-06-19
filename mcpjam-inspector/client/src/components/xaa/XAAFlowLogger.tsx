@@ -511,7 +511,6 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
-  const focusedStep = activeStep ?? flowState.currentStep;
   const negativeModeSummary =
     NEGATIVE_TEST_MODE_DETAILS[summary.negativeTestMode];
 
@@ -582,7 +581,7 @@ export function XAAFlowLogger({
   };
 
   return (
-    <div className="h-full border-l border-border flex flex-col">
+    <div className="h-full min-w-0 border-l border-border flex flex-col">
       <div className="@container/xaa-run-bar bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         <div className="flex flex-col gap-2 @min-[384px]/xaa-run-bar:flex-row @min-[384px]/xaa-run-bar:items-center">
           <button
@@ -773,32 +772,38 @@ export function XAAFlowLogger({
                 Welcome to the XAA Debugger
               </h3>
               <p className="text-sm text-muted-foreground">
-                Step through the full cross-app access (XAA) authorization flow
-                against an MCP server.
+                Cross-app access (XAA) lets one app call another app&apos;s MCP
+                server on a user&apos;s behalf — without a second login. Step
+                through that flow here and see exactly where your authorization
+                server accepts or rejects it.
               </p>
             </div>
 
             <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
               <li>
                 <span className="font-medium text-foreground">
-                  Add or pick a server in the bar above
+                  Pick a server to test
                 </span>{" "}
-                — each environment (beta/staging/prod) is its own server. Set
-                the simulated identity and negative-test Mode in the run bar.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">
-                  Run the flow
-                </span>{" "}
-                — MCPJam mints an ID-JAG; your authorization server redeems it
-                for an access token, one step at a time.
+                — add or pick one in the bar above (each environment —
+                beta/staging/prod — is its own server), then set the simulated
+                user and test mode in the run bar.
               </li>
               <li>
                 <span className="font-medium text-foreground">
                   Trust MCPJam at your auth server
                 </span>{" "}
-                — register the IdP endpoints (the card at the top) so your
-                authorization server accepts the ID-JAG MCPJam mints.
+                — MCPJam acts as the identity provider. Register its Issuer and
+                JWKS (public signing keys) URLs (the card at the top) so your
+                authorization server accepts the tokens MCPJam signs. Do this
+                first, or the next step gets rejected.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Run the flow
+                </span>{" "}
+                — MCPJam mints an ID-JAG (a signed assertion of who the user
+                is); your authorization server exchanges it for an access token.
+                Advance one step at a time to inspect each request.
               </li>
             </ol>
           </div>
@@ -840,12 +845,7 @@ export function XAAFlowLogger({
                     ref={(el) => {
                       stepRefs.current.set(group.step, el);
                     }}
-                    className={cn(
-                      "bg-background border rounded-lg shadow-sm",
-                      focusedStep === group.step
-                        ? "border-blue-400 ring-1 ring-blue-400/20"
-                        : "border-border"
-                    )}
+                    className="bg-background border border-border rounded-lg shadow-sm"
                   >
                     <button
                       onClick={() => toggleStep(group.step)}
