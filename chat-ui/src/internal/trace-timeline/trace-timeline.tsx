@@ -25,6 +25,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "./eval-trace";
+import { mcpErrorCodeLabel } from "./eval-trace";
 import { Markdown } from "../markdown";
 import { JsonView } from "../../parts/json-view";
 import { extractTextFromToolResult } from "../tool-result-text";
@@ -1678,13 +1679,11 @@ function TimelineDetailPane({
               <div
                 data-testid="trace-mcp-error-code"
                 className="text-[11px] tabular-nums text-muted-foreground"
-                title="JSON-RPC error code returned by the MCP server (rpc.response.status_code) — a protocol contract violation"
+                title="MCP-layer error code. -32602/-32601 etc. are server JSON-RPC errors; -32000 (connection closed) / -32001 (request timeout) are transport/client failures, not server faults."
               >
-                <span className="text-muted-foreground/70">
-                  JSON-RPC error code:{" "}
-                </span>
+                <span className="text-muted-foreground/70">MCP error: </span>
                 <span className="font-medium text-foreground">
-                  {row.span.mcpErrorCode}
+                  {mcpErrorCodeLabel(row.span.mcpErrorCode)}
                 </span>
               </div>
             ) : null}

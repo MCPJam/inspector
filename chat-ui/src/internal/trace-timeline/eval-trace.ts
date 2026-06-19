@@ -42,9 +42,35 @@ export type TraceSpan = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
-  // MCP server-contract metadata (tool spans).
+  // MCP error metadata (tool spans). Negative MCP-layer error code from a
+  // failed tools/call — server JSON-RPC errors (-32602) OR SDK-local transport
+  // failures (-32001 timeout, -32000 connection closed). See mcpErrorCodeLabel.
   mcpErrorCode?: number;
 };
+
+/**
+ * Error-code names. Source of truth = the MCP SDK `ErrorCode` enum
+ * (@modelcontextprotocol/sdk). -32700/-32600/-32601/-32602/-32603 are JSON-RPC
+ * 2.0 spec standard; -32000/-32001/-32042 are MCP-SDK additions (-32000/-32001
+ * are client-side transport conditions, not server faults). Unmapped codes fall
+ * back to the raw number, so drift degrades to "show the code".
+ */
+const MCP_ERROR_CODE_NAMES: Record<number, string> = {
+  [-32700]: "Parse error",
+  [-32600]: "Invalid request",
+  [-32601]: "Method not found",
+  [-32602]: "Invalid params",
+  [-32603]: "Internal error",
+  [-32000]: "Connection closed",
+  [-32001]: "Request timeout",
+  [-32042]: "URL elicitation required",
+};
+
+/** Human label for an MCP error code, e.g. "-32602 · Invalid params". */
+export function mcpErrorCodeLabel(code: number): string {
+  const name = MCP_ERROR_CODE_NAMES[code];
+  return name ? `${code} · ${name}` : String(code);
+}
 
 // Internal aliases so the ported timeline keeps its original identifiers
 // (`EvalTraceSpan`, `EvalTraceSpanCategory`) without churn. The public export

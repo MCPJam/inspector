@@ -7,18 +7,19 @@ import {
 import type { ModelMessage } from "ai";
 
 /**
- * Pull the JSON-RPC error code off a thrown MCP tool error (OTel
- * `rpc.response.status_code`). Present only on protocol-level failures — a
- * `tools/call` that returns `isError: true` (domain error) has no code per the
- * MCP spec.
+ * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
+ * not necessarily a server JSON-RPC *response*: the MCP SDK raises `McpError`
+ * with the same negative-code shape for both server error responses
+ * (`-32602` invalid params, `-32601` method not found) AND client-side
+ * lifecycle failures (`-32001` request timeout, `-32000` connection closed).
+ * We can't reliably distinguish those by code, so we capture all of them and
+ * the UI labels them neutrally as "MCP error" rather than claiming the server
+ * returned them.
  *
- * Accepts only NEGATIVE integers: MCP/JSON-RPC error codes are all negative
- * (`-32602` invalid params, `-32601` method not found, `-32000..-32099`
- * server-defined). Transport errors (`StreamableHTTPError`, `SseError`) also
- * carry a numeric `.code`, but it's an HTTP status (e.g. `401`, `404`, `500`) —
- * a positive number. Excluding non-negatives keeps us from mislabeling a
- * transport/HTTP failure as a JSON-RPC code (those still surface via the
- * existing error-text + red dot, just without a code).
+ * Accepts only NEGATIVE integers — every MCP/JSON-RPC code is negative.
+ * Transport errors (`StreamableHTTPError`, `SseError`) carry an HTTP status on
+ * `.code` (e.g. `401`, a positive number); excluding non-negatives keeps those
+ * out (they still surface via the existing error text + red dot).
  */
 function extractMcpErrorCode(error: unknown): number | undefined {
   const code = (error as { code?: unknown } | null)?.code;

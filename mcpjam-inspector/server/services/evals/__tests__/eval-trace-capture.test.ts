@@ -461,4 +461,35 @@ describe("eval-trace-capture", () => {
     // 401 is an HTTP status, not a JSON-RPC code — must not be recorded/mislabeled.
     expect(toolSpan?.mcpErrorCode).toBeUndefined();
   });
+
+  it("captures SDK-local lifecycle codes too (e.g. request timeout -32001)", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    // MCP SDK raises McpError(RequestTimeout, -32001) client-side. We keep it
+    // (negative code); the UI labels it neutrally, not as a server fault.
+    const timeout = Object.assign(new Error("Request timed out"), {
+      code: -32001,
+    });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        slow: {
+          execute: async () => {
+            throw timeout;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.slow.execute({}, { toolCallId: "call-timeout" }),
+    ).rejects.toBe(timeout);
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.mcpErrorCode).toBe(-32001);
+  });
 });

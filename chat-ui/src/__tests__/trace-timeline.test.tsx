@@ -99,6 +99,8 @@ describe("TraceTimeline (recorded waterfall)", () => {
     );
     const labelButtons = getAllByTestId("trace-row-label-button");
     fireEvent.click(labelButtons[labelButtons.length - 1]);
-    expect(getByTestId("trace-mcp-error-code").textContent).toContain("-32602");
+    const codeEl = getByTestId("trace-mcp-error-code");
+    expect(codeEl.textContent).toContain("-32602");
+    expect(codeEl.textContent).toContain("Invalid params");
   });
 });

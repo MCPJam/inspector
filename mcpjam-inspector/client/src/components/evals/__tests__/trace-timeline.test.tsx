@@ -142,9 +142,11 @@ describe("harness span metadata", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes("create_view"));
     fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
-    expect(screen.getByTestId("trace-mcp-error-code").textContent).toContain(
-      "-32602",
-    );
+    const codeEl = screen.getByTestId("trace-mcp-error-code");
+    // Neutral "MCP error" label + standard code name (not "JSON-RPC … server").
+    expect(codeEl.textContent).toContain("-32602");
+    expect(codeEl.textContent).toContain("Invalid params");
+    expect(codeEl.textContent).not.toContain("JSON-RPC error code");
   });
 
   it("omits the error-code line when no mcpErrorCode is present", () => {
