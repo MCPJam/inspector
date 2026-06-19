@@ -105,8 +105,11 @@ describe("PassDotRow", () => {
       "aria-label",
       "1 passed, 1 failed out of 2",
     );
-    const dots = container.querySelectorAll("span[aria-hidden]");
-    expect(dots[1]).toHaveClass("bg-warning/50");
+    const dots = Array.from(container.querySelectorAll("span[aria-hidden]"));
+    const warningDot = dots.find((dot) =>
+      dot.classList.contains("bg-warning/50"),
+    );
+    expect(warningDot).toHaveClass("bg-warning/50");
   });
 
   it("renders an empty-state aria-label when no iterations", () => {

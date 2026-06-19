@@ -285,7 +285,10 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxEvalIterationsPerMonth") {
-    if (typeof options?.resetsAt === "number") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
       const resetTime = new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",
@@ -319,7 +322,10 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "computerStartsPerDay") {
-    if (typeof options?.resetsAt === "number") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
       const resetTime = new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",

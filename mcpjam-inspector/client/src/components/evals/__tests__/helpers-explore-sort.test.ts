@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sortExploreCasesBySignal } from "../helpers";
+import { computeIterationSummary, sortExploreCasesBySignal } from "../helpers";
 import type { EvalCase, EvalIteration, SuiteAggregate } from "../types";
 
 function makeCase(id: string, title: string, isNegative = false): EvalCase {
@@ -138,5 +138,26 @@ describe("sortExploreCasesBySignal", () => {
       iterations,
     );
     expect(sorted.map((c) => c._id)).toEqual(["w", "p"]);
+  });
+});
+
+describe("computeIterationSummary", () => {
+  it("counts timed-out status without an explicit result as failed", () => {
+    const summary = computeIterationSummary([
+      {
+        _id: "iter-timeout",
+        testCaseId: "case",
+        createdBy: "u",
+        createdAt: 1,
+        updatedAt: 2,
+        iterationNumber: 1,
+        actualToolCalls: [],
+        tokensUsed: 0,
+        status: "timed_out",
+      } as EvalIteration,
+    ]);
+
+    expect(summary.failed).toBe(1);
+    expect(summary.pending).toBe(0);
   });
 });

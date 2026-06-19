@@ -115,13 +115,14 @@ export function computeIterationSummary(items: EvalIteration[]) {
   let durationCount = 0;
 
   items.forEach((iteration) => {
-    if (iteration.result === "passed") summary.passed += 1;
+    const result = computeIterationResult(iteration);
+    if (result === "passed") summary.passed += 1;
     else if (
-      iteration.result === "failed" ||
-      iteration.result === "timed_out"
+      result === "failed" ||
+      result === "timed_out"
     )
       summary.failed += 1;
-    else if (iteration.result === "cancelled") summary.cancelled += 1;
+    else if (result === "cancelled") summary.cancelled += 1;
     else summary.pending += 1;
 
     summary.tokens += iteration.tokensUsed || 0;

@@ -103,7 +103,7 @@ function formatEvalBillingLimitMessage(
       ? "monthly eval run limit"
       : "eval iteration limit";
   const reset =
-    typeof payload.resetsAt === "number"
+    typeof payload.resetsAt === "number" && Number.isFinite(payload.resetsAt)
       ? ` Resets ${new Intl.DateTimeFormat(undefined, {
           month: "short",
           day: "numeric",

@@ -897,16 +897,12 @@ async function runIterationWithTimeout<T>(args: {
           if (args.shouldSkipTimeout()) {
             return;
           }
-          void (async () => {
-            try {
-              await args.onTimeout();
-            } catch (error) {
-              logger.warn("[evals] Iteration timeout cleanup failed", {
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            reject(ITERATION_TIMEOUT_ERROR);
-          })();
+          reject(ITERATION_TIMEOUT_ERROR);
+          void args.onTimeout().catch((error) => {
+            logger.warn("[evals] Iteration timeout cleanup failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         }, EVAL_ITERATION_TIMEOUT_MS);
       }),
     ]);
@@ -2671,13 +2667,18 @@ const runTestCase = async (params: {
   // cases.
   const normalizedTest = normalizeTestForPinnedTurns(test);
 
-  const runSingleIteration = <T extends EvalIterationOutcome>(
+  const runSingleIteration = async <T extends EvalIterationOutcome>(
     runner: () => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
     timeoutTest: EvalTestCase = normalizedTest
-  ) =>
-    runIterationWithTimeout({
+  ) => {
+    if (abortSignal?.aborted) {
+      const reason = abortSignal.reason;
+      throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
+    }
+
+    return await runIterationWithTimeout({
       run: runner,
       shouldSkipTimeout: () => abortSignal?.aborted === true,
       onTimeout: async () => {
@@ -2691,6 +2692,7 @@ const runTestCase = async (params: {
         });
       },
     });
+  };
 
   // Pinned-only case (today's render check): no model turns at all. Run it
   // through the same `runIterationWithAiSdk` engine, model-free — it skips all
