@@ -28,6 +28,18 @@ The combined org and project switcher sits at the top of the sidebar. It shows y
 When you switch projects, all servers disconnect automatically to give you a clean slate.
 </Info>
 
+## Switching Organizations
+
+The context menu leads with the **Projects** list. At the bottom of the menu, a footer row shows your active organization name and its shared credit usage.
+
+- **Switch organization** — appears only when you belong to two or more organizations. Click it to expand an inline list of all your organizations and select a different one. Switching reloads the sidebar with that organization's projects — no page reload required.
+- **New organization** — appears at the bottom of the switch list (or directly in the footer when you have only one org and can create another).
+- The **gear icon** next to an organization name navigates to that organization's settings.
+
+<Info>
+After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
+</Info>
+
 <iframe
   className="w-full aspect-video rounded-xl"
   src="https://www.youtube.com/embed/p27gp_OuyMA"
@@ -35,18 +47,6 @@ When you switch projects, all servers disconnect automatically to give you a cle
   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
   allowFullScreen
 ></iframe>
-
-## Switching Organizations
-
-The **Organization** section at the top of the context menu shows your active organization. Click the organization chip to open a popover listing all your organizations and select a different one. Switching organizations reloads the sidebar with that organization's projects — no page reload required.
-
-- On desktop, hovering over the chip also opens the organization list.
-- The gear icon next to an organization name (visible to admins and owners) navigates to that organization's settings.
-- Per-project settings gears and member avatars are shown on each project row in the list.
-
-<Info>
-After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
-</Info>
 
 ## Sharing Projects
 
