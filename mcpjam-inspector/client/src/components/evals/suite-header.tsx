@@ -21,6 +21,7 @@ import {
   Plus,
   RotateCw,
   Settings,
+  Square,
   Sparkles,
   X,
 } from "lucide-react";
@@ -287,6 +288,51 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
+  const activeSuiteRun =
+    latestRunForMetadata &&
+    (latestRunForMetadata.status === "running" ||
+      latestRunForMetadata.status === "pending")
+      ? latestRunForMetadata
+      : null;
+  const isCancellingActiveSuiteRun =
+    activeSuiteRun != null && cancellingRunId === activeSuiteRun._id;
+
+  const suiteStopCta =
+    activeSuiteRun && !readOnlyConfig ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => onCancelRun(activeSuiteRun._id)}
+              disabled={isCancellingActiveSuiteRun}
+              aria-label="Stop suite run"
+              aria-busy={isCancellingActiveSuiteRun}
+            >
+              {isCancellingActiveSuiteRun ? (
+                <Loader2
+                  className="h-3.5 w-3.5 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : (
+                <Square className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+              {isCancellingActiveSuiteRun ? "Stopping..." : "Stop"}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="bottom"
+          className="max-w-[16rem]"
+        >
+          Stop the current suite run
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
 
   const isMobile = useIsMobile();
 
@@ -454,9 +500,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
       ? (() => {
+          if (suiteStopCta) {
+            return suiteStopCta;
+          }
+
           const testCaseCount = testCases?.length ?? 0;
           const isRunAllDisabled = Boolean(
             isRerunning ||
+              activeSuiteRun ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
@@ -469,6 +520,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
+            : activeSuiteRun
+            ? "A suite run is already in progress."
             : isRerunning || replayingRunId != null
             ? "A suite or replay is already in progress."
             : runningTestCaseId != null
@@ -637,7 +690,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (showTestCaseCtas && Boolean(onCreateTestCase));
   const overviewHasExportOrRun =
     Boolean(onOpenExportSuite) ||
-    (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
+    (!hideRunActions &&
+      (Boolean(activeSuiteRun) || replayableLatestRun || !readOnlyConfig));
 
   return (
     <div
@@ -858,7 +912,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Button>
             ) : null}
 
-            {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+            {suiteStopCta}
+
+            {!activeSuiteRun &&
+            !hideRunActions &&
+            !readOnlyConfig &&
+            hasServersConfigured ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">
@@ -890,7 +949,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Tooltip>
             ) : null}
 
-            {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
+            {!activeSuiteRun &&
+            !hideRunActions &&
+            (replayableLatestRun || !readOnlyConfig) ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">

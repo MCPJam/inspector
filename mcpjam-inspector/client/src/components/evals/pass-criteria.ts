@@ -47,8 +47,14 @@ export const DEFAULT_CRITERIA: PassCriteria = {
  */
 export function computeIterationResult(
   iteration: {
-    status: "pending" | "running" | "completed" | "failed" | "cancelled";
-    result?: "pending" | "passed" | "failed" | "cancelled";
+    status:
+      | "pending"
+      | "running"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "timed_out";
+    result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
     resultSource?: "reported" | "derived";
     testCaseSnapshot?: {
       expectedToolCalls: Array<{
@@ -62,13 +68,14 @@ export function computeIterationResult(
     }>;
   },
   criteria?: PassCriteria,
-): "pending" | "passed" | "failed" | "cancelled" {
+): "pending" | "passed" | "failed" | "cancelled" | "timed_out" {
   if (
     iteration.resultSource === "reported" &&
     (iteration.result === "pending" ||
       iteration.result === "passed" ||
       iteration.result === "failed" ||
-      iteration.result === "cancelled")
+      iteration.result === "cancelled" ||
+      iteration.result === "timed_out")
   ) {
     return iteration.result;
   }
@@ -79,6 +86,9 @@ export function computeIterationResult(
   }
   if (iteration.status === "cancelled") {
     return "cancelled";
+  }
+  if (iteration.status === "timed_out") {
+    return "timed_out";
   }
 
   // Compute pass/fail for completed iterations
@@ -170,8 +180,13 @@ export function evaluatePassCriteria(
         passed: result === "passed",
       };
     })
-    // Only count completed iterations - exclude pending/cancelled
-    .filter((it) => it.result === "passed" || it.result === "failed");
+    // Only count terminal pass/fail iterations - exclude pending/cancelled.
+    .filter(
+      (it) =>
+        it.result === "passed" ||
+        it.result === "failed" ||
+        it.result === "timed_out",
+    );
 
   const totalCount = iterationsWithResults.length;
   const passedCount = iterationsWithResults.filter((it) => it.passed).length;

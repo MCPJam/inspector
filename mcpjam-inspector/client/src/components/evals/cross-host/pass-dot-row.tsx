@@ -43,7 +43,7 @@ export function PassDotRow({ iterations }: PassDotRowProps) {
     for (const iter of ordered) {
       const result = computeIterationResult(iter);
       if (result === "passed") passed++;
-      else if (result === "failed") failed++;
+      else if (result === "failed" || result === "timed_out") failed++;
       else other++;
     }
     return { passed, failed, other, total: ordered.length };
@@ -73,6 +73,7 @@ export function PassDotRow({ iterations }: PassDotRowProps) {
               "inline-block size-2 rounded-full ring-1",
               result === "passed" && "bg-success/50 ring-success/60",
               result === "failed" && "bg-destructive/50 ring-destructive/60",
+              result === "timed_out" && "bg-warning/50 ring-warning/60",
               result === "cancelled" && "bg-muted-foreground/50 ring-muted-foreground/60",
               result === "pending" && "bg-warning/50 ring-warning/60",
             )}

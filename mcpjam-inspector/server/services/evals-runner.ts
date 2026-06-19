@@ -8,7 +8,6 @@ import {
 import {
   evaluateMultiTurnResults,
   type EvaluationResult,
-  type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
@@ -19,7 +18,7 @@ import {
   type HostExecutionPolicy,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   createLlmModel,
   type BaseUrls,
@@ -50,16 +49,9 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import {
-  buildIterationTranscript,
-  buildTurnTranscript,
-  evaluatePredicates,
-  evaluateTurnChecks,
   extractFinalAssistantMessage,
   extractToolErrors,
-  summarizeRenderObservations,
-  type PredicateResult,
   type ToolErrorRecord,
-  type TurnChecksInput,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -68,6 +60,10 @@ import {
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import { runPinnedTurn } from "./evals/pinned-turn";
+import {
+  buildPromptTraceSummaries,
+  computeIterationVerdict,
+} from "./evals/iteration-verdict";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -80,7 +76,6 @@ import type {
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
-  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -277,27 +272,72 @@ export type EvalIterationOutcome = {
   iterationId?: string;
 };
 
-/**
- * True when the provider/backend actually reported token usage. `accumulatedUsage`
- * is initialized to a zero object, so a zero total is indistinguishable from
- * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
- * pass on runs with no usage data. Only forward usage when something was
- * reported so the predicate can fail closed otherwise.
- */
-function hasReportedUsage(usage: UsageTotals): boolean {
-  return (
-    (usage.totalTokens ?? 0) > 0 ||
-    (usage.inputTokens ?? 0) > 0 ||
-    (usage.outputTokens ?? 0) > 0
-  );
-}
-
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
   quickRunIterationOutcomes?: EvalIterationOutcome[];
 };
 
 const MAX_STEPS = 20;
+const EVAL_RUN_TIMEOUT_MS = 20 * 60 * 1000;
+const EVAL_ITERATION_TIMEOUT_MS = 10 * 60 * 1000;
+const EVAL_CANCEL_POLL_MS = 10 * 1000;
+const EVAL_ABORT_GRACE_MS = 30 * 1000;
+const EVAL_HEARTBEAT_MS = 15 * 1000;
+
+type EvalRunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+
+class EvalRunStoppedError extends Error {
+  readonly stopReason: EvalRunStopReason;
+  readonly terminalStatus: "cancelled" | "timed_out";
+  readonly notes: string;
+
+  constructor(args: {
+    stopReason: EvalRunStopReason;
+    terminalStatus: "cancelled" | "timed_out";
+    notes: string;
+  }) {
+    super(args.notes);
+    this.name = "EvalRunStoppedError";
+    this.stopReason = args.stopReason;
+    this.terminalStatus = args.terminalStatus;
+    this.notes = args.notes;
+  }
+}
+
+const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
+  stopReason: "user_cancelled",
+  terminalStatus: "cancelled",
+  notes: "Run cancelled by user",
+});
+
+const RUN_TIMEOUT_ERROR = new EvalRunStoppedError({
+  stopReason: "run_timeout",
+  terminalStatus: "timed_out",
+  notes: "Run timed out after 20 minutes",
+});
+
+const ITERATION_TIMEOUT_ERROR = new EvalRunStoppedError({
+  stopReason: "iteration_timeout",
+  terminalStatus: "timed_out",
+  notes: "Run timed out because an iteration exceeded 10 minutes",
+});
+
+function isEvalRunStoppedError(error: unknown): error is EvalRunStoppedError {
+  return error instanceof EvalRunStoppedError;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTerminalRunStatus(status: unknown): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "timed_out"
+  );
+}
 
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
@@ -305,12 +345,12 @@ type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 function getServerLabelForEvalError(
   serverId: string,
-  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined
 ): string {
   const binding = environment?.serverBindings?.find(
     (entry) =>
       entry.projectServerId === serverId ||
-      entry.projectServerId?.toLowerCase() === serverId.toLowerCase(),
+      entry.projectServerId?.toLowerCase() === serverId.toLowerCase()
   );
   return binding?.serverName || serverId;
 }
@@ -341,14 +381,14 @@ async function getEvalToolsForAiSdkOrThrow(args: {
       } catch (error) {
         const serverLabel = getServerLabelForEvalError(
           serverId,
-          args.environment,
+          args.environment
         );
         if (isMissingRuntimeServerError(error)) {
           throw new WebRouteError(
             409,
             ErrorCode.SERVER_UNREACHABLE,
             `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
-            { serverId, serverName: serverLabel },
+            { serverId, serverName: serverLabel }
           );
         }
         const cause = error instanceof Error ? error.message : String(error);
@@ -356,10 +396,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
           502,
           ErrorCode.SERVER_UNREACHABLE,
           `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
-          { serverId, serverName: serverLabel, cause },
+          { serverId, serverName: serverLabel, cause }
         );
       }
-    }),
+    })
   );
 
   const flattened: ToolSet = {};
@@ -507,11 +547,11 @@ function resolvePinnedServerKey(
   pinned: PinnedToolCall,
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
   selectedServers: string[],
-  mcpClientManager: MCPClientManager,
+  mcpClientManager: MCPClientManager
 ): string | undefined {
   const connected = new Set(selectedServers);
   const candidates = [pinned.serverId, pinned.serverName].filter(
-    (ref): ref is string => !!ref,
+    (ref): ref is string => !!ref
   );
   for (const candidate of candidates) {
     const [resolved] = resolveConfiguredServerIds({
@@ -535,73 +575,10 @@ function resolvePinnedServerKey(
  * carries what each runner already has per turn (tool calls, this turn's
  * assistant message + tool errors, and this turn's render observations).
  */
-function buildTurnCheckResults(
-  promptTurns: PromptTurn[],
-  perTurnSignals: {
-    toolsCalledByPrompt: ToolCall[][];
-    assistantMessageByPrompt: (string | undefined)[];
-    toolErrorsByPrompt: ToolErrorRecord[][];
-    renderObservations: readonly RunnerWidgetRenderObservation[];
-  }
-): PredicateResult[] {
-  const inputs: TurnChecksInput[] = promptTurns.map((turn, i) => ({
-    promptIndex: i,
-    checks: turn.checks,
-    transcript: buildTurnTranscript({
-      toolCalls: perTurnSignals.toolsCalledByPrompt[i] ?? [],
-      finalAssistantMessage: perTurnSignals.assistantMessageByPrompt[i],
-      toolErrors: perTurnSignals.toolErrorsByPrompt[i] ?? [],
-      renderObservations: summarizeRenderObservations(
-        perTurnSignals.renderObservations.filter((o) => o.promptIndex === i)
-      ),
-    }),
-  }));
-  return evaluateTurnChecks(inputs);
-}
-
-function buildPromptTraceSummaries(
-  evaluation: MultiTurnEvaluationResult,
-  turnCheckResults: PredicateResult[] = []
-): PromptTraceSummary[] {
-  return evaluation.promptSummaries.map((summary) => {
-    const perTurn = turnCheckResults.filter(
-      (r) => r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex
-    );
-    return {
-    promptIndex: summary.promptIndex,
-    prompt: summary.prompt,
-    expectedToolCalls: summary.expectedToolCalls,
-    actualToolCalls: summary.actualToolCalls,
-    expectedOutput: summary.expectedOutput,
-    passed: summary.passed,
-    ...(perTurn.length ? { predicateResults: perTurn } : {}),
-    missing: summary.missing,
-    unexpected: summary.unexpected,
-    argumentMismatches: summary.argumentMismatches.map((mismatch) => {
-      const mismatchedArguments = new Set<string>([
-        ...Object.keys(mismatch.expectedArgs ?? {}),
-        ...Object.keys(mismatch.actualArgs ?? {}),
-      ]);
-
-      return {
-        expected: {
-          toolName: mismatch.toolName,
-          arguments: mismatch.expectedArgs,
-        },
-        actual: {
-          toolName: mismatch.toolName,
-          arguments: mismatch.actualArgs,
-        },
-        mismatchedArguments: Array.from(mismatchedArguments).filter(
-          (key) =>
-            JSON.stringify(mismatch.expectedArgs?.[key]) !==
-            JSON.stringify(mismatch.actualArgs?.[key])
-        ),
-      };
-    }),
-    };
-  });
-}
+// `buildTurnCheckResults`, `buildPromptTraceSummaries`, and the post-loop
+// verdict pipeline (`computeIterationVerdict`) live in ./evals/iteration-verdict
+// so all four runner paths (local/hosted × batch/stream) share ONE
+// implementation instead of copy-pasting it (and silently drifting).
 
 function extractToolCallsFromConversation(params: {
   steps?: ReadonlyArray<any>;
@@ -805,6 +782,134 @@ async function createIterationDirectly(
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
     return undefined;
+  }
+}
+
+async function findIterationIdForTimeout(args: {
+  convexClient: ConvexHttpClient;
+  runId: string | null;
+  precreatedIterationId?: string;
+  test: EvalTestCase;
+  runIndex: number;
+}): Promise<string | undefined> {
+  if (args.precreatedIterationId) {
+    return args.precreatedIterationId;
+  }
+  if (args.runId === null) {
+    return undefined;
+  }
+
+  const resolvedTest = resolveEvalTestCase(args.test);
+  const shouldMatchByTestCaseOnly =
+    !needsModel({
+      caseType: args.test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    }) && Boolean(args.test.testCaseId);
+  try {
+    const response = await args.convexClient.query(
+      "testSuites:getTestSuiteRunDetails" as any,
+      { runId: args.runId }
+    );
+    const iterations = response?.iterations ?? [];
+    const matching = iterations.find((iteration: any) => {
+      if (
+        shouldMatchByTestCaseOnly &&
+        iteration.testCaseId === args.test.testCaseId &&
+        iteration.iterationNumber === args.runIndex + 1 &&
+        (iteration.status === "pending" || iteration.status === "running")
+      ) {
+        return true;
+      }
+
+      const snapshot = iteration.testCaseSnapshot ?? {};
+      return (
+        snapshot.title === args.test.title &&
+        snapshot.query === resolvedTest.query &&
+        snapshot.model === args.test.model &&
+        snapshot.provider === args.test.provider &&
+        iteration.iterationNumber === args.runIndex + 1 &&
+        (iteration.status === "pending" || iteration.status === "running")
+      );
+    });
+    return matching?._id as string | undefined;
+  } catch (error) {
+    logger.warn("[evals] Failed to locate iteration for timeout", {
+      runId: args.runId,
+      runIndex: args.runIndex,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+async function markIterationTimedOut(args: {
+  convexClient: ConvexHttpClient;
+  runId: string | null;
+  precreatedIterationId?: string;
+  test: EvalTestCase;
+  runIndex: number;
+}): Promise<void> {
+  const iterationId = await findIterationIdForTimeout(args);
+  if (!iterationId) {
+    return;
+  }
+
+  const message = "Iteration timed out after 10 minutes";
+  try {
+    await args.convexClient.action("testSuites:updateTestIteration" as any, {
+      iterationId,
+      status: "timed_out",
+      result: "timed_out",
+      actualToolCalls: [],
+      tokensUsed: 0,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [
+        {
+          role: "assistant",
+          content: message,
+        },
+      ],
+      error: message,
+      resultSource: "derived",
+      metadata: {
+        stopReason: "iteration_timeout",
+      },
+    });
+  } catch (error) {
+    logger.warn("[evals] Failed to mark timed-out iteration", {
+      iterationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function runIterationWithTimeout<T>(args: {
+  run: () => Promise<T>;
+  onTimeout: () => Promise<void>;
+  shouldSkipTimeout: () => boolean;
+}): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      args.run(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          if (args.shouldSkipTimeout()) {
+            return;
+          }
+          reject(ITERATION_TIMEOUT_ERROR);
+          void args.onTimeout().catch((error) => {
+            logger.warn("[evals] Iteration timeout cleanup failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }, EVAL_ITERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -1105,7 +1210,7 @@ const runIterationWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         { runId }
       );
-      if (currentRun?.status === "cancelled") {
+      if (isTerminalRunStatus(currentRun?.status)) {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
           // as passed. evaluateMultiTurnResults returns passed:true for an
@@ -1206,7 +1311,7 @@ const runIterationWithAiSdk = async ({
   // First pinned turn's render-budget override; applied to the shared harness.
   const pinnedRenderTimeoutMs = promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
   )?.pinnedToolCall?.renderTimeoutMs;
 
   const modelRuntime = caseNeedsModel
@@ -1333,7 +1438,9 @@ const runIterationWithAiSdk = async ({
     ...(caseNeedsModel ? { model: test.model } : {}),
     mcpClientManager,
     injectOpenAiCompat,
-    ...(pinnedRenderTimeoutMs ? { renderTimeoutMs: pinnedRenderTimeoutMs } : {}),
+    ...(pinnedRenderTimeoutMs
+      ? { renderTimeoutMs: pinnedRenderTimeoutMs }
+      : {}),
   });
 
   try {
@@ -1765,27 +1872,6 @@ const runIterationWithAiSdk = async ({
       activeCompletedStepCount = 0;
     }
 
-    const evaluation = evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions
-    );
-    // Per-turn checks: each turn's `checks` evaluated against its own slice
-    // of the transcript (tool calls / assistant message / tool errors /
-    // render observations for that turn). Independent of the suite/case
-    // predicate layering; runs whenever a turn authored checks.
-    const turnCheckResults = buildTurnCheckResults(promptTurns, {
-      toolsCalledByPrompt,
-      assistantMessageByPrompt,
-      toolErrorsByPrompt,
-      renderObservations: browser.widgetRenderObservations,
-    });
-    const promptTraceSummaries = buildPromptTraceSummaries(
-      evaluation,
-      turnCheckResults
-    );
-
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
         ?.failOnToolError !== false;
@@ -1799,62 +1885,27 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (today's render check) with no authored predicates
-    // defaults to "the widget rendered" — the model-free equivalent of the
-    // legacy probe verdict (`toolCallOk && rendered`). An errored/non-renderable
-    // pinned call produces no `rendered` observation, so this fails closed.
-    // Hybrid/model cases keep the normal match-driven verdict when unauthored.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
-    const casePredicateResults = effectivePredicates?.length
-      ? evaluatePredicates(
-          buildIterationTranscript({
-            trace: traceForGate,
-            toolCalls: evaluation.toolsCalled,
-            usage: hasReportedUsage(accumulatedUsage)
-              ? accumulatedUsage
-              : undefined,
-            renderObservations: summarizeRenderObservations(
-              browser.widgetRenderObservations,
-            ),
-            // Pinned turns have no trace; thread their tool errors explicitly.
-            toolErrors: pinnedToolErrors,
-          }),
-          effectivePredicates
-        )
-      : [];
-    // Case-level + per-turn (scope-tagged) results gate the verdict and
-    // persist together (testIteration.metadata.predicates).
-    const predicateResults = [...casePredicateResults, ...turnCheckResults];
-    let passed = finalizePassedForEval({
-      matchPassed: evaluation.passed,
-      trace: traceForGate,
-      // PR 4b (mirrors PR 3 invariant): if the per-turn loop set
-      // `iterationError` via the failure-detection branch (no new
-      // messages, non-tool error span), feed it to the gate so a
-      // failed cycle doesn't sneak through as a verdict pass on
-      // negative tests / zero-expected-tool cases.
-      iterationError,
-      failOnToolError,
-      predicateResults,
-    });
-    // A pinned (model-free) tool call's error never enters the trace, so
-    // `finalizePassedForEval`'s `failOnToolError` gate (which inspects the
-    // trace) is blind to it. Apply the gate explicitly to pinned tool errors
-    // so a failing pinned call can't pass when tool-error gating is on and no
-    // widget/`noToolErrors` predicate happened to catch it.
-    if (passed && failOnToolError && pinnedToolErrors.length > 0) {
-      passed = false;
-    }
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
+    // Shared post-loop verdict: tool-call scoring + per-turn checks +
+    // case-level predicates + gate (incl. pinned-only widget default and the
+    // pinned-tool-error gate). The local batch path captures per-turn signals.
+    const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+      computeIterationVerdict({
+        test,
+        promptTurns,
+        toolsCalledByPrompt,
+        perTurnSignals: {
+          kind: "captured",
+          assistantMessageByPrompt,
+          toolErrorsByPrompt,
+        },
+        renderObservations: browser.widgetRenderObservations,
+        traceForGate,
+        accumulatedUsage,
+        pinnedToolErrors,
+        failOnToolError,
+        iterationError,
+      });
+    const predicateResults = allPredicateResults;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -2138,7 +2189,7 @@ const runIterationViaBackendWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId }
       );
-      if (currentRun?.status === "cancelled") {
+      if (isTerminalRunStatus(currentRun?.status)) {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
           // as passed. evaluateMultiTurnResults returns passed:true for an
@@ -2216,6 +2267,9 @@ const runIterationViaBackendWithBrowser = async (
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for per-turn checks (captured by driveHostedEvalTurn).
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -2439,6 +2493,8 @@ const runIterationViaBackendWithBrowser = async (
         capturedSpans,
         accumulatedUsage,
         toolsCalledByPrompt,
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
       },
     });
     if (outcome.kind === "cancelled") return returnCancelled();
@@ -2448,14 +2504,6 @@ const runIterationViaBackendWithBrowser = async (
       break;
     }
   }
-
-  const evaluation = evaluateMultiTurnResults(
-    promptTurns,
-    toolsCalledByPrompt,
-    test.isNegativeTest,
-    test.matchOptions
-  );
-  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -2470,32 +2518,26 @@ const runIterationViaBackendWithBrowser = async (
           }>,
         }
       : undefined;
-  const predicateResults = test.successPredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: traceForGate,
-          toolCalls: evaluation.toolsCalled,
-          usage: hasReportedUsage(accumulatedUsage)
-            ? accumulatedUsage
-            : undefined,
-          renderObservations: summarizeRenderObservations(
-            browser.widgetRenderObservations,
-          ),
-        }),
-        test.successPredicates
-      )
-    : [];
-  const passed = finalizePassedForEval({
-    matchPassed: evaluation.passed,
-    trace: traceForGate,
-    iterationError,
-    failOnToolError,
-    predicateResults,
-  });
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
+  // Shared post-loop verdict (see computeIterationVerdict). Hosted paths now
+  // capture per-turn signals via driveHostedEvalTurn, so per-turn checks run
+  // here too. Hosted paths run no pinned turns (no pinnedToolErrors).
+  const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+    computeIterationVerdict({
+      test,
+      promptTurns,
+      toolsCalledByPrompt,
+      perTurnSignals: {
+        kind: "captured",
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
+      },
+      renderObservations: browser.widgetRenderObservations,
+      traceForGate,
+      accumulatedUsage,
+      failOnToolError,
+      iterationError,
+    });
+  const predicateResults = allPredicateResults;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
@@ -2576,6 +2618,7 @@ const runTestCase = async (params: {
   suiteId?: string;
   runId: string | null;
   abortSignal?: AbortSignal;
+  abortRun?: (error: EvalRunStoppedError) => void;
   compareRunId?: string;
   /** Suite-level compat-runtime flag; forwarded to each iteration. */
   injectOpenAiCompat?: boolean;
@@ -2609,6 +2652,7 @@ const runTestCase = async (params: {
     suiteId,
     runId,
     abortSignal,
+    abortRun,
     compareRunId,
     injectOpenAiCompat,
     hostPolicy,
@@ -2622,6 +2666,33 @@ const runTestCase = async (params: {
   // so the unified engine sees one shape. No-op for already-pinned / prompt
   // cases.
   const normalizedTest = normalizeTestForPinnedTurns(test);
+
+  const runSingleIteration = async <T extends EvalIterationOutcome>(
+    runner: () => Promise<T>,
+    precreatedIterationId: string | undefined,
+    runIndex: number,
+    timeoutTest: EvalTestCase = normalizedTest
+  ) => {
+    if (abortSignal?.aborted) {
+      const reason = abortSignal.reason;
+      throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
+    }
+
+    return await runIterationWithTimeout({
+      run: runner,
+      shouldSkipTimeout: () => abortSignal?.aborted === true,
+      onTimeout: async () => {
+        abortRun?.(ITERATION_TIMEOUT_ERROR);
+        await markIterationTimedOut({
+          convexClient,
+          runId,
+          precreatedIterationId,
+          test: timeoutTest,
+          runIndex,
+        });
+      },
+    });
+  };
 
   // Pinned-only case (today's render check): no model turns at all. Run it
   // through the same `runIterationWithAiSdk` engine, model-free — it skips all
@@ -2638,34 +2709,40 @@ const runTestCase = async (params: {
     for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
       if (abortSignal?.aborted) break;
       outcomes.push(
-        await runIterationWithAiSdk({
-          test: normalizedTest,
+        await runSingleIteration(
+          () =>
+            runIterationWithAiSdk({
+              test: normalizedTest,
+              runIndex,
+              tools,
+              selectedServers,
+              mcpClientManager,
+              recorder,
+              testCaseId,
+              suiteId,
+              // Unused when the case is model-free (caseNeedsModel === false), but
+              // the param is required. A real id is never resolved.
+              modelDefinition: {
+                id: "pinned-only",
+                provider: "none",
+              } as unknown as ModelDefinition,
+              modelApiKeys,
+              orgModelConfig,
+              orgModelConfigTarget,
+              convexClient,
+              runId,
+              abortSignal,
+              ...(compareRunId ? { compareRunId } : {}),
+              injectOpenAiCompat,
+              hostPolicy,
+              toolSignals,
+              suiteHostConfig,
+              environment,
+            }),
+          undefined,
           runIndex,
-          tools,
-          selectedServers,
-          mcpClientManager,
-          recorder,
-          testCaseId,
-          suiteId,
-          // Unused when the case is model-free (caseNeedsModel === false), but
-          // the param is required. A real id is never resolved.
-          modelDefinition: {
-            id: "pinned-only",
-            provider: "none",
-          } as unknown as ModelDefinition,
-          modelApiKeys,
-          orgModelConfig,
-          orgModelConfigTarget,
-          convexClient,
-          runId,
-          abortSignal,
-          ...(compareRunId ? { compareRunId } : {}),
-          injectOpenAiCompat,
-          hostPolicy,
-          toolSignals,
-          suiteHostConfig,
-          environment,
-        })
+          normalizedTest
+        )
       );
     }
     return outcomes;
@@ -2676,7 +2753,8 @@ const runTestCase = async (params: {
   // locally-executed pinned turn. Local BYOK hybrids work (the pinned branch
   // lives in runIterationWithAiSdk). Fail loudly rather than silently send a
   // pinned turn's empty prompt to the model.
-  const caseHasPinnedTurn = resolvePromptTurns(normalizedTest).some(isPinnedTurn);
+  const caseHasPinnedTurn =
+    resolvePromptTurns(normalizedTest).some(isPinnedTurn);
 
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
@@ -2761,100 +2839,117 @@ const runTestCase = async (params: {
       ? precreatedIterationIds[runIndex]
       : undefined;
     if (isJamModel) {
-      const iterationOutcome = await runIterationViaBackend({
-        test,
-        runIndex,
-        tools,
-        selectedServers,
-        mcpClientManager,
-        recorder,
-        testCaseId,
-        suiteId,
-        convexHttpUrl,
-        convexAuthToken,
-        modelId: resolvedModelId,
-        modelDefinition,
-        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
-        convexClient,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        runId,
-        abortSignal,
-        compareRunId,
+      const iterationOutcome = await runSingleIteration(
+        () =>
+          runIterationViaBackend({
+            test,
+            runIndex,
+            tools,
+            selectedServers,
+            mcpClientManager,
+            recorder,
+            testCaseId,
+            suiteId,
+            convexHttpUrl,
+            convexAuthToken,
+            modelId: resolvedModelId,
+            modelDefinition,
+            extraBodyFields: jamBillingTarget
+              ? { ...jamBillingTarget }
+              : undefined,
+            convexClient,
+            modelApiKeys,
+            orgModelConfig,
+            orgModelConfigTarget,
+            runId,
+            abortSignal,
+            compareRunId,
+            precreatedIterationId,
+            injectOpenAiCompat,
+            hostPolicy,
+            toolSignals,
+            suiteHostConfig,
+          }),
         precreatedIterationId,
-        injectOpenAiCompat,
-        hostPolicy,
-        toolSignals,
-        suiteHostConfig,
-      });
+        runIndex
+      );
       outcomes.push(iterationOutcome);
       continue;
     }
 
     if (orgByokRuntime?.kind === "cloud") {
-      const iterationOutcome = await runIterationViaBackend({
-        test,
-        runIndex,
-        tools,
-        selectedServers,
-        mcpClientManager,
-        recorder,
-        testCaseId,
-        suiteId,
-        convexHttpUrl,
-        convexAuthToken,
-        modelId: String(modelDefinition.id),
-        modelDefinition,
-        endpointPath: "/stream/org",
-        extraBodyFields: {
-          providerKey: orgByokRuntime.providerKey,
-          ...orgByokRuntime.target,
-        },
-        convexClient,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        runId,
-        abortSignal,
-        compareRunId,
+      const iterationOutcome = await runSingleIteration(
+        () =>
+          runIterationViaBackend({
+            test,
+            runIndex,
+            tools,
+            selectedServers,
+            mcpClientManager,
+            recorder,
+            testCaseId,
+            suiteId,
+            convexHttpUrl,
+            convexAuthToken,
+            modelId: String(modelDefinition.id),
+            modelDefinition,
+            endpointPath: "/stream/org",
+            extraBodyFields: {
+              providerKey: orgByokRuntime.providerKey,
+              ...orgByokRuntime.target,
+            },
+            convexClient,
+            modelApiKeys,
+            orgModelConfig,
+            orgModelConfigTarget,
+            runId,
+            abortSignal,
+            compareRunId,
+            precreatedIterationId,
+            injectOpenAiCompat,
+            hostPolicy,
+            toolSignals,
+            suiteHostConfig,
+          }),
         precreatedIterationId,
-        injectOpenAiCompat,
-        hostPolicy,
-        toolSignals,
-        suiteHostConfig,
-      });
+        runIndex
+      );
       outcomes.push(iterationOutcome);
       continue;
     }
 
-    const iterationOutcome = await runIterationWithAiSdk({
-      test,
-      runIndex,
-      tools,
-      selectedServers,
-      mcpClientManager,
-      recorder,
-      testCaseId,
-      suiteId,
-      modelDefinition,
-      modelApiKeys,
-      orgModelConfig:
-        orgByokRuntime?.kind === "local"
-          ? orgByokRuntime.orgModelConfig
-          : orgModelConfig,
-      orgModelConfigTarget,
-      convexClient,
-      runId,
-      abortSignal,
-      compareRunId,
+    const iterationOutcome = await runSingleIteration(
+      () =>
+        runIterationWithAiSdk({
+          test,
+          runIndex,
+          tools,
+          selectedServers,
+          mcpClientManager,
+          recorder,
+          testCaseId,
+          suiteId,
+          modelDefinition,
+          modelApiKeys,
+          orgModelConfig:
+            orgByokRuntime?.kind === "local"
+              ? orgByokRuntime.orgModelConfig
+              : orgModelConfig,
+          orgModelConfigTarget,
+          convexClient,
+          runId,
+          abortSignal,
+          compareRunId,
+          precreatedIterationId,
+          injectOpenAiCompat,
+          hostPolicy,
+          toolSignals,
+          suiteHostConfig,
+          environment,
+        }),
       precreatedIterationId,
-      injectOpenAiCompat,
-      hostPolicy,
-      toolSignals,
-      suiteHostConfig,
-      environment,
-    });
+      runIndex
+    );
     outcomes.push(iterationOutcome);
   }
 
@@ -2908,33 +3003,6 @@ export const runEvalSuiteWithAiSdk = async ({
   };
 
   try {
-    // When a host policy is present we need the full tool set (including
-    // app-only) so `applyVisibilityPolicyAndCountSignals` can:
-    //   1. Count `toolsTotalBefore` honestly, and
-    //   2. Keep app-only tools when the host opted out of visibility filtering.
-    // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
-    // sees a partial set — drops are reported as 0 even when tools were hidden.
-    const tools = await getEvalToolsForAiSdkOrThrow({
-      mcpClientManager,
-      serverIds,
-      includeAppOnly: Boolean(hostExecutionPolicy),
-      environment: config.environment,
-    });
-
-    // Apply visibility filtering when a host policy is present. The filter
-    // mutates `tools` in place (same as prepareChatV2) so downstream iteration
-    // runners see the post-filter set.
-    const resolvedToolSignals = hostExecutionPolicy
-      ? applyVisibilityPolicyAndCountSignals(
-          tools as Record<string, unknown>,
-          mcpClientManager,
-          hostExecutionPolicy
-        )
-      : undefined;
-
-    // Note: Iterations are now pre-created in startSuiteRunWithRecorder
-    // This code is no longer needed as precreateIterationsForRun is called there
-
     // Check if run has been cancelled before starting (only for suite runs)
     if (runId !== null) {
       const currentRun = await convexClient.query(
@@ -2944,82 +3012,44 @@ export const runEvalSuiteWithAiSdk = async ({
         }
       );
 
-      if (currentRun?.status === "cancelled") {
-        if (recorder) {
-          await recorder.finalize({
-            status: "cancelled",
-            notes: "Run cancelled by user",
-          });
-        }
+      if (isTerminalRunStatus(currentRun?.status)) {
         return undefined;
       }
     }
 
     // Create AbortController to cancel in-flight requests
     const abortController = new AbortController();
+    const abortRun = (error: EvalRunStoppedError) => {
+      if (!abortController.signal.aborted) {
+        abortController.abort(error);
+      }
+    };
 
-    // Run tests in parallel, but cap concurrent render checks: each
-    // `widget_probe` case launches a headless Chromium, so an all-render-check
-    // monitoring suite would otherwise spawn one browser per case at once and
-    // exhaust the worker. LLM-only cases are network-bound and stay unbounded.
-    // The limiter releases a slot when each case settles, so it can't leak.
-    const renderCheckLimit = createConcurrencyLimiter(
-      MAX_CONCURRENT_RENDER_CHECKS
-    );
-    const runOne = (test: (typeof tests)[number]) =>
-      runTestCase({
-        test,
-        tools,
-        selectedServers: serverIds,
-        mcpClientManager,
-        recorder,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        convexHttpUrl,
-        convexAuthToken,
-        convexClient,
-        testCaseId,
-        compareRunId,
-        suiteId,
-        runId,
-        abortSignal: abortController.signal,
-        injectOpenAiCompat,
-        hostPolicy: hostExecutionPolicy,
-        toolSignals: resolvedToolSignals,
-        suiteHostConfig,
-        environment: config.environment,
-      });
-    const testPromises = tests.map((test) =>
-      // Cap concurrent headless browsers for every model-free render check
-      // (legacy widget_probe OR a unified case whose turns are all pinned),
-      // not just the legacy discriminator — otherwise a monitoring suite of
-      // new pinned-only cases launches one Chromium per case at once.
-      isPinnedOnly({ caseType: test.caseType, promptTurns: test.promptTurns })
-        ? renderCheckLimit(() => runOne(test))
-        : runOne(test)
-    );
+    let stopControls = false;
+    let runTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    let testPromises: Promise<EvalIterationOutcome[]>[] = [];
 
-    // Create a cancellation checker that polls every 2s
-    let stopPolling = false;
     const createCancellationChecker = async () => {
       if (runId === null) return; // Quick runs can't be cancelled
 
-      while (!stopPolling) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (stopPolling) return;
+      while (!stopControls) {
+        await delay(EVAL_CANCEL_POLL_MS);
+        if (stopControls) return;
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
             { runId }
           );
           if (currentRun?.status === "cancelled") {
-            // Abort all in-flight LLM requests
-            abortController.abort();
-            throw new Error("RUN_CANCELLED");
+            abortRun(RUN_CANCELLED_ERROR);
+            throw RUN_CANCELLED_ERROR;
+          }
+          if (currentRun?.status === "timed_out") {
+            abortRun(RUN_TIMEOUT_ERROR);
+            throw RUN_TIMEOUT_ERROR;
           }
         } catch (error) {
-          if (error instanceof Error && error.message === "RUN_CANCELLED") {
+          if (isEvalRunStoppedError(error)) {
             throw error;
           }
           // If run not found, it was deleted - treat as cancelled
@@ -3029,43 +3059,182 @@ export const runEvalSuiteWithAiSdk = async ({
             errorMessage.includes("not found") ||
             errorMessage.includes("unauthorized")
           ) {
-            // Abort all in-flight LLM requests
-            abortController.abort();
-            throw new Error("RUN_CANCELLED");
+            abortRun(RUN_CANCELLED_ERROR);
+            throw RUN_CANCELLED_ERROR;
           }
         }
       }
     };
 
+    const createHeartbeatLoop = async () => {
+      if (runId === null) return;
+      while (!stopControls) {
+        try {
+          await convexClient.mutation(
+            "testSuites:heartbeatTestSuiteRun" as any,
+            {
+              runId,
+            }
+          );
+        } catch (error) {
+          logger.warn("[evals] Failed to heartbeat eval run", {
+            runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        await delay(EVAL_HEARTBEAT_MS);
+      }
+    };
+
+    const createRunTimeout = async () => {
+      await new Promise<never>((_, reject) => {
+        runTimeoutId = setTimeout(() => {
+          abortRun(RUN_TIMEOUT_ERROR);
+          reject(RUN_TIMEOUT_ERROR);
+        }, EVAL_RUN_TIMEOUT_MS);
+      });
+    };
+
+    const throwIfStopped = () => {
+      if (!abortController.signal.aborted) {
+        return;
+      }
+      const reason = abortController.signal.reason;
+      throw isEvalRunStoppedError(reason) ? reason : RUN_CANCELLED_ERROR;
+    };
+
+    const runWork = async (): Promise<
+      PromiseSettledResult<EvalIterationOutcome[]>[]
+    > => {
+      // When a host policy is present we need the full tool set (including
+      // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+      //   1. Count `toolsTotalBefore` honestly, and
+      //   2. Keep app-only tools when the host opted out of visibility filtering.
+      // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+      // sees a partial set — drops are reported as 0 even when tools were hidden.
+      const tools = await getEvalToolsForAiSdkOrThrow({
+        mcpClientManager,
+        serverIds,
+        includeAppOnly: Boolean(hostExecutionPolicy),
+        environment: config.environment,
+      });
+      throwIfStopped();
+
+      // Apply visibility filtering when a host policy is present. The filter
+      // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+      // runners see the post-filter set.
+      const resolvedToolSignals = hostExecutionPolicy
+        ? applyVisibilityPolicyAndCountSignals(
+            tools as Record<string, unknown>,
+            mcpClientManager,
+            hostExecutionPolicy
+          )
+        : undefined;
+
+      // Note: Iterations are now pre-created in startSuiteRunWithRecorder
+      // This code is no longer needed as precreateIterationsForRun is called there
+
+      // Run tests in parallel, but cap concurrent render checks: each
+      // `widget_probe` case launches a headless Chromium, so an all-render-check
+      // monitoring suite would otherwise spawn one browser per case at once and
+      // exhaust the worker. LLM-only cases are network-bound and stay unbounded.
+      // The limiter releases a slot when each case settles, so it can't leak.
+      const renderCheckLimit = createConcurrencyLimiter(
+        MAX_CONCURRENT_RENDER_CHECKS
+      );
+      const runOne = (test: (typeof tests)[number]) =>
+        runTestCase({
+          test,
+          tools,
+          selectedServers: serverIds,
+          mcpClientManager,
+          recorder,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+          convexHttpUrl,
+          convexAuthToken,
+          convexClient,
+          testCaseId,
+          compareRunId,
+          suiteId,
+          runId,
+          abortSignal: abortController.signal,
+          abortRun,
+          injectOpenAiCompat,
+          hostPolicy: hostExecutionPolicy,
+          toolSignals: resolvedToolSignals,
+          suiteHostConfig,
+          environment: config.environment,
+        });
+      testPromises = tests.map((test) =>
+        // Cap concurrent headless browsers for every model-free render check
+        // (legacy widget_probe OR a unified case whose turns are all pinned),
+        // not just the legacy discriminator — otherwise a monitoring suite of
+        // new pinned-only cases launches one Chromium per case at once.
+        isPinnedOnly({ caseType: test.caseType, promptTurns: test.promptTurns })
+          ? renderCheckLimit(() => runOne(test))
+          : runOne(test)
+      );
+      const never = () => new Promise<never>(() => {});
+      const firstLifecycleStop = Promise.race(
+        testPromises.map((promise) =>
+          promise.then(never, (error) => {
+            if (isEvalRunStoppedError(error)) {
+              throw error;
+            }
+            return never();
+          })
+        )
+      );
+      const allTestsSettled = Promise.allSettled(testPromises);
+      return await Promise.race([allTestsSettled, firstLifecycleStop]);
+    };
+
     let results: PromiseSettledResult<EvalIterationOutcome[]>[];
+    const heartbeatLoop = createHeartbeatLoop().catch((error) => {
+      logger.warn("[evals] Eval heartbeat loop stopped unexpectedly", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
 
     try {
-      // Race between all tests completing and cancellation check
+      // Race between setup+tests completing, user cancellation, and hard timeout.
       results = await Promise.race([
-        Promise.allSettled(testPromises),
+        runWork(),
         createCancellationChecker().then(() => {
           // This will never resolve, only reject if cancelled
           return new Promise<never>(() => {});
         }),
+        createRunTimeout(),
       ]);
     } catch (error) {
-      if (error instanceof Error && error.message === "RUN_CANCELLED") {
-        logger.debug(
-          "[evals] Run was cancelled, all in-flight requests aborted"
-        );
+      if (isEvalRunStoppedError(error)) {
+        logger.debug("[evals] Run stopped by lifecycle guard", {
+          reason: error.stopReason,
+        });
 
-        // Finalize the run as cancelled
+        await Promise.race([
+          Promise.allSettled(testPromises),
+          delay(EVAL_ABORT_GRACE_MS),
+        ]);
         if (recorder) {
           await recorder.finalize({
-            status: "cancelled",
-            notes: "Run cancelled by user",
+            status: error.terminalStatus,
+            notes: error.notes,
+            stopReason: error.stopReason,
           });
         }
         return undefined;
       }
       throw error;
     } finally {
-      stopPolling = true;
+      stopControls = true;
+      if (runTimeoutId) {
+        clearTimeout(runTimeoutId);
+      }
+      void heartbeatLoop;
     }
 
     const quickRunOutcomes: EvalIterationOutcome[] = [];
@@ -3174,7 +3343,7 @@ const streamIterationWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         { runId }
       );
-      if (currentRun?.status === "cancelled") {
+      if (isTerminalRunStatus(currentRun?.status)) {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
           // as passed. evaluateMultiTurnResults returns passed:true for an
@@ -3274,7 +3443,7 @@ const streamIterationWithAiSdk = async ({
   // First pinned turn's render-budget override; applied to the shared harness.
   const pinnedRenderTimeoutMs = promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
   )?.pinnedToolCall?.renderTimeoutMs;
 
   const modelRuntime = caseNeedsModel
@@ -3396,7 +3565,9 @@ const streamIterationWithAiSdk = async ({
     ...(caseNeedsModel ? { model: test.model } : {}),
     mcpClientManager,
     injectOpenAiCompat,
-    ...(pinnedRenderTimeoutMs ? { renderTimeoutMs: pinnedRenderTimeoutMs } : {}),
+    ...(pinnedRenderTimeoutMs
+      ? { renderTimeoutMs: pinnedRenderTimeoutMs }
+      : {}),
   });
 
   try {
@@ -3879,24 +4050,6 @@ const streamIterationWithAiSdk = async ({
       }
     }
 
-    const evaluation = evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions
-    );
-    // Per-turn checks: each turn's `checks` evaluated against its own slice.
-    const turnCheckResults = buildTurnCheckResults(promptTurns, {
-      toolsCalledByPrompt,
-      assistantMessageByPrompt,
-      toolErrorsByPrompt,
-      renderObservations: browser.widgetRenderObservations,
-    });
-    const promptTraceSummaries = buildPromptTraceSummaries(
-      evaluation,
-      turnCheckResults
-    );
-
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
         ?.failOnToolError !== false;
@@ -3910,39 +4063,26 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    const casePredicateResults = test.successPredicates?.length
-      ? evaluatePredicates(
-          buildIterationTranscript({
-            trace: traceForGate,
-            toolCalls: evaluation.toolsCalled,
-            usage: hasReportedUsage(accumulatedUsage)
-              ? accumulatedUsage
-              : undefined,
-            renderObservations: summarizeRenderObservations(
-              browser.widgetRenderObservations,
-            ),
-          }),
-          test.successPredicates
-        )
-      : [];
-    // Case-level + per-turn (scope-tagged) results gate the verdict and
-    // persist together.
-    const predicateResults = [...casePredicateResults, ...turnCheckResults];
-    const passed = finalizePassedForEval({
-      matchPassed: evaluation.passed,
-      trace: traceForGate,
-      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
-      // via the failure-detection branch, feed it to the gate so a
-      // failed cycle doesn't sneak through as a verdict pass on
-      // negative tests / zero-expected-tool cases.
-      iterationError,
-      failOnToolError,
-      predicateResults,
-    });
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
+    // Shared post-loop verdict (see computeIterationVerdict). Streaming local
+    // path captures per-turn signals; it rejects pinned turns earlier, so the
+    // pinned-only default never fires and there are no pinned tool errors.
+    const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+      computeIterationVerdict({
+        test,
+        promptTurns,
+        toolsCalledByPrompt,
+        perTurnSignals: {
+          kind: "captured",
+          assistantMessageByPrompt,
+          toolErrorsByPrompt,
+        },
+        renderObservations: browser.widgetRenderObservations,
+        traceForGate,
+        accumulatedUsage,
+        failOnToolError,
+        iterationError,
+      });
+    const predicateResults = allPredicateResults;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -4248,7 +4388,7 @@ const streamIterationViaBackendWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId }
       );
-      if (currentRun?.status === "cancelled") {
+      if (isTerminalRunStatus(currentRun?.status)) {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
           // as passed. evaluateMultiTurnResults returns passed:true for an
@@ -4325,6 +4465,9 @@ const streamIterationViaBackendWithBrowser = async (
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for per-turn checks (captured by driveHostedEvalTurn).
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -4557,6 +4700,8 @@ const streamIterationViaBackendWithBrowser = async (
         capturedSpans,
         accumulatedUsage,
         toolsCalledByPrompt,
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
       },
       buildSinks: ({ baselineUsage, traceCtx, promptToolsCalled }) => {
         // Track engine-emitted step events so the post-turn `turn_finish`
@@ -4787,14 +4932,6 @@ const streamIterationViaBackendWithBrowser = async (
     }
   }
 
-  const evaluation = evaluateMultiTurnResults(
-    promptTurns,
-    toolsCalledByPrompt,
-    test.isNegativeTest,
-    test.matchOptions
-  );
-  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
       ?.failOnToolError !== false;
@@ -4808,32 +4945,26 @@ const streamIterationViaBackendWithBrowser = async (
           }>,
         }
       : undefined;
-  const predicateResults = test.successPredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: traceForGate,
-          toolCalls: evaluation.toolsCalled,
-          usage: hasReportedUsage(accumulatedUsage)
-            ? accumulatedUsage
-            : undefined,
-          renderObservations: summarizeRenderObservations(
-            browser.widgetRenderObservations,
-          ),
-        }),
-        test.successPredicates
-      )
-    : [];
-  const passed = finalizePassedForEval({
-    matchPassed: evaluation.passed,
-    trace: traceForGate,
-    iterationError,
-    failOnToolError,
-    predicateResults,
-  });
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
+  // Shared post-loop verdict (see computeIterationVerdict). Hosted paths now
+  // capture per-turn signals via driveHostedEvalTurn, so per-turn checks run
+  // here too. Hosted paths run no pinned turns (no pinnedToolErrors).
+  const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+    computeIterationVerdict({
+      test,
+      promptTurns,
+      toolsCalledByPrompt,
+      perTurnSignals: {
+        kind: "captured",
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
+      },
+      renderObservations: browser.widgetRenderObservations,
+      traceForGate,
+      accumulatedUsage,
+      failOnToolError,
+      iterationError,
+    });
+  const predicateResults = allPredicateResults;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,

@@ -370,6 +370,8 @@ export interface RunDirectChatTurnHandle {
   result: ReturnType<typeof streamText>;
   traceContext: ReturnType<typeof createAiSdkEvalTraceContext>;
   traceTurn: DirectChatTurnTraceTurn;
+  /** Model id for this turn — lets headless consumers build the real turnTrace. */
+  modelId: string;
   /** Removes the abort listener (idempotent). Call from a finally block. */
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
@@ -924,6 +926,7 @@ export function runDirectChatTurn(
     result,
     traceContext,
     traceTurn,
+    modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
   };
@@ -937,6 +940,13 @@ export interface DirectChatTurnHeadlessResult {
   spans: Awaited<
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
+  /**
+   * The turn's real `PersistedTurnTrace`, built from the engine's own
+   * `traceTurn` accumulator + `recordedSpans` — the SAME construction the
+   * streaming `onPersist` path uses (see runDirectChatTurn). Lets the unified
+   * turn facade hand direct + hosted callers an identical trace shape.
+   */
+  turnTrace: PersistedTurnTrace;
   /** True if the abort signal fired mid-turn. The caller should drop the result on true. */
   aborted: boolean;
 }
@@ -958,12 +968,26 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    // Build the real turnTrace from the engine's own accumulator — mirrors the
+    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
+    // and streaming produce the identical PersistedTurnTrace.
+    const turnTrace: PersistedTurnTrace = {
+      turnId: handle.traceTurn.turnId,
+      promptIndex: handle.traceTurn.promptIndex,
+      startedAt: handle.traceTurn.turnStartedAt,
+      endedAt: Date.now(),
+      spans: [...handle.traceContext.recordedSpans],
+      usage: handle.traceTurn.turnUsage,
+      finishReason: finishReason ?? undefined,
+      modelId: handle.modelId,
+    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
+      turnTrace,
       aborted: handle.isAborted(),
     };
   } finally {

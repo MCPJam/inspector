@@ -285,14 +285,17 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxEvalIterationsPerMonth") {
-    if (typeof options?.resetsAt === "number") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
       const resetTime = new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(options.resetsAt));
-      return `Eval iteration limit reached. Resets ${resetTime}.`;
+      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
@@ -319,7 +322,10 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "computerStartsPerDay") {
-    if (typeof options?.resetsAt === "number") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
       const resetTime = new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",

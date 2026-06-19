@@ -117,6 +117,34 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray(result.spans)).toBe(true);
   });
 
+  it("builds the real turnTrace from the engine accumulator (modelId, finishReason, spans, usage)", async () => {
+    // The unified turn facade relies on this — assert headless builds it, not
+    // just that the facade forwards it.
+    streamTextMock.mockReturnValueOnce(
+      defaultStreamTextReturn({ finishReason: "stop" }),
+    );
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hello" } as any],
+      systemPrompt: "system",
+      tools: {} as any,
+    });
+
+    const result = await consumeDirectChatTurnHeadless(handle);
+
+    expect(result.turnTrace.modelId).toBe("gpt-4-turbo");
+    expect(result.turnTrace.finishReason).toBe("stop");
+    expect(Array.isArray(result.turnTrace.spans)).toBe(true);
+    expect(typeof result.turnTrace.turnId).toBe("string");
+    expect(typeof result.turnTrace.promptIndex).toBe("number");
+    expect(typeof result.turnTrace.startedAt).toBe("number");
+    expect(typeof result.turnTrace.endedAt).toBe("number");
+    // usage key is always present (mirrors the streaming onPersist construction).
+    expect("usage" in result.turnTrace).toBe(true);
+  });
+
   it("treats `traceEvents` as fully optional — no UI writer dependency", async () => {
     // PR 4a invariant: eval (PR 4b) calls runDirectChatTurn without ANY
     // `traceEvents`. If the helper internally required a writer or threw

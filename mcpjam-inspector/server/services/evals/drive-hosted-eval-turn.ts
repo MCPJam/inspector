@@ -33,7 +33,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import { logger } from "../../utils/logger";
-import { runAssistantTurn } from "../../utils/assistant-turn.js";
+import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import type {
   MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
@@ -47,6 +47,11 @@ import {
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
 import type { UsageTotals } from "./types";
+import {
+  extractFinalAssistantMessage,
+  extractToolErrors,
+  type ToolErrorRecord,
+} from "@/shared/eval-matching";
 
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 
@@ -141,6 +146,11 @@ export interface DriveHostedEvalTurnParams {
     capturedSpans: EvalTraceSpan[];
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
+    // Per-turn signals for per-turn checks (PromptTurn.checks), indexed by
+    // promptIndex parallel to toolsCalledByPrompt. Populated on turn success;
+    // a turn that fails before capture leaves its slot unset (fail-closed).
+    assistantMessageByPrompt: (string | undefined)[];
+    toolErrorsByPrompt: ToolErrorRecord[][];
   };
   buildSinks?: (ctx: HostedEvalTurnSinkContext) => HostedEvalTurnSinks;
 }
@@ -181,7 +191,6 @@ export async function driveHostedEvalTurn(
   // failed turn still persists the user side of the transcript (Cursor
   // review round-2 — the transcript stays honest about WHICH turn errored).
   acc.messageHistory.push({ role: "user", content: params.prompt });
-  const messageCountBeforeTurn = acc.messageHistory.length;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -290,9 +299,17 @@ export async function driveHostedEvalTurn(
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
 
-  let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
+  let turnResult: Awaited<ReturnType<typeof runUnifiedAssistantTurn>>;
   try {
-    turnResult = await runAssistantTurn({
+    turnResult = await runUnifiedAssistantTurn({
+      // Hosted runtime: routing (endpoint, extra body fields, harness) is an
+      // explicit part of the discriminator, not hidden behind a string.
+      runtime: {
+        kind: "hosted",
+        endpointPath: params.endpointPath,
+        extraBodyFields: mergedExtraBodyFields,
+        ...(params.harness ? { harness: params.harness } : {}),
+      },
       messages: inputMessages,
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
@@ -320,20 +337,18 @@ export async function driveHostedEvalTurn(
       // requireToolApproval host (it can't do interactive approval yet) while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
+      // `harness` moved to `runtime` above; `requireToolApproval` + `projectId`
+      // stay top-level engine options (still harness-gated so emulated evals
+      // remain byte-identical — runHarnessTurn needs projectId for the host's
+      // computer; authHeader rides authContext.token).
       ...(params.harness
         ? {
-            harness: params.harness,
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
               : {}),
-            // runHarnessTurn needs projectId to resolve the host's computer
-            // (authHeader already rides authContext.token). Harness-gated so
-            // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
           }
         : {}),
-      endpointPath: params.endpointPath,
-      extraBodyFields: mergedExtraBodyFields,
       ...(abortSignal ? { abortSignal } : {}),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
@@ -407,14 +422,25 @@ export async function driveHostedEvalTurn(
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
   }
 
-  // Per-turn tool calls — rebuild from the new messages only (the engine
-  // returns the FULL transcript; slice from `messageCountBeforeTurn` so
-  // prior turns' calls aren't double-counted). Replaces whatever the live
-  // `onToolCall` sink accumulated so the grader sees the canonical shape.
-  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
+  // Per-turn tool calls — rebuild from THIS turn's new messages only (the
+  // facade computes the slice once as `newMessages`, so prior turns' calls
+  // aren't double-counted). Replaces whatever the live `onToolCall` sink
+  // accumulated so the grader sees the canonical shape.
+  const newMessages = turnResult.newMessages;
   const canonicalPromptToolsCalled = params.extractToolCalls(newMessages);
   promptToolsCalled.length = 0;
   promptToolsCalled.push(...canonicalPromptToolsCalled);
+
+  // Per-turn signals for per-turn checks — same capture the local runners do,
+  // so the shared verdict helper evaluates PromptTurn.checks on hosted evals
+  // too. This turn's assistant text + tool errors, scoped to this turn's new
+  // messages and spans (wrap tool spans + the engine's turnTrace spans).
+  acc.assistantMessageByPrompt[promptIndex] =
+    extractFinalAssistantMessage(newMessages);
+  acc.toolErrorsByPrompt[promptIndex] = extractToolErrors({
+    spans: [...traceCtx.recordedSpans, ...(turnResult.turnTrace?.spans ?? [])],
+    messages: newMessages as Array<{ role: string; content: unknown }>,
+  });
 
   // Roll the engine's transcript forward as the next turn's starting point.
   acc.messageHistory.length = 0;

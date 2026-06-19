@@ -16,7 +16,8 @@ import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+type IterationStatus = "completed" | "failed" | "cancelled" | "timed_out";
+type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 
 type SuiteRunEnvironmentSnapshot = {
   servers: string[];
@@ -26,6 +27,93 @@ type SuiteRunEnvironmentSnapshot = {
     workspaceServerId?: string;
   }>;
 };
+
+type BillingLimitPayload = {
+  code?: string;
+  message?: string;
+  limit?: string;
+  limitName?: string;
+  allowedValue?: number | null;
+  resetsAt?: number | null;
+};
+
+function tryParseJsonPayload(value: string): BillingLimitPayload | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === "object") {
+      return parsed as BillingLimitPayload;
+    }
+  } catch {
+    // Convex often prefixes errors before appending the JSON payload.
+  }
+
+  const jsonMatch = value.match(/\{[\s\S]*\}$/);
+  if (!jsonMatch) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed && typeof parsed === "object"
+      ? (parsed as BillingLimitPayload)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractBillingLimitPayload(error: unknown): BillingLimitPayload | null {
+  const data = (error as { data?: unknown } | null | undefined)?.data;
+  if (data && typeof data === "object") {
+    return data as BillingLimitPayload;
+  }
+  if (typeof data === "string") {
+    return tryParseJsonPayload(data);
+  }
+
+  if (error instanceof Error) {
+    return tryParseJsonPayload(error.message);
+  }
+  if (typeof error === "string") {
+    return tryParseJsonPayload(error);
+  }
+  return null;
+}
+
+function formatEvalBillingLimitMessage(
+  payload: BillingLimitPayload | null,
+): string | null {
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return null;
+  }
+
+  const limitName = payload.limitName ?? payload.limit;
+  if (
+    limitName !== "maxEvalIterationsPerMonth" &&
+    limitName !== "maxEvalRunsPerMonth"
+  ) {
+    return payload.message ?? null;
+  }
+
+  const allowedValue =
+    typeof payload.allowedValue === "number" ? payload.allowedValue : null;
+  const cap = allowedValue !== null ? ` (${allowedValue})` : "";
+  const noun =
+    limitName === "maxEvalRunsPerMonth"
+      ? "monthly eval run limit"
+      : "eval iteration limit";
+  const reset =
+    typeof payload.resetsAt === "number" && Number.isFinite(payload.resetsAt)
+      ? ` Resets ${new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        }).format(new Date(payload.resetsAt))}.`
+      : " Upgrade to continue.";
+
+  return `This organization has reached its ${noun}${cap}.${reset}`;
+}
 
 export type SuiteRunRecorder = {
   runId: string;
@@ -89,7 +177,7 @@ export type SuiteRunRecorder = {
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
-    status: "completed" | "failed" | "cancelled";
+    status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
       total: number;
       passed: number;
@@ -97,6 +185,7 @@ export type SuiteRunRecorder = {
       passRate: number;
     };
     notes?: string;
+    stopReason?: RunStopReason;
   }): Promise<void>;
 };
 
@@ -226,7 +315,7 @@ export const createSuiteRunRecorder = ({
         },
       });
     },
-    async finalize({ status, summary, notes }) {
+    async finalize({ status, summary, notes, stopReason }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return;
@@ -238,6 +327,7 @@ export const createSuiteRunRecorder = ({
           status,
           summary,
           notes,
+          stopReason,
         });
       } catch (error) {
         const errorMessage =
@@ -377,6 +467,9 @@ export const startSuiteRunWithRecorder = async ({
     });
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
+    const billingLimitMessage = formatEvalBillingLimitMessage(
+      extractBillingLimitPayload(error),
+    );
     logger.error("[evals] Failed to pre-create suite run iterations", error, {
       suiteId,
       runId,
@@ -398,8 +491,14 @@ export const startSuiteRunWithRecorder = async ({
     }
     await recorder.finalize({
       status: "failed",
-      notes: "Failed to prepare eval test attempts.",
+      notes: billingLimitMessage ?? "Failed to prepare eval test attempts.",
     });
+    if (billingLimitMessage) {
+      throw new WebRouteError(429, ErrorCode.RATE_LIMITED, billingLimitMessage, {
+        runId,
+        cause,
+      });
+    }
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
