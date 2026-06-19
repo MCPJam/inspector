@@ -231,6 +231,15 @@ function compareSpans(a: EvalTraceSpan, b: EvalTraceSpan): number {
   return a.name.localeCompare(b.name);
 }
 
+/** Output tokens per second for an llm span, or null when not computable. */
+function spanThroughputPerSec(
+  outputTokens: number | undefined,
+  durationMs: number,
+): number | null {
+  if (typeof outputTokens !== "number" || durationMs < 50) return null;
+  return outputTokens / (durationMs / 1000);
+}
+
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
   return `${Math.round(ms)}ms`;
@@ -1563,6 +1572,54 @@ function TimelineDetailPane({
                 </>
               ) : null}
             </div>
+
+            {row.kind === "span"
+              ? (() => {
+                  const span = row.span;
+                  const throughput =
+                    span.category === "llm"
+                      ? spanThroughputPerSec(span.outputTokens, durationMs)
+                      : null;
+                  const items: Array<{ label: string; value: string }> = [];
+                  if (span.provider)
+                    items.push({ label: "Provider", value: span.provider });
+                  if (span.finishReason)
+                    items.push({ label: "Finish", value: span.finishReason });
+                  if (typeof span.ttfcMs === "number")
+                    items.push({
+                      label: "TTFC",
+                      value: formatDuration(span.ttfcMs),
+                    });
+                  if (throughput !== null)
+                    items.push({
+                      label: "Throughput",
+                      value: `${throughput.toFixed(1)} tok/s`,
+                    });
+                  if (span.responseId)
+                    items.push({
+                      label: "Response ID",
+                      value: span.responseId,
+                    });
+                  if (items.length === 0) return null;
+                  return (
+                    <div
+                      data-testid="trace-span-metadata"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                    >
+                      {items.map((item) => (
+                        <span key={item.label} className="truncate">
+                          <span className="text-muted-foreground/70">
+                            {item.label}:{" "}
+                          </span>
+                          <span className="font-medium text-foreground">
+                            {item.value}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()
+              : null}
           </div>
         </div>
 
