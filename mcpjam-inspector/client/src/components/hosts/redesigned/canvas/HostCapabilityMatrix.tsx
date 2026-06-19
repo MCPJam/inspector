@@ -4,7 +4,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
-import gooseLogoDark from "/goose_logo_dark.png";
+import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -41,7 +41,7 @@ function getClientLogo(
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;
-  if (haystack.includes("goose")) return gooseLogoDark;
+  if (haystack.includes("goose")) return gooseLogoLight;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
