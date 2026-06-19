@@ -60,6 +60,22 @@
         "toolName": "draw_rectangle",
         "serverId": "excalidraw"
       }
+    },
+    {
+      "label": "failed tool span with JSON-RPC error code",
+      "value": {
+        "id": "p0-s0-tool-def",
+        "parentId": "p0-s0",
+        "name": "create_view",
+        "category": "tool",
+        "startMs": 1300,
+        "endMs": 1320,
+        "status": "error",
+        "toolCallId": "def",
+        "toolName": "create_view",
+        "serverId": "excalidraw",
+        "mcpErrorCode": -32602
+      }
     }
   ],
   "reject": [
