@@ -51,9 +51,15 @@ import {
 } from "@/shared/types";
 import {
   buildIterationTranscript,
+  buildTurnTranscript,
   evaluatePredicates,
+  evaluateTurnChecks,
+  extractFinalAssistantMessage,
+  extractToolErrors,
   summarizeRenderObservations,
+  type PredicateResult,
   type ToolErrorRecord,
+  type TurnChecksInput,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -74,6 +80,7 @@ import type {
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -521,16 +528,53 @@ function resolvePinnedServerKey(
   return undefined;
 }
 
+/**
+ * Per-turn check verdicts, evaluated by `evaluateTurnChecks` against each
+ * turn's slice of the transcript. Shared by every runner variant that
+ * evaluates predicates so the four paths can't diverge. `perTurnSignals`
+ * carries what each runner already has per turn (tool calls, this turn's
+ * assistant message + tool errors, and this turn's render observations).
+ */
+function buildTurnCheckResults(
+  promptTurns: PromptTurn[],
+  perTurnSignals: {
+    toolsCalledByPrompt: ToolCall[][];
+    assistantMessageByPrompt: (string | undefined)[];
+    toolErrorsByPrompt: ToolErrorRecord[][];
+    renderObservations: readonly RunnerWidgetRenderObservation[];
+  }
+): PredicateResult[] {
+  const inputs: TurnChecksInput[] = promptTurns.map((turn, i) => ({
+    promptIndex: i,
+    checks: turn.checks,
+    transcript: buildTurnTranscript({
+      toolCalls: perTurnSignals.toolsCalledByPrompt[i] ?? [],
+      finalAssistantMessage: perTurnSignals.assistantMessageByPrompt[i],
+      toolErrors: perTurnSignals.toolErrorsByPrompt[i] ?? [],
+      renderObservations: summarizeRenderObservations(
+        perTurnSignals.renderObservations.filter((o) => o.promptIndex === i)
+      ),
+    }),
+  }));
+  return evaluateTurnChecks(inputs);
+}
+
 function buildPromptTraceSummaries(
-  evaluation: MultiTurnEvaluationResult
+  evaluation: MultiTurnEvaluationResult,
+  turnCheckResults: PredicateResult[] = []
 ): PromptTraceSummary[] {
-  return evaluation.promptSummaries.map((summary) => ({
+  return evaluation.promptSummaries.map((summary) => {
+    const perTurn = turnCheckResults.filter(
+      (r) => r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex
+    );
+    return {
     promptIndex: summary.promptIndex,
     prompt: summary.prompt,
     expectedToolCalls: summary.expectedToolCalls,
     actualToolCalls: summary.actualToolCalls,
     expectedOutput: summary.expectedOutput,
     passed: summary.passed,
+    ...(perTurn.length ? { predicateResults: perTurn } : {}),
     missing: summary.missing,
     unexpected: summary.unexpected,
     argumentMismatches: summary.argumentMismatches.map((mismatch) => {
@@ -555,7 +599,8 @@ function buildPromptTraceSummaries(
         ),
       };
     }),
-  }));
+    };
+  });
 }
 
 function extractToolCallsFromConversation(params: {
@@ -1223,6 +1268,12 @@ const runIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for PER-TURN checks (PromptTurn.checks), indexed by
+  // promptIndex parallel to toolsCalledByPrompt. Assigned by index (not push)
+  // so a turn that breaks early simply leaves its slot unset → the turn-scoped
+  // transcript fails closed for response/widget checks, matching case-level.
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   // Tool errors from pinned (model-free) turns. No trace exists for a direct
   // tool call, so these are threaded into the transcript explicitly (the
   // `toolErrors` input to buildIterationTranscript) so `noToolErrors` gates.
@@ -1414,6 +1465,11 @@ const runIterationWithAiSdk = async ({
         toolsCalledByPrompt.push(
           pinnedResult.toolCall ? [pinnedResult.toolCall] : []
         );
+        // Per-turn signals for this pinned turn's checks.
+        assistantMessageByPrompt[promptIndex] = pinnedResult.summary;
+        toolErrorsByPrompt[promptIndex] = pinnedResult.toolError
+          ? [pinnedResult.toolError]
+          : [];
         if (pinnedResult.toolError) {
           pinnedToolErrors.push(pinnedResult.toolError);
         }
@@ -1652,6 +1708,19 @@ const runIterationWithAiSdk = async ({
         messages: promptResponseMessages,
       });
       toolsCalledByPrompt.push(promptToolsCalled);
+      // Per-turn signals for this model turn's checks: the turn's final
+      // assistant text and the tool errors observed in this turn's trace
+      // (this turn's spans + response messages only).
+      assistantMessageByPrompt[promptIndex] = extractFinalAssistantMessage(
+        promptResponseMessages
+      );
+      toolErrorsByPrompt[promptIndex] = extractToolErrors({
+        spans: activeTraceCtx.recordedSpans,
+        messages: promptResponseMessages as Array<{
+          role: string;
+          content: unknown;
+        }>,
+      });
       recordedSpans.push(...activeTraceCtx.recordedSpans);
 
       conversationMessages = [
@@ -1675,7 +1744,20 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions
     );
-    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+    // Per-turn checks: each turn's `checks` evaluated against its own slice
+    // of the transcript (tool calls / assistant message / tool errors /
+    // render observations for that turn). Independent of the suite/case
+    // predicate layering; runs whenever a turn authored checks.
+    const turnCheckResults = buildTurnCheckResults(promptTurns, {
+      toolsCalledByPrompt,
+      assistantMessageByPrompt,
+      toolErrorsByPrompt,
+      renderObservations: browser.widgetRenderObservations,
+    });
+    const promptTraceSummaries = buildPromptTraceSummaries(
+      evaluation,
+      turnCheckResults
+    );
 
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -1702,7 +1784,7 @@ const runIterationWithAiSdk = async ({
             typeof test.successPredicates
           >)
         : undefined;
-    const predicateResults = effectivePredicates?.length
+    const casePredicateResults = effectivePredicates?.length
       ? evaluatePredicates(
           buildIterationTranscript({
             trace: traceForGate,
@@ -1719,6 +1801,9 @@ const runIterationWithAiSdk = async ({
           effectivePredicates
         )
       : [];
+    // Case-level + per-turn (scope-tagged) results gate the verdict and
+    // persist together (testIteration.metadata.predicates).
+    const predicateResults = [...casePredicateResults, ...turnCheckResults];
     let passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,

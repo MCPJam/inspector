@@ -145,17 +145,25 @@ export {
   evaluatePredicate,
   evaluatePredicates,
   allPredicatesPassed,
+  evaluateTurnChecks,
   buildIterationTranscript,
+  buildTurnTranscript,
+  extractFinalAssistantMessage,
+  extractToolErrors,
   predicateSchema,
   predicateArraySchema,
   argMatcherSchema,
   casePredicatesSchema,
+  predicateScopeSchema,
   PREDICATE_PLACEHOLDER_STRINGS,
+  TURN_SCOPABLE_PREDICATE_KINDS,
+  isTurnScopablePredicateKind,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,
   PredicateType,
   PredicateResult,
+  PredicateScope,
   ArgMatcher,
   ArgMatchMode,
   IterationTranscript,
@@ -167,6 +175,8 @@ export type {
   RenderObservationSummary,
   CasePredicates,
   PredicatePlaceholder,
+  TurnChecksInput,
+  TurnTranscriptInput,
 } from "@mcpjam/sdk/predicates";
 
 import type {
