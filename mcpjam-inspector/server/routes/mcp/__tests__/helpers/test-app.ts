@@ -4,6 +4,7 @@ import type { MockMCPClientManager } from "./mock-mcp-client-manager.js";
 
 // Import route modules
 import connect from "../../connect.js";
+import connectAdhoc from "../../connect-adhoc.js";
 import tools from "../../tools.js";
 import resources from "../../resources.js";
 import servers from "../../servers.js";
@@ -24,6 +25,7 @@ import { CORS_ORIGINS } from "../../../../config.js";
  */
 export type RouteConfig =
   | "connect"
+  | "connect-adhoc"
   | "tools"
   | "resources"
   | "servers"
@@ -36,6 +38,7 @@ export type RouteConfig =
 
 const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   connect: { path: "/api/mcp/connect", handler: connect },
+  "connect-adhoc": { path: "/api/mcp/connect-adhoc", handler: connectAdhoc },
   tools: { path: "/api/mcp/tools", handler: tools },
   resources: { path: "/api/mcp/resources", handler: resources },
   servers: { path: "/api/mcp/servers", handler: servers },

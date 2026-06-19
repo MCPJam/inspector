@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import connect from "./connect";
+import connectAdhoc from "./connect-adhoc";
 import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
@@ -44,6 +45,11 @@ mcp.route("/elicitation", elicitation);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
+
+// Ad-hoc connect: inline {serverId, serverConfig}, no project lookup. Backs the
+// CLI harness-render flows (apps render/session) that target servers existing
+// in no project. See connect-adhoc.ts.
+mcp.route("/connect-adhoc", connectAdhoc);
 
 // Inspector command bus endpoints
 mcp.route("/command", command);

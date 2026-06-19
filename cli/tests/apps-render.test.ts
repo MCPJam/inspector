@@ -125,7 +125,7 @@ test("runWidgetRender sends the render POST with the floored timeout", async () 
       hasActiveClient: false,
       started: false,
     }),
-    connectServer: async () => ({ success: true }),
+    connectServerAdhoc: async () => ({ success: true }),
     request: async (path: string, init?: { timeoutMs?: number }) => {
       calls.push({ path, timeoutMs: init?.timeoutMs });
       return { status: "rendered", elapsedMs: 1 } satisfies WidgetRenderResponse;
@@ -284,7 +284,7 @@ async function startMockInspector(options: {
       return;
     }
 
-    if (request.method === "POST" && request.url === "/api/mcp/connect") {
+    if (request.method === "POST" && request.url === "/api/mcp/connect-adhoc") {
       const body = await readJsonBody(request);
       requests.push({ method: request.method, url: request.url, body });
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -376,7 +376,7 @@ test("apps render writes the screenshot to a file and keeps stdout clean", async
 
     // The render server-side path connects the target server first.
     const connect = server.requests.find(
-      (entry) => entry.url === "/api/mcp/connect",
+      (entry) => entry.url === "/api/mcp/connect-adhoc",
     );
     assert.equal(
       (connect?.body as { serverId?: string } | undefined)?.serverId,

@@ -530,12 +530,19 @@ export class InspectorApiClient {
     return ensureInspectorBackend({ ...options, baseUrl: this.baseUrl });
   }
 
-  async connectServer(
+  /**
+   * Connect a fully-specified ad-hoc server (inline config, no project) into the
+   * local Inspector's manager. Backs the harness-render flows (`apps render`,
+   * `apps session`, inspector render) whose `--url`/`--command` target exists in
+   * no project, so the project-scoped `/api/mcp/connect` (which now requires a
+   * `projectId`) can't serve them. See `server/routes/mcp/connect-adhoc.ts`.
+   */
+  async connectServerAdhoc(
     serverId: string,
     serverConfig: unknown,
     options: { timeoutMs?: number } = {},
   ) {
-    return this.request("/api/mcp/connect", {
+    return this.request("/api/mcp/connect-adhoc", {
       method: "POST",
       body: { serverId, serverConfig },
       timeoutMs: options.timeoutMs,

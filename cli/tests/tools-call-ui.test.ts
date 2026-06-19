@@ -212,7 +212,7 @@ async function startMockServer(options: {
       const body = await readJsonBody(request);
       requests.push({ method: request.method, url: request.url, body });
 
-      if (request.url === "/api/mcp/connect") {
+      if (request.url === "/api/mcp/connect-adhoc") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ success: true, status: "connected" }));
         return;
@@ -407,7 +407,7 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
     assert.equal(mcpMethods.includes("tools/list"), false);
 
     const connectRequest = server.requests.find(
-      (entry) => entry.url === "/api/mcp/connect",
+      (entry) => entry.url === "/api/mcp/connect-adhoc",
     );
     assert.equal(
       (connectRequest?.body as { serverId?: string } | undefined)?.serverId,
