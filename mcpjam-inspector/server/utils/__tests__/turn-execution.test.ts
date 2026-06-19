@@ -42,6 +42,7 @@ describe("runUnifiedAssistantTurn", () => {
         endpointPath: "/stream/org",
         extraBodyFields: { providerKey: "k" },
       },
+      streamSink: "none",
       messages: [userMsg],
     } as never);
 
@@ -51,9 +52,32 @@ describe("runUnifiedAssistantTurn", () => {
     expect(passed.extraBodyFields).toEqual({ providerKey: "k" });
     // routing is lifted out of `runtime` into the engine options, not nested.
     expect(passed.runtime).toBeUndefined();
-    // newMessages = full transcript minus the input history.
+    // newMessages = full transcript minus the input history (headless sink).
     expect(res.newMessages).toEqual([asstMsg]);
     expect(res.messages).toEqual([userMsg, asstMsg]);
+    expect(res.aborted).toBe(false);
+  });
+
+  it("hosted + ui: does NOT eagerly slice newMessages (transcript drains async)", async () => {
+    // ui returns before the stream drains, so result.messages is not rolled
+    // forward yet — newMessages must not be a stale slice.
+    runAssistantTurnMock.mockResolvedValue({
+      messages: [userMsg],
+      assistantMessages: [],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: { spans: [] },
+      usage: {},
+      finishReason: undefined,
+      response: new Response("x"),
+    });
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "hosted", endpointPath: "/stream" },
+      streamSink: "ui",
+      messages: [userMsg],
+    } as never);
+    expect(res.newMessages).toEqual([]);
+    expect(res.toolCalls).toEqual([]);
   });
 
   it("direct + none: delegates to runDirectChatTurn, returns the real turnTrace and a unified result", async () => {
@@ -89,7 +113,29 @@ describe("runUnifiedAssistantTurn", () => {
       usage: { totalTokens: 5 },
     });
     expect(res.usage).toEqual({ totalTokens: 5 });
+    expect(res.aborted).toBe(false);
     expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("direct: surfaces headless.aborted so callers can drop cancelled turns", async () => {
+    runDirectChatTurnMock.mockReturnValue({ handle: true });
+    consumeDirectChatTurnHeadlessMock.mockResolvedValue({
+      messages: [],
+      steps: [],
+      totalUsage: {},
+      finishReason: "stop",
+      spans: [],
+      turnTrace: { spans: [], usage: {} },
+      aborted: true,
+    });
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "direct", llmModel: {}, modelId: "m1" },
+      streamSink: "none",
+      messages: [userMsg],
+      systemPrompt: "sys",
+      tools: {},
+    } as never);
+    expect(res.aborted).toBe(true);
   });
 
   it("direct + ui: throws (wired in the chat-migration PR), not silently mis-routed", async () => {

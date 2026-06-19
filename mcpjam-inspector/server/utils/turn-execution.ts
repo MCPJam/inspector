@@ -57,6 +57,13 @@ export type TurnRuntime = HostedRuntime | DirectRuntime;
  */
 export type UnifiedTurnResult = RunAssistantTurnResult & {
   newMessages: ModelMessage[];
+  /**
+   * True when the turn was cancelled mid-flight (the direct engine's
+   * `headless.aborted`). Callers MUST drop/skip-persist an aborted turn rather
+   * than record partial state as completed. Always `false` on the hosted path
+   * (Convex handles cancellation internally; `runAssistantTurn` exposes no flag).
+   */
+  aborted: boolean;
 };
 
 /** Hosted options = `runAssistantTurn`'s, with routing lifted into `runtime`. */
@@ -108,9 +115,26 @@ export async function runUnifiedAssistantTurn(
       extraBodyFields: runtime.extraBodyFields,
       harness: runtime.harness,
     });
-    // Hosted returns the FULL rolled-forward transcript; slice off the input.
-    const newMessages = result.messages.slice(opts.messages.length);
-    return { ...result, newMessages };
+    // For `streamSink: "ui"`, `runAssistantTurn` returns BEFORE the SSE stream
+    // drains — the transcript rolls forward asynchronously, so an eager slice
+    // here would be stale. UI callers consume `response` + `onConversationComplete`
+    // for the final transcript; only the headless ("none") sink has a complete
+    // transcript at return time.
+    const newMessages =
+      opts.streamSink === "none"
+        ? result.messages.slice(opts.messages.length)
+        : [];
+    return {
+      ...result,
+      newMessages,
+      // Scope the convenience views to THIS turn (consistent with the direct
+      // branch + `newMessages`). `runAssistantTurn` computes them over the full
+      // history, which would leak prior turns' tools into a "normalized" result.
+      assistantMessages: extractAssistantMessages(newMessages),
+      toolCalls: extractToolCalls(newMessages),
+      toolResults: extractToolResults(newMessages),
+      aborted: false,
+    };
   }
 
   // runtime.kind === "direct"
@@ -155,6 +179,9 @@ export async function runUnifiedAssistantTurn(
     turnTrace: headless.turnTrace,
     usage: headless.turnTrace.usage,
     finishReason: headless.finishReason ?? undefined,
+    // Surface the cancellation signal (don't throw) so callers keep the existing
+    // "check flag → return cancelled" pattern instead of try/catch.
+    aborted: headless.aborted,
   };
 }
 
