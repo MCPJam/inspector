@@ -79,6 +79,27 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  it("keeps Goose host capabilities faithful to the raw probe", () => {
+    const config = seedHostTemplate("goose", { theme: "dark" });
+    const apps = config.mcpProfile?.apps as any;
+
+    expect(config.hostCapabilitiesOverride).toEqual({ openLinks: {} });
+    expect(apps?.mcpAppsOverrides).toMatchObject({
+      openLinks: true,
+      serverTools: false,
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: false,
+      sandboxPermissions: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+    });
+  });
+
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {
     const caps = { extensions: { foo: { bar: 1 } } };
     const config = emptyHostConfigInputV2({ clientCapabilities: caps });
