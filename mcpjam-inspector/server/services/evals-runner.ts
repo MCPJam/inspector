@@ -8,7 +8,6 @@ import {
 import {
   evaluateMultiTurnResults,
   type EvaluationResult,
-  type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
@@ -19,7 +18,7 @@ import {
   type HostExecutionPolicy,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   createLlmModel,
   type BaseUrls,
@@ -50,16 +49,9 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import {
-  buildIterationTranscript,
-  buildTurnTranscript,
-  evaluatePredicates,
-  evaluateTurnChecks,
   extractFinalAssistantMessage,
   extractToolErrors,
-  summarizeRenderObservations,
-  type PredicateResult,
   type ToolErrorRecord,
-  type TurnChecksInput,
 } from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -68,6 +60,10 @@ import {
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import { runPinnedTurn } from "./evals/pinned-turn";
+import {
+  buildPromptTraceSummaries,
+  computeIterationVerdict,
+} from "./evals/iteration-verdict";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -80,7 +76,6 @@ import type {
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
-  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -276,21 +271,6 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
 };
-
-/**
- * True when the provider/backend actually reported token usage. `accumulatedUsage`
- * is initialized to a zero object, so a zero total is indistinguishable from
- * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
- * pass on runs with no usage data. Only forward usage when something was
- * reported so the predicate can fail closed otherwise.
- */
-function hasReportedUsage(usage: UsageTotals): boolean {
-  return (
-    (usage.totalTokens ?? 0) > 0 ||
-    (usage.inputTokens ?? 0) > 0 ||
-    (usage.outputTokens ?? 0) > 0
-  );
-}
 
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
@@ -535,73 +515,10 @@ function resolvePinnedServerKey(
  * carries what each runner already has per turn (tool calls, this turn's
  * assistant message + tool errors, and this turn's render observations).
  */
-function buildTurnCheckResults(
-  promptTurns: PromptTurn[],
-  perTurnSignals: {
-    toolsCalledByPrompt: ToolCall[][];
-    assistantMessageByPrompt: (string | undefined)[];
-    toolErrorsByPrompt: ToolErrorRecord[][];
-    renderObservations: readonly RunnerWidgetRenderObservation[];
-  }
-): PredicateResult[] {
-  const inputs: TurnChecksInput[] = promptTurns.map((turn, i) => ({
-    promptIndex: i,
-    checks: turn.checks,
-    transcript: buildTurnTranscript({
-      toolCalls: perTurnSignals.toolsCalledByPrompt[i] ?? [],
-      finalAssistantMessage: perTurnSignals.assistantMessageByPrompt[i],
-      toolErrors: perTurnSignals.toolErrorsByPrompt[i] ?? [],
-      renderObservations: summarizeRenderObservations(
-        perTurnSignals.renderObservations.filter((o) => o.promptIndex === i)
-      ),
-    }),
-  }));
-  return evaluateTurnChecks(inputs);
-}
-
-function buildPromptTraceSummaries(
-  evaluation: MultiTurnEvaluationResult,
-  turnCheckResults: PredicateResult[] = []
-): PromptTraceSummary[] {
-  return evaluation.promptSummaries.map((summary) => {
-    const perTurn = turnCheckResults.filter(
-      (r) => r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex
-    );
-    return {
-    promptIndex: summary.promptIndex,
-    prompt: summary.prompt,
-    expectedToolCalls: summary.expectedToolCalls,
-    actualToolCalls: summary.actualToolCalls,
-    expectedOutput: summary.expectedOutput,
-    passed: summary.passed,
-    ...(perTurn.length ? { predicateResults: perTurn } : {}),
-    missing: summary.missing,
-    unexpected: summary.unexpected,
-    argumentMismatches: summary.argumentMismatches.map((mismatch) => {
-      const mismatchedArguments = new Set<string>([
-        ...Object.keys(mismatch.expectedArgs ?? {}),
-        ...Object.keys(mismatch.actualArgs ?? {}),
-      ]);
-
-      return {
-        expected: {
-          toolName: mismatch.toolName,
-          arguments: mismatch.expectedArgs,
-        },
-        actual: {
-          toolName: mismatch.toolName,
-          arguments: mismatch.actualArgs,
-        },
-        mismatchedArguments: Array.from(mismatchedArguments).filter(
-          (key) =>
-            JSON.stringify(mismatch.expectedArgs?.[key]) !==
-            JSON.stringify(mismatch.actualArgs?.[key])
-        ),
-      };
-    }),
-    };
-  });
-}
+// `buildTurnCheckResults`, `buildPromptTraceSummaries`, and the post-loop
+// verdict pipeline (`computeIterationVerdict`) live in ./evals/iteration-verdict
+// so all four runner paths (local/hosted × batch/stream) share ONE
+// implementation instead of copy-pasting it (and silently drifting).
 
 function extractToolCallsFromConversation(params: {
   steps?: ReadonlyArray<any>;
@@ -1765,27 +1682,6 @@ const runIterationWithAiSdk = async ({
       activeCompletedStepCount = 0;
     }
 
-    const evaluation = evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions
-    );
-    // Per-turn checks: each turn's `checks` evaluated against its own slice
-    // of the transcript (tool calls / assistant message / tool errors /
-    // render observations for that turn). Independent of the suite/case
-    // predicate layering; runs whenever a turn authored checks.
-    const turnCheckResults = buildTurnCheckResults(promptTurns, {
-      toolsCalledByPrompt,
-      assistantMessageByPrompt,
-      toolErrorsByPrompt,
-      renderObservations: browser.widgetRenderObservations,
-    });
-    const promptTraceSummaries = buildPromptTraceSummaries(
-      evaluation,
-      turnCheckResults
-    );
-
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
         ?.failOnToolError !== false;
@@ -1799,62 +1695,27 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (today's render check) with no authored predicates
-    // defaults to "the widget rendered" — the model-free equivalent of the
-    // legacy probe verdict (`toolCallOk && rendered`). An errored/non-renderable
-    // pinned call produces no `rendered` observation, so this fails closed.
-    // Hybrid/model cases keep the normal match-driven verdict when unauthored.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
-    const casePredicateResults = effectivePredicates?.length
-      ? evaluatePredicates(
-          buildIterationTranscript({
-            trace: traceForGate,
-            toolCalls: evaluation.toolsCalled,
-            usage: hasReportedUsage(accumulatedUsage)
-              ? accumulatedUsage
-              : undefined,
-            renderObservations: summarizeRenderObservations(
-              browser.widgetRenderObservations,
-            ),
-            // Pinned turns have no trace; thread their tool errors explicitly.
-            toolErrors: pinnedToolErrors,
-          }),
-          effectivePredicates
-        )
-      : [];
-    // Case-level + per-turn (scope-tagged) results gate the verdict and
-    // persist together (testIteration.metadata.predicates).
-    const predicateResults = [...casePredicateResults, ...turnCheckResults];
-    let passed = finalizePassedForEval({
-      matchPassed: evaluation.passed,
-      trace: traceForGate,
-      // PR 4b (mirrors PR 3 invariant): if the per-turn loop set
-      // `iterationError` via the failure-detection branch (no new
-      // messages, non-tool error span), feed it to the gate so a
-      // failed cycle doesn't sneak through as a verdict pass on
-      // negative tests / zero-expected-tool cases.
-      iterationError,
-      failOnToolError,
-      predicateResults,
-    });
-    // A pinned (model-free) tool call's error never enters the trace, so
-    // `finalizePassedForEval`'s `failOnToolError` gate (which inspects the
-    // trace) is blind to it. Apply the gate explicitly to pinned tool errors
-    // so a failing pinned call can't pass when tool-error gating is on and no
-    // widget/`noToolErrors` predicate happened to catch it.
-    if (passed && failOnToolError && pinnedToolErrors.length > 0) {
-      passed = false;
-    }
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
+    // Shared post-loop verdict: tool-call scoring + per-turn checks +
+    // case-level predicates + gate (incl. pinned-only widget default and the
+    // pinned-tool-error gate). The local batch path captures per-turn signals.
+    const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+      computeIterationVerdict({
+        test,
+        promptTurns,
+        toolsCalledByPrompt,
+        perTurnSignals: {
+          kind: "captured",
+          assistantMessageByPrompt,
+          toolErrorsByPrompt,
+        },
+        renderObservations: browser.widgetRenderObservations,
+        traceForGate,
+        accumulatedUsage,
+        pinnedToolErrors,
+        failOnToolError,
+        iterationError,
+      });
+    const predicateResults = allPredicateResults;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -2216,6 +2077,9 @@ const runIterationViaBackendWithBrowser = async (
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for per-turn checks (captured by driveHostedEvalTurn).
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -2439,6 +2303,8 @@ const runIterationViaBackendWithBrowser = async (
         capturedSpans,
         accumulatedUsage,
         toolsCalledByPrompt,
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
       },
     });
     if (outcome.kind === "cancelled") return returnCancelled();
@@ -2448,14 +2314,6 @@ const runIterationViaBackendWithBrowser = async (
       break;
     }
   }
-
-  const evaluation = evaluateMultiTurnResults(
-    promptTurns,
-    toolsCalledByPrompt,
-    test.isNegativeTest,
-    test.matchOptions
-  );
-  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -2470,32 +2328,26 @@ const runIterationViaBackendWithBrowser = async (
           }>,
         }
       : undefined;
-  const predicateResults = test.successPredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: traceForGate,
-          toolCalls: evaluation.toolsCalled,
-          usage: hasReportedUsage(accumulatedUsage)
-            ? accumulatedUsage
-            : undefined,
-          renderObservations: summarizeRenderObservations(
-            browser.widgetRenderObservations,
-          ),
-        }),
-        test.successPredicates
-      )
-    : [];
-  const passed = finalizePassedForEval({
-    matchPassed: evaluation.passed,
-    trace: traceForGate,
-    iterationError,
-    failOnToolError,
-    predicateResults,
-  });
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
+  // Shared post-loop verdict (see computeIterationVerdict). Hosted paths now
+  // capture per-turn signals via driveHostedEvalTurn, so per-turn checks run
+  // here too. Hosted paths run no pinned turns (no pinnedToolErrors).
+  const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+    computeIterationVerdict({
+      test,
+      promptTurns,
+      toolsCalledByPrompt,
+      perTurnSignals: {
+        kind: "captured",
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
+      },
+      renderObservations: browser.widgetRenderObservations,
+      traceForGate,
+      accumulatedUsage,
+      failOnToolError,
+      iterationError,
+    });
+  const predicateResults = allPredicateResults;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
@@ -3879,24 +3731,6 @@ const streamIterationWithAiSdk = async ({
       }
     }
 
-    const evaluation = evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions
-    );
-    // Per-turn checks: each turn's `checks` evaluated against its own slice.
-    const turnCheckResults = buildTurnCheckResults(promptTurns, {
-      toolsCalledByPrompt,
-      assistantMessageByPrompt,
-      toolErrorsByPrompt,
-      renderObservations: browser.widgetRenderObservations,
-    });
-    const promptTraceSummaries = buildPromptTraceSummaries(
-      evaluation,
-      turnCheckResults
-    );
-
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
         ?.failOnToolError !== false;
@@ -3910,39 +3744,26 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
-    const casePredicateResults = test.successPredicates?.length
-      ? evaluatePredicates(
-          buildIterationTranscript({
-            trace: traceForGate,
-            toolCalls: evaluation.toolsCalled,
-            usage: hasReportedUsage(accumulatedUsage)
-              ? accumulatedUsage
-              : undefined,
-            renderObservations: summarizeRenderObservations(
-              browser.widgetRenderObservations,
-            ),
-          }),
-          test.successPredicates
-        )
-      : [];
-    // Case-level + per-turn (scope-tagged) results gate the verdict and
-    // persist together.
-    const predicateResults = [...casePredicateResults, ...turnCheckResults];
-    const passed = finalizePassedForEval({
-      matchPassed: evaluation.passed,
-      trace: traceForGate,
-      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
-      // via the failure-detection branch, feed it to the gate so a
-      // failed cycle doesn't sneak through as a verdict pass on
-      // negative tests / zero-expected-tool cases.
-      iterationError,
-      failOnToolError,
-      predicateResults,
-    });
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
+    // Shared post-loop verdict (see computeIterationVerdict). Streaming local
+    // path captures per-turn signals; it rejects pinned turns earlier, so the
+    // pinned-only default never fires and there are no pinned tool errors.
+    const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+      computeIterationVerdict({
+        test,
+        promptTurns,
+        toolsCalledByPrompt,
+        perTurnSignals: {
+          kind: "captured",
+          assistantMessageByPrompt,
+          toolErrorsByPrompt,
+        },
+        renderObservations: browser.widgetRenderObservations,
+        traceForGate,
+        accumulatedUsage,
+        failOnToolError,
+        iterationError,
+      });
+    const predicateResults = allPredicateResults;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -4325,6 +4146,9 @@ const streamIterationViaBackendWithBrowser = async (
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
+  // Per-turn signals for per-turn checks (captured by driveHostedEvalTurn).
+  const assistantMessageByPrompt: (string | undefined)[] = [];
+  const toolErrorsByPrompt: ToolErrorRecord[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -4557,6 +4381,8 @@ const streamIterationViaBackendWithBrowser = async (
         capturedSpans,
         accumulatedUsage,
         toolsCalledByPrompt,
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
       },
       buildSinks: ({ baselineUsage, traceCtx, promptToolsCalled }) => {
         // Track engine-emitted step events so the post-turn `turn_finish`
@@ -4787,14 +4613,6 @@ const streamIterationViaBackendWithBrowser = async (
     }
   }
 
-  const evaluation = evaluateMultiTurnResults(
-    promptTurns,
-    toolsCalledByPrompt,
-    test.isNegativeTest,
-    test.matchOptions
-  );
-  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
       ?.failOnToolError !== false;
@@ -4808,32 +4626,26 @@ const streamIterationViaBackendWithBrowser = async (
           }>,
         }
       : undefined;
-  const predicateResults = test.successPredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: traceForGate,
-          toolCalls: evaluation.toolsCalled,
-          usage: hasReportedUsage(accumulatedUsage)
-            ? accumulatedUsage
-            : undefined,
-          renderObservations: summarizeRenderObservations(
-            browser.widgetRenderObservations,
-          ),
-        }),
-        test.successPredicates
-      )
-    : [];
-  const passed = finalizePassedForEval({
-    matchPassed: evaluation.passed,
-    trace: traceForGate,
-    iterationError,
-    failOnToolError,
-    predicateResults,
-  });
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
+  // Shared post-loop verdict (see computeIterationVerdict). Hosted paths now
+  // capture per-turn signals via driveHostedEvalTurn, so per-turn checks run
+  // here too. Hosted paths run no pinned turns (no pinnedToolErrors).
+  const { evaluation, promptTraceSummaries, allPredicateResults, passed } =
+    computeIterationVerdict({
+      test,
+      promptTurns,
+      toolsCalledByPrompt,
+      perTurnSignals: {
+        kind: "captured",
+        assistantMessageByPrompt,
+        toolErrorsByPrompt,
+      },
+      renderObservations: browser.widgetRenderObservations,
+      traceForGate,
+      accumulatedUsage,
+      failOnToolError,
+      iterationError,
+    });
+  const predicateResults = allPredicateResults;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
