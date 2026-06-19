@@ -2426,10 +2426,6 @@ const deleteHostInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
-  force: z
-    .boolean()
-    .optional()
-    .describe("Delete even if the host is still referenced (e.g. by suites)."),
 });
 export type DeleteHostInput = z.infer<typeof deleteHostInput>;
 
@@ -2454,7 +2450,6 @@ export const deleteHostOperation: PlatformOperation<
       {
         projectId: project.id,
         hostId: host.id,
-        body: input.force ? { force: true } : {},
       },
       { signal }
     );

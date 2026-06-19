@@ -190,7 +190,10 @@ const updateHostSchema = z
     message: "Provide at least one of `name` or `config` to update.",
   });
 
-const deleteHostSchema = z.object({ force: z.boolean().optional() });
+// Delete takes no body. A strict empty schema means a stray field (e.g. a
+// legacy `{ "force": true }`) is rejected as VALIDATION_ERROR rather than
+// silently accepted and dropped.
+const deleteHostSchema = z.object({}).strict();
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -273,16 +276,13 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
 hosts.delete("/projects/:projectId/hosts/:hostId", async (c) => {
   const projectId = c.req.param("projectId");
   const hostId = c.req.param("hostId");
-  const body = parseWithSchema(deleteHostSchema, await synthesizeServerBody(c));
+  parseWithSchema(deleteHostSchema, await synthesizeServerBody(c));
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   await requireHostInProject(readClient, projectId, hostId);
   const { convexClient } = createConvexClients(token);
   try {
-    await convexClient.mutation("hosts:deleteHost" as any, {
-      hostId,
-      ...(body.force ? { force: true } : {}),
-    });
+    await convexClient.mutation("hosts:deleteHost" as any, { hostId });
   } catch (error) {
     throw translateConvexWriteError(error);
   }
