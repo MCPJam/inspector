@@ -1229,3 +1229,9 @@
   --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
 }
+
+/* Goose Desktop thinking indicator (`indicators/goose-icon.tsx`).
+   Renders the Goose mark static — no entrance pop-in or bob loop. */
+.goose-icon-indicator {
+  transform-origin: 0 100%;
+}

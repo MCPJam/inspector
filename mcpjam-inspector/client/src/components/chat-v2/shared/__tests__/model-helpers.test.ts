@@ -7,7 +7,7 @@ import {
 } from "../model-helpers";
 
 describe("org model helpers", () => {
-  it("prefers Mistral Small 4 as the MCPJam default model", () => {
+  it("prefers Claude Haiku 4.5 as the MCPJam default model", () => {
     expect(
       getDefaultModel([
         {
@@ -21,7 +21,7 @@ describe("org model helpers", () => {
           provider: "mistral",
         },
       ]).id,
-    ).toBe("mistralai/mistral-small-2603");
+    ).toBe("anthropic/claude-haiku-4.5");
   });
 
   it("includes enabled custom providers that do not require an API key", () => {

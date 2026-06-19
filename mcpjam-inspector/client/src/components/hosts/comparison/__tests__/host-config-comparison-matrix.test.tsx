@@ -78,6 +78,21 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.getByText("Cursor")).toBeInTheDocument();
   });
 
+  it("uses the dark Goose logo in dark theme column headers", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_goose_001", "Goose", { hostStyle: "goose" }, "goose1"),
+        ]}
+        themeMode="dark"
+      />,
+    );
+
+    const header = screen.getByText("Goose").closest("th");
+    const logo = header?.querySelector("img");
+    expect(logo?.getAttribute("src")).toContain("goose_logo_dark");
+  });
+
   it("paints the diverge gutter on rows whose value differs across hosts", () => {
     render(
       <HostConfigComparisonMatrix

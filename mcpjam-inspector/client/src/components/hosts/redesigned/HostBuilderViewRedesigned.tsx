@@ -506,6 +506,7 @@ export function HostBuilderViewRedesigned({
                     onClearSelection={() => setSelectedNodeId(null)}
                     onAddServer={() => setShowAddServer(true)}
                     onOpenComputer={() => navigate("/computer")}
+                    themeMode={themeMode}
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>

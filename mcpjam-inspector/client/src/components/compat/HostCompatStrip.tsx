@@ -6,6 +6,7 @@ import {
 import type { ServerWithName } from "@/state/app-types";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { CompatVerdict, HostCompatReport } from "@/lib/host-compat/types";
+import type { HostThemeMode } from "@/lib/client-styles";
 
 const VERDICT_DOT_CLASS: Record<CompatVerdict, string> = {
   works: "bg-emerald-500",
@@ -28,7 +29,7 @@ export function summarizeReports(reports: HostCompatReport[]): string {
       acc[report.verdict] += 1;
       return acc;
     },
-    { works: 0, degraded: 0, blocked: 0, unknown: 0 },
+    { works: 0, degraded: 0, blocked: 0, unknown: 0 }
   );
   const parts: string[] = [];
   if (counts.works > 0) parts.push(`works in ${counts.works}`);
@@ -54,10 +55,12 @@ export function HostCompatStripView({
   serverName,
   reports,
   onOpenDetails,
+  themeMode = "light",
 }: {
   serverName: string;
   reports: HostCompatReport[];
   onOpenDetails?: () => void;
+  themeMode?: HostThemeMode;
 }) {
   return (
     <div
@@ -78,12 +81,14 @@ export function HostCompatStripView({
               <TooltipTrigger asChild>
                 <span className="relative inline-flex h-4 w-4 items-center justify-center">
                   <img
-                    src={report.logoSrc}
+                    src={report.logoSrcByTheme?.[themeMode] ?? report.logoSrc}
                     alt={report.hostLabel}
                     className="h-3.5 w-3.5 rounded-[3px] object-contain"
                   />
                   <span
-                    className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${VERDICT_DOT_CLASS[report.verdict]}`}
+                    className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${
+                      VERDICT_DOT_CLASS[report.verdict]
+                    }`}
                   />
                 </span>
               </TooltipTrigger>

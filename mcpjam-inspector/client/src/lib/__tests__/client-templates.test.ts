@@ -56,6 +56,60 @@ describe("client templates", () => {
     });
   });
 
+  it("seeds Goose Desktop from the captured MCP Apps surface", () => {
+    const seed = seedFromHostTemplate("goose");
+
+    expect(HOST_TEMPLATES.some((template) => template.id === "goose")).toBe(
+      true,
+    );
+    expect(seed.hostStyle).toBe("goose");
+    expect(seed.clientCapabilities).toEqual({
+      extensions: {
+        [MCP_UI_EXTENSION_ID]: {
+          mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+        },
+      },
+      roots: {},
+      sampling: {},
+      elicitation: {},
+    });
+    expect(seed.hostCapabilitiesOverride).toEqual({ openLinks: {} });
+    expect(seed.hostContext.availableDisplayModes).toEqual([
+      "inline",
+      "fullscreen",
+      "pip",
+    ]);
+    expect(seed.hostContext.displayMode).toBe("inline");
+    expect(seed.hostContext.platform).toBe("desktop");
+    expect(seed.mcpProfile?.initialize).toEqual({
+      supportedProtocolVersions: ["2025-03-26"],
+      clientInfo: { name: "goose-desktop", version: "1.38.0" },
+    });
+    expect(seed.mcpProfile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "MCP-UI Host",
+      version: "1.0.0",
+    });
+    expect(seed.mcpProfile?.apps?.compatRuntime).toEqual({
+      openaiApps: false,
+    });
+    expect(seed.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen", "pip"],
+      toolInfo: true,
+      openLinks: true,
+      serverTools: false,
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: false,
+      sandboxPermissions: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+    });
+  });
+
   it("seeds n8n as a tools-only MCP client", () => {
     const seed = seedFromHostTemplate("n8n");
 

@@ -240,6 +240,7 @@ export function HostConfigCompareView({
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={setShowDescriptions}
               disabled={listLoading}
+              themeMode={themeMode}
             />
 
             {totalSelectedCount === 0 ? (
@@ -261,6 +262,7 @@ export function HostConfigCompareView({
                   subjects={orderedSubjects}
                   divergingOnly={divergingOnly}
                   showDescriptions={showDescriptions}
+                  themeMode={themeMode}
                   onRemoveHost={
                     selectedHostIdSet.size > 1 ? handleToggleHost : undefined
                   }

@@ -12,6 +12,7 @@ const ALL_IDS: HostTemplateId[] = [
   "claude-code",
   "chatgpt",
   "mistral",
+  "goose",
   "cursor",
   "codex",
   "copilot",
@@ -64,6 +65,39 @@ describe("seedHostTemplate", () => {
     expect((light.hostContext as any).theme).toBe("light");
     expect((dark.hostContext as any).theme).toBe("dark");
     expect(light.hostContext).not.toEqual(dark.hostContext);
+  });
+
+  it("keeps Goose HostContext style variables faithful to the raw probe", () => {
+    const config = seedHostTemplate("goose", { theme: "dark" });
+    const variables = (config.hostContext as any).styles.variables;
+
+    expect(variables["--color-text-primary"]).toBe(
+      "light-dark(#3f434b, #ffffff)",
+    );
+    expect(variables["--color-background-primary"]).toBe(
+      "light-dark(#ffffff, #22252a)",
+    );
+  });
+
+  it("keeps Goose host capabilities faithful to the raw probe", () => {
+    const config = seedHostTemplate("goose", { theme: "dark" });
+    const apps = config.mcpProfile?.apps as any;
+
+    expect(config.hostCapabilitiesOverride).toEqual({ openLinks: {} });
+    expect(apps?.mcpAppsOverrides).toMatchObject({
+      openLinks: true,
+      serverTools: false,
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: false,
+      sandboxPermissions: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+    });
   });
 
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {

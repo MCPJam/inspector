@@ -11,8 +11,12 @@ import {
   TIMEZONE_OPTIONS,
   CSP_MODE_OPTIONS,
 } from "@/components/shared/client-context-constants";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import {
+  getHostLogoSrc,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-client-style";
 import { listHostStyles } from "@/lib/client-styles";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type {
   CustomViewport,
   CspMode,
@@ -22,7 +26,7 @@ import type {
 
 type PresetEntry = [
   PresetDeviceType,
-  (typeof PRESET_DEVICE_CONFIGS)[PresetDeviceType],
+  (typeof PRESET_DEVICE_CONFIGS)[PresetDeviceType]
 ];
 
 export function DevicePickerBody({
@@ -84,7 +88,7 @@ export function DevicePickerBody({
               </span>
             </button>
           );
-        },
+        }
       )}
 
       <button
@@ -228,6 +232,8 @@ export function HostStylePickerBody({
   hostStyle: ChatboxHostStyle;
   onPickHost: (id: ChatboxHostStyle) => void;
 }) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+
   return (
     <div className="space-y-1">
       {listHostStyles().map((host) => (
@@ -240,7 +246,7 @@ export function HostStylePickerBody({
           }`}
         >
           <img
-            src={host.chatUi.logoSrc}
+            src={getHostLogoSrc(host.chatUi, themeMode)}
             alt=""
             aria-hidden="true"
             className="h-3.5 w-3.5 object-contain"

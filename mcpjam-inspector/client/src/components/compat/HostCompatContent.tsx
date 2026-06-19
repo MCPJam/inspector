@@ -43,7 +43,7 @@ import {
  * table — but we still gate on the catalog so a profile id that ever drifts
  * away from a real template silently hides its CTA instead of crashing. */
 const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
-  HOST_TEMPLATES.map((t) => [t.id, t.label]),
+  HOST_TEMPLATES.map((t) => [t.id, t.label])
 );
 
 const isHostTemplateId = (id: string): id is HostTemplateId =>
@@ -118,7 +118,7 @@ export function HostCompatContent({
   const widgetUsage = useWidgetUsage(server.name, toolsData);
   const { requirements, reports } = useMemo(
     () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage],
+    [toolsData, widgetUsage]
   );
 
   const posthog = usePostHog();
@@ -128,7 +128,7 @@ export function HostCompatContent({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Which host's CTA is mid-create (drives its spinner + disables the rest).
   const [creatingTemplateId, setCreatingTemplateId] = useState<string | null>(
-    null,
+    null
   );
   // Findings are collapsed by default — the row shows a terse summary; the
   // full list expands on demand so the tab reads as a scannable list.
@@ -199,7 +199,7 @@ export function HostCompatContent({
       navigate(routePaths.playground);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : `Couldn't open in ${label}`,
+        err instanceof Error ? err.message : `Couldn't open in ${label}`
       );
     } finally {
       setCreatingTemplateId(null);
@@ -231,7 +231,7 @@ export function HostCompatContent({
             <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">
                 <img
-                  src={report.logoSrc}
+                  src={report.logoSrcByTheme?.[themeMode] ?? report.logoSrc}
                   alt=""
                   className="h-4 w-4 flex-shrink-0 rounded-[3px] object-contain"
                 />
@@ -266,7 +266,9 @@ export function HostCompatContent({
                   >
                     <span className="truncate">{summary}</span>
                     <ChevronDown
-                      className={`h-4 w-4 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      className={`h-4 w-4 flex-shrink-0 transition-transform ${
+                        isOpen ? "rotate-180" : ""
+                      }`}
                     />
                   </button>
                 ) : (
