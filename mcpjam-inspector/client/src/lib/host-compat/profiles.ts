@@ -31,6 +31,7 @@ type MarketHost = {
   id: string;
   label: string;
   logoSrc: string;
+  logoSrcByTheme?: { light: string; dark: string };
   provenance: CompatProvenance;
   rendersMcpApps: boolean;
 };

@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import type { HostThemeMode } from "@/lib/client-styles";
 
 const INLINE_CHIP_LIMIT = 6;
 
@@ -32,6 +32,7 @@ interface HostCompareSelectorProps {
   showDescriptions: boolean;
   onShowDescriptionsChange: (enabled: boolean) => void;
   disabled?: boolean;
+  themeMode?: HostThemeMode;
 }
 
 export function HostCompareSelector({
@@ -44,11 +45,11 @@ export function HostCompareSelector({
   showDescriptions,
   onShowDescriptionsChange,
   disabled = false,
+  themeMode = "light",
 }: HostCompareSelectorProps) {
   const selectedSet = new Set(selectedHostIds);
   const inlineHosts = hosts.slice(0, INLINE_CHIP_LIMIT);
   const overflowHosts = hosts.slice(INLINE_CHIP_LIMIT);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -110,7 +111,7 @@ function HostCompareChip({
   selected: boolean;
   onToggle: () => void;
   disabled?: boolean;
-  themeMode: "light" | "dark";
+  themeMode: HostThemeMode;
 }) {
   const logoSrc =
     subject !== undefined
@@ -171,7 +172,7 @@ function HostCompareOverflowMenu({
   subjectsByHost: Readonly<Record<string, HostComparisonSubject>>;
   onToggleHost: (hostId: string) => void;
   disabled?: boolean;
-  themeMode: "light" | "dark";
+  themeMode: HostThemeMode;
 }) {
   const selectedOverflowCount = hosts.filter((h) =>
     selectedSet.has(h.hostId)

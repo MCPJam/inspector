@@ -240,6 +240,7 @@ export function HostConfigCompareView({
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={setShowDescriptions}
               disabled={listLoading}
+              themeMode={themeMode}
             />
 
             {totalSelectedCount === 0 ? (

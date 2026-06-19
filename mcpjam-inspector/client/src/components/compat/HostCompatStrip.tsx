@@ -6,7 +6,7 @@ import {
 import type { ServerWithName } from "@/state/app-types";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { CompatVerdict, HostCompatReport } from "@/lib/host-compat/types";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import type { HostThemeMode } from "@/lib/client-styles";
 
 const VERDICT_DOT_CLASS: Record<CompatVerdict, string> = {
   works: "bg-emerald-500",
@@ -55,13 +55,13 @@ export function HostCompatStripView({
   serverName,
   reports,
   onOpenDetails,
+  themeMode = "light",
 }: {
   serverName: string;
   reports: HostCompatReport[];
   onOpenDetails?: () => void;
+  themeMode?: HostThemeMode;
 }) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-
   return (
     <div
       data-server-card-context-menu-exempt

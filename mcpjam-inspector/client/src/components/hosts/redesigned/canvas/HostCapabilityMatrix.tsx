@@ -1,9 +1,11 @@
 import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import type { HostThemeMode } from "@/lib/client-styles";
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
+import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
@@ -31,7 +33,8 @@ import { SandboxProxyIframeCard } from "./sandbox-config-grid";
 
 function getClientLogo(
   clientInfoName: string | undefined,
-  hostName: string | undefined
+  hostName: string | undefined,
+  themeMode: HostThemeMode
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
@@ -41,7 +44,10 @@ function getClientLogo(
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;
-  if (haystack.includes("goose")) return gooseLogoLight;
+  // Goose's mark is a flat silhouette, so it needs to flip with the app
+  // theme to stay visible: white goose on dark, black goose on light.
+  if (haystack.includes("goose"))
+    return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
@@ -114,6 +120,7 @@ export interface HostMatrixCardProps {
     hasOverrides: boolean;
     overrideCount: number;
   };
+  themeMode?: HostThemeMode;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
@@ -129,6 +136,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   appsExtensionAdvertised,
   compatRuntime,
   mcpAppsBridge,
+  themeMode = "light",
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
@@ -160,7 +168,8 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
             const clientLogo = getClientLogo(
               clientInfoLeaf?.value,
-              hostName
+              hostName,
+              themeMode
             );
             return (
               <span
