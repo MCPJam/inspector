@@ -31,6 +31,10 @@ test("detects iTerm-family terminals", () => {
     "iterm",
   );
   assert.equal(
+    detectInlineImageProtocol({ TERM_PROGRAM: "WarpTerminal" }, true),
+    "iterm",
+  );
+  assert.equal(
     detectInlineImageProtocol({ LC_TERMINAL: "iTerm2" }, true),
     "iterm",
   );
