@@ -67,6 +67,18 @@ describe("seedHostTemplate", () => {
     expect(light.hostContext).not.toEqual(dark.hostContext);
   });
 
+  it("keeps Goose HostContext style variables faithful to the raw probe", () => {
+    const config = seedHostTemplate("goose", { theme: "dark" });
+    const variables = (config.hostContext as any).styles.variables;
+
+    expect(variables["--color-text-primary"]).toBe(
+      "light-dark(#3f434b, #ffffff)",
+    );
+    expect(variables["--color-background-primary"]).toBe(
+      "light-dark(#ffffff, #22252a)",
+    );
+  });
+
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {
     const caps = { extensions: { foo: { bar: 1 } } };
     const config = emptyHostConfigInputV2({ clientCapabilities: caps });

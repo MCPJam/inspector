@@ -29,8 +29,8 @@ import {
 import { getMistralStyleVariables } from "./mistral-style.js";
 import {
   GOOSE_FONT_CSS,
+  GOOSE_HOST_STYLE_VARIABLES,
   GOOSE_PLATFORM,
-  getGooseStyleVariables,
 } from "./goose-style.js";
 
 type HostThemeMode = "light" | "dark";
@@ -1054,7 +1054,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         deviceCapabilities: { touch: false, hover: true },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
         styles: {
-          variables: getGooseStyleVariables(theme),
+          variables: GOOSE_HOST_STYLE_VARIABLES,
           css: { fonts: GOOSE_FONT_CSS },
         },
       };

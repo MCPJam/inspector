@@ -3,51 +3,57 @@
  *
  * Captured from Goose Desktop 1.38.0 on 2026-06-19. Goose renders MCP Apps
  * through `ui/initialize`, advertises the MCP UI extension at the base MCP
- * layer, and sends a Cash Sans themed HostContext. The style variables use
- * CSS `light-dark()`, so the returned map is the same for both inspector
- * theme modes.
+ * layer, and sends a Cash Sans themed HostContext. The raw hostContext
+ * variables use CSS `light-dark()`, but MCPJam's own host chrome needs
+ * concrete values so it does not depend on ambient `color-scheme`.
  */
 
 export const GOOSE_PLATFORM = "desktop" as const;
 
-export const GOOSE_HOST_STYLE_VARIABLES: Record<string, string> = {
-  "--color-background-primary": "light-dark(#ffffff, #22252a)",
-  "--color-background-secondary": "light-dark(#f4f6f7, #3f434b)",
-  "--color-background-tertiary": "light-dark(#e3e6ea, #474e57)",
-  "--color-background-inverse": "light-dark(#000000, #cbd1d6)",
-  "--color-background-ghost": "light-dark(transparent, transparent)",
-  "--color-background-info": "light-dark(#5c98f9, #7cacff)",
-  "--color-background-danger": "light-dark(#f94b4b, #ff6b6b)",
-  "--color-background-success": "light-dark(#91cb80, #a3d795)",
-  "--color-background-warning": "light-dark(#fbcd44, #ffd966)",
-  "--color-background-disabled": "light-dark(#e3e6ea, #474e57)",
-  "--color-text-primary": "light-dark(#3f434b, #ffffff)",
-  "--color-text-secondary": "light-dark(#878787, #878787)",
-  "--color-text-tertiary": "light-dark(#a7b0b9, #606c7a)",
-  "--color-text-inverse": "light-dark(#ffffff, #000000)",
-  "--color-text-ghost": "light-dark(#878787, #878787)",
-  "--color-text-info": "light-dark(#5c98f9, #7cacff)",
-  "--color-text-danger": "light-dark(#f94b4b, #ff6b6b)",
-  "--color-text-success": "light-dark(#91cb80, #a3d795)",
-  "--color-text-warning": "light-dark(#fbcd44, #ffd966)",
-  "--color-text-disabled": "light-dark(#cbd1d6, #525b68)",
-  "--color-border-primary": "light-dark(#e3e6ea, #3f434b)",
-  "--color-border-secondary": "light-dark(#e3e6ea, #525b68)",
-  "--color-border-tertiary": "light-dark(#cbd1d6, #474e57)",
-  "--color-border-inverse": "light-dark(#000000, #ffffff)",
-  "--color-border-ghost": "light-dark(transparent, transparent)",
-  "--color-border-info": "light-dark(#5c98f9, #7cacff)",
-  "--color-border-danger": "light-dark(#f94b4b, #ff6b6b)",
-  "--color-border-success": "light-dark(#91cb80, #a3d795)",
-  "--color-border-warning": "light-dark(#fbcd44, #ffd966)",
-  "--color-border-disabled": "light-dark(#e3e6ea, #3f434b)",
-  "--color-ring-primary": "light-dark(#e3e6ea, #525b68)",
-  "--color-ring-secondary": "light-dark(#cbd1d6, #474e57)",
-  "--color-ring-inverse": "light-dark(#ffffff, #000000)",
-  "--color-ring-info": "light-dark(#5c98f9, #7cacff)",
-  "--color-ring-danger": "light-dark(#f94b4b, #ff6b6b)",
-  "--color-ring-success": "light-dark(#91cb80, #a3d795)",
-  "--color-ring-warning": "light-dark(#fbcd44, #ffd966)",
+const GOOSE_LIGHT_DARK_STYLE_VARIABLES: Record<
+  string,
+  [light: string, dark: string]
+> = {
+  "--color-background-primary": ["#ffffff", "#22252a"],
+  "--color-background-secondary": ["#f4f6f7", "#3f434b"],
+  "--color-background-tertiary": ["#e3e6ea", "#474e57"],
+  "--color-background-inverse": ["#000000", "#cbd1d6"],
+  "--color-background-ghost": ["transparent", "transparent"],
+  "--color-background-info": ["#5c98f9", "#7cacff"],
+  "--color-background-danger": ["#f94b4b", "#ff6b6b"],
+  "--color-background-success": ["#91cb80", "#a3d795"],
+  "--color-background-warning": ["#fbcd44", "#ffd966"],
+  "--color-background-disabled": ["#e3e6ea", "#474e57"],
+  "--color-text-primary": ["#3f434b", "#ffffff"],
+  "--color-text-secondary": ["#878787", "#878787"],
+  "--color-text-tertiary": ["#a7b0b9", "#606c7a"],
+  "--color-text-inverse": ["#ffffff", "#000000"],
+  "--color-text-ghost": ["#878787", "#878787"],
+  "--color-text-info": ["#5c98f9", "#7cacff"],
+  "--color-text-danger": ["#f94b4b", "#ff6b6b"],
+  "--color-text-success": ["#91cb80", "#a3d795"],
+  "--color-text-warning": ["#fbcd44", "#ffd966"],
+  "--color-text-disabled": ["#cbd1d6", "#525b68"],
+  "--color-border-primary": ["#e3e6ea", "#3f434b"],
+  "--color-border-secondary": ["#e3e6ea", "#525b68"],
+  "--color-border-tertiary": ["#cbd1d6", "#474e57"],
+  "--color-border-inverse": ["#000000", "#ffffff"],
+  "--color-border-ghost": ["transparent", "transparent"],
+  "--color-border-info": ["#5c98f9", "#7cacff"],
+  "--color-border-danger": ["#f94b4b", "#ff6b6b"],
+  "--color-border-success": ["#91cb80", "#a3d795"],
+  "--color-border-warning": ["#fbcd44", "#ffd966"],
+  "--color-border-disabled": ["#e3e6ea", "#3f434b"],
+  "--color-ring-primary": ["#e3e6ea", "#525b68"],
+  "--color-ring-secondary": ["#cbd1d6", "#474e57"],
+  "--color-ring-inverse": ["#ffffff", "#000000"],
+  "--color-ring-info": ["#5c98f9", "#7cacff"],
+  "--color-ring-danger": ["#f94b4b", "#ff6b6b"],
+  "--color-ring-success": ["#91cb80", "#a3d795"],
+  "--color-ring-warning": ["#fbcd44", "#ffd966"],
+};
+
+const GOOSE_STATIC_STYLE_VARIABLES: Record<string, string> = {
   "--font-sans": "'Cash Sans', sans-serif",
   "--font-mono": "monospace",
   "--font-weight-normal": "400",
@@ -91,10 +97,26 @@ export const GOOSE_HOST_STYLE_VARIABLES: Record<string, string> = {
     "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
 };
 
+export const GOOSE_HOST_STYLE_VARIABLES: Record<string, string> = {
+  ...Object.fromEntries(
+    Object.entries(GOOSE_LIGHT_DARK_STYLE_VARIABLES).map(
+      ([key, [light, dark]]) => [key, `light-dark(${light}, ${dark})`],
+    ),
+  ),
+  ...GOOSE_STATIC_STYLE_VARIABLES,
+};
+
 export function getGooseStyleVariables(
-  _theme: "light" | "dark",
+  theme: "light" | "dark",
 ): Record<string, string> {
-  return { ...GOOSE_HOST_STYLE_VARIABLES };
+  const idx = theme === "light" ? 0 : 1;
+  const resolved: Record<string, string> = {};
+  for (const [key, [light, dark]] of Object.entries(
+    GOOSE_LIGHT_DARK_STYLE_VARIABLES,
+  )) {
+    resolved[key] = idx === 0 ? light : dark;
+  }
+  return { ...resolved, ...GOOSE_STATIC_STYLE_VARIABLES };
 }
 
 export const GOOSE_FONT_CSS = `

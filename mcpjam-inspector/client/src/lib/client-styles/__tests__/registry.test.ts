@@ -172,6 +172,20 @@ describe("host-styles registry", () => {
     });
   });
 
+  it("resolves Goose shell tokens to concrete colors for the active theme", () => {
+    const lightVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("light");
+    const darkVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("dark");
+
+    expect(lightVars["--color-text-primary"]).toBe("#3f434b");
+    expect(darkVars["--color-text-primary"]).toBe("#ffffff");
+    expect(darkVars["--color-background-primary"]).toBe("#22252a");
+    expect(
+      Object.values(darkVars).some(
+        (value) => typeof value === "string" && value.includes("light-dark("),
+      ),
+    ).toBe(false);
+  });
+
   it("rejects duplicate host style ids", async () => {
     vi.resetModules();
     const { CLAUDE_HOST_STYLE, registerHostStyle } = await import("..");
