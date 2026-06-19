@@ -2,21 +2,29 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import {
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk/browser";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
+import { getMistralStyleVariables } from "@/config/mistral-client-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
+import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -213,11 +221,14 @@ export type HostTemplateId =
   | "claude"
   | "claude-code"
   | "chatgpt"
+  | "mistral"
   | "cursor"
   | "codex"
   | "copilot"
   | "vscode"
-  | "agentcore";
+  | "agentcore"
+  | "n8n"
+  | "perplexity";
 
 export interface SeedHostTemplateOptions {
   /**
@@ -864,6 +875,115 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     },
   },
   {
+    id: "mistral",
+    label: "Mistral",
+    description: "Mistral web host. MCP Apps, no OpenAI shim.",
+    logoSrc: mistralLogo,
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "mistral",
+        // Le Chat's MCP/App captures identify the host and MCP client, not
+        // the backing model. Keep this empty so the template doesn't imply
+        // unobserved evidence such as "Mistral Large".
+        modelId: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+
+      // Le Chat's captured base MCP `initialize` reported:
+      //   clientInfo: { name: "mcp", version: "0.1.0" }
+      //   clientCapabilities: {}
+      // But the same capture rendered MCP Apps and completed ui/initialize.
+      // For the normalized MCPJam template, advertise the standard MCP Apps
+      // extension explicitly so the canvas/runtime reflect the capability
+      // Le Chat demonstrated instead of preserving a contradictory raw quirk.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        updateModelContext: { text: {} },
+        message: { text: {}, image: {} },
+      };
+      base.hostContext = {
+        theme,
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { width: 1130.5 },
+        locale: "en",
+        timeZone: "America/Los_Angeles",
+        userAgent: "Le Chat/1.0.0",
+        platform: "web",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: getMistralStyleVariables(theme),
+        },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "mcp", version: "0.1.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "Le Chat", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            toolCancelled: false,
+            hostContextChanged: true,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                resourceDomains: ["https://cdn.jsdelivr.net"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
     id: "cursor",
     label: "Cursor",
     description: "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
@@ -1307,6 +1427,71 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             description: "AWS Bedrock AgentCore agent runtime",
             websiteUrl: "https://aws.amazon.com/bedrock/agentcore/",
           },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "n8n",
+    label: "n8n",
+    description:
+      "n8n MCP Client Tool. Tools-only client, no widget rendering.",
+    logoSrc: n8nLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "n8n",
+        // n8n's MCP Client Tool is model-provider agnostic; this hosted
+        // default only keeps MCPJam's simulated chat runnable out-of-the-box.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Captured from a real @n8n/n8n-nodes-langchain.mcpClientTool probe:
+      // it sends an empty capabilities object and no MCP UI extension. Replace
+      // the SDK default entirely so the template remains tools-only.
+      base.clientCapabilities = {};
+      // n8n does not render MCP Apps views, so there is no ui/initialize host
+      // capability negotiation, no hostContext, and no OpenAI compat runtime.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "@n8n/n8n-nodes-langchain.mcpClientTool",
+            version: "1.3",
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    description:
+      "Perplexity MCP client. Tools-only client, no widget rendering.",
+    logoSrc: perplexityLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "perplexity",
+        // The probe only identifies Perplexity's MCP client, not a reusable
+        // model id; keep MCPJam's simulated chat runnable with a hosted model.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Captured from the Perplexity host probe: protocol 2025-06-18,
+      // clientInfo mcp@0.1.0, and an empty clientCapabilities object.
+      base.clientCapabilities = {};
+      // No snapshot/UI support in the probe, so keep this template headless.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: { name: "mcp", version: "0.1.0" },
         },
       };
       return base;

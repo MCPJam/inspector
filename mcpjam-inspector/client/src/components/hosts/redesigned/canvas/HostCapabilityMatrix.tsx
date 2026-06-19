@@ -3,11 +3,14 @@ import { cn } from "@/lib/utils";
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
+import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -34,6 +37,8 @@ function getClientLogo(
   if (haystack.includes("claude-code") || haystack.includes("claude code"))
     return claudeCodeLogo;
   if (haystack.includes("claude")) return claudeLogo;
+  if (haystack.includes("mistral") || haystack.includes("le chat"))
+    return mistralLogo;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
@@ -49,6 +54,8 @@ function getClientLogo(
   // "AgentCore". Reuses the Bedrock mark (no dedicated AgentCore asset).
   if (haystack.includes("agentcore") || haystack.includes("bedrock"))
     return bedrockLogo;
+  if (haystack.includes("n8n")) return n8nLogo;
+  if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
     return openaiLogo;
   return null;
@@ -233,6 +240,19 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             <span className="hp-section-title">Client capabilities</span>
           </button>
           <div className="hp-caps">
+            {connectedClientCaps.length === 0 ? (
+              <button
+                type="button"
+                className="hp-cap hp-cap--off"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectNode(PROTOCOL_HUB_NODE_ID);
+                }}
+              >
+                <span className="hp-cap-dot" aria-hidden />
+                <span className="hp-cap-name">none advertised</span>
+              </button>
+            ) : null}
             {connectedClientCaps.map((row) => (
               <button
                 key={row.key}
