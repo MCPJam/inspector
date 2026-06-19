@@ -168,24 +168,11 @@
         "operationId": "deleteHost",
         "tags": ["Hosts"],
         "summary": "Delete a host",
-        "description": "Permanently delete a host from the project. Pass `{ \"force\": true }` to delete a host that is still referenced (e.g. by an eval suite). Guest callers are denied (a write).",
+        "description": "Permanently delete a host from the project. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/hostId" }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "force": { "type": "boolean", "description": "Delete even if the host is still referenced." }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "The host was deleted.",
