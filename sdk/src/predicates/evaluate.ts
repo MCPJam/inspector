@@ -10,6 +10,7 @@
  */
 
 import { argMatch } from "./argMatcher.js";
+import { isTurnScopablePredicateKind } from "./types.js";
 import type {
   IterationTranscript,
   Predicate,
@@ -565,6 +566,11 @@ export interface TurnChecksInput {
  * tagged with `scope: { kind: "turn", promptIndex }` so the UI and persisted
  * metadata can attribute it to the turn. Turns with no checks contribute
  * nothing. Order is preserved (turn order, then check order within a turn).
+ *
+ * Defense in depth: non-turn-scopable kinds (e.g. `tokenBudgetUnder`) are
+ * dropped here even though the backend rejects them at the write boundary —
+ * the evaluator must never silently treat a case-only check as turn-scoped if
+ * one reaches it directly (a different write path, a test, a future caller).
  */
 export function evaluateTurnChecks(
   turns: TurnChecksInput[],
@@ -572,7 +578,10 @@ export function evaluateTurnChecks(
   const results: PredicateResult[] = [];
   for (const turn of turns) {
     if (!turn.checks || turn.checks.length === 0) continue;
-    for (const result of evaluatePredicates(turn.transcript, turn.checks)) {
+    const turnScopable = turn.checks.filter((check) =>
+      isTurnScopablePredicateKind(check.type),
+    );
+    for (const result of evaluatePredicates(turn.transcript, turnScopable)) {
       results.push({
         ...result,
         scope: { kind: "turn", promptIndex: turn.promptIndex },

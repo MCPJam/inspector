@@ -3,91 +3,71 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/chat-ui",
+          "name": "@mcpjam/cli",
           "type": "minor"
         }
       ],
-      "summary": "Add the recorded-trace waterfall as a new `@mcpjam/chat-ui/trace-timeline` subpath.\n\n`TraceTimeline` renders the per-step trace waterfall (per-span latency + token\ncounts, hover for wall-clock start/end) from a `TraceSpan[]`. Tier-A clean:\nprovider-free, no posthog / design-system / convex / widget-runtime imports —\nit reuses the package's own `JsonView` / `Markdown` / `tool-result-text` / `cn`\nplus small local UI shims, and the `trace-waterfall-*` classes + their tokens\nship in `styles.css` scoped under `.mcpjam-chat-ui`. New subpath only; existing\nexports are unchanged.",
-      "id": "chat-ui-trace-timeline"
+      "summary": "Add `mcpjam eval screenshot` to view the widget screenshot an eval iteration\nrendered.\n\n`eval screenshot --run <id> --iteration <id> --project <id>` pulls the rendered\n`widgetRenderObservations` out of the iteration trace and shows the image\n**inline** when the terminal supports a graphics protocol (iTerm2/WezTerm via\nOSC 1337, Kitty/Ghostty via the Kitty graphics protocol), and otherwise prints\nthe image URL — so it degrades cleanly in plain terminals, pipes, and CI. Pass\n`--out <file|dir>` to save the PNG(s) to disk instead, `--index <n>` to pick one\nrender. JSON output (default off-TTY) emits a structured `items[]` of\n`{ toolName, toolCallId, status, screenshotUrl, savedTo? }`. Inline rendering is\ndependency-free; no image libraries are added.",
+      "id": "cli-eval-screenshot"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Support full eval suite/case editing from the CLI `eval` command via the public\nAPI.",
-      "id": "cli-eval-edit"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Eval improvements: unify render checks into the prompt-test runner as model-free\nper-turn pinned tool calls, add a run timeout, surface clearer errors when eval\n`tools/list` or setup fails, and expose full eval suite/case editing through the\npublic API. Show per-tool quality badges in the Tools tab. Stop persisting OAuth\nclient secrets in browser storage.",
-      "id": "inspector-evals-and-oauth"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "OAuth and eval polish:\n\n- Stop reconnect from wiping a server's saved OAuth config.\n- Show the full saved OAuth config (clientId, scopes, secret flag, issuer) in the\n  Configure modal, and cleaner client-secret reveal UX.\n- Drop the blue focus ring on flow steps and add an issuer auto-discovery hint;\n  render the IdP header in a flat container; keep ID-JAG lint rows inside the\n  flow panel on narrow widths.\n- Clearer welcome-screen instructions for newcomers.\n- Configurable eval Generate (case count, per-bucket mix, vary user styles) plus\n  assorted eval nits.",
-      "id": "inspector-oauth-ui-fixes"
+      "summary": "Render `eval screenshot` images inline in Warp.\n\nWarp supports the iTerm2 inline-image protocol (OSC 1337) for normal command\noutput, but its `TERM_PROGRAM=WarpTerminal` wasn't recognized, so `eval\nscreenshot` fell back to printing the image URL. Warp is now detected and gets\nthe inline image like iTerm2/WezTerm; piped/non-TTY runs still print the URL.",
+      "id": "cli-warp-inline-images"
     },
     {
       "releases": [
         {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
           "name": "@mcpjam/sdk",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
         }
       ],
-      "summary": "Add platform operations for editing eval suites and cases. New additive exports\non the `@mcpjam/sdk` platform client (operations, types) backing the public\neval-editing API; existing signatures are unchanged.",
-      "id": "sdk-platform-eval-edit"
+      "summary": "Capture and surface the MCP error code on failed tool spans in eval traces.\n\nWhen a `tools/call` fails, the eval trace capture now records the JSON-RPC\nerror code (`mcpErrorCode`, aligned with OTel `rpc.response.status_code`) on\nboth the tool span and its synthesized error span. Only negative codes are kept:\nserver JSON-RPC faults (e.g. `-32602` Invalid params, `-32601` Method not found)\nand SDK-local lifecycle codes (`-32000` connection closed, `-32001` request\ntimeout). Positive `.code` values such as transport HTTP statuses (e.g. `401`)\nare no longer mistaken for an MCP error code.\n\nThe inspector trace timeline shows the code on the tool detail pane with a\nneutral \"MCP error\" label and the standard code name, rather than asserting it\nis always a server JSON-RPC fault.\n\n`@mcpjam/sdk` adds the optional `mcpErrorCode` field to `EvalTraceSpanInput`, and\n`@mcpjam/cli` picks up the updated trace types.",
+      "id": "mcp-tool-error-code"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/chat-ui",
-      "type": "minor",
-      "oldVersion": "0.1.0",
-      "changesets": [
-        "chat-ui-trace-timeline"
-      ],
-      "newVersion": "0.2.0"
-    },
-    {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.8.0",
+      "oldVersion": "3.9.0",
       "changesets": [
-        "cli-eval-edit"
+        "cli-eval-screenshot",
+        "cli-warp-inline-images",
+        "mcp-tool-error-code"
       ],
-      "newVersion": "3.9.0"
+      "newVersion": "3.10.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.15.0",
+      "oldVersion": "2.16.0",
       "changesets": [
-        "inspector-evals-and-oauth",
-        "inspector-oauth-ui-fixes"
+        "mcp-tool-error-code"
       ],
-      "newVersion": "2.16.0"
+      "newVersion": "2.17.0"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.20.0",
+      "oldVersion": "1.21.0",
       "changesets": [
-        "sdk-platform-eval-edit"
+        "mcp-tool-error-code"
       ],
-      "newVersion": "1.21.0"
+      "newVersion": "1.22.0"
     },
     {
       "name": "@mcpjam/mcp",

@@ -371,4 +371,125 @@ describe("eval-trace-capture", () => {
       }),
     ]);
   });
+
+  it("captures the JSON-RPC error code when a backend tool throws with .code", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    const rpcError = Object.assign(new Error("Invalid params"), {
+      code: -32602,
+    });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        create_view: {
+          execute: async () => {
+            throw rpcError;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.create_view.execute({}, { toolCallId: "call-err" }),
+    ).rejects.toBe(rpcError);
+
+    // Both the tool span and the synthesized error span carry the code.
+    const toolSpan = spans.find((s) => s.category === "tool");
+    const errSpan = spans.find((s) => s.category === "error");
+    expect(toolSpan?.status).toBe("error");
+    expect(toolSpan?.mcpErrorCode).toBe(-32602);
+    expect(errSpan?.mcpErrorCode).toBe(-32602);
+  });
+
+  it("leaves mcpErrorCode unset when a thrown error has no numeric code", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        boom: {
+          execute: async () => {
+            throw new Error("plain failure");
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.boom.execute({}, { toolCallId: "call-plain" }),
+    ).rejects.toThrow("plain failure");
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.status).toBe("error");
+    expect(toolSpan?.mcpErrorCode).toBeUndefined();
+  });
+
+  it("does not record a transport HTTP status (positive .code) as mcpErrorCode", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    // StreamableHTTPError / SseError carry an HTTP status on `.code` (e.g. 401).
+    const httpError = Object.assign(new Error("Unauthorized"), { code: 401 });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        secured: {
+          execute: async () => {
+            throw httpError;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.secured.execute({}, { toolCallId: "call-401" }),
+    ).rejects.toBe(httpError);
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.status).toBe("error");
+    // 401 is an HTTP status, not a JSON-RPC code — must not be recorded/mislabeled.
+    expect(toolSpan?.mcpErrorCode).toBeUndefined();
+  });
+
+  it("captures SDK-local lifecycle codes too (e.g. request timeout -32001)", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    // MCP SDK raises McpError(RequestTimeout, -32001) client-side. We keep it
+    // (negative code); the UI labels it neutrally, not as a server fault.
+    const timeout = Object.assign(new Error("Request timed out"), {
+      code: -32001,
+    });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        slow: {
+          execute: async () => {
+            throw timeout;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.slow.execute({}, { toolCallId: "call-timeout" }),
+    ).rejects.toBe(timeout);
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.mcpErrorCode).toBe(-32001);
+  });
 });

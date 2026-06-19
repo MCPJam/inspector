@@ -88,6 +88,24 @@ describe("evaluateTurnChecks — turn-scoped evaluation", () => {
     ]);
     expect(results).toEqual([]);
   });
+
+  it("drops non-turn-scopable kinds (defense in depth)", () => {
+    // `tokenBudgetUnder` is case-only; even if one reaches the evaluator it must
+    // not be treated as a per-turn check. The valid sibling still evaluates.
+    const results = evaluateTurnChecks([
+      {
+        promptIndex: 0,
+        checks: [
+          { type: "tokenBudgetUnder", tokens: 100 },
+          { type: "firstToolWas", toolName: "search" },
+        ],
+        transcript: turn0,
+      },
+    ]);
+    expect(results).toHaveLength(1);
+    expect(results[0].predicate.type).toBe("firstToolWas");
+    expect(results[0]).toMatchObject({ scope: { promptIndex: 0 } });
+  });
 });
 
 describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {

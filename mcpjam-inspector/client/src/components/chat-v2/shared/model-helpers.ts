@@ -367,6 +367,7 @@ export const getDefaultModel = (
   availableModels: ModelDefinition[]
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
+    "mistralai/mistral-small-2603",
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "meta-llama/llama-4-scout",

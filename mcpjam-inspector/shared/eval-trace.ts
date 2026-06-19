@@ -44,7 +44,47 @@ export type EvalTraceSpan = {
   responseTimestamp?: string;
   /** Time to first streamed chunk, ms. OTel `gen_ai.response.time_to_first_chunk` (seconds — export as ttfcMs/1000). Undefined on non-streaming paths; advisory only. */
   ttfcMs?: number;
+  // ── MCP error metadata (tool spans) ──
+  /**
+   * MCP-layer error code from a failed `tools/call` (negative integer). Covers
+   * both server JSON-RPC error responses (e.g. -32602 invalid params) and
+   * SDK-local lifecycle failures (-32001 request timeout, -32000 connection
+   * closed) — we can't distinguish source by code, so the UI labels it
+   * neutrally as an "MCP error" rather than claiming the server returned it.
+   * Absent for `isError: true` domain errors (no code per spec). See
+   * `mcpErrorCodeLabel`.
+   */
+  mcpErrorCode?: number;
 };
+
+/**
+ * Error-code names. Source of truth = the MCP SDK `ErrorCode` enum
+ * (@modelcontextprotocol/sdk types.ts). Of these:
+ *   - -32700/-32600/-32601/-32602/-32603 are JSON-RPC 2.0 spec standard errors
+ *     (MCP is built on JSON-RPC 2.0, so it inherits them);
+ *   - -32000 (connection closed), -32001 (request timeout), -32042 (url
+ *     elicitation required) are MCP-SDK additions, NOT the JSON-RPC spec.
+ *     -32000/-32001 are client-side transport/lifecycle conditions, not server
+ *     faults.
+ * Unmapped codes fall back to the raw number (see mcpErrorCodeLabel), so this
+ * map drifting behind the SDK degrades to "show the code", never a wrong name.
+ */
+const MCP_ERROR_CODE_NAMES: Record<number, string> = {
+  [-32700]: "Parse error",
+  [-32600]: "Invalid request",
+  [-32601]: "Method not found",
+  [-32602]: "Invalid params",
+  [-32603]: "Internal error",
+  [-32000]: "Connection closed",
+  [-32001]: "Request timeout",
+  [-32042]: "URL elicitation required",
+};
+
+/** Human label for an MCP error code, e.g. "-32602 · Invalid params" (or just the code when unknown). */
+export function mcpErrorCodeLabel(code: number): string {
+  const name = MCP_ERROR_CODE_NAMES[code];
+  return name ? `${code} · ${name}` : String(code);
+}
 
 /**
  * Canonical finish-reason vocabulary. The AI SDK already normalizes to most of
@@ -104,6 +144,11 @@ export const OTEL_ATTR = {
   modelId: "gen_ai.request.model",
   inputTokens: "gen_ai.usage.input_tokens",
   outputTokens: "gen_ai.usage.output_tokens",
+  // MCP tool-span fields. `rpc.response.status_code` (string at export) applies
+  // to genuine JSON-RPC *responses*; SDK-local codes (-32000/-32001) are
+  // transport/lifecycle errors and would map to span status / error.type
+  // instead. The exporter (deferred) must branch on that.
+  mcpErrorCode: "rpc.response.status_code",
 } as const;
 
 export type PromptTraceSummary = {
@@ -389,6 +434,8 @@ export const evalTraceSpanZ = z.object({
   responseId: z.string().optional(),
   responseTimestamp: z.string().optional(),
   ttfcMs: z.number().optional(),
+  // MCP server-contract metadata (tool spans).
+  mcpErrorCode: z.number().optional(),
 });
 
 const traceToolCallZ = z.object({

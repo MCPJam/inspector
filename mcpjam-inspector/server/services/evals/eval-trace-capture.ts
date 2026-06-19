@@ -6,6 +6,28 @@ import {
 } from "@/shared/eval-trace";
 import type { ModelMessage } from "ai";
 
+/**
+ * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
+ * not necessarily a server JSON-RPC *response*: the MCP SDK raises `McpError`
+ * with the same negative-code shape for both server error responses
+ * (`-32602` invalid params, `-32601` method not found) AND client-side
+ * lifecycle failures (`-32001` request timeout, `-32000` connection closed).
+ * We can't reliably distinguish those by code, so we capture all of them and
+ * the UI labels them neutrally as "MCP error" rather than claiming the server
+ * returned them.
+ *
+ * Accepts only NEGATIVE integers — every MCP/JSON-RPC code is negative.
+ * Transport errors (`StreamableHTTPError`, `SseError`) carry an HTTP status on
+ * `.code` (e.g. `401`, a positive number); excluding non-negatives keeps those
+ * out (they still surface via the existing error text + red dot).
+ */
+function extractMcpErrorCode(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "number" && Number.isInteger(code) && code < 0
+    ? code
+    : undefined;
+}
+
 type StepSpanMeta = {
   modelId?: string;
   inputTokens?: number;
@@ -251,6 +273,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
+        let mcpErrorCode: number | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
@@ -259,6 +282,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           return result;
         } catch (err) {
           success = false;
+          mcpErrorCode = extractMcpErrorCode(err);
           throw err;
         } finally {
           const toolFinishedAt = Date.now();
@@ -274,6 +298,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId,
             status: success ? "ok" : "error",
+            ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(
               ctx.runStartedAt,
               toolStartedAt,
@@ -292,6 +317,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId,
               status: "error",
+              ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
                 ctx.runStartedAt,
                 toolStartedAt,
@@ -758,6 +784,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             ? options.toolCallId
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
+        let mcpErrorCode: number | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
@@ -766,6 +793,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
           return result;
         } catch (error) {
           success = false;
+          mcpErrorCode = extractMcpErrorCode(error);
           throw error;
         } finally {
           const finishedAt = Date.now();
@@ -783,6 +811,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId: raw._serverId,
             status: success ? "ok" : "error",
+            ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
           });
           if (!success) {
@@ -800,6 +829,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId: raw._serverId,
               status: "error",
+              ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
                 params.runStartedAt,
                 startedAt,

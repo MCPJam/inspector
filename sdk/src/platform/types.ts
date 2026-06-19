@@ -285,6 +285,30 @@ export interface PlatformEvalCaseDeleted {
   deleted: true;
 }
 
+/** A host in a project (list projection). */
+export interface PlatformHost {
+  id: string;
+  name: string;
+  hostConfigId: string;
+  modelId: string;
+  serverCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Full host detail, including the resolved host config DTO. */
+export interface PlatformHostDetail {
+  id: string;
+  name: string;
+  /** Resolved host-config v2 DTO (model, capabilities, hostContext, …). */
+  config: Record<string, unknown>;
+}
+
+export interface PlatformHostDeleted {
+  id: string;
+  deleted: true;
+}
+
 /** `200` response of `POST /eval-suites/{id}/cases/generate`. */
 export interface PlatformEvalCasesGenerated {
   /** The backend LLM that authored the cases — NOT the case execution model. */

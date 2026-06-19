@@ -5,6 +5,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerEvalCommands } from "./commands/eval.js";
+import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
@@ -77,6 +78,7 @@ export async function main(
   registerAuthCommands(program);
   registerProjectsCommands(program);
   registerEvalCommands(program);
+  registerHostsCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);
   registerMcpCommands(program);

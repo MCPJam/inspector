@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -56,6 +56,11 @@
       "types": "./dist/host-config/internal.d.ts",
       "import": "./dist/host-config/internal.js",
       "default": "./dist/host-config/internal.js"
+    },
+    "./host-config/templates": {
+      "types": "./dist/host-config/templates/index.d.ts",
+      "import": "./dist/host-config/templates/index.js",
+      "default": "./dist/host-config/templates/index.js"
     },
     "./platform": {
       "types": "./dist/platform/index.d.ts",
