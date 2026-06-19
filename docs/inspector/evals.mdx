@@ -46,17 +46,22 @@ Checks are what actually decide pass/fail. They're pure functions of the iterati
 
 Set defaults on the suite; override per case with **inherit** (use suite defaults), **replace** (use only the case's list), or **extend** (suite defaults, then the case's list).
 
-| Check | Passes when |
-| --- | --- |
-| **Tool was called with…** | The named tool was called with arguments matching your spec (per the suite's `argumentMatching` mode). |
-| **Tool was called at least once** | The named tool fired at least once across the turn. |
-| **Tool was never called** | The named tool did not fire. The core of negative cases. |
-| **First tool called was…** | The first tool call in the turn matched the named tool. |
-| **Response contains…** | The final assistant message contains a substring. |
-| **Response matches regex…** | The final assistant message matches a regex. |
-| **No tool errors** | No tool call returned an error. |
-| **Final message non-empty** | The model produced a final assistant message. |
-| **Token budget under N** | Total token usage stayed below the cap. |
+| Check | Passes when | Scope |
+| --- | --- | --- |
+| **Tool was called with…** | The named tool was called with arguments matching your spec (per the suite's `argumentMatching` mode). | Turn or case |
+| **Tool was called at least once** | The named tool fired at least once across the turn. | Turn or case |
+| **Tool was never called** | The named tool did not fire. The core of negative cases. | Turn or case |
+| **First tool called was…** | The first tool call in the turn matched the named tool. | Turn or case |
+| **Response contains…** | The final assistant message contains a substring. | Turn or case |
+| **Response matches regex…** | The final assistant message matches a regex. | Turn or case |
+| **No tool errors** | No tool call returned an error. | Turn or case |
+| **Final message non-empty** | The model produced a final assistant message. | Turn or case |
+| **Widget rendered** | The named widget was rendered during the turn. | Turn or case |
+| **Widget render latency under N** | The widget rendered within the specified milliseconds. | Turn or case |
+| **Widget no console errors** | The widget rendered without console errors. | Turn or case |
+| **Token budget under N** | Total token usage stayed below the cap. | Case only |
+
+When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
 
 ### Argument matching
 
