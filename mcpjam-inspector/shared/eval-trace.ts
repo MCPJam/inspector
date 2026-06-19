@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { PromptTurnToolCall } from "./prompt-turns";
+import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
@@ -164,6 +165,12 @@ export type PromptTraceSummary = {
     actual: PromptTurnToolCall;
     mismatchedArguments: string[];
   }>;
+  /**
+   * Per-turn deterministic check verdicts for this turn (scope.kind === "turn",
+   * scope.promptIndex === this turn). Absent/empty ⇒ the turn authored no
+   * checks. Case-level predicate results live on the iteration, not here.
+   */
+  predicateResults?: PredicateResult[];
 };
 
 export type EvalTraceWidgetSnapshot = {
