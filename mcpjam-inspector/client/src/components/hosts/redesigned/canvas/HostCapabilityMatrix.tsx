@@ -5,7 +5,6 @@ import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
-import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
@@ -29,12 +28,10 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { SandboxProxyIframeCard } from "./sandbox-config-grid";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 function getClientLogo(
   clientInfoName: string | undefined,
-  hostName: string | undefined,
-  themeMode: "light" | "dark"
+  hostName: string | undefined
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
@@ -44,8 +41,7 @@ function getClientLogo(
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;
-  if (haystack.includes("goose"))
-    return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
+  if (haystack.includes("goose")) return gooseLogoDark;
   if (haystack.includes("cursor")) return cursorLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
@@ -136,7 +132,6 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
   const connectedClientCaps = clientCaps.filter((row) => row.on);
 
   const timeoutLeaf = protocolBand.find((l) => l.leafKey === "timeout");
@@ -165,8 +160,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
             const clientLogo = getClientLogo(
               clientInfoLeaf?.value,
-              hostName,
-              themeMode
+              hostName
             );
             return (
               <span
@@ -558,6 +552,9 @@ const PAPER_STYLES = `
   font-size: 14px;
   line-height: 1.5;
   text-align: left;
+}
+.dark .host-paper-card {
+  --hp-host-bg: #000;
 }
 .host-paper-card .hp-mono {
   font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
