@@ -10,11 +10,21 @@ import type { ModelMessage } from "ai";
  * Pull the JSON-RPC error code off a thrown MCP tool error (OTel
  * `rpc.response.status_code`). Present only on protocol-level failures — a
  * `tools/call` that returns `isError: true` (domain error) has no code per the
- * MCP spec. Returns undefined for anything without a numeric `.code`.
+ * MCP spec.
+ *
+ * Accepts only NEGATIVE integers: MCP/JSON-RPC error codes are all negative
+ * (`-32602` invalid params, `-32601` method not found, `-32000..-32099`
+ * server-defined). Transport errors (`StreamableHTTPError`, `SseError`) also
+ * carry a numeric `.code`, but it's an HTTP status (e.g. `401`, `404`, `500`) —
+ * a positive number. Excluding non-negatives keeps us from mislabeling a
+ * transport/HTTP failure as a JSON-RPC code (those still surface via the
+ * existing error-text + red dot, just without a code).
  */
 function extractMcpErrorCode(error: unknown): number | undefined {
   const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "number" && Number.isFinite(code) ? code : undefined;
+  return typeof code === "number" && Number.isInteger(code) && code < 0
+    ? code
+    : undefined;
 }
 
 type StepSpanMeta = {

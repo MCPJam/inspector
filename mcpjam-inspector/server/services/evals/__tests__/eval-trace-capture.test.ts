@@ -431,4 +431,34 @@ describe("eval-trace-capture", () => {
     expect(toolSpan?.status).toBe("error");
     expect(toolSpan?.mcpErrorCode).toBeUndefined();
   });
+
+  it("does not record a transport HTTP status (positive .code) as mcpErrorCode", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    // StreamableHTTPError / SseError carry an HTTP status on `.code` (e.g. 401).
+    const httpError = Object.assign(new Error("Unauthorized"), { code: 401 });
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        secured: {
+          execute: async () => {
+            throw httpError;
+          },
+          _serverId: "server-1",
+        },
+      },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+
+    wall = runAt + 5;
+    await expect(
+      backendTools.secured.execute({}, { toolCallId: "call-401" }),
+    ).rejects.toBe(httpError);
+
+    const toolSpan = spans.find((s) => s.category === "tool");
+    expect(toolSpan?.status).toBe("error");
+    // 401 is an HTTP status, not a JSON-RPC code — must not be recorded/mislabeled.
+    expect(toolSpan?.mcpErrorCode).toBeUndefined();
+  });
 });
