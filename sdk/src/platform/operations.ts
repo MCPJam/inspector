@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
+import { HOST_TEMPLATE_IDS } from "../host-config/templates/index.js";
 import {
   buildShowServersPayload,
   projectResolutionError,
@@ -2225,22 +2226,6 @@ export const listChatSessionsOperation: PlatformOperation<
 
 const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
 
-/** Built-in host templates (kept in sync with @mcpjam/sdk/host-config/templates). */
-const HOST_TEMPLATE_IDS = [
-  "mcpjam",
-  "claude",
-  "claude-code",
-  "chatgpt",
-  "mistral",
-  "cursor",
-  "codex",
-  "copilot",
-  "vscode",
-  "agentcore",
-  "n8n",
-  "perplexity",
-] as const;
-
 async function resolveHost(
   client: PlatformApiClient,
   project: PlatformProject,
@@ -2343,13 +2328,15 @@ const createHostInput = z
       .describe("Theme stamped into the seeded host config (template only)."),
     config: z
       .record(z.string(), z.unknown())
+      .refine((value) => Object.keys(value).length > 0, {
+        message: "`config` must be a non-empty host config object.",
+      })
       .optional()
       .describe("Full host config v2 to use verbatim (alternative to template)."),
   })
   .refine(
-    (value) =>
-      (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
-    { message: "Provide exactly one of `template` or `config`." }
+    (value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
+    { message: "Provide exactly one of `template` or a non-empty `config`." }
   );
 export type CreateHostInput = z.infer<typeof createHostInput>;
 

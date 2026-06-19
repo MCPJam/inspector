@@ -222,19 +222,28 @@ const CLAUDE_FONTS_CSS = `
 }
 `;
 
-export type HostTemplateId =
-  | "mcpjam"
-  | "claude"
-  | "claude-code"
-  | "chatgpt"
-  | "mistral"
-  | "cursor"
-  | "codex"
-  | "copilot"
-  | "vscode"
-  | "agentcore"
-  | "n8n"
-  | "perplexity";
+/**
+ * Canonical list of built-in host-template ids — the single source of truth
+ * reused by the SDK platform `create_host` operation, the server v1 route's
+ * request validator, and the CLI `hosts templates` lister. Adding/removing a
+ * template here keeps all three in lockstep (no per-layer enum to drift).
+ */
+export const HOST_TEMPLATE_IDS = [
+  "mcpjam",
+  "claude",
+  "claude-code",
+  "chatgpt",
+  "mistral",
+  "cursor",
+  "codex",
+  "copilot",
+  "vscode",
+  "agentcore",
+  "n8n",
+  "perplexity",
+] as const;
+
+export type HostTemplateId = (typeof HOST_TEMPLATE_IDS)[number];
 
 export interface SeedHostTemplateOptions {
   /**

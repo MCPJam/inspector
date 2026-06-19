@@ -16,34 +16,24 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import { seedHostTemplate } from "@mcpjam/sdk/host-config/templates";
+import {
+  seedHostTemplate,
+  HOST_TEMPLATE_IDS,
+} from "@mcpjam/sdk/host-config/templates";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
+import inspectorPkg from "../../../package.json" with { type: "json" };
 
 const hosts = new Hono();
 
 // Stamped into the mcpjam template's mcpProfile version (cosmetic; only the
 // mcpjam template reads it). Mirrors the inspector build version the UI threads
-// in via the Vite `__APP_VERSION__` constant.
-const INSPECTOR_VERSION = process.env.npm_package_version ?? "0.0.0";
-
-const HOST_TEMPLATE_IDS = [
-  "mcpjam",
-  "claude",
-  "claude-code",
-  "chatgpt",
-  "mistral",
-  "cursor",
-  "codex",
-  "copilot",
-  "vscode",
-  "agentcore",
-  "n8n",
-  "perplexity",
-] as const;
+// in via the Vite `__APP_VERSION__` constant (both derive from this same
+// package.json), so a server-created mcpjam host matches a UI-created one.
+const INSPECTOR_VERSION = inspectorPkg.version ?? "0.0.0";
 
 // ── Convex row shapes (mirrored from client/src/hooks/useClients.ts) ────────
 type HostListRow = {
@@ -180,8 +170,15 @@ const createHostSchema = z
     config: hostConfigSchema.optional(),
   })
   .refine(
-    (value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
-    { message: "Provide exactly one of `template` or `config`." }
+    (value) => {
+      // An empty `{}` is a truthy object but not a usable host config; count
+      // config only when it actually carries fields so `--json '{}'` can't
+      // satisfy the XOR and mint a degenerate host.
+      const hasConfig =
+        value.config !== undefined && Object.keys(value.config).length > 0;
+      return (value.template ? 1 : 0) + (hasConfig ? 1 : 0) === 1;
+    },
+    { message: "Provide exactly one of `template` or a non-empty `config`." }
   );
 
 const updateHostSchema = z

@@ -9,6 +9,7 @@ import {
   PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
+import { HOST_TEMPLATES as SDK_HOST_TEMPLATES } from "@mcpjam/sdk/host-config/templates";
 import { JsonInputContext } from "../lib/json-input.js";
 import { usageError, writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
@@ -19,21 +20,13 @@ type PlatformOptions = {
   apiUrl?: string;
 };
 
-/** Built-in host templates, surfaced by `hosts templates` and `create --template`. */
-const HOST_TEMPLATES: ReadonlyArray<{ id: string; label: string }> = [
-  { id: "mcpjam", label: "MCPJam" },
-  { id: "claude", label: "Claude" },
-  { id: "claude-code", label: "Claude Code" },
-  { id: "chatgpt", label: "ChatGPT" },
-  { id: "mistral", label: "Mistral (Le Chat)" },
-  { id: "cursor", label: "Cursor" },
-  { id: "codex", label: "Codex" },
-  { id: "copilot", label: "Copilot" },
-  { id: "vscode", label: "VS Code" },
-  { id: "agentcore", label: "AgentCore" },
-  { id: "n8n", label: "n8n" },
-  { id: "perplexity", label: "Perplexity" },
-];
+/**
+ * Built-in host templates surfaced by `hosts templates`, derived from the SDK
+ * registry (single source of truth) so this list can't drift from what
+ * `create --template` actually accepts.
+ */
+const HOST_TEMPLATES: ReadonlyArray<{ id: string; label: string }> =
+  SDK_HOST_TEMPLATES.map(({ id, label }) => ({ id, label }));
 
 function addPlatformOptions(command: Command): Command {
   return command

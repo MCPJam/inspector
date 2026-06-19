@@ -168,11 +168,24 @@
         "operationId": "deleteHost",
         "tags": ["Hosts"],
         "summary": "Delete a host",
-        "description": "Permanently delete a host from the project. Guest callers are denied (a write).",
+        "description": "Permanently delete a host from the project. Pass `{ \"force\": true }` to delete a host that is still referenced (e.g. by an eval suite). Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/hostId" }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": { "type": "boolean", "description": "Delete even if the host is still referenced." }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "The host was deleted.",
@@ -2528,16 +2541,18 @@
             "enum": ["mcpjam", "claude", "claude-code", "chatgpt", "mistral", "cursor", "codex", "copilot", "vscode", "agentcore", "n8n", "perplexity"]
           },
           "theme": { "type": "string", "enum": ["light", "dark"], "description": "Theme stamped into the seeded config (template only)." },
-          "config": { "type": "object", "additionalProperties": true, "description": "Full host config v2, used verbatim (alternative to `template`)." }
-        }
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Full host config v2, used verbatim (alternative to `template`)." }
+        },
+        "oneOf": [{ "required": ["template"] }, { "required": ["config"] }]
       },
       "HostUpdateRequest": {
         "type": "object",
         "description": "Edit a host. Provide at least one of `name` or `config`; only the fields you pass change.",
         "properties": {
           "name": { "type": "string", "description": "New display name." },
-          "config": { "type": "object", "additionalProperties": true, "description": "Replacement host config v2." }
-        }
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Replacement host config v2." }
+        },
+        "anyOf": [{ "required": ["name"] }, { "required": ["config"] }]
       },
       "HostDeleted": {
         "type": "object",
