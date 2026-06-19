@@ -32,7 +32,7 @@ Evals require a signed-in MCPJam account. As a guest you'll see a sign-in prompt
 Each case has four moving parts:
 
 - **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
+- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up." Each expanded turn also has its own **Checks** section for assertions scoped to that turn only (see [Per-turn checks](#per-turn-checks)).
 - **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
 - **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
 
