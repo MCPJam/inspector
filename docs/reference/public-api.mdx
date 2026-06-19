@@ -148,8 +148,8 @@ query parameter on `GET` lists). Cursors are opaque — don't parse them.
 `suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
 is the async counterpart: it validates and creates a run synchronously, then
 detaches execution and responds `202` with a `runId`. Poll
-`GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
-`cancelled`.
+`GET /eval-runs/{runId}` until `status` is `completed`, `failed`, `cancelled`,
+or `timed_out`.
 
 **IDs.** Every identifier the API takes is discoverable through the API
 itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
