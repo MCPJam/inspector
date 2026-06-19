@@ -97,7 +97,16 @@ function translateConvexWriteError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   const message = error instanceof Error ? error.message : String(error);
   if (/not found|unauthorized|not a member/i.test(message)) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Host not found");
+    // Convex collapses "project missing", "not a project member", and "host
+    // missing" into the same generic error, and the v1 surface deliberately
+    // doesn't leak which. Keep the message neutral rather than asserting
+    // "Host not found" — the failure on the list/create paths is usually the
+    // PROJECT (bad id or no membership), where a host-specific message misleads.
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Project or host not found, or you do not have access to it."
+    );
   }
   const cleaned = message
     .replace(/\[Request ID:[^\]]*\]\s*/g, "")
