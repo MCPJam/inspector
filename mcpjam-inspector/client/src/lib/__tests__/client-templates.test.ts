@@ -10,7 +10,7 @@ describe("client templates", () => {
     const seed = seedFromHostTemplate("mistral");
 
     expect(seed.hostStyle).toBe("mistral");
-    expect(seed.modelId).toBe("");
+    expect(seed.modelId).toBe("mistralai/mistral-large-2512");
     expect(seed.clientCapabilities).toEqual({
       extensions: {
         [MCP_UI_EXTENSION_ID]: {
