@@ -14,6 +14,9 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformHost,
+  PlatformHostDeleted,
+  PlatformHostDetail,
   PlatformMe,
   PlatformPage,
   PlatformProject,
@@ -168,6 +171,83 @@ export class PlatformApiClient {
         params.projectId
       )}/chatboxes/${encodeURIComponent(params.chatboxId)}`,
       {},
+      options
+    );
+  }
+
+  // ── Hosts ────────────────────────────────────────────────────────────
+
+  listHosts(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformHost>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      {},
+      options
+    );
+  }
+
+  getHost(
+    params: { projectId: string; hostId: string },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/hosts` — create a host either from a built-in template
+   * (`{ name, template, theme? }`) or from a full host config
+   * (`{ name, config }`). Returns the created host detail.
+   */
+  createHost(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateHost(
+    params: { projectId: string; hostId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteHost(
+    params: {
+      projectId: string;
+      hostId: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformHostDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body ?? {} },
       options
     );
   }

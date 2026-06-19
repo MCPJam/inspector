@@ -21,6 +21,8 @@ export default defineConfig({
     "src/host-config/index.ts",
     // Low-level first-party entry used by the backend and SDK tooling.
     "src/host-config/internal.ts",
+    // Node-safe host-template seeding (server `--template` resolver + CLI).
+    "src/host-config/templates/index.ts",
     // Runtime-agnostic Platform API client (Workers/browser/Node safe).
     "src/platform/index.ts",
     // Framework-free widget/app runtime building blocks (SEP-1865).

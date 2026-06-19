@@ -57,6 +57,11 @@
       "import": "./dist/host-config/internal.js",
       "default": "./dist/host-config/internal.js"
     },
+    "./host-config/templates": {
+      "types": "./dist/host-config/templates/index.d.ts",
+      "import": "./dist/host-config/templates/index.js",
+      "default": "./dist/host-config/templates/index.js"
+    },
     "./platform": {
       "types": "./dist/platform/index.d.ts",
       "import": "./dist/platform/index.js",
