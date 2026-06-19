@@ -133,7 +133,7 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
 - **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
-- **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
+- **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled/timed out), and timestamp. Click any row to open it in the compare view.
 
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
