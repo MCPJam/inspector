@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`POST /api/mcp/chat-v2 > success cases > direct path: exact trace-event sequence is stable (wire parity) 1`] = `
+[
+  "turn_start",
+  "request_payload",
+  "text_delta",
+  "trace_snapshot",
+  "turn_finish",
+]
+`;
