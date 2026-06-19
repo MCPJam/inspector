@@ -18,7 +18,13 @@ const spec = JSON.parse(
   )
 ) as {
   security?: unknown[];
-  paths: Record<string, Record<string, { operationId?: string; requestBody?: unknown }>>;
+  paths: Record<
+    string,
+    Record<
+      string,
+      { operationId?: string; requestBody?: unknown; security?: unknown[] }
+    >
+  >;
 };
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
@@ -122,8 +128,31 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     ).toEqual([]);
   });
 
-  it("requires a bearer-auth security scheme (global or per-op)", () => {
-    expect(Array.isArray(spec.security) && spec.security.length > 0).toBe(true);
+  it("requires bearerAuth security globally or per operation", () => {
+    const hasBearer = (entries: unknown): boolean =>
+      Array.isArray(entries) &&
+      entries.some(
+        (entry) =>
+          !!entry &&
+          typeof entry === "object" &&
+          "bearerAuth" in (entry as Record<string, unknown>)
+      );
+    const globalBearer = hasBearer(spec.security);
+    const missing: string[] = [];
+    for (const [path, item] of Object.entries(spec.paths)) {
+      for (const [method, op] of Object.entries(item)) {
+        if (!HTTP_METHODS.has(method.toUpperCase())) continue;
+        if (!globalBearer && !hasBearer(op.security)) {
+          missing.push(`${method} ${path}`);
+        }
+      }
+    }
+    expect(
+      missing,
+      `Operations without a bearerAuth security requirement:\n  ${missing.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
   });
 
   it("gives every operation an operationId", () => {

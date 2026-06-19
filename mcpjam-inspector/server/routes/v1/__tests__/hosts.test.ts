@@ -273,5 +273,19 @@ describe("v1 host routes", () => {
       expect(body.message).toContain("force");
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+
+    it("rejects a delete body even with only a synthesized-looking key (400)", async () => {
+      // The route reads the raw body, so a payload like `{ "projectId": "p1" }`
+      // is still a body and is rejected — DELETE is truly bodyless, not merely
+      // "no fields other than the ones synthesizeServerBody would inject".
+      const res = await request("DELETE", "/api/v1/projects/p1/hosts/h1", {
+        body: { projectId: "p1" },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
   });
 });

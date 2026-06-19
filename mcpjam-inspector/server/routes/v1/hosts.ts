@@ -247,21 +247,41 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
 hosts.delete("/projects/:projectId/hosts/:hostId", async (c) => {
   const projectId = c.req.param("projectId");
   const hostId = c.req.param("hostId");
-  // Delete takes no body. `synthesizeServerBody` merges the path's
-  // projectId/serverId in, so strip those and reject anything left over
-  // (e.g. a legacy `force`) as VALIDATION_ERROR rather than dropping it.
-  const deleteBody = await synthesizeServerBody(c);
-  const strayDeleteFields = Object.keys(deleteBody).filter(
-    (key) => key !== "projectId" && key !== "serverId"
-  );
-  if (strayDeleteFields.length > 0) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      `Unexpected field(s) in delete body: ${strayDeleteFields
-        .sort()
-        .join(", ")}`
-    );
+  // Delete takes no body. Read the raw payload directly (NOT via
+  // synthesizeServerBody, which injects the path projectId/serverId) so the
+  // contract is truly bodyless: reject ANY field — a legacy `force`, or even a
+  // stray `projectId` — as VALIDATION_ERROR rather than accepting or dropping it.
+  const rawDeleteBody = await c.req.text();
+  if (rawDeleteBody.trim()) {
+    let parsedDeleteBody: unknown;
+    try {
+      parsedDeleteBody = JSON.parse(rawDeleteBody);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid JSON body"
+      );
+    }
+    if (
+      !parsedDeleteBody ||
+      typeof parsedDeleteBody !== "object" ||
+      Array.isArray(parsedDeleteBody)
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be a JSON object"
+      );
+    }
+    const strayDeleteFields = Object.keys(parsedDeleteBody).sort();
+    if (strayDeleteFields.length > 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `Unexpected field(s) in delete body: ${strayDeleteFields.join(", ")}`
+      );
+    }
   }
   const token = await getConvexBearerForRequest(c);
   // `hosts:deleteHost` enforces project scope from `projectId`.
