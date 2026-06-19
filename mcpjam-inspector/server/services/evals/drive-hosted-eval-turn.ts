@@ -47,6 +47,11 @@ import {
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
 import type { UsageTotals } from "./types";
+import {
+  extractFinalAssistantMessage,
+  extractToolErrors,
+  type ToolErrorRecord,
+} from "@/shared/eval-matching";
 
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 
@@ -141,6 +146,11 @@ export interface DriveHostedEvalTurnParams {
     capturedSpans: EvalTraceSpan[];
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
+    // Per-turn signals for per-turn checks (PromptTurn.checks), indexed by
+    // promptIndex parallel to toolsCalledByPrompt. Populated on turn success;
+    // a turn that fails before capture leaves its slot unset (fail-closed).
+    assistantMessageByPrompt: (string | undefined)[];
+    toolErrorsByPrompt: ToolErrorRecord[][];
   };
   buildSinks?: (ctx: HostedEvalTurnSinkContext) => HostedEvalTurnSinks;
 }
@@ -415,6 +425,17 @@ export async function driveHostedEvalTurn(
   const canonicalPromptToolsCalled = params.extractToolCalls(newMessages);
   promptToolsCalled.length = 0;
   promptToolsCalled.push(...canonicalPromptToolsCalled);
+
+  // Per-turn signals for per-turn checks — same capture the local runners do,
+  // so the shared verdict helper evaluates PromptTurn.checks on hosted evals
+  // too. This turn's assistant text + tool errors, scoped to this turn's new
+  // messages and spans (wrap tool spans + the engine's turnTrace spans).
+  acc.assistantMessageByPrompt[promptIndex] =
+    extractFinalAssistantMessage(newMessages);
+  acc.toolErrorsByPrompt[promptIndex] = extractToolErrors({
+    spans: [...traceCtx.recordedSpans, ...(turnResult.turnTrace?.spans ?? [])],
+    messages: newMessages as Array<{ role: string; content: unknown }>,
+  });
 
   // Roll the engine's transcript forward as the next turn's starting point.
   acc.messageHistory.length = 0;
