@@ -548,3 +548,36 @@ export function evaluatePredicates(
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
   return results.every((r) => r.passed);
 }
+
+/** One prompt turn's checks plus the turn-scoped transcript to run them on. */
+export interface TurnChecksInput {
+  /** Zero-based index of the turn in the case's `promptTurns`. */
+  promptIndex: number;
+  /** The turn's per-turn checks (already restricted to turn-scopable kinds). */
+  checks: Predicate[] | undefined;
+  /** The turn-scoped transcript (see `buildTurnTranscript`). */
+  transcript: IterationTranscript;
+}
+
+/**
+ * Evaluate per-turn checks across a case's turns, reusing the same
+ * {@link evaluatePredicates} engine against each turn's slice. Every result is
+ * tagged with `scope: { kind: "turn", promptIndex }` so the UI and persisted
+ * metadata can attribute it to the turn. Turns with no checks contribute
+ * nothing. Order is preserved (turn order, then check order within a turn).
+ */
+export function evaluateTurnChecks(
+  turns: TurnChecksInput[],
+): PredicateResult[] {
+  const results: PredicateResult[] = [];
+  for (const turn of turns) {
+    if (!turn.checks || turn.checks.length === 0) continue;
+    for (const result of evaluatePredicates(turn.transcript, turn.checks)) {
+      results.push({
+        ...result,
+        scope: { kind: "turn", promptIndex: turn.promptIndex },
+      });
+    }
+  }
+  return results;
+}

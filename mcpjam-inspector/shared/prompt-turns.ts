@@ -1,4 +1,5 @@
 import type { ProbeConfig } from "./probe-config";
+import type { Predicate } from "@mcpjam/sdk/predicates";
 
 export type PromptTurnToolCall = {
   toolName: string;
@@ -27,6 +28,14 @@ export type PromptTurn = {
    * so the runner and selectors can read it.
    */
   pinnedToolCall?: PinnedToolCall;
+  /**
+   * Per-turn deterministic checks evaluated against THIS turn's slice of the
+   * transcript (not the whole iteration). Restricted to turn-scopable predicate
+   * kinds (`TURN_SCOPABLE_PREDICATE_KINDS` in `@mcpjam/sdk/predicates`).
+   * Independent of suite/case predicate layering — per-turn checks are literal
+   * on the turn.
+   */
+  checks?: Predicate[];
 };
 
 function normalizeToolCalls(value: unknown): PromptTurnToolCall[] {
@@ -60,6 +69,7 @@ function normalizePromptTurn(value: unknown, index: number): PromptTurn | null {
 
   const raw = value as Record<string, unknown>;
   const pinnedToolCall = raw.pinnedToolCall;
+  const checks = normalizePromptTurnChecks(raw.checks);
   return {
     id:
       typeof raw.id === "string" && raw.id.trim().length > 0
@@ -75,7 +85,32 @@ function normalizePromptTurn(value: unknown, index: number): PromptTurn | null {
     ...(pinnedToolCall && typeof pinnedToolCall === "object"
       ? { pinnedToolCall: pinnedToolCall as PinnedToolCall }
       : {}),
+    // Preserve per-turn checks through normalization. Semantic + turn-scopable
+    // validation happens at the Convex mutation boundary, not here.
+    ...(checks ? { checks } : {}),
   };
+}
+
+/**
+ * Structurally normalize a turn's `checks` array: keep only objects with a
+ * string `type` discriminator. Mirrors the backend
+ * `normalizePromptTurnChecks` — round-trip shape only; semantic validation is
+ * the Convex mutation boundary's job.
+ */
+export function normalizePromptTurnChecks(
+  value: unknown,
+): Predicate[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const checks = value.filter(
+    (item): item is Predicate =>
+      !!item &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      typeof (item as { type?: unknown }).type === "string",
+  );
+  return checks.length > 0 ? checks : undefined;
 }
 
 export function normalizePromptTurns(value: unknown): PromptTurn[] {
