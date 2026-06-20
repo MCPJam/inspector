@@ -11,6 +11,7 @@ import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
+import notionLogo from "/notion_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -59,6 +60,7 @@ import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import { N8nMarkIndicator } from "./indicators/n8n-mark";
 import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
+import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
 import type {
   HostStyleDefinition,
@@ -732,6 +734,35 @@ export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Notion AI agent host style. The Notion client is a bare, tools-only MCP
+ * consumer (empty capabilities, no MCP Apps/UI extension), so its MCP matrix
+ * stays at the no-claims baseline and there's no widget rendering surface.
+ * The chat chrome is MCPJam's neutral stand-in with Notion identity; what
+ * makes it feel like Notion is the shimmer "Working" thinking indicator
+ * (captured from notion.so DevTools).
+ */
+export const NOTION_HOST_STYLE: HostStyleDefinition = {
+  id: "notion",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Notion",
+    shortLabel: "Notion-style host",
+    pickerDescription: "Notion AI agent (tools-only)",
+    logoSrc: notionLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // Notion's shimmer-text "Working" label, ported from a live notion.so probe.
+    loadingIndicator: NotionShimmerIndicator,
+  },
+};
+
+/**
  * MCPJam's own house chrome. Used as the inspector's default host style so
  * "no host selected" doesn't silently render as Claude. Capability blob is
  * the inspector's actual MCP Apps renderer support — same baseline as
@@ -787,4 +818,5 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
+  NOTION_HOST_STYLE,
 ];

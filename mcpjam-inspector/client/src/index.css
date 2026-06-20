@@ -512,6 +512,96 @@
   }
 }
 
+/* Notion AI "Working" shimmer label — verbatim port of Notion's own
+   `.nds-shimmer-text` rule (captured from notion.so DevTools, light theme).
+   A 200%-wide gradient clips to the glyphs and a band sweeps across over
+   1.5s linear infinite. Pairs with `indicators/notion-shimmer.tsx`.
+
+   `--nds-shimmer-{faded,solid}` derive the two tones so `data-theme` can swap
+   them. Light is the verbatim capture (faded #d4d3cf = --c-texDis, solid
+   #7d7a75 = --c-texSec); the dark override is reconstructed (the probe was
+   light theme). Keyframe endpoints are reconstructed to reproduce the sweep —
+   only the name, 200% size, 1.5s linear timing, and the resting `200% 50%`
+   position came across the wire. */
+.nds-shimmer-text {
+  --nds-shimmer-faded: #d4d3cf;
+  --nds-shimmer-solid: #7d7a75;
+
+  background-image: linear-gradient(
+    to right,
+    var(--nds-shimmer-faded) 0%,
+    var(--nds-shimmer-solid) 50%,
+    var(--nds-shimmer-faded) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 200% 50%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: nds-shimmer-text 1.5s linear infinite;
+  will-change: background-position;
+}
+
+/* Dark mode: Notion's capture was light-theme; mirror it on dark with a
+   muted base + lighter band so the sweep still reads against dark chrome. */
+.nds-shimmer-text[data-theme="dark"] {
+  --nds-shimmer-faded: #5a5a57;
+  --nds-shimmer-solid: #c2c0bb;
+}
+
+@keyframes nds-shimmer-text {
+  from {
+    background-position: 200% 50%;
+  }
+  to {
+    background-position: 0% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nds-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentcolor;
+  }
+}
+
+/* Notion AI loader icon. Notion draws this glyph on a <canvas> (48x32 backing,
+   shown 24x16 at 0.3 opacity) via requestAnimationFrame — there's no markup to
+   port, so it was captured frame-by-frame from notion.so: 47 frames, 48x32 px
+   each, measured loop ~1.567s. Replayed as a horizontal sprite strip stepped
+   one frame at a time (steps(47)); background-size halves the 2x-DPR sprite so
+   each frame shows at 24px crisp. */
+.notion-loader-icon {
+  width: 24px;
+  height: 16px;
+  flex: none;
+  opacity: 0.55;
+  background-image: url(/notion-icon-sprite.png);
+  background-repeat: no-repeat;
+  background-size: 1128px 16px; /* 47 frames × 24px */
+  animation: notion-loader-icon 1.567s steps(47) infinite;
+}
+
+/* The captured sprite is a dark-gray stroke (Notion drew it on a light
+   theme). On dark chrome that's invisible, so invert it to light gray. */
+.notion-loader-icon[data-theme="dark"] {
+  filter: invert(1);
+}
+
+@keyframes notion-loader-icon {
+  to {
+    background-position: -1128px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notion-loader-icon {
+    animation: none;
+    background-position: 0 0;
+  }
+}
+
 .claude-loading-indicator__stage {
   isolation: isolate;
 }

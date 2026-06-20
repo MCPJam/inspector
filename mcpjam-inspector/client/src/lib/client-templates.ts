@@ -37,6 +37,7 @@ import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
+import notionLogo from "/notion_logo.png";
 
 declare const __APP_VERSION__: string;
 
@@ -58,6 +59,7 @@ const LOGO_BY_ID: Record<HostTemplateId, string> = {
   agentcore: bedrockLogo,
   n8n: n8nLogo,
   perplexity: perplexityLogo,
+  notion: notionLogo,
 };
 
 const LOGO_BY_ID_AND_THEME: Partial<
