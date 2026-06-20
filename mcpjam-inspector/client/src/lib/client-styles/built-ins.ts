@@ -12,6 +12,7 @@ import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.svg";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -763,6 +764,38 @@ export const NOTION_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Slack host style. "Slack as an MCP client" is the DIY Slackbot pattern — a
+ * bot (e.g. `@slack/bolt` Socket Mode) connects OUT to MCP servers, runs an
+ * LLM loop, and surfaces tool calls back into Slack chat. Slack renders Block
+ * Kit, NOT iframes, so MCP Apps (`ui://`) widgets cannot render here; this is
+ * a headless tool-calling client and the MCP matrix stays at the no-claims
+ * baseline. The chat chrome is MCPJam's neutral stand-in with Slack identity
+ * (Slack has its own aubergine product UI, but the neutral house surface is
+ * the honest choice — don't invent a Slack message-pane clone). The loading
+ * indicator is the generic Codex/Cursor "Thinking" shimmer — Slack-as-client
+ * is a headless tool-caller with no branded busy-state of its own to clone.
+ */
+export const SLACK_HOST_STYLE: HostStyleDefinition = {
+  id: "slack",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Slack",
+    shortLabel: "Slack-style host",
+    pickerDescription: "Slack MCP client (Slackbot, tools-only)",
+    logoSrc: slackLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: CodexShineIndicator,
+  },
+};
+
+/**
  * MCPJam's own house chrome. Used as the inspector's default host style so
  * "no host selected" doesn't silently render as Claude. Capability blob is
  * the inspector's actual MCP Apps renderer support — same baseline as
@@ -819,4 +852,5 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   N8N_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
   NOTION_HOST_STYLE,
+  SLACK_HOST_STYLE,
 ];

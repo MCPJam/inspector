@@ -15,6 +15,7 @@ import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.svg";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -67,6 +68,8 @@ function getClientLogo(
   if (haystack.includes("n8n")) return n8nLogo;
   if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("notion")) return notionLogo;
+  // Slack-as-client: clientInfo.name "slack-mcp-client", host "Slack".
+  if (haystack.includes("slack")) return slackLogo;
   if (
     haystack.includes("openai") ||
     haystack.includes("chatgpt") ||

@@ -247,6 +247,7 @@ export const HOST_TEMPLATE_IDS = [
   "n8n",
   "perplexity",
   "notion",
+  "slack",
 ] as const;
 
 export type HostTemplateId = (typeof HOST_TEMPLATE_IDS)[number];
@@ -1646,6 +1647,55 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // animation was captured, not its MCP `initialize` handshake. Swap in
           // the real clientInfo once a wire probe is available.
           clientInfo: { name: "notion", version: "1.0.0" },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "slack",
+    label: "Slack",
+    description:
+      "Slackbot MCP client. Conversational tool-caller, no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "slack",
+        // "Slack as an MCP client" is the DIY Slackbot pattern (e.g.
+        // @slack/bolt Socket Mode → LLM loop → MCP client). The bridge is
+        // model-agnostic; default to the guest-allowed hosted Claude (Haiku
+        // 4.5, in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App Builder runs
+        // without a BYOK key, matching the Anthropic-flavored reference bots.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // GUESS (unprobed) — "Slack as a client" has no single official MCP
+      // client to probe; it's the DIY Slackbot-as-client pattern (refs:
+      // tuannvm/slack-mcp-client, sooperset/mcp-client-slackbot). Unlike the
+      // headless n8n / Perplexity workflow callers (empty caps), Slack is a
+      // genuine conversational surface where the bot can prompt the user for
+      // input — text replies or Block Kit interactive elements — so we
+      // advertise `elicitation`. Replace the SDK default entirely (rather
+      // than spreading) so the MCP UI extension doesn't leak back in and
+      // misrepresent Slack as a widget-rendering host: Slack renders Block
+      // Kit, not iframes, so MCP Apps views cannot render here. Refine once a
+      // live Slackbot→MCP `initialize` capture is available.
+      base.clientCapabilities = {
+        elicitation: {},
+      };
+      // No widget rendering → no ui/initialize negotiation, no hostContext.
+      // Leaves both as the empty defaults from emptyHostConfigInputV2 (same
+      // reasoning as the Codex / AgentCore CLI-style templates).
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          // GUESS (unprobed) — name follows the reference DIY bots'
+          // convention (`slack-mcp-client`); a fresh bot on the current MCP
+          // SDK negotiates the latest protocol. Replace verbatim once a real
+          // Slackbot→MCP `initialize` is captured.
+          clientInfo: { name: "slack-mcp-client", version: "1.0.0" },
         },
       };
       return base;

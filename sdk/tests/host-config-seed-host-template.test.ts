@@ -21,6 +21,7 @@ const ALL_IDS: HostTemplateId[] = [
   "n8n",
   "perplexity",
   "notion",
+  "slack",
 ];
 
 describe("seedHostTemplate", () => {

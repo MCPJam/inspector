@@ -167,4 +167,25 @@ describe("client templates", () => {
       },
     });
   });
+
+  it("seeds Slack as a conversational, non-rendering MCP client", () => {
+    const seed = seedFromHostTemplate("slack");
+
+    expect(HOST_TEMPLATES.some((template) => template.id === "slack")).toBe(
+      true,
+    );
+    expect(seed.hostStyle).toBe("slack");
+    // Conversational surface → advertises elicitation (unlike the headless
+    // n8n / Perplexity workflow callers), but renders no widgets.
+    expect(seed.clientCapabilities).toEqual({ elicitation: {} });
+    expect(seed.hostCapabilitiesOverride).toEqual({});
+    expect(seed.hostContext).toEqual({});
+    expect(seed.mcpProfile).toEqual({
+      profileVersion: 1,
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25"],
+        clientInfo: { name: "slack-mcp-client", version: "1.0.0" },
+      },
+    });
+  });
 });

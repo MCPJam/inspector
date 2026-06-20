@@ -2788,6 +2788,78 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "systemPrompt": "",
     "temperature": 0.7,
   },
+  "slack/dark": {
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "elicitation": {},
+    },
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "slack",
+    "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "name": "slack-mcp-client",
+          "version": "1.0.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "anthropic/claude-haiku-4.5",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
+  "slack/light": {
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "elicitation": {},
+    },
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "slack",
+    "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "name": "slack-mcp-client",
+          "version": "1.0.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "anthropic/claude-haiku-4.5",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
   "vscode/dark": {
     "builtInToolIds": [],
     "chatUiOverride": undefined,

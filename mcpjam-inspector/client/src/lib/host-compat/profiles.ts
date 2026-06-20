@@ -108,6 +108,17 @@ const MARKET_HOSTS: readonly MarketHost[] = [
     provenance: "probe",
     rendersMcpApps: false,
   },
+  // Slack-as-client is the DIY Slackbot pattern — a real shipping target for
+  // an MCP server, but a headless one: Slack renders Block Kit, not iframes,
+  // so no `ui://` widgets. `assumed` since there's no canonical client to
+  // probe (see the Slack template in the SDK seed-host-template.ts).
+  {
+    id: "slack",
+    label: "Slack",
+    logoSrc: "/slack_logo.svg",
+    provenance: "assumed",
+    rendersMcpApps: false,
+  },
 ];
 
 /**
