@@ -246,6 +246,7 @@ export const HOST_TEMPLATE_IDS = [
   "agentcore",
   "n8n",
   "perplexity",
+  "cline",
 ] as const;
 
 export type HostTemplateId = (typeof HOST_TEMPLATE_IDS)[number];
@@ -1611,6 +1612,37 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           supportedProtocolVersions: ["2025-06-18"],
           clientInfo: { name: "mcp", version: "0.1.0" },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    description:
+      "Cline coding-agent MCP client. Tools-only client, no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "cline",
+        // The probe only identifies Cline's MCP client, not a reusable model
+        // id; keep MCPJam's simulated chat runnable with a hosted model.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Captured from the Cline 3.89.2 host probe: protocol 2025-11-25,
+      // clientInfo Cline@3.89.2, and an empty clientCapabilities object.
+      base.clientCapabilities = {};
+      // The probe reported no snapshot ("no-snapshot-yet") and Cline renders
+      // its own native agent UI, not MCP Apps widgets — so there is no
+      // ui/initialize host-capability negotiation and no hostContext.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "Cline", version: "3.89.2" },
         },
       };
       return base;
