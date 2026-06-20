@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,6 +17,9 @@ import { cn } from "@/lib/utils";
  * Registry-shaped: accepts only `className`.
  */
 export function ClineMarkIndicator({ className }: { className?: string }) {
+  const reactId = useId();
+  const maskId = `cline-indicator-eyes-${reactId.replace(/:/g, "")}`;
+
   return (
     <span
       className={cn("inline-flex min-h-6 items-center gap-2", className)}
@@ -30,7 +34,7 @@ export function ClineMarkIndicator({ className }: { className?: string }) {
         data-testid="loading-indicator-cline-mark"
       >
         <mask
-          id="cline-indicator-eyes"
+          id={maskId}
           maskUnits="userSpaceOnUse"
           x="0"
           y="0"
@@ -41,7 +45,7 @@ export function ClineMarkIndicator({ className }: { className?: string }) {
           <rect x="64" y="92" width="28" height="72" rx="14" fill="#000" />
           <rect x="108" y="92" width="28" height="72" rx="14" fill="#000" />
         </mask>
-        <g fill="currentColor" mask="url(#cline-indicator-eyes)">
+        <g fill="currentColor" mask={`url(#${maskId})`}>
           <circle cx="100" cy="25" r="22" />
           <path d="M 52 46 L 148 46 A 37 37 0 0 1 185 83 Q 206 120 185 157 A 37 37 0 0 1 148 194 L 52 194 A 37 37 0 0 1 15 157 Q -6 120 15 83 A 37 37 0 0 1 52 46 Z" />
         </g>
