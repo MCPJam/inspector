@@ -526,6 +526,7 @@
 .nds-shimmer-text {
   --nds-shimmer-faded: #d4d3cf;
   --nds-shimmer-solid: #7d7a75;
+
   background-image: linear-gradient(
     to right,
     var(--nds-shimmer-faded) 0%,
@@ -561,7 +562,7 @@
   .nds-shimmer-text {
     animation: none;
     background: none;
-    -webkit-text-fill-color: currentColor;
+    -webkit-text-fill-color: currentcolor;
   }
 }
 
