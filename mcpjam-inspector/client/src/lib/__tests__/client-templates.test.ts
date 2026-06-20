@@ -148,4 +148,23 @@ describe("client templates", () => {
       },
     });
   });
+
+  it("seeds Notion as a tools-only MCP client", () => {
+    const seed = seedFromHostTemplate("notion");
+
+    expect(
+      HOST_TEMPLATES.some((template) => template.id === "notion"),
+    ).toBe(true);
+    expect(seed.hostStyle).toBe("notion");
+    expect(seed.clientCapabilities).toEqual({});
+    expect(seed.hostCapabilitiesOverride).toEqual({});
+    expect(seed.hostContext).toEqual({});
+    expect(seed.mcpProfile).toEqual({
+      profileVersion: 1,
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25"],
+        clientInfo: { name: "notion", version: "1.0.0" },
+      },
+    });
+  });
 });
