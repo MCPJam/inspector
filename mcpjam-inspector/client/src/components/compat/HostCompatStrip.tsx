@@ -47,9 +47,8 @@ export function summarizeReports(reports: HostCompatReport[]): string {
 
 /**
  * Presentational compat strip — a row of host logos with verdict dots and a
- * one-line summary. Split from the data-fetching wrapper so it can be
- * rendered from pre-evaluated reports (e.g. the detail modal, prototype
- * harnesses) without re-fetching tools.
+ * per-host tooltips. Split from the data-fetching wrapper so it can be
+ * rendered from pre-evaluated reports without re-fetching tools.
  */
 export function HostCompatStripView({
   serverName,
@@ -72,10 +71,12 @@ export function HostCompatStripView({
         type="button"
         onClick={onOpenDetails}
         disabled={!onOpenDetails}
-        aria-label={`Host compatibility for ${serverName}`}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
+        aria-label={`Host compatibility for ${serverName}: ${summarizeReports(
+          reports
+        )}`}
+        className="inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
       >
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {reports.map((report) => (
             <Tooltip key={report.hostId}>
               <TooltipTrigger asChild>
@@ -116,9 +117,6 @@ export function HostCompatStripView({
             </Tooltip>
           ))}
         </div>
-        <span className="text-[11px] text-muted-foreground">
-          {summarizeReports(reports)}
-        </span>
       </button>
     </div>
   );
