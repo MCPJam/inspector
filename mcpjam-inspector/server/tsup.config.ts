@@ -65,6 +65,7 @@ export default defineConfig({
     "@mcpjam/sdk/host-config/internal",
     "@mcpjam/sdk/host-config/templates",
     "@mcpjam/sdk/platform",
+    "@mcpjam/sdk/public-api",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -85,6 +86,10 @@ export default defineConfig({
         "../sdk/dist/host-config/templates/index.js",
       ),
       "@mcpjam/sdk/platform": join(rootDir, "../sdk/dist/platform/index.js"),
+      "@mcpjam/sdk/public-api": join(
+        rootDir,
+        "../sdk/dist/public-api/index.js",
+      ),
     };
   },
 });
