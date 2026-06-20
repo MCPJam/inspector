@@ -63,6 +63,7 @@ describe("client templates", () => {
       true,
     );
     expect(seed.hostStyle).toBe("goose");
+    expect(seed.progressiveToolDiscovery).toBe(true);
     expect(seed.clientCapabilities).toEqual({
       extensions: {
         [MCP_UI_EXTENSION_ID]: {

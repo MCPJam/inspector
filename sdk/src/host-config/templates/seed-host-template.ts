@@ -1034,6 +1034,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         elicitation: {},
       };
 
+      // Progressive tool discovery ON for Goose-shaped hosts. Product
+      // choice, not probe data: tool disclosure is an MCPJam execution
+      // policy and does not appear in the MCP initialize handshake.
+      base.progressiveToolDiscovery = true;
+
       // Goose's captured `ui/initialize` response only advertised
       // `openLinks`. It rendered the View and supplied rich HostContext,
       // but did not claim serverTools, resources, logging, message, or
