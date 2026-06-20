@@ -247,6 +247,7 @@ export const HOST_TEMPLATE_IDS = [
   "n8n",
   "perplexity",
   "cline",
+  "notion",
 ] as const;
 
 export type HostTemplateId = (typeof HOST_TEMPLATE_IDS)[number];
@@ -1648,6 +1649,40 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: { name: "Cline", version: "3.89.2" },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    description:
+      "Notion AI agent MCP client. Tools-only client, no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "notion",
+        // Notion AI is model-provider agnostic toward MCP servers; this hosted
+        // default only keeps MCPJam's simulated chat runnable out-of-the-box.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Bare client: advertises an empty capabilities object and negotiates no
+      // MCP Apps/UI extension (no `mimeTypes`). Replace the SDK default
+      // entirely so nothing is layered on top.
+      base.clientCapabilities = {};
+      // Notion renders its own native agent UI, not MCP Apps widgets, so there
+      // is no ui/initialize host-capability negotiation and no hostContext.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          // NOTE: name/version are placeholders — only Notion's browser thinking
+          // animation was captured, not its MCP `initialize` handshake. Swap in
+          // the real clientInfo once a wire probe is available.
+          clientInfo: { name: "notion", version: "1.0.0" },
         },
       };
       return base;

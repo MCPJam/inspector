@@ -16,6 +16,7 @@ import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
 import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
+import notionLogo from "/notion_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -69,6 +70,7 @@ function getClientLogo(
   if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("cline"))
     return themeMode === "dark" ? clineLogoDark : clineLogoLight;
+  if (haystack.includes("notion")) return notionLogo;
   if (
     haystack.includes("openai") ||
     haystack.includes("chatgpt") ||

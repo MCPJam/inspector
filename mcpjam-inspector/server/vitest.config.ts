@@ -27,6 +27,10 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   "../sdk/src/host-config/templates/index.ts",
 );
 const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
+const sdkPublicApiEntry = path.resolve(
+  rootDir,
+  "../sdk/src/public-api/index.ts",
+);
 
 export default defineConfig({
   define: {
@@ -67,6 +71,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-config/internal",
           "@mcpjam/sdk/host-config/templates",
           "@mcpjam/sdk/platform",
+          "@mcpjam/sdk/public-api",
         ],
       },
     },
@@ -101,6 +106,7 @@ export default defineConfig({
         replacement: sdkHostConfigTemplatesEntry,
       },
       { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
+      { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
   },
