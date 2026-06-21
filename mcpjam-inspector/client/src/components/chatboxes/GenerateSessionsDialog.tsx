@@ -26,6 +26,9 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
+// Mirrors the backend MAX_PERSONA_COUNT and the /start `.max(10)` validator.
+const MAX_PERSONAS = 10;
+
 interface PersonaSlate {
   id: string;
   name: string;
@@ -167,9 +170,13 @@ export function GenerateSessionsDialog({
     return `$${value.toFixed(2)}`;
   };
 
+  // Personas marked to actually run in the Review stage; the /start endpoint
+  // caps this at MAX_PERSONAS, so the Run button guards on it.
+  const selectedReviewCount = personas.filter((p) => p.selected).length;
+
   function handleUseRoster() {
     const chosen = (roster ?? []).filter((p) => rosterSelected.has(p._id));
-    if (chosen.length === 0) return;
+    if (chosen.length === 0 || chosen.length > MAX_PERSONAS) return;
     setPersonas(
       chosen.map((p) => ({
         id: p.personaId,
@@ -412,11 +419,19 @@ export function GenerateSessionsDialog({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
                     {rosterSelected.size} selected
+                    {rosterSelected.size > MAX_PERSONAS ? (
+                      <span className="ml-1 text-amber-600 dark:text-amber-400">
+                        · max {MAX_PERSONAS}
+                      </span>
+                    ) : null}
                   </span>
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={rosterSelected.size === 0}
+                    disabled={
+                      rosterSelected.size === 0 ||
+                      rosterSelected.size > MAX_PERSONAS
+                    }
                     onClick={handleUseRoster}
                   >
                     Review selected ({rosterSelected.size})
@@ -554,7 +569,7 @@ export function GenerateSessionsDialog({
                   This chatbox uses your organization&apos;s model key. Running
                   these sessions will consume your provider credits (~
                   {formatUsd(
-                    (personas.filter((p) => p.selected).length *
+                    (selectedReviewCount *
                       sessionsPerPersona *
                       maxTurns *
                       ESTIMATED_TOKENS_PER_TURN *
@@ -606,7 +621,7 @@ export function GenerateSessionsDialog({
                 </div>
               ))}
             </div>
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -614,15 +629,30 @@ export function GenerateSessionsDialog({
               >
                 Back
               </Button>
-              <Button size="sm" onClick={handleRun} disabled={starting}>
-                {starting ? (
-                  <>
-                    <Loader2 className="mr-1 size-3 animate-spin" /> Starting
-                  </>
-                ) : (
-                  "Run simulation"
-                )}
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedReviewCount > MAX_PERSONAS ? (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                    Select at most {MAX_PERSONAS}
+                  </span>
+                ) : null}
+                <Button
+                  size="sm"
+                  onClick={handleRun}
+                  disabled={
+                    starting ||
+                    selectedReviewCount === 0 ||
+                    selectedReviewCount > MAX_PERSONAS
+                  }
+                >
+                  {starting ? (
+                    <>
+                      <Loader2 className="mr-1 size-3 animate-spin" /> Starting
+                    </>
+                  ) : (
+                    "Run simulation"
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
