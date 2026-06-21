@@ -29,7 +29,6 @@ import { toMCPConfig } from "@/state/server-helpers";
 import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
-  getStoredTokens,
   clearOAuthData,
   initiateOAuth,
   isElectronMcpCallbackState,
@@ -145,18 +144,24 @@ function mergeOAuthCallbackServerConfig(
     ...(omitAuthorizationHeader(
       extractRequestHeaders(existingHttpConfig?.requestInit)
     ) ?? {}),
-    ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
+    ...(omitAuthorizationHeader(
+      extractRequestHeaders(callbackConfig.requestInit)
+    ) ?? {}),
   };
   const nextRequestInit =
     existingHttpConfig?.requestInit || callbackConfig.requestInit
       ? {
           ...(existingHttpConfig?.requestInit ?? {}),
           ...(callbackConfig.requestInit ?? {}),
-          ...(Object.keys(mergedHeaders).length > 0
-            ? { headers: mergedHeaders }
-            : {}),
         }
       : undefined;
+  if (nextRequestInit) {
+    if (Object.keys(mergedHeaders).length > 0) {
+      nextRequestInit.headers = mergedHeaders;
+    } else {
+      delete nextRequestInit.headers;
+    }
+  }
 
   return {
     ...(existingHttpConfig ?? {}),
@@ -171,6 +176,30 @@ function mergeOAuthCallbackServerConfig(
       callbackConfig.capabilities ??
       existingHttpConfig?.capabilities,
   } as HttpServerConfig;
+}
+
+function stripAuthorizationFromHttpConfig(
+  config: HttpServerConfig
+): HttpServerConfig {
+  const headers = omitAuthorizationHeader(
+    extractRequestHeaders(config.requestInit)
+  );
+  const requestInit = config.requestInit
+    ? {
+        ...config.requestInit,
+      }
+    : undefined;
+  if (requestInit) {
+    if (headers) {
+      requestInit.headers = headers;
+    } else {
+      delete requestInit.headers;
+    }
+  }
+  return {
+    ...config,
+    ...(requestInit ? { requestInit } : {}),
+  };
 }
 
 /**
@@ -452,6 +481,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
     normalized.includes("requires oauth authentication") ||
+    normalized.includes("no hosted oauth credential found") ||
     normalized.includes(
       "stored hosted oauth credential is missing refresh_token"
     ) ||
@@ -1770,7 +1800,7 @@ export function useServerState({
               type: "CONNECT_SUCCESS",
               name,
               config: serverConfig,
-              tokens: getStoredTokens(name),
+              tokens: undefined,
               useOAuth,
             });
             if (result.initInfo) {
@@ -2034,9 +2064,7 @@ export function useServerState({
                 type: "CONNECT_SUCCESS",
                 name: serverName,
                 config: mergedServerConfig,
-                tokens: isHostedProjectCallback
-                  ? undefined
-                  : getStoredTokens(serverName),
+                tokens: undefined,
                 useOAuth: true,
                 oauthTrace: result.oauthTrace,
               });
@@ -2341,8 +2369,8 @@ export function useServerState({
       if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
         // OAuth in hosted mode requires a Convex serverId to bind credentials
         // to; without it the OAuth dance would complete without a durable
-        // credential. Local-mode OAuth follows the same constraint post-
-        // unification but the legacy localStorage fallback still catches it.
+        // credential. Local-mode OAuth is guarded later when tokens are
+        // imported into backend storage instead of being saved locally.
         const errorMessage =
           syncErr instanceof Error
             ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
@@ -2375,50 +2403,55 @@ export function useServerState({
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
-          const existingTokens = getStoredTokens(formData.name);
-          if (existingTokens?.access_token) {
-            logger.info("Connecting with existing OAuth tokens", {
-              serverName: formData.name,
+          const serverConfig = {
+            url: formData.url,
+            ...(formData.headers && Object.keys(formData.headers).length > 0
+              ? { requestInit: { headers: formData.headers } }
+              : {}),
+          } satisfies HttpServerConfig;
+          logger.info("Connecting with synced OAuth credentials", {
+            serverName: formData.name,
+          });
+          const storedCredentialResult = await guardedTestConnection(
+            withProjectConnectionDefaults(serverConfig),
+            formData.name
+          );
+          if (isStaleOp(formData.name, token)) return;
+          if (storedCredentialResult.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: formData.name,
+              config: serverConfig,
+              tokens: undefined,
+              useOAuth: true,
             });
-            const serverConfig = {
-              url: formData.url,
-              requestInit: {
-                headers: {
-                  Authorization: `Bearer ${existingTokens.access_token}`,
-                  ...(formData.headers || {}),
-                },
-              },
-            } satisfies HttpServerConfig;
-            const connectionResult = await guardedTestConnection(
-              withProjectConnectionDefaults(serverConfig),
-              formData.name
+            toast.success("Connected successfully with OAuth!");
+            storeInitInfo(formData.name, storedCredentialResult.initInfo).catch(
+              (err) =>
+                logger.warn("Failed to fetch init info", {
+                  serverName: formData.name,
+                  err,
+                })
             );
-            if (isStaleOp(formData.name, token)) return;
-            if (connectionResult.success) {
-              dispatch({
-                type: "CONNECT_SUCCESS",
-                name: formData.name,
-                config: serverConfig,
-                tokens: existingTokens,
-                useOAuth: true,
-              });
-              toast.success(
-                "Connected successfully with existing OAuth tokens!"
-              );
-              storeInitInfo(formData.name, connectionResult.initInfo).catch(
-                (err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  })
-              );
-              return;
-            }
-            logger.warn("Existing tokens failed, will trigger OAuth flow", {
-              serverName: formData.name,
-              error: connectionResult.error,
-            });
+            return;
           }
+          if (!requiresFreshOAuthAuthorization(storedCredentialResult.error)) {
+            const errorMessage =
+              storedCredentialResult.error || "OAuth connection failed";
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: errorMessage,
+              normalized: (storedCredentialResult as { normalized?: unknown })
+                .normalized as any,
+            });
+            toast.error(errorMessage);
+            return;
+          }
+          logger.info("Synced OAuth credentials require a fresh OAuth flow", {
+            serverName: formData.name,
+            error: storedCredentialResult.error,
+          });
 
           dispatch({
             type: "UPSERT_SERVER",
@@ -2476,8 +2509,11 @@ export function useServerState({
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
+              const oauthServerConfig = stripAuthorizationFromHttpConfig(
+                oauthResult.serverConfig
+              );
               const connectionResult = await guardedTestConnection(
-                withProjectConnectionDefaults(oauthResult.serverConfig),
+                withProjectConnectionDefaults(oauthServerConfig),
                 formData.name
               );
               if (isStaleOp(formData.name, token)) return;
@@ -2485,11 +2521,8 @@ export function useServerState({
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: formData.name,
-                  config: oauthResult.serverConfig,
-                  tokens:
-                    HOSTED_MODE && isAuthenticated
-                      ? undefined
-                      : getStoredTokens(formData.name),
+                  config: oauthServerConfig,
+                  tokens: undefined,
                   useOAuth: true,
                   oauthTrace: oauthResult.oauthTrace,
                 });
@@ -2764,13 +2797,6 @@ export function useServerState({
         token_type: tokens.tokenType || "Bearer",
         expires_in: tokens.expiresIn,
       };
-      if (!HOSTED_MODE) {
-        localStorage.setItem(
-          `mcp-tokens-${serverName}`,
-          JSON.stringify(tokenData)
-        );
-      }
-
       if (!HOSTED_MODE && tokens.clientId) {
         localStorage.setItem(
           `mcp-client-${serverName}`,
@@ -2787,48 +2813,60 @@ export function useServerState({
       if (!HOSTED_MODE) {
         const resolved = tryResolveProjectServer(serverName);
         const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
-        if (resolved && normalizedTokens) {
-          if (!tokens.clientId) {
-            return {
-              success: false,
-              error:
-                "OAuth client information missing client_id; cannot import tokens to Convex",
-            };
-          }
-          const storedOAuthConfig = readStoredOAuthConfig(serverName);
-          const isRegistry =
-            !!storedOAuthConfig.registryServerId &&
-            storedOAuthConfig.useRegistryOAuthProxy === true;
-          await importHostedOAuthTokens({
-            projectId: resolved.projectId,
-            serverId: resolved.serverId,
-            serverUrl,
-            ...(storedOAuthConfig.resourceUrl
-              ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
-              : {}),
-            kind: isRegistry ? "registry" : "generic",
-            ...(isRegistry
-              ? {
-                  registryServerId: storedOAuthConfig.registryServerId,
-                  useRegistryOAuthProxy: true,
-                }
-              : {}),
-            clientInformation: {
-              clientId: tokens.clientId,
-              ...(tokens.clientSecret
-                ? { clientSecret: tokens.clientSecret }
-                : {}),
-            },
-            tokens: normalizedTokens,
-          });
+        if (!resolved) {
+          localStorage.removeItem(`mcp-tokens-${serverName}`);
+          return {
+            success: false,
+            error: "OAuth server is not synced; cannot store tokens securely",
+          };
         }
+        if (!normalizedTokens) {
+          localStorage.removeItem(`mcp-tokens-${serverName}`);
+          return {
+            success: false,
+            error:
+              "OAuth token response missing access_token; cannot import tokens to Convex",
+          };
+        }
+        if (!tokens.clientId) {
+          localStorage.removeItem(`mcp-tokens-${serverName}`);
+          return {
+            success: false,
+            error:
+              "OAuth client information missing client_id; cannot import tokens to Convex",
+          };
+        }
+        const storedOAuthConfig = readStoredOAuthConfig(serverName);
+        const isRegistry =
+          !!storedOAuthConfig.registryServerId &&
+          storedOAuthConfig.useRegistryOAuthProxy === true;
+        await importHostedOAuthTokens({
+          projectId: resolved.projectId,
+          serverId: resolved.serverId,
+          serverUrl,
+          ...(storedOAuthConfig.resourceUrl
+            ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+            : {}),
+          kind: isRegistry ? "registry" : "generic",
+          ...(isRegistry
+            ? {
+                registryServerId: storedOAuthConfig.registryServerId,
+                useRegistryOAuthProxy: true,
+              }
+            : {}),
+          clientInformation: {
+            clientId: tokens.clientId,
+            ...(tokens.clientSecret
+              ? { clientSecret: tokens.clientSecret }
+              : {}),
+          },
+          tokens: normalizedTokens,
+        });
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
       }
 
       const serverConfig = {
         url: serverUrl,
-        requestInit: {
-          headers: { Authorization: `Bearer ${tokens.accessToken}` },
-        },
       } satisfies HttpServerConfig;
 
       dispatch({
@@ -2853,7 +2891,7 @@ export function useServerState({
             type: "CONNECT_SUCCESS",
             name: serverName,
             config: serverConfig,
-            tokens: getStoredTokens(serverName),
+            tokens: undefined,
             useOAuth: true,
           });
           await storeInitInfo(serverName, result.initInfo);
@@ -3538,9 +3576,12 @@ export function useServerState({
             error: errorMessage,
           };
         }
+        const oauthServerConfig = stripAuthorizationFromHttpConfig(
+          oauthResult.serverConfig!
+        );
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(oauthResult.serverConfig!)
+          withProjectConnectionDefaults(oauthServerConfig)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -3552,11 +3593,8 @@ export function useServerState({
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: oauthResult.serverConfig!,
-            tokens:
-              HOSTED_MODE && isAuthenticated
-                ? undefined
-                : getStoredTokens(serverName),
+            config: oauthServerConfig,
+            tokens: undefined,
             useOAuth: true,
             oauthTrace: oauthResult.oauthTrace,
           });
@@ -3582,14 +3620,14 @@ export function useServerState({
         };
       }
 
-      if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withProjectConnectionDefaults(
+      if (server.useOAuth === true) {
+        const syncedReconnectConfig = withProjectConnectionDefaults(
           server.config
         );
         try {
           const result = await guardedReconnectServer(
             serverName,
-            hostedReconnectConfig
+            syncedReconnectConfig
           );
           if (isStaleOp(serverName, token)) {
             return {
@@ -3605,7 +3643,7 @@ export function useServerState({
               tokens: undefined,
               useOAuth: true,
             });
-            logger.info("Hosted reconnect successful using stored OAuth", {
+            logger.info("Reconnect successful using synced OAuth credentials", {
               serverName,
               result,
             });
@@ -3622,7 +3660,7 @@ export function useServerState({
               name: serverName,
               error: errorMessage,
             });
-            logger.error("Hosted reconnect failed", { serverName, result });
+            logger.error("OAuth reconnect failed", { serverName, result });
             reportError(errorMessage || `Failed to reconnect: ${serverName}`);
             return {
               status: "failed",
@@ -3631,7 +3669,7 @@ export function useServerState({
           }
 
           logger.info(
-            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: result.error }
           );
         } catch (error) {
@@ -3651,7 +3689,7 @@ export function useServerState({
               name: serverName,
               error: errorMessage,
             });
-            logger.error("Hosted reconnect failed", {
+            logger.error("OAuth reconnect failed", {
               serverName,
               error: errorMessage,
             });
@@ -3663,7 +3701,7 @@ export function useServerState({
           }
 
           logger.info(
-            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: errorMessage }
           );
         }
@@ -3730,9 +3768,13 @@ export function useServerState({
             error: authResult.error,
           };
         }
+        const authServerConfig =
+          "url" in authResult.serverConfig
+            ? stripAuthorizationFromHttpConfig(authResult.serverConfig)
+            : authResult.serverConfig;
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(authResult.serverConfig)
+          withProjectConnectionDefaults(authServerConfig)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -3744,7 +3786,7 @@ export function useServerState({
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: authResult.serverConfig,
+            config: authServerConfig,
             tokens: authResult.tokens,
             useOAuth: server.useOAuth === true || authResult.tokens != null,
             oauthTrace: authResult.oauthTrace,

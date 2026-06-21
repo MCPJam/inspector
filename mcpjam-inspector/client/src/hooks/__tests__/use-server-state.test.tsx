@@ -1043,7 +1043,7 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.hash).toBe("");
   });
 
-  it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {
+  it("preserves existing HTTP config without keeping the callback bearer token", async () => {
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
     readStoredOAuthConfigMock.mockReturnValue({
@@ -1102,7 +1102,6 @@ describe("useServerState OAuth callback failures", () => {
         url: "https://example.com/mcp",
         requestInit: expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: "Bearer access-token",
             "x-existing-header": "present",
           }),
         }),
@@ -1117,6 +1116,11 @@ describe("useServerState OAuth callback failures", () => {
             listChanged: true,
           },
         },
+      })
+    );
+    expect(testConnectionMock.mock.calls.at(-1)?.[0]?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
       })
     );
 
@@ -1172,15 +1176,15 @@ describe("useServerState OAuth callback failures", () => {
     expect(testConnectionMock.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({
         url: "https://example.com/mcp",
-        requestInit: expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer access-token",
-          }),
-        }),
       })
     );
 
     const connectConfig = testConnectionMock.mock.calls.at(-1)?.[0];
+    expect(connectConfig?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
+      })
+    );
     expect(connectConfig).not.toHaveProperty("command");
     expect(connectConfig).not.toHaveProperty("args");
   });
@@ -1334,6 +1338,69 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("strips OAuth bearer headers from reconnect fallback configs", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(reconnectServer)
+      .mockResolvedValueOnce({
+        success: false,
+        error: "Requires OAuth authentication",
+      } as any)
+      .mockResolvedValueOnce({
+        success: true,
+        initInfo: {
+          clientCapabilities: {},
+        },
+      } as any);
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+            "X-Keep": "yes",
+          },
+        },
+      },
+      tokens: undefined,
+    } as any);
+
+    await result.current.handleReconnect("demo-server");
+
+    await waitFor(() => {
+      expect(vi.mocked(reconnectServer)).toHaveBeenCalledTimes(2);
+    });
+
+    const [, effectiveConfig] =
+      vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+    expect(effectiveConfig?.requestInit?.headers).toEqual({
+      "X-Keep": "yes",
+    });
+
+    const successAction = dispatch.mock.calls.find(
+      ([action]) => action.type === "CONNECT_SUCCESS"
+    )?.[0] as AppAction | undefined;
+    expect(successAction?.config).toMatchObject({
+      url: "https://example.com/mcp",
+      requestInit: {
+        headers: {
+          "X-Keep": "yes",
+        },
+      },
+    });
+    expect((successAction?.config as any)?.requestInit?.headers).not.toEqual(
+      expect.objectContaining({
+        Authorization: "Bearer access-token",
+      })
+    );
+  });
+
   it("prefers an exact per-server clientCapabilities override over project capability merging", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(
@@ -1409,6 +1476,10 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("resolves preregistered registry OAuth config before initiating Asana connect", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockResolvedValueOnce({
       clientId: "asana-client-id",
       scopes: ["default"],
@@ -1445,7 +1516,49 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("starts a fresh OAuth flow when no synced OAuth credential exists yet", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "No hosted OAuth credential found",
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "New OAuth Server",
+        type: "http",
+        url: "https://oauth.example.com/mcp",
+        useOAuth: true,
+      });
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "New OAuth Server",
+        serverUrl: "https://oauth.example.com/mcp",
+      })
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPSERT_SERVER",
+      name: "New OAuth Server",
+      server: expect.objectContaining({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      }),
+    });
+    expect(toastError).not.toHaveBeenCalledWith(
+      "No hosted OAuth credential found"
+    );
+  });
+
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockResolvedValueOnce({
       scopes: ["read", "write"],
     });
@@ -1478,6 +1591,10 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("fails registry OAuth initiation when the dedicated OAuth config query fails", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Requires OAuth authentication",
+    });
     mockConvexQuery.mockRejectedValueOnce(new Error("registry lookup failed"));
 
     const dispatch = vi.fn();
