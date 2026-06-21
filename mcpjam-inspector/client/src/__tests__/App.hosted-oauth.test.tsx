@@ -709,7 +709,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the chatbox link and try again."
+        "Your guest session expired. Reopen the swarm link and try again."
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();

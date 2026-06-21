@@ -345,11 +345,11 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="stale-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
+      await screen.findByRole("heading", { name: "Swarm Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access."
+        "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access."
       )
     ).toBeInTheDocument();
     expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
@@ -612,11 +612,11 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="broken-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
+      await screen.findByRole("heading", { name: "Swarm Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We couldn't open this chatbox right now. Please try again or open MCPJam."
+        "We couldn't open this swarm right now. Please try again or open MCPJam."
       )
     ).toBeInTheDocument();
     expect(
