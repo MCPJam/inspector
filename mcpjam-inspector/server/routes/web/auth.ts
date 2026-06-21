@@ -926,8 +926,23 @@ export async function createAuthorizedManager(
     })
   );
 
+  const authorizedConfigs = Object.fromEntries(configEntries);
+  const overlappingAdditionalServerIds = Object.keys(
+    additionalServerConfigs
+  ).filter((serverId) =>
+    Object.prototype.hasOwnProperty.call(authorizedConfigs, serverId)
+  );
+  if (overlappingAdditionalServerIds.length > 0) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Additional MCP server configs cannot override authorized project servers.",
+      { serverIds: overlappingAdditionalServerIds }
+    );
+  }
+
   const manager = new MCPClientManager(
-    { ...Object.fromEntries(configEntries), ...additionalServerConfigs },
+    { ...authorizedConfigs, ...additionalServerConfigs },
     {
       defaultTimeout: timeoutMs,
       rpcLogger: options?.rpcLogger,
