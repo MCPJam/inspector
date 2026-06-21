@@ -80,7 +80,7 @@ export function ChatboxPublishClientBar({
         selectedServerIds: attachment.serverIds,
       });
       toast.success(
-        `Chatbox now connects to ${attachment.serverIds.length} server${attachment.serverIds.length === 1 ? "" : "s"} via "${attachment.name}".`,
+        `Swarm now connects to ${attachment.serverIds.length} server${attachment.serverIds.length === 1 ? "" : "s"} via "${attachment.name}".`,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

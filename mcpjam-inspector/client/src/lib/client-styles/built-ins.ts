@@ -297,7 +297,7 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   chatUi: {
     label: "Claude",
     shortLabel: "Claude-style host",
-    pickerDescription: "Claude-style chatbox chrome",
+    pickerDescription: "Claude-style swarm chrome",
     logoSrc: claudeLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
@@ -364,7 +364,7 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   chatUi: {
     label: "ChatGPT",
     shortLabel: "ChatGPT-style host",
-    pickerDescription: "OpenAI-style chatbox chrome",
+    pickerDescription: "OpenAI-style swarm chrome",
     logoSrc: openaiLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],

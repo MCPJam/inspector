@@ -262,14 +262,14 @@ describe("ChatboxCanvas", () => {
     );
 
     const addTrigger = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Add project servers to chatbox"]',
+      '[aria-label="Add project servers to swarm"]',
     );
     expect(addTrigger).not.toBeNull();
     fireEvent.click(addTrigger!);
 
     expect(
       screen.getByText(
-        "Pick HTTPS servers from your project for this chatbox.",
+        "Pick HTTPS servers from your project for this swarm.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("HTTPS Server")).toBeInTheDocument();

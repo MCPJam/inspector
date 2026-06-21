@@ -133,7 +133,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This project has reached its chatbox limit (5). Upgrade to continue."
+      "This project has reached its swarm limit (5). Upgrade to continue."
     );
   });
 
@@ -221,7 +221,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Team to continue."
+      "Swarms is not included in the Free plan. Upgrade to Team to continue."
     );
   });
 
@@ -240,7 +240,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Team."
+      "Swarms is not included in the Free plan. Ask an organization owner to upgrade to Team."
     );
   });
 

@@ -407,7 +407,7 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    aria-label="Add project servers to chatbox"
+                    aria-label="Add project servers to swarm"
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
                     className={plusHandleButtonClass}
@@ -422,7 +422,7 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                   className="w-80 p-0 z-[100]"
                 >
                   <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                    Pick HTTPS servers from your project for this chatbox.
+                    Pick HTTPS servers from your project for this swarm.
                   </p>
                   <div className="p-1">
                     <ProjectServerPickerList
@@ -702,7 +702,7 @@ export function ChatboxCanvas({
                 variant="ghost"
                 size="icon"
                 className="pointer-events-auto size-10 shrink-0 text-muted-foreground"
-                aria-label="About the chatbox layout"
+                aria-label="About the swarm layout"
               >
                 <CircleHelp className="size-5" />
               </Button>

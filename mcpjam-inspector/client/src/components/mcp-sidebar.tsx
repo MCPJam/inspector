@@ -210,7 +210,7 @@ const navigationSections: NavSection[] = [
         icon: Layers,
       },
       {
-        title: "Chatboxes",
+        title: "Swarms",
         url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",

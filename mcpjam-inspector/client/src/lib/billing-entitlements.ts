@@ -133,7 +133,7 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
     case "cicd":
       return "Evals CI/CD";
     case "chatboxes":
-      return "Chatboxes";
+      return "Swarms";
     case "auditLog":
       return "Audit Log";
     case "customDomains":
@@ -161,7 +161,7 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
     case "maxServersPerProject":
       return "Servers per project";
     case "maxChatboxesPerProject":
-      return "Chatboxes per project";
+      return "Swarms per project";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
     case "maxEvalIterationsPerMonth":
@@ -303,8 +303,8 @@ export function formatBillingLimitReachedMessage(
   }
   if (limitName === "maxChatboxesPerProject") {
     return canManageBilling
-      ? `This project has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
-      : `This project has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+      ? `This project has reached its swarm limit (${allowedValue}). Upgrade to continue.`
+      : `This project has reached its swarm limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "insightsPerDay") {
     return canManageBilling
