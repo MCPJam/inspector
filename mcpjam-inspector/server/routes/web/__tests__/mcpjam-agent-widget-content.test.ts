@@ -19,15 +19,23 @@ const managerState = vi.hoisted(() => ({
   disconnectAllServers: vi.fn(async () => {}),
 }));
 
+// The route authorizes the caller's project servers through this helper
+// (same path chat-v2 uses). The default impl stands up a fake manager that
+// owns both the requested project servers and the injected built-ins.
+const authMocks = vi.hoisted(() => ({ createAuthorizedManager: vi.fn() }));
+
 vi.mock("@mcpjam/sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@mcpjam/sdk")>();
   class FakeMCPClientManager {
+    configs: Record<string, any>;
     constructor(configs: Record<string, any>) {
+      this.configs = configs;
       managerState.constructedConfigs.push(configs);
     }
     readResource = managerState.readResource;
     disconnectAllServers = managerState.disconnectAllServers;
     listTools = managerState.listTools;
+    listServers = () => Object.keys(this.configs);
   }
   return { ...actual, MCPClientManager: FakeMCPClientManager };
 });
@@ -69,6 +77,8 @@ vi.mock("../auth.js", () => {
       message: error?.message ?? "Internal error",
       details: error?.details,
     }),
+    callerContextFromHono: () => ({}),
+    createAuthorizedManager: authMocks.createAuthorizedManager,
   };
 });
 
@@ -108,6 +118,35 @@ beforeEach(() => {
   managerState.listTools.mockResolvedValue({ tools: [] });
   managerState.disconnectAllServers.mockClear();
   streamWebChatTurn.mockClear();
+  authMocks.createAuthorizedManager.mockReset();
+  // Default: authorize every requested project server and merge the injected
+  // built-ins, returning a manager that owns the union.
+  authMocks.createAuthorizedManager.mockImplementation(
+    async (
+      _caller: unknown,
+      _bearer: unknown,
+      _projectId: unknown,
+      serverIds: string[],
+      _timeout: unknown,
+      _oauth: unknown,
+      _caps: unknown,
+      opts?: { additionalServerConfigs?: Record<string, unknown> }
+    ) => {
+      const configs: Record<string, unknown> = {
+        ...(opts?.additionalServerConfigs ?? {}),
+        ...Object.fromEntries((serverIds ?? []).map((id) => [id, {}])),
+      };
+      managerState.constructedConfigs.push(configs);
+      return {
+        manager: {
+          listServers: () => Object.keys(configs),
+          listTools: managerState.listTools,
+          disconnectAllServers: managerState.disconnectAllServers,
+        },
+        oauthServerUrls: {},
+      };
+    }
+  );
 });
 
 describe("POST /api/web/mcpjam-agent ambient project context", () => {
@@ -175,6 +214,95 @@ describe("POST /api/web/mcpjam-agent ambient project context", () => {
     // about them either.
     expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
     expect(args.prepare.systemPrompt).toBe("Be terse.");
+  });
+});
+
+describe("POST /api/web/mcpjam-agent project servers", () => {
+  it("authorizes the caller's project servers and advertises their tools alongside the built-ins", async () => {
+    const app = makeApp();
+    const response = await app.request("/api/web/mcpjam-agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "anthropic/claude-haiku-4.5" },
+        chatSessionId: "session_1",
+        projectId: "proj_ambient",
+        // Synthetic ids are dropped and duplicate project ids are deduped;
+        // names must stay aligned with the surviving ids.
+        selectedServerIds: [
+          MCPJAM_PLATFORM_SERVER_ID,
+          "srv_real_1",
+          "srv_real_1",
+          "srv_real_2",
+        ],
+        selectedServerNames: [
+          "platform",
+          "My Server",
+          "Duplicate Label",
+          "Other Server",
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    // The project server is authorized through the same Convex check chat-v2
+    // uses (strict), with the two MCPJam-owned servers injected as
+    // `additionalServerConfigs` (which skip project authorization).
+    expect(authMocks.createAuthorizedManager).toHaveBeenCalledTimes(1);
+    const callArgs = authMocks.createAuthorizedManager.mock.calls[0]!;
+    expect(callArgs[3]).toEqual(["srv_real_1", "srv_real_2"]);
+    const opts = callArgs[7] as {
+      serverNames?: string[];
+      additionalServerConfigs?: Record<string, unknown>;
+    };
+    expect(opts.serverNames).toEqual(["My Server", "Other Server"]);
+    expect(opts.additionalServerConfigs).toHaveProperty("mcpjam-docs");
+    expect(opts.additionalServerConfigs).toHaveProperty(
+      MCPJAM_PLATFORM_SERVER_ID
+    );
+
+    // The user's server tools reach the model alongside the built-ins.
+    const streamArgs = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+      prepare: { selectedServerIds: string[] };
+    };
+    expect(streamArgs.prepare.selectedServerIds).toContain("srv_real_1");
+    expect(streamArgs.prepare.selectedServerIds).toContain("srv_real_2");
+    expect(streamArgs.prepare.selectedServerIds).toContain(
+      MCPJAM_PLATFORM_SERVER_ID
+    );
+    expect(streamArgs.prepare.selectedServerIds).toContain("mcpjam-docs");
+  });
+
+  it("skips the Convex authorize round trip when no project servers are sent", async () => {
+    const app = makeApp();
+    const response = await app.request("/api/web/mcpjam-agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "anthropic/claude-haiku-4.5" },
+        chatSessionId: "session_1",
+        projectId: "proj_ambient",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(authMocks.createAuthorizedManager).not.toHaveBeenCalled();
+    const streamArgs = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+      prepare: { selectedServerIds: string[] };
+    };
+    expect(streamArgs.prepare.selectedServerIds).toEqual([
+      "mcpjam-docs",
+      MCPJAM_PLATFORM_SERVER_ID,
+    ]);
   });
 });
 

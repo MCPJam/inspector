@@ -89,13 +89,12 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
-import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { useResolvedSelectedMcpServers } from "@/hooks/use-resolved-selected-mcp-servers";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -317,26 +316,14 @@ export function ChatTabV2({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
   });
-  const { serversById, serversByName } = useProjectServers({
-    isAuthenticated: isConvexAuthenticated,
+  const {
+    serversById,
+    selectedServerIds: hostedSelectedServerIds,
+    oauthTokens: hostedOAuthTokens,
+  } = useResolvedSelectedMcpServers({
     projectId: convexProjectId,
+    selectedServerNames: selectedConnectedServerNames,
   });
-  const hostedSelectedServerIds = useMemo(
-    () =>
-      selectedConnectedServerNames
-        .map((serverName) => serversByName.get(serverName))
-        .filter((serverId): serverId is string => !!serverId),
-    [selectedConnectedServerNames, serversByName]
-  );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedConnectedServerNames,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
-      ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
-  );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxId

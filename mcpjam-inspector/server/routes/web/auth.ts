@@ -775,14 +775,22 @@ export async function createAuthorizedManager(
      * undefined (SDK chooses at request time).
      */
     mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+    /**
+     * Extra pre-built server configs merged into the manager alongside the
+     * authorized project servers. Used by the MCPJam Agent to bolt its
+     * MCPJam-owned servers (docs + platform) onto the caller's own project
+     * servers — these are NOT routed through project authorization.
+     */
+    additionalServerConfigs?: Record<string, HttpServerConfig>;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
   const uniqueServerIds = Array.from(new Set(serverIds));
+  const additionalServerConfigs = options?.additionalServerConfigs ?? {};
   if (uniqueServerIds.length === 0) {
     return {
       manager: new MCPClientManager(
-        {},
+        { ...additionalServerConfigs },
         {
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
@@ -918,11 +926,14 @@ export async function createAuthorizedManager(
     })
   );
 
-  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
-    defaultTimeout: timeoutMs,
-    rpcLogger: options?.rpcLogger,
-    retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-  });
+  const manager = new MCPClientManager(
+    { ...Object.fromEntries(configEntries), ...additionalServerConfigs },
+    {
+      defaultTimeout: timeoutMs,
+      rpcLogger: options?.rpcLogger,
+      retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    }
+  );
   return {
     manager,
     oauthServerUrls,
