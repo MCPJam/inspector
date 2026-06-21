@@ -74,9 +74,9 @@ interface ChatboxDisplayError {
 }
 
 const INVALID_CHATBOX_LINK_MESSAGE =
-  "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access.";
+  "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access.";
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
-  "We couldn't open this chatbox right now. Please try again or open MCPJam.";
+  "We couldn't open this swarm right now. Please try again or open MCPJam.";
 
 type ChatboxBootstrapAuthMode = "workos" | "guest";
 type ChatboxLandingState =
@@ -159,7 +159,7 @@ function getChatboxDisplayError(
   if (!error) {
     return {
       kind: "invalid_link",
-      title: "Chatbox Link Unavailable",
+      title: "Swarm Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
@@ -208,14 +208,14 @@ function getChatboxDisplayError(
   if (isInvalidLink) {
     return {
       kind: "invalid_link",
-      title: "Chatbox Link Unavailable",
+      title: "Swarm Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
 
   return {
     kind: "unexpected",
-    title: "Chatbox Link Unavailable",
+    title: "Swarm Link Unavailable",
     message: UNEXPECTED_CHATBOX_ERROR_MESSAGE,
   };
 }
@@ -546,7 +546,7 @@ export function ChatboxChatPage({
           if (!nextSession) {
             throw createChatboxRouteError(
               502,
-              "Chatbox redeem returned an incomplete bootstrap payload."
+              "Swarm redeem returned an incomplete bootstrap payload."
             );
           }
 
@@ -767,7 +767,7 @@ export function ChatboxChatPage({
     // Copy link work across reloads.
     const token = shareableToken;
     if (!session || !token) {
-      toast.error("Chatbox link unavailable");
+      toast.error("Swarm link unavailable");
       return;
     }
 
@@ -780,9 +780,9 @@ export function ChatboxChatPage({
       await navigator.clipboard.writeText(
         buildChatboxLink(token, session.payload.name)
       );
-      toast.success("Chatbox link copied");
+      toast.success("Swarm link copied");
     } catch {
-      toast.error("Failed to copy chatbox link");
+      toast.error("Failed to copy swarm link");
     }
   }, [session, shareableToken]);
 

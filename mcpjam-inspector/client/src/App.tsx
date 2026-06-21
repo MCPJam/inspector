@@ -1442,7 +1442,7 @@ export default function App() {
               return {
                 success: false,
                 error:
-                  "Your guest session expired. Reopen the chatbox link and try again.",
+                  "Your guest session expired. Reopen the swarm link and try again.",
               };
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;

@@ -62,15 +62,15 @@ export function ChatboxDeleteConfirmDialog({
         className="gap-4 sm:max-w-md"
       >
         <DialogHeader className="gap-2 text-left">
-          <DialogTitle className="text-foreground">Delete chatbox?</DialogTitle>
+          <DialogTitle className="text-foreground">Delete swarm?</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 <span className="font-medium text-foreground">
-                  {chatboxName || "This chatbox"}
+                  {chatboxName || "This swarm"}
                 </span>{" "}
                 will be removed from this project. The hosted link will stop
-                working and saved usage history for this chatbox will be
+                working and saved usage history for this swarm will be
                 cleared.
               </p>
               <p>You cannot undo this.</p>

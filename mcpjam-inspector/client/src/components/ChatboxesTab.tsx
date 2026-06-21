@@ -168,7 +168,7 @@ export function ChatboxesTab({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to provision chatbox for host",
+            : "Failed to provision swarm for host",
         );
       });
     return () => {
@@ -216,7 +216,7 @@ export function ChatboxesTab({
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
           <p className="mt-3 text-sm font-medium">Pick a host</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the host bar at the top to choose which host's chatbox you
+            Use the host bar at the top to choose which host's swarm you
             want to manage.
           </p>
         </div>
@@ -228,7 +228,7 @@ export function ChatboxesTab({
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        <span className="text-sm">Loading chatbox…</span>
+        <span className="text-sm">Loading swarm…</span>
       </div>
     );
   }
@@ -241,7 +241,7 @@ export function ChatboxesTab({
     if (previewedHostId && ensureCompletedNullHosts.has(previewedHostId)) {
       return (
         <ChatboxLoadFailure
-          title="Couldn't load this host's chatbox"
+          title="Couldn't load this host's swarm"
           body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this host."
         />
       );
@@ -251,7 +251,7 @@ export function ChatboxesTab({
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        <span className="text-sm">Provisioning chatbox for this host…</span>
+        <span className="text-sm">Provisioning swarm for this host…</span>
       </div>
     );
   }
@@ -265,7 +265,7 @@ export function ChatboxesTab({
         <div className="flex min-w-0 items-center justify-center">
           <ViewModeSelector
             value={tab}
-            ariaLabel="Chatbox view"
+            ariaLabel="Swarm view"
             onChange={(next) => {
               setTab(next as ChatboxTab);
               // Manual navigation supersedes the deep link — drop the params
@@ -300,7 +300,7 @@ export function ChatboxesTab({
                           onClick={() =>
                             window.open(publishLink, "_blank", "noopener")
                           }
-                          title="Open the published chatbox in a new tab"
+                          title="Open the published swarm in a new tab"
                         >
                           <ExternalLink className="mr-1.5 size-4" />
                           Open preview
@@ -423,7 +423,7 @@ function ChatboxPreviewPane({
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
           <p className="mt-3 text-sm font-medium">No share link yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Publish the chatbox to generate a share link, then come back
+            Publish the swarm to generate a share link, then come back
             here to preview it.
           </p>
         </div>
@@ -435,7 +435,7 @@ function ChatboxPreviewPane({
       <iframe
         key={publishLink}
         src={publishLink}
-        title="Chatbox preview"
+        title="Swarm preview"
         className="size-full flex-1 border-0 bg-background"
         allow={allow}
       />

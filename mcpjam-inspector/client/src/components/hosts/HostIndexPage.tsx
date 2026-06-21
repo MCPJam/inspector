@@ -84,7 +84,7 @@ export function HostIndexPage({
         <EmptyState
           icon={Server}
           title="No hosts yet"
-          description="Create a named host to reuse across Chat, Chatboxes, and Evals."
+          description="Create a named host to reuse across Chat, Swarms, and Evals."
         >
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="mr-2 h-4 w-4" />
