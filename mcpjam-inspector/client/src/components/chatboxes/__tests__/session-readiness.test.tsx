@@ -45,6 +45,11 @@ describe("SessionReadinessBadge", () => {
     expect(screen.getByText(/Not ready/)).toBeInTheDocument();
     expect(screen.getByText(/· 2/)).toBeInTheDocument();
   });
+
+  it("shows a distinct failed state", () => {
+    render(<SessionReadinessBadge readiness={ready({ status: "failed" })} />);
+    expect(screen.getByText(/Readiness failed/i)).toBeInTheDocument();
+  });
 });
 
 describe("SessionInsightBar", () => {
@@ -91,5 +96,18 @@ describe("SessionInsightBar", () => {
   it("shows a progress state while pending", () => {
     render(<SessionInsightBar readiness={ready({ status: "pending" })} />);
     expect(screen.getByText(/in progress/i)).toBeInTheDocument();
+  });
+
+  it("surfaces the error on a failed analysis", () => {
+    render(
+      <SessionInsightBar
+        readiness={ready({
+          status: "failed",
+          errorMessage: "trace unreadable",
+        })}
+      />
+    );
+    expect(screen.getByText(/Readiness analysis failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/trace unreadable/)).toBeInTheDocument();
   });
 });

@@ -51,6 +51,10 @@ interface ClusterSummary {
   memberCount?: number;
 }
 
+// Mirrors the backend MAX_PERSONA_COUNT (and the /start `.max(10)` validator):
+// a single run accepts at most this many personas.
+const MAX_RUN_PERSONAS = 10;
+
 export function PersonasTab({ chatbox }: { chatbox: ChatboxSettings }) {
   const roster = useSortedRoster(usePersonaRoster(chatbox.chatboxId));
   const { create, seedFromClusters } = usePersonaMutations();
@@ -60,6 +64,13 @@ export function PersonasTab({ chatbox }: { chatbox: ChatboxSettings }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
+
+  // Selection/focus are per-chatbox; clear them on a chatbox switch so the
+  // track-record panel never renders a persona from the previous chatbox.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setFocusedId(null);
+  }, [chatbox.chatboxId]);
 
   const clusterData = useQuery(
     "chatSessions:listClustersByChatbox" as any,
@@ -178,13 +189,26 @@ export function PersonasTab({ chatbox }: { chatbox: ChatboxSettings }) {
             ))}
           </div>
         ) : null}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {selectedPersonas.length > MAX_RUN_PERSONAS ? (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+              Select at most {MAX_RUN_PERSONAS}
+            </span>
+          ) : null}
           <Button
             type="button"
             size="sm"
             className="rounded-full"
-            disabled={selectedPersonas.length === 0}
+            disabled={
+              selectedPersonas.length === 0 ||
+              selectedPersonas.length > MAX_RUN_PERSONAS
+            }
             onClick={() => setRunOpen(true)}
+            title={
+              selectedPersonas.length > MAX_RUN_PERSONAS
+                ? `A run accepts at most ${MAX_RUN_PERSONAS} personas`
+                : undefined
+            }
           >
             <Sparkles className="mr-1 size-3" />
             Run swarm

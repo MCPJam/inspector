@@ -544,6 +544,27 @@ export function GenerateSessionsDialog({
 
         {stage === "review" ? (
           <div className="space-y-3">
+            {/* BYOK spend warning — also shown here because the Personas-tab
+                "Run swarm" path opens straight at Review, bypassing the
+                configure-stage warning. */}
+            {isByokChatbox ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox uses your organization&apos;s model key. Running
+                  these sessions will consume your provider credits (~
+                  {formatUsd(
+                    (personas.filter((p) => p.selected).length *
+                      sessionsPerPersona *
+                      maxTurns *
+                      ESTIMATED_TOKENS_PER_TURN *
+                      ESTIMATED_USD_PER_1K_TOKENS) /
+                      1000
+                  )}
+                  ).
+                </span>
+              </div>
+            ) : null}
             <div className="grid max-h-[400px] grid-cols-1 gap-2 overflow-y-auto pr-1">
               {personas.map((persona, index) => (
                 <div key={persona.id} className="rounded-md border p-3 text-sm">
