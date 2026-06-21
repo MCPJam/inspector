@@ -580,6 +580,17 @@ export function GenerateSessionsDialog({
                 </span>
               </div>
             ) : null}
+            {/* Approval-mode warning — also surfaced here so the Personas-tab
+                "Run swarm" path doesn't bypass the configure-stage notice. */}
+            {chatbox.requireToolApproval ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  Synthetic sessions cannot exercise approval-required tools.
+                  The persona will only see meta/discovery tools.
+                </span>
+              </div>
+            ) : null}
             <div className="grid max-h-[400px] grid-cols-1 gap-2 overflow-y-auto pr-1">
               {personas.map((persona, index) => (
                 <div key={persona.id} className="rounded-md border p-3 text-sm">
