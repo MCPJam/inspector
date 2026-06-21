@@ -1516,6 +1516,44 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("starts a fresh OAuth flow when no synced OAuth credential exists yet", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "No hosted OAuth credential found",
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "New OAuth Server",
+        type: "http",
+        url: "https://oauth.example.com/mcp",
+        useOAuth: true,
+      });
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "New OAuth Server",
+        serverUrl: "https://oauth.example.com/mcp",
+      })
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPSERT_SERVER",
+      name: "New OAuth Server",
+      server: expect.objectContaining({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      }),
+    });
+    expect(toastError).not.toHaveBeenCalledWith(
+      "No hosted OAuth credential found"
+    );
+  });
+
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,

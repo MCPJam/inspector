@@ -481,6 +481,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
     normalized.includes("requires oauth authentication") ||
+    normalized.includes("no hosted oauth credential found") ||
     normalized.includes(
       "stored hosted oauth credential is missing refresh_token"
     ) ||
@@ -2360,8 +2361,8 @@ export function useServerState({
       if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
         // OAuth in hosted mode requires a Convex serverId to bind credentials
         // to; without it the OAuth dance would complete without a durable
-        // credential. Local-mode OAuth follows the same constraint post-
-        // unification but the legacy localStorage fallback still catches it.
+        // credential. Local-mode OAuth is guarded later when tokens are
+        // imported into backend storage instead of being saved locally.
         const errorMessage =
           syncErr instanceof Error
             ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`

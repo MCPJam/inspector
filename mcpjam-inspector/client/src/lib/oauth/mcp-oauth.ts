@@ -3271,8 +3271,8 @@ export async function handleOAuthCallback(
       message: "Received OAuth callback and loading stored state.",
       details: {
         serverUrl,
-        },
-      });
+      },
+    });
     emitTrace(callbackTrace);
     const clientInformation = await provider.clientInformation();
     if (!clientInformation?.client_id) {
