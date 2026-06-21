@@ -9,7 +9,7 @@
  *   - a track-record panel surfacing Phase 1 readiness aggregates per persona
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Loader2, Plus, Sparkles, Users } from "lucide-react";
@@ -284,6 +284,16 @@ function NewCharacterDialog({
     setRole("");
     setNotes("");
   };
+
+  // Clear the draft whenever the dialog closes (Cancel or dismiss), so
+  // reopening "New character" always starts from an empty form.
+  useEffect(() => {
+    if (!isOpen) {
+      setName("");
+      setRole("");
+      setNotes("");
+    }
+  }, [isOpen]);
 
   const handleSave = async () => {
     if (!name.trim() || !role.trim()) {

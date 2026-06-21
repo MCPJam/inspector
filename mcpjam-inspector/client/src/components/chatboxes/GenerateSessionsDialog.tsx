@@ -92,6 +92,11 @@ export function GenerateSessionsDialog({
   // Ref (not state) so the guard is checked synchronously inside the poll
   // callback without depending on a re-render.
   const completionAnalyticsFired = useRef(false);
+  // Seed the preselected personas exactly once per open cycle. Without this,
+  // a Convex roster refetch (or any new `initialPersonas` array identity) while
+  // the dialog is open would re-run the effect and snap the stage back to
+  // "review" — clobbering an in-progress run, the "Back" navigation, or edits.
+  const seededForOpenRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -103,14 +108,20 @@ export function GenerateSessionsDialog({
       setStarting(false);
       setRosterSelected(new Set());
       completionAnalyticsFired.current = false;
+      seededForOpenRef.current = false;
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
       }
       return;
     }
-    // Opened from "Run swarm" with characters preselected — seed Review.
-    if (initialPersonas && initialPersonas.length > 0) {
+    // Opened from "Run swarm" with characters preselected — seed Review once.
+    if (
+      !seededForOpenRef.current &&
+      initialPersonas &&
+      initialPersonas.length > 0
+    ) {
+      seededForOpenRef.current = true;
       setPersonas(initialPersonas.map((p) => ({ ...p, selected: true })));
       setStage("review");
     }
