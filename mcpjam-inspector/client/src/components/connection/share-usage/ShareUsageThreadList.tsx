@@ -13,6 +13,7 @@ import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
+import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
 
 interface ShareUsageThreadListProps {
   /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
@@ -46,7 +47,7 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "chatbox", sourceId: null },
+      : { sourceType: sourceType ?? "chatbox", sourceId: null }
   );
 
   const threads = useMemo(() => {
@@ -56,8 +57,8 @@ export function ShareUsageThreadList({
     const filtered = filterState
       ? raw.filter((t) => threadMatchesFilterState(t, filterState))
       : usageFilter === "all"
-        ? raw
-        : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
+      ? raw
+      : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
   }, [providedThreads, legacyThreads.threads, filterState, usageFilter]);
 
@@ -162,7 +163,11 @@ function ThreadCard({
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {rating != null ? (
           <span
-            className={`text-xs font-medium ${rating <= 2 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+            className={`text-xs font-medium ${
+              rating <= 2
+                ? "text-amber-700 dark:text-amber-400"
+                : "text-muted-foreground"
+            }`}
           >
             {rating}/5
           </span>
@@ -180,6 +185,15 @@ function ThreadCard({
             <Sparkles className="size-2.5 shrink-0" />
             <span className="truncate">{thread.themeClusterLabel}</span>
           </span>
+        ) : null}
+        {/* Synthetic rows: persona chip + Phase 1 readiness signal. */}
+        {thread.synthetic === true && thread.personaLabel ? (
+          <span className="inline-flex max-w-[140px] items-center gap-0.5 truncate rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
+            <span className="truncate">{thread.personaLabel}</span>
+          </span>
+        ) : null}
+        {thread.synthetic === true ? (
+          <SessionReadinessBadge readiness={thread.readiness} />
         ) : null}
       </div>
       {thread.firstMessagePreview ? (

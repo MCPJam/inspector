@@ -24,6 +24,36 @@ export interface PersonaSlate {
   notes: string;
 }
 
+/**
+ * Durable roster persona (Phase 2). Mirrors the `chatboxPersonas` row shape the
+ * backend's `chatboxPersonas.listChatboxPersonas` / `getPersonaTrackRecord`
+ * return. `personaId` is the slate-compatible string key; `_id` is the durable
+ * `personaRefId`. A roster persona maps to a `PersonaSlate`
+ * (`{ id: personaId, name, role, notes }`) when launched into a run.
+ */
+export interface Persona {
+  _id: string;
+  personaId: string;
+  name: string;
+  role: string;
+  notes: string;
+  source: "manual" | "generated" | "cluster";
+  seedThemeClusterId?: string;
+  seedKeywords?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Project a durable roster persona into the inline slate payload. */
+export function personaToSlate(persona: Persona): PersonaSlate {
+  return {
+    id: persona.personaId,
+    name: persona.name,
+    role: persona.role,
+    notes: persona.notes,
+  };
+}
+
 export interface RunSummary {
   total: number;
   succeeded: number;
@@ -73,7 +103,7 @@ async function postJson<T>(
   url: string,
   convexAuthToken: string,
   body: unknown,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
@@ -87,7 +117,7 @@ async function postJson<T>(
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(
-      `session-agent ${url} failed (${response.status}): ${errorText}`,
+      `session-agent ${url} failed (${response.status}): ${errorText}`
     );
   }
   return (await response.json()) as T;
@@ -100,7 +130,7 @@ export async function generatePersonas(
   projectId: string,
   chatboxId: string,
   personaCount: number,
-  serverAttachment?: ServerAttachmentInput,
+  serverAttachment?: ServerAttachmentInput
 ): Promise<PersonaSlate[]> {
   const data = await postJson<{
     ok?: boolean;
@@ -116,11 +146,13 @@ export async function generatePersonas(
       personaCount,
       ...(serverAttachment ? { serverAttachment } : {}),
     },
-    LLM_TIMEOUT_MS,
+    LLM_TIMEOUT_MS
   );
   if (!data.ok || !Array.isArray(data.personas)) {
     throw new Error(
-      `Invalid response from backend generatePersonas: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend generatePersonas: ${
+        data.error ?? "unknown error"
+      }`
     );
   }
   return data.personas;
@@ -134,6 +166,10 @@ export async function createRun(
   personas: PersonaSlate[],
   sessionsPerPersona: number,
   maxTurns: number,
+  // Phase 2: when the swarm is launched from selected roster personas, pass
+  // their durable refs. The backend resolves them into the same persona
+  // payload shape and merges with any inline `personas`.
+  personaRefIds?: string[]
 ): Promise<{ runId: string }> {
   const data = await postJson<{
     ok?: boolean;
@@ -148,12 +184,15 @@ export async function createRun(
       personas,
       sessionsPerPersona,
       maxTurns,
+      ...(personaRefIds && personaRefIds.length > 0 ? { personaRefIds } : {}),
     },
-    NON_LLM_TIMEOUT_MS,
+    NON_LLM_TIMEOUT_MS
   );
   if (!data.ok || typeof data.runId !== "string") {
     throw new Error(
-      `Invalid response from backend createRun: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend createRun: ${
+        data.error ?? "unknown error"
+      }`
     );
   }
   return { runId: data.runId };
@@ -165,7 +204,7 @@ export async function personaNextTurn(
   projectId: string,
   runId: string,
   personaId: string,
-  transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
+  transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<PersonaNextTurnResponse> {
   const data = await postJson<{
     ok?: boolean;
@@ -176,11 +215,13 @@ export async function personaNextTurn(
     `${convexHttpUrl}/session-simulation/persona-next-turn`,
     convexAuthToken,
     { projectId, runId, personaId, transcriptSoFar },
-    LLM_TIMEOUT_MS,
+    LLM_TIMEOUT_MS
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(
-      `Invalid response from backend personaNextTurn: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend personaNextTurn: ${
+        data.error ?? "unknown error"
+      }`
     );
   }
   return {
@@ -195,7 +236,7 @@ export async function updateRun(
   projectId: string,
   runId: string,
   deltaSummary: DeltaSummary,
-  status?: RunRecord["status"],
+  status?: RunRecord["status"]
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/session-simulation/runs/update`,
@@ -206,14 +247,16 @@ export async function updateRun(
       deltaSummary,
       ...(status ? { status } : {}),
     },
-    NON_LLM_TIMEOUT_MS,
+    NON_LLM_TIMEOUT_MS
   );
   // Backend may return HTTP 200 with {ok: false} for soft validation
   // failures; treat that as an error so callers can decide whether to
   // retry or abort the batch.
   if (data.ok !== true) {
     throw new Error(
-      `Invalid response from backend updateRun: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend updateRun: ${
+        data.error ?? "unknown error"
+      }`
     );
   }
 }
@@ -222,11 +265,9 @@ export async function getRun(
   convexHttpUrl: string,
   convexAuthToken: string,
   projectId: string,
-  runId: string,
+  runId: string
 ): Promise<{ run: RunRecord; threadIds: string[] }> {
-  const url = new URL(
-    `${convexHttpUrl}/session-simulation/runs`,
-  );
+  const url = new URL(`${convexHttpUrl}/session-simulation/runs`);
   url.searchParams.set("runId", runId);
   url.searchParams.set("projectId", projectId);
   const response = await fetch(url.toString(), {
@@ -239,7 +280,7 @@ export async function getRun(
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(
-      `session-agent getRun failed (${response.status}): ${errorText}`,
+      `session-agent getRun failed (${response.status}): ${errorText}`
     );
   }
   const data = (await response.json()) as {
@@ -250,7 +291,7 @@ export async function getRun(
   };
   if (!data.ok || !data.run) {
     throw new Error(
-      `Invalid response from backend getRun: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend getRun: ${data.error ?? "unknown error"}`
     );
   }
   return { run: data.run, threadIds: data.threadIds ?? [] };

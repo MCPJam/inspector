@@ -18,6 +18,11 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { standardEventProps } from "@/lib/PosthogUtils";
+import {
+  PersonaCard,
+  usePersonaRoster,
+  useSortedRoster,
+} from "@/components/chatboxes/personas";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
@@ -43,19 +48,26 @@ interface RunStatus {
   error?: string;
 }
 
-
 type DialogStage = "configure" | "review" | "running";
 
 interface GenerateSessionsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   chatbox: ChatboxSettings;
+  /**
+   * Phase 2: when launched from the Personas tab "Run swarm" with characters
+   * already selected, the dialog opens straight at the Review stage seeded with
+   * these personas (skipping roster selection / generation). The `/start`
+   * payload is unchanged — these flow through as inline personas.
+   */
+  initialPersonas?: PersonaSlate[];
 }
 
 export function GenerateSessionsDialog({
   isOpen,
   onClose,
   chatbox,
+  initialPersonas,
 }: GenerateSessionsDialogProps) {
   const { getAccessToken } = useAuth();
   const posthog = usePostHog();
@@ -70,6 +82,9 @@ export function GenerateSessionsDialog({
   const [running, setRunning] = useState<RunStatus | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  // Stage 1 roster selection (Phase 2).
+  const [rosterSelected, setRosterSelected] = useState<Set<string>>(new Set());
+  const roster = useSortedRoster(usePersonaRoster(chatbox.chatboxId));
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const runStartAt = useRef<number>(0);
   // Guards `chatbox_simulate_sessions_completed` against firing more than
@@ -86,13 +101,20 @@ export function GenerateSessionsDialog({
       setRunId(null);
       setPollError(null);
       setStarting(false);
+      setRosterSelected(new Set());
       completionAnalyticsFired.current = false;
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
       }
+      return;
     }
-  }, [isOpen]);
+    // Opened from "Run swarm" with characters preselected — seed Review.
+    if (initialPersonas && initialPersonas.length > 0) {
+      setPersonas(initialPersonas.map((p) => ({ ...p, selected: true })));
+      setStage("review");
+    }
+  }, [isOpen, initialPersonas]);
 
   // Server selection lives on the backend: the dialog forwards the full
   // chatbox server list and the start route filters optionals out so the
@@ -124,7 +146,8 @@ export function GenerateSessionsDialog({
   const ESTIMATED_USD_PER_1K_TOKENS = 0.005; // coarse blended midpoint
   const totalTurnsUpperBound = personaCount * sessionsPerPersona * maxTurns;
   const estimatedCostUsd =
-    (totalTurnsUpperBound * ESTIMATED_TOKENS_PER_TURN *
+    (totalTurnsUpperBound *
+      ESTIMATED_TOKENS_PER_TURN *
       ESTIMATED_USD_PER_1K_TOKENS) /
     1000;
   const formatUsd = (value: number): string => {
@@ -132,6 +155,21 @@ export function GenerateSessionsDialog({
     if (value < 1) return `$${value.toFixed(2)}`;
     return `$${value.toFixed(2)}`;
   };
+
+  function handleUseRoster() {
+    const chosen = (roster ?? []).filter((p) => rosterSelected.has(p._id));
+    if (chosen.length === 0) return;
+    setPersonas(
+      chosen.map((p) => ({
+        id: p.personaId,
+        name: p.name,
+        role: p.role,
+        notes: p.notes,
+        selected: true,
+      }))
+    );
+    setStage("review");
+  }
 
   async function authHeader(): Promise<Record<string, string>> {
     const token = await getAccessToken();
@@ -160,16 +198,14 @@ export function GenerateSessionsDialog({
             personaCount,
             chatboxName: chatbox.name,
           }),
-        },
+        }
       );
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text);
       }
       const data = (await response.json()) as { personas: PersonaSlate[] };
-      setPersonas(
-        data.personas.map((p) => ({ ...p, selected: true })),
-      );
+      setPersonas(data.personas.map((p) => ({ ...p, selected: true })));
       setStage("review");
       posthog.capture("chatbox_generate_personas_completed", {
         ...standardEventProps("chatbox_usage_panel"),
@@ -218,7 +254,7 @@ export function GenerateSessionsDialog({
             sessionsPerPersona,
             maxTurns,
           }),
-        },
+        }
       );
       if (!response.ok) {
         const text = await response.text();
@@ -258,13 +294,17 @@ export function GenerateSessionsDialog({
     pollTimer.current = setInterval(async () => {
       try {
         const response = await fetch(
-          `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/${runId}?projectId=${encodeURIComponent(chatbox.projectId)}`,
+          `${API_BASE}/api/web/chatboxes/${
+            chatbox.chatboxId
+          }/simulate-sessions/${runId}?projectId=${encodeURIComponent(
+            chatbox.projectId
+          )}`,
           {
             method: "GET",
             headers: {
               ...(await authHeader()),
             },
-          },
+          }
         );
         if (!response.ok) {
           setPollError(`Last update failed (${response.status})`);
@@ -313,10 +353,10 @@ export function GenerateSessionsDialog({
 
   function updatePersona(
     index: number,
-    patch: Partial<PersonaEditState>,
+    patch: Partial<PersonaEditState>
   ): void {
     setPersonas((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, ...patch } : p)),
+      prev.map((p, i) => (i === index ? { ...p, ...patch } : p))
     );
   }
 
@@ -336,6 +376,51 @@ export function GenerateSessionsDialog({
 
         {stage === "configure" ? (
           <div className="space-y-4">
+            {/* Stage 1 — roster selection. Pick saved characters to run, or
+                generate a fresh slate below. */}
+            {roster && roster.length > 0 ? (
+              <div className="space-y-2">
+                <Label>Run saved characters</Label>
+                <div className="grid max-h-[240px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {roster.map((persona) => (
+                    <PersonaCard
+                      key={persona._id}
+                      persona={persona}
+                      selected={rosterSelected.has(persona._id)}
+                      onToggle={() =>
+                        setRosterSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(persona._id)) next.delete(persona._id);
+                          else next.add(persona._id);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {rosterSelected.size} selected
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={rosterSelected.size === 0}
+                    onClick={handleUseRoster}
+                  >
+                    Review selected ({rosterSelected.size})
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    or generate new
+                  </span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="persona-count">Personas</Label>
@@ -347,7 +432,7 @@ export function GenerateSessionsDialog({
                   value={personaCount}
                   onChange={(e) =>
                     setPersonaCount(
-                      Math.max(1, Math.min(10, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(10, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -362,7 +447,7 @@ export function GenerateSessionsDialog({
                   value={sessionsPerPersona}
                   onChange={(e) =>
                     setSessionsPerPersona(
-                      Math.max(1, Math.min(5, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(5, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -377,7 +462,7 @@ export function GenerateSessionsDialog({
                   value={maxTurns}
                   onChange={(e) =>
                     setMaxTurns(
-                      Math.max(1, Math.min(20, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(20, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -404,9 +489,9 @@ export function GenerateSessionsDialog({
                   </div>
                   <div className="mt-1 text-[11px] opacity-80">
                     {totalTurnsUpperBound} turns ({personaCount} ×{" "}
-                    {sessionsPerPersona} × {maxTurns}) at a coarse blended
-                    rate. Actuals depend on the model and conversation
-                    length and can vary above this number.
+                    {sessionsPerPersona} × {maxTurns}) at a coarse blended rate.
+                    Actuals depend on the model and conversation length and can
+                    vary above this number.
                   </div>
                 </div>
               </>
@@ -433,11 +518,7 @@ export function GenerateSessionsDialog({
               <Button variant="outline" size="sm" onClick={onClose}>
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                onClick={handleGenerate}
-                disabled={generating}
-              >
+              <Button size="sm" onClick={handleGenerate} disabled={generating}>
                 {generating ? (
                   <>
                     <Loader2 className="mr-1 size-3 animate-spin" /> Generating
@@ -454,10 +535,7 @@ export function GenerateSessionsDialog({
           <div className="space-y-3">
             <div className="grid max-h-[400px] grid-cols-1 gap-2 overflow-y-auto pr-1">
               {personas.map((persona, index) => (
-                <div
-                  key={persona.id}
-                  className="rounded-md border p-3 text-sm"
-                >
+                <div key={persona.id} className="rounded-md border p-3 text-sm">
                   <div className="flex items-start gap-2">
                     <Checkbox
                       checked={persona.selected}
@@ -530,15 +608,16 @@ export function GenerateSessionsDialog({
                 {running.status === "running"
                   ? "Running…"
                   : running.status === "completed"
-                    ? "Done"
-                    : running.status === "partial"
-                      ? "Completed partially"
-                      : running.status === "rate_limited"
-                        ? "Rate-limited — budget reached"
-                        : "Failed"}
+                  ? "Done"
+                  : running.status === "partial"
+                  ? "Completed partially"
+                  : running.status === "rate_limited"
+                  ? "Rate-limited — budget reached"
+                  : "Failed"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {running.summary.succeeded + running.summary.failed +
+                {running.summary.succeeded +
+                  running.summary.failed +
                   running.summary.rateLimited}{" "}
                 / {running.summary.total} sessions
                 {running.summary.failed > 0
@@ -569,8 +648,8 @@ export function GenerateSessionsDialog({
                 {running.status !== "running"
                   ? "View sessions"
                   : pollError
-                    ? "Close"
-                    : "Working…"}
+                  ? "Close"
+                  : "Working…"}
               </Button>
             </div>
           </div>
