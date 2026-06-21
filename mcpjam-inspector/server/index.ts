@@ -115,6 +115,7 @@ import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
+import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
@@ -400,6 +401,10 @@ app.use(
   })
 );
 app.route("/api/v1", v1Routes);
+
+if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
+  app.route("/user_management", workosAuthkitRoutes);
+}
 
 // In-process self-dispatch for the workspace built-in tools' platform
 // client (see utils/self-app.ts). Mirror of the registration in
