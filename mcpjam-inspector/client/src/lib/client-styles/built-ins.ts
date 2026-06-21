@@ -11,6 +11,8 @@ import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
 import perplexityLogo from "/perplexity_logo.svg";
+import clineLogoDark from "/cline_logo_dark.svg";
+import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
@@ -60,6 +62,7 @@ import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import { N8nMarkIndicator } from "./indicators/n8n-mark";
 import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
+import { ClineMarkIndicator } from "./indicators/cline-mark";
 import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
 import type {
@@ -734,6 +737,40 @@ export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Cline host style. Captured from a Cline 3.89.2 probe: protocol 2025-11-25,
+ * an empty `clientCapabilities` object, and no uploaded snapshot — so Cline is
+ * a bare, tools-only MCP consumer with no MCP Apps/UI extension and no widget
+ * rendering surface. The MCP matrix stays at the no-claims baseline. The chat
+ * chrome is MCPJam's neutral stand-in with Cline identity; there's no captured
+ * thinking animation, so the busy state reuses the brand mark + "Thinking"
+ * label (same shape as the Goose indicator).
+ */
+export const CLINE_HOST_STYLE: HostStyleDefinition = {
+  id: "cline",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Cline",
+    shortLabel: "Cline-style host",
+    pickerDescription: "Cline MCP client (tools-only)",
+    logoSrc: clineLogoLight,
+    logoSrcByTheme: {
+      light: clineLogoLight,
+      dark: clineLogoDark,
+    },
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // No captured Cline thinking animation; reuse the brand mark + label.
+    loadingIndicator: ClineMarkIndicator,
+  },
+};
+
+/**
  * Notion AI agent host style. The Notion client is a bare, tools-only MCP
  * consumer (empty capabilities, no MCP Apps/UI extension), so its MCP matrix
  * stays at the no-claims baseline and there's no widget rendering surface.
@@ -818,5 +855,6 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
+  CLINE_HOST_STYLE,
   NOTION_HOST_STYLE,
 ];

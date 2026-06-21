@@ -20,6 +20,7 @@ const ALL_IDS: HostTemplateId[] = [
   "agentcore",
   "n8n",
   "perplexity",
+  "cline",
   "notion",
 ];
 

@@ -1325,3 +1325,27 @@
 .goose-icon-indicator {
   transform-origin: 0 100%;
 }
+
+/* Cline thinking indicator (`indicators/cline-mark.tsx`). No busy-state
+   animation was captured from the Cline probe, so this is a neutral generic
+   loading pulse on the brand mark — not Cline's real thinking effect. */
+.cline-mark-indicator {
+  animation: cline-mark-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cline-mark-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cline-mark-indicator {
+    animation: none;
+    opacity: 0.8;
+  }
+}

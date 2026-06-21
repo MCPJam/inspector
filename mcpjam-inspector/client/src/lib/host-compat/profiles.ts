@@ -12,7 +12,7 @@ import type { CompatProvenance, HostCompatProfile } from "./types";
  * Each entry carries the facts the registry can't give us:
  *   - identity (label/logo) and `provenance` (how much to trust the matrix).
  *   - `rendersMcpApps`: does this host render MCP Apps (`ui://`) widgets at
- *     all? Headless clients such as Codex, n8n, and Perplexity carry
+ *     all? Headless clients such as Codex, n8n, Perplexity, and Cline carry
  *     capability matrices for protocol-bucket reasons but have no rendering
  *     surface. That "is it headless?" fact isn't in the registry, so it's
  *     explicit here.
@@ -105,6 +105,17 @@ const MARKET_HOSTS: readonly MarketHost[] = [
     id: "perplexity",
     label: "Perplexity",
     logoSrc: "/perplexity_logo.svg",
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    logoSrc: "/cline_logo_light.svg",
+    logoSrcByTheme: {
+      light: "/cline_logo_light.svg",
+      dark: "/cline_logo_dark.svg",
+    },
     provenance: "probe",
     rendersMcpApps: false,
   },

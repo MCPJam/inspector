@@ -63,6 +63,7 @@ describe("client templates", () => {
       true,
     );
     expect(seed.hostStyle).toBe("goose");
+    expect(seed.progressiveToolDiscovery).toBe(true);
     expect(seed.clientCapabilities).toEqual({
       extensions: {
         [MCP_UI_EXTENSION_ID]: {
@@ -145,6 +146,27 @@ describe("client templates", () => {
       initialize: {
         supportedProtocolVersions: ["2025-06-18"],
         clientInfo: { name: "mcp", version: "0.1.0" },
+      },
+    });
+  });
+
+  it("seeds Cline as a tools-only MCP client", () => {
+    const seed = seedFromHostTemplate("cline");
+
+    expect(HOST_TEMPLATES.some((template) => template.id === "cline")).toBe(
+      true,
+    );
+    expect(seed.hostStyle).toBe("cline");
+    expect(seed.clientCapabilities).toEqual({});
+    expect(seed.hostCapabilitiesOverride).toEqual({});
+    expect(seed.hostContext).toEqual({});
+    // Captured verbatim from the Cline 3.89.2 probe (protocol 2025-11-25,
+    // real clientInfo, empty capabilities, no snapshot).
+    expect(seed.mcpProfile).toEqual({
+      profileVersion: 1,
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25"],
+        clientInfo: { name: "Cline", version: "3.89.2" },
       },
     });
   });
