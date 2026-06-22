@@ -21,12 +21,27 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Configure the target server** - Click **Configure** to open the "Configure Server to Test" modal and fill in the server details (see [Configuring the target server](#configuring-the-target-server) below). The saved server appears in the shared server bar and is automatically selected.
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Configuring the target server
+
+Click **Configure** anywhere in the XAA Debugger to open the "Configure Server to Test" modal. The modal accepts the following fields:
+
+| Field | Required | Description |
+|---|---|---|
+| **Server Name** | Yes | A unique display name for this server. |
+| **Server URL** | Yes | The full URL of the MCP server to test (e.g. `https://staging.mcp.example.com`). |
+| **Client ID** | Yes | The OAuth client ID registered at the authorization server. |
+| **Client Secret** | No | The OAuth client secret for confidential clients. When editing a saved server, the stored secret is masked — use **Replace** to enter a new value or **Clear** to remove it. |
+| **Scopes** | No | Space-separated OAuth scopes to request (e.g. `read:tools read:resources`). |
+| **Authorization Server Issuer** | No | Override the authorization server issuer URL. Leave blank to use auto-discovery from the MCP server's resource metadata. |
+
+Clicking **Save configuration** persists the server to the shared server bar and selects it as the active target.
 
 ## Authorization Server Compatibility
 
