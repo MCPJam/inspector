@@ -16,6 +16,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
+import { createRequire } from "module";
 import {
   seedHostTemplate,
   HOST_TEMPLATE_IDS,
@@ -25,9 +26,10 @@ import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
-import inspectorPkg from "../../../package.json" with { type: "json" };
 
 const hosts = new Hono();
+const require = createRequire(import.meta.url);
+const inspectorPkg = require("../../../package.json") as { version?: string };
 
 // Stamped into the mcpjam template's mcpProfile version (cosmetic; only the
 // mcpjam template reads it). Mirrors the inspector build version the UI threads
