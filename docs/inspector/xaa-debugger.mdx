@@ -78,8 +78,33 @@ The XAA flow sequence diagram shows four actors:
 
 Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
 
+## ID-JAG claim lint
+
+After the token exchange, the ID-JAG inspector shows a **Claim lint** panel below the decoded token. Each claim gets a pass, warn, or fail verdict with a spec citation explaining why the claim matters.
+
+| Status | Meaning |
+| --- | --- |
+| **Pass** | Claim is present, correctly formatted, and matches the configured flow. |
+| **Warn** | Claim is optional but its absence weakens security (for example, a missing `jti` means the authorization server can't detect replays). |
+| **Fail** | Claim is missing, malformed, or doesn't match the expected value. The authorization server should reject the assertion. |
+
+### Claims checked
+
+| Claim | What is checked | Spec |
+| --- | --- | --- |
+| `typ` header | Must be `oauth-id-jag+jwt` to prevent token confusion | RFC 8725 §3.11 |
+| `iss` | Must be present; must match the identity provider configured for the flow | RFC 7523 §3 |
+| `sub` | Must be a non-empty string identifying the user | RFC 7523 §3 |
+| `aud` | Must be a single string exactly matching the authorization server's issuer; arrays are rejected | RFC 7523 §3 |
+| `resource` | Must be present and match the MCP server's resource identifier | RFC 8707 / ID-JAG draft |
+| `client_id` | Must match the client configured for the flow | ID-JAG draft |
+| `jti` | Absence is a warning — without a unique token id the authorization server can't detect replays | RFC 7519 §4.1.7 |
+| `exp` | Expired = fail; lifetime longer than 15 minutes = warn (the ID-JAG is a single-use artifact) | RFC 7523 §3 |
+
+When `expectedAudience`, `expectedResource`, or `expectedClientId` are not set in the flow configuration, the lint degrades to presence and format checks rather than exact-match checks.
+
 ## Next Steps
 
 - Review the [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) for XAA requirements
 - Check your authorization server's documentation for jwt-bearer grant configuration
-- Use the Register Issuer dialog to get the JWKS URL for configuring issuer trust
+- [Use MCPJam as a test IdP](/inspector/xaa-test-idp) to register MCPJam's issuer with your authorization server
