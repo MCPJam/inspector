@@ -3,71 +3,36 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add `mcpjam eval screenshot` to view the widget screenshot an eval iteration\nrendered.\n\n`eval screenshot --run <id> --iteration <id> --project <id>` pulls the rendered\n`widgetRenderObservations` out of the iteration trace and shows the image\n**inline** when the terminal supports a graphics protocol (iTerm2/WezTerm via\nOSC 1337, Kitty/Ghostty via the Kitty graphics protocol), and otherwise prints\nthe image URL — so it degrades cleanly in plain terminals, pipes, and CI. Pass\n`--out <file|dir>` to save the PNG(s) to disk instead, `--index <n>` to pick one\nrender. JSON output (default off-TTY) emits a structured `items[]` of\n`{ toolName, toolCallId, status, screenshotUrl, savedTo? }`. Inline rendering is\ndependency-free; no image libraries are added.",
-      "id": "cli-eval-screenshot"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "Render `eval screenshot` images inline in Warp.\n\nWarp supports the iTerm2 inline-image protocol (OSC 1337) for normal command\noutput, but its `TERM_PROGRAM=WarpTerminal` wasn't recognized, so `eval\nscreenshot` fell back to printing the image URL. Warp is now detected and gets\nthe inline image like iTerm2/WezTerm; piped/non-TTY runs still print the URL.",
-      "id": "cli-warp-inline-images"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
           "name": "@mcpjam/sdk",
           "type": "minor"
         },
         {
-          "name": "@mcpjam/cli",
-          "type": "patch"
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         }
       ],
-      "summary": "Capture and surface the MCP error code on failed tool spans in eval traces.\n\nWhen a `tools/call` fails, the eval trace capture now records the JSON-RPC\nerror code (`mcpErrorCode`, aligned with OTel `rpc.response.status_code`) on\nboth the tool span and its synthesized error span. Only negative codes are kept:\nserver JSON-RPC faults (e.g. `-32602` Invalid params, `-32601` Method not found)\nand SDK-local lifecycle codes (`-32000` connection closed, `-32001` request\ntimeout). Positive `.code` values such as transport HTTP statuses (e.g. `401`)\nare no longer mistaken for an MCP error code.\n\nThe inspector trace timeline shows the code on the tool detail pane with a\nneutral \"MCP error\" label and the standard code name, rather than asserting it\nis always a server JSON-RPC fault.\n\n`@mcpjam/sdk` adds the optional `mcpErrorCode` field to `EvalTraceSpanInput`, and\n`@mcpjam/cli` picks up the updated trace types.",
-      "id": "mcp-tool-error-code"
+      "summary": "Add Cline as a built-in tools-only client template and enable progressive tool discovery by default for Goose hosts.",
+      "id": "bright-cline-hosts"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/cli",
+      "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "3.9.0",
+      "oldVersion": "1.22.0",
       "changesets": [
-        "cli-eval-screenshot",
-        "cli-warp-inline-images",
-        "mcp-tool-error-code"
+        "bright-cline-hosts"
       ],
-      "newVersion": "3.10.0"
+      "newVersion": "1.23.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.16.0",
+      "oldVersion": "2.17.0",
       "changesets": [
-        "mcp-tool-error-code"
+        "bright-cline-hosts"
       ],
-      "newVersion": "2.17.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.21.0",
-      "changesets": [
-        "mcp-tool-error-code"
-      ],
-      "newVersion": "1.22.0"
+      "newVersion": "2.18.0"
     },
     {
       "name": "@mcpjam/mcp",

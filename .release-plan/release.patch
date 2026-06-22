@@ -1,100 +1,25 @@
-diff --git a/.changeset/cli-eval-screenshot.md b/.changeset/cli-eval-screenshot.md
+diff --git a/.changeset/bright-cline-hosts.md b/.changeset/bright-cline-hosts.md
 deleted file mode 100644
-index b6b1f85f1..000000000
---- a/.changeset/cli-eval-screenshot.md
+index 6815f4947..000000000
+--- a/.changeset/bright-cline-hosts.md
 +++ /dev/null
-@@ -1,16 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
--"@mcpjam/cli": minor
-----
--
--Add `mcpjam eval screenshot` to view the widget screenshot an eval iteration
--rendered.
--
--`eval screenshot --run <id> --iteration <id> --project <id>` pulls the rendered
--`widgetRenderObservations` out of the iteration trace and shows the image
--**inline** when the terminal supports a graphics protocol (iTerm2/WezTerm via
--OSC 1337, Kitty/Ghostty via the Kitty graphics protocol), and otherwise prints
--the image URL — so it degrades cleanly in plain terminals, pipes, and CI. Pass
--`--out <file|dir>` to save the PNG(s) to disk instead, `--index <n>` to pick one
--render. JSON output (default off-TTY) emits a structured `items[]` of
--`{ toolName, toolCallId, status, screenshotUrl, savedTo? }`. Inline rendering is
--dependency-free; no image libraries are added.
-diff --git a/.changeset/cli-warp-inline-images.md b/.changeset/cli-warp-inline-images.md
-deleted file mode 100644
-index 47338050b..000000000
---- a/.changeset/cli-warp-inline-images.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--Render `eval screenshot` images inline in Warp.
--
--Warp supports the iTerm2 inline-image protocol (OSC 1337) for normal command
--output, but its `TERM_PROGRAM=WarpTerminal` wasn't recognized, so `eval
--screenshot` fell back to printing the image URL. Warp is now detected and gets
--the inline image like iTerm2/WezTerm; piped/non-TTY runs still print the URL.
-diff --git a/.changeset/mcp-tool-error-code.md b/.changeset/mcp-tool-error-code.md
-deleted file mode 100644
-index eb212a6cc..000000000
---- a/.changeset/mcp-tool-error-code.md
-+++ /dev/null
-@@ -1,22 +0,0 @@
-----
--"@mcpjam/inspector": minor
 -"@mcpjam/sdk": minor
--"@mcpjam/cli": patch
+-"@mcpjam/inspector": minor
 ----
 -
--Capture and surface the MCP error code on failed tool spans in eval traces.
--
--When a `tools/call` fails, the eval trace capture now records the JSON-RPC
--error code (`mcpErrorCode`, aligned with OTel `rpc.response.status_code`) on
--both the tool span and its synthesized error span. Only negative codes are kept:
--server JSON-RPC faults (e.g. `-32602` Invalid params, `-32601` Method not found)
--and SDK-local lifecycle codes (`-32000` connection closed, `-32001` request
--timeout). Positive `.code` values such as transport HTTP statuses (e.g. `401`)
--are no longer mistaken for an MCP error code.
--
--The inspector trace timeline shows the code on the tool detail pane with a
--neutral "MCP error" label and the standard code name, rather than asserting it
--is always a server JSON-RPC fault.
--
--`@mcpjam/sdk` adds the optional `mcpErrorCode` field to `EvalTraceSpanInput`, and
--`@mcpjam/cli` picks up the updated trace types.
-diff --git a/cli/package.json b/cli/package.json
-index 91d09b66e..2ab021463 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "3.9.0",
-+  "version": "3.10.0",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -17,7 +17,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^1.21.0",
-+    "@mcpjam/sdk": "^1.22.0",
-     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
-     "commander": "^12.1.0",
-     "posthog-node": "^5.24.10",
+-Add Cline as a built-in tools-only client template and enable progressive tool discovery by default for Goose hosts.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index d4081cdab..53c19a9fa 100644
+index 53c19a9fa..8d640ba82 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.16.0",
-+  "version": "2.17.0",
+-  "version": "2.17.0",
++  "version": "2.18.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -102,33 +27,21 @@ index d4081cdab..53c19a9fa 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.21.0",
-+    "@mcpjam/sdk": "^1.22.0",
+-    "@mcpjam/sdk": "^1.22.0",
++    "@mcpjam/sdk": "^1.23.0",
      "@modelcontextprotocol/client": "^2.0.0-alpha.2",
      "@modelcontextprotocol/ext-apps": "^1.7.2",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index f12f81066..73c3062ba 100644
+index 73c3062ba..7707c89b2 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -58,9 +58,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "3.9.0",
-+      "version": "3.10.0",
-       "dependencies": {
--        "@mcpjam/sdk": "^1.21.0",
-+        "@mcpjam/sdk": "^1.22.0",
-         "@modelcontextprotocol/server": "^2.0.0-alpha.2",
-         "commander": "^12.1.0",
-         "posthog-node": "^5.24.10",
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.16.0",
-+      "version": "2.17.0",
+-      "version": "2.17.0",
++      "version": "2.18.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -136,8 +49,8 @@ index f12f81066..73c3062ba 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.21.0",
-+        "@mcpjam/sdk": "^1.22.0",
+-        "@mcpjam/sdk": "^1.22.0",
++        "@mcpjam/sdk": "^1.23.0",
          "@modelcontextprotocol/client": "^2.0.0-alpha.2",
          "@modelcontextprotocol/ext-apps": "^1.7.2",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -145,20 +58,20 @@ index f12f81066..73c3062ba 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.21.0",
-+      "version": "1.22.0",
+-      "version": "1.22.0",
++      "version": "1.23.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index bdbdc91f3..3fdcec90f 100644
+index e577cc127..54b93c5e4 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.21.0",
-+  "version": "1.22.0",
+-  "version": "1.22.0",
++  "version": "1.23.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
