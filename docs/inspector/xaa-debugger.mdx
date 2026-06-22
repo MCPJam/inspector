@@ -21,12 +21,19 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Select or add a target server** - Choose an existing server from the server picker, or click **Add Server +** to save a new server config. On the XAA tab, adding a server saves the configuration and selects it as the target without opening a browser OAuth redirect.
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Server compatibility requirements
+
+XAA testing requires an MCP server that exposes an HTTP URL and supports OAuth. If you select a server that doesn't meet these requirements (for example, a STDIO server), the tab shows a **Not XAA-compatible** screen that names the selected server and explains what it needs. From that screen you can:
+
+- **Configure Server to Test** - Open the server configuration dialog to update the connection settings.
+- **Back to start** - Clear the selection and return to the welcome screen to choose a different server.
 
 ## Authorization Server Compatibility
 
