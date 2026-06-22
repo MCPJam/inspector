@@ -33,6 +33,8 @@ export interface RosterPersona {
   name: string;
   role: string;
   notes: string;
+  /** Phase 3 gradable objective (goal-completion judge target). */
+  goal?: string;
   source: PersonaSource;
   seedThemeClusterId?: string;
   seedKeywords?: string[];
@@ -262,6 +264,14 @@ export function PersonaTrackRecordPanel({
           </p>
         </div>
       </div>
+      {persona.goal ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Goal
+          </p>
+          <p className="mt-0.5 text-sm">{persona.goal}</p>
+        </div>
+      ) : null}
       {persona.notes ? (
         <p className="text-sm text-muted-foreground">{persona.notes}</p>
       ) : null}

@@ -58,7 +58,12 @@ export interface SessionReadiness {
   hallucinatedTools?: string[];
   failingTools?: ReadinessToolError[];
   topFailingTool?: ReadinessToolError;
-  sessionDurationMs?: number;
+  /** Host turns observed (per-turn trace samples). */
+  turnCount?: number;
+  /** Sum of per-turn host-response latencies (excludes persona-driver time). */
+  hostLatencyMs?: number;
+  /** Slowest single host turn. */
+  maxTurnLatencyMs?: number;
   analyzerVersion?: number;
   generatedAt?: number;
   errorMessage?: string;
@@ -103,6 +108,12 @@ const VERDICT_META: Record<
 function coveragePct(ratio: number | null | undefined): string | null {
   if (typeof ratio !== "number") return null;
   return `${Math.round(ratio * 100)}%`;
+}
+
+/** Host-response latency (server work time, excludes persona-driver time). */
+function formatLatency(ms: number | null | undefined): string | null {
+  if (typeof ms !== "number" || ms <= 0) return null;
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 // ── badge (session row) ───────────────────────────────────────────────────────
@@ -236,6 +247,17 @@ export function SessionInsightBar({
             <span className="text-red-600 dark:text-red-400">
               {readiness.hallucinatedTools!.length} undeclared tool
               {readiness.hallucinatedTools!.length === 1 ? "" : "s"}
+            </span>
+          </>
+        ) : null}
+        {formatLatency(readiness.hostLatencyMs) ? (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <span
+              className="text-muted-foreground"
+              title="Host-response latency (server work time across turns; excludes the persona driver's own LLM time)"
+            >
+              {formatLatency(readiness.hostLatencyMs)} host latency
             </span>
           </>
         ) : null}

@@ -80,6 +80,13 @@ describe("SessionInsightBar", () => {
     expect(screen.getByText(/not an advertised tool/)).toBeInTheDocument();
   });
 
+  it("renders host-response latency from the readiness record", () => {
+    render(
+      <SessionInsightBar readiness={ready({ hostLatencyMs: 3500 })} />
+    );
+    expect(screen.getByText(/3\.5s host latency/)).toBeInTheDocument();
+  });
+
   it("flags partial readiness when the tool inventory was unavailable", () => {
     render(
       <SessionInsightBar

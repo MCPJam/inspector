@@ -37,6 +37,8 @@ export interface Persona {
   name: string;
   role: string;
   notes: string;
+  /** Phase 3 gradable objective (goal-completion judge target). */
+  goal?: string;
   source: "manual" | "generated" | "cluster";
   seedThemeClusterId?: string;
   seedKeywords?: string[];

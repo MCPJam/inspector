@@ -296,17 +296,20 @@ function NewCharacterDialog({
     name: string;
     role: string;
     notes: string;
+    goal: string;
   }) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [notes, setNotes] = useState("");
+  const [goal, setGoal] = useState("");
   const [saving, setSaving] = useState(false);
 
   const reset = () => {
     setName("");
     setRole("");
     setNotes("");
+    setGoal("");
   };
 
   // Clear the draft whenever the dialog closes (Cancel or dismiss), so
@@ -316,6 +319,7 @@ function NewCharacterDialog({
       setName("");
       setRole("");
       setNotes("");
+      setGoal("");
     }
   }, [isOpen]);
 
@@ -330,6 +334,7 @@ function NewCharacterDialog({
         name: name.trim(),
         role: role.trim(),
         notes: notes.trim(),
+        goal: goal.trim(),
       });
       toast.success("Character added");
       reset();
@@ -372,12 +377,21 @@ function NewCharacterDialog({
             />
           </div>
           <div className="flex flex-col gap-1.5">
+            <Label htmlFor="persona-goal">Goal</Label>
+            <Input
+              id="persona-goal"
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              placeholder="What they're trying to accomplish (graded later)"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor="persona-notes">Notes</Label>
             <Textarea
               id="persona-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Background, goals, what they'll try…"
+              placeholder="Background, context, what they'll try…"
               rows={3}
             />
           </div>
