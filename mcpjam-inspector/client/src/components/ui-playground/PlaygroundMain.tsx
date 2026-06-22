@@ -39,6 +39,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import LoadingScreen from "@/components/LoadingScreen";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
@@ -2573,6 +2574,8 @@ export function PlaygroundMain({
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
   const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
+  const shouldShowFirstRunLoadingScreen =
+    isAuthLoading && initialInputTypewriter && Boolean(initialInput);
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
       location: "app_builder_tab",
@@ -3041,6 +3044,11 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {shouldShowFirstRunLoadingScreen && (
+        <div className="fixed inset-0 z-[100] bg-background">
+          <LoadingScreen />
+        </div>
+      )}
     <div
       className={cn(
         "relative h-full flex flex-col overflow-hidden",
