@@ -67,6 +67,20 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 **MCP Server Rejected the Access Token**
 - The AS issued a token but the MCP server returned 401. The `resource` or `aud` claim on the access token likely doesn't match the MCP server's canonical resource URL.
 
+## ID-JAG claim lint
+
+After the token exchange, the ID-JAG inspector shows a **Claim lint** panel below the decoded token. Each claim gets a pass, warn, or fail verdict with a spec citation so you can see exactly why a claim matters — not just whether it matched.
+
+| Status | Meaning |
+| --- | --- |
+| **Pass** | Claim is present, correctly typed, and matches the configured flow values. |
+| **Warn** | Claim is optional but its absence weakens security (for example, a missing `jti` prevents replay detection). |
+| **Fail** | Claim is missing, malformed, expired, or doesn't match the expected value. An authorization server that validates correctly will reject the assertion. |
+
+The panel checks eight claims: `typ` header, `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, and `exp`. When a flow value is configured (audience, resource, client ID), the lint compares the actual claim against it; otherwise it falls back to a presence and format check.
+
+A summary line above the verdicts shows the count of failing and warning claims, or "All claims pass" when everything is green.
+
 ## Sequence Diagram
 
 The XAA flow sequence diagram shows four actors:
