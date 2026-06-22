@@ -1792,12 +1792,44 @@ export default function App() {
     typeof currentUser?.createdAt === "number" &&
     currentUser.createdAt >= FIRST_RUN_PLAYGROUND_ROLLOUT_MS;
   const isHostedDefaultRoute =
-    activeTab === "servers" || activeTab === "clients";
+    activeTab === "home" || activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
+  const shouldHoldHostedHomeRouteForAppReady =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    activeTab === "home" &&
+    effectiveHostedShellGateState === "ready" &&
+    (isAuthLoading ||
+      !isAuthenticated ||
+      isLoadingRemoteProjects ||
+      !areServersHydrated ||
+      !activeProjectId ||
+      activeProjectId === "none");
+  const shouldRouteToFirstRunOnboarding =
+    !isHostedChatRoute &&
+    !isWorkOsLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    !hasSeenFirstRunOnboarding &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    isFirstRunEligible(
+      hasAnyFirstRunBlockingProjectServers,
+      activeTab,
+      !!workOsUser,
+      remoteFirstRunOnboardingShown,
+      isNewSignedInAccount
+    );
+  const shouldHoldHostedHomeRouteForFirstRunRedirect =
+    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -2357,64 +2389,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-
-    if (isWorkOsLoading) {
-      return;
-    }
-
-    if (effectiveHostedShellGateState !== "ready") {
-      return;
-    }
-
-    if (isAuthenticated && currentUser === undefined) {
-      return;
-    }
-
-    if (hasSeenFirstRunOnboarding) {
-      return;
-    }
-
-    // Hosted guests need Convex auth and their actor-owned project before
-    // Playground can auto-connect Excalidraw against the right project.
-    if (
-      HOSTED_MODE &&
-      (!isAuthenticated ||
-        isLoadingRemoteProjects ||
-        !activeProjectId ||
-        activeProjectId === "none")
-    ) {
-      return;
-    }
-
-    if (
-      isFirstRunEligible(
-        hasAnyFirstRunBlockingProjectServers,
-        activeTab,
-        !!workOsUser,
-        remoteFirstRunOnboardingShown,
-        isNewSignedInAccount
-      )
-    ) {
+    if (shouldRouteToFirstRunOnboarding) {
       navigateApp(routePaths.playground);
     }
-  }, [
-    activeProjectId,
-    activeTab,
-    currentUser,
-    effectiveHostedShellGateState,
-    hasSeenFirstRunOnboarding,
-    hasAnyFirstRunBlockingProjectServers,
-    isAuthenticated,
-    isHostedChatRoute,
-    isLoadingRemoteProjects,
-    isNewSignedInAccount,
-    isWorkOsLoading,
-    remoteFirstRunOnboardingShown,
-    workOsUser,
-  ]);
+  }, [shouldRouteToFirstRunOnboarding]);
 
   // When the active project changes (org switch, project delete, manual switch),
   // snap to Servers — staying on App Builder/Chat would leave the user pointed
@@ -2919,7 +2897,11 @@ export default function App() {
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
-  if (shouldHoldHostedDefaultRouteForAuth) {
+  if (
+    shouldHoldHostedDefaultRouteForAuth ||
+    shouldHoldHostedHomeRouteForAppReady ||
+    shouldHoldHostedHomeRouteForFirstRunRedirect
+  ) {
     return <LoadingScreen />;
   }
 
@@ -2996,8 +2978,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-                ? () => setOauthServerModalNonce((n) => n + 1)
-                : undefined,
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
