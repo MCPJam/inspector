@@ -54,7 +54,8 @@
               "inspector/home",
               "inspector/clients",
               "inspector/projects",
-              "inspector/protocol-versions"
+              "inspector/protocol-versions",
+              "inspector/host-compat"
             ]
           },
           {
