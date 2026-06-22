@@ -21,12 +21,16 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Select a server** - Pick an HTTP + OAuth server from the server bar at the top. STDIO servers and servers without OAuth enabled show a not-testable state and cannot be run. If you need to add or adjust a server, click **Configure Server to Test**.
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+<Note>
+If you have a registered resource app, selecting it in the registration panel overrides the bar server selection for that run. A banner appears letting you switch back to the bar server at any time.
+</Note>
 
 ## Authorization Server Compatibility
 
@@ -51,12 +55,12 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 
 - **Title** - A user-friendly summary of what went wrong
 - **Explanation** - Plain-English description of the root cause
-- **Actions** - Buttons to fix the issue (Configure Target, Register Issuer, Reset Flow)
+- **Actions** - Buttons to fix the issue (Configure Server to Test, Register Issuer, Reset Flow)
 
 ### Common Error Scenarios
 
 **Client ID Required**
-- The ID-JAG needs a `client_id` claim. Configure it in the target settings and register the client at your authorization server.
+- The ID-JAG needs a `client_id` claim. Configure it via **Configure Server to Test** and register the client at your authorization server.
 
 **Authorization Server Doesn't Support jwt-bearer Grant**
 - The AS returned `unsupported_grant_type`. Most authorization servers don't support RFC 7523 yet. Check vendor-specific guidance or run a bridge service.
