@@ -98,7 +98,7 @@ describe("workos authkit local session bridge", () => {
       "https://api.workos.com/user_management/sessions/logout?session_id=session_123"
     );
     expect(res.headers.get("set-cookie")).toContain(
-      "mcpjam_workos_session=; Max-Age=0"
+      "mcpjam_workos_sessions=; Max-Age=0"
     );
   });
 
