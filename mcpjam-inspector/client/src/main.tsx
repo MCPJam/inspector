@@ -204,6 +204,8 @@ if (isInIframe) {
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
     const root = createRoot(document.getElementById("root")!);
+    const skipLocalSessionBootstrap =
+      import.meta.env.DEV && window.location.pathname.startsWith("/__e2e/");
 
     if (electronHostedAuthCallbackUrl) {
       root.render(
@@ -217,7 +219,7 @@ if (isInIframe) {
     }
 
     try {
-      if (!HOSTED_MODE) {
+      if (!HOSTED_MODE && !skipLocalSessionBootstrap) {
         // Initialize session token BEFORE rendering in local mode.
         await initializeSessionToken();
         console.log("[Auth] Session token initialized");

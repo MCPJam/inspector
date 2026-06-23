@@ -31,6 +31,16 @@ export interface OAuthTokensFromFlow {
   clientSecret?: string;
 }
 
+declare global {
+  interface Window {
+    __oauthDebuggerE2EFlowState?: {
+      authorizationUrl?: string;
+      currentStep: OAuthFlowStep;
+      state?: string;
+    };
+  }
+}
+
 const deriveServerIdentifier = (profile: OAuthTestProfile): string => {
   const trimmedUrl = profile.serverUrl.trim();
   if (!trimmedUrl) {
@@ -178,6 +188,25 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
+
+  useEffect(() => {
+    if (
+      !import.meta.env.DEV ||
+      !window.location.pathname.startsWith("/__e2e/oauth-debugger")
+    ) {
+      return;
+    }
+
+    window.__oauthDebuggerE2EFlowState = {
+      authorizationUrl: oauthFlowState.authorizationUrl,
+      currentStep: oauthFlowState.currentStep,
+      state: oauthFlowState.state,
+    };
+  }, [
+    oauthFlowState.authorizationUrl,
+    oauthFlowState.currentStep,
+    oauthFlowState.state,
+  ]);
 
   useEffect(() => {
     setFocusedStep(null);
