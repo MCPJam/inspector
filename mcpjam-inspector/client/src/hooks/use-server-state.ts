@@ -2810,60 +2810,56 @@ export function useServerState({
         localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
       }
 
-      if (!HOSTED_MODE) {
-        const resolved = tryResolveProjectServer(serverName);
-        const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
-        if (!resolved) {
-          localStorage.removeItem(`mcp-tokens-${serverName}`);
-          return {
-            success: false,
-            error: "OAuth server is not synced; cannot store tokens securely",
-          };
-        }
-        if (!normalizedTokens) {
-          localStorage.removeItem(`mcp-tokens-${serverName}`);
-          return {
-            success: false,
-            error:
-              "OAuth token response missing access_token; cannot import tokens to Convex",
-          };
-        }
-        if (!tokens.clientId) {
-          localStorage.removeItem(`mcp-tokens-${serverName}`);
-          return {
-            success: false,
-            error:
-              "OAuth client information missing client_id; cannot import tokens to Convex",
-          };
-        }
-        const storedOAuthConfig = readStoredOAuthConfig(serverName);
-        const isRegistry =
-          !!storedOAuthConfig.registryServerId &&
-          storedOAuthConfig.useRegistryOAuthProxy === true;
-        await importHostedOAuthTokens({
-          projectId: resolved.projectId,
-          serverId: resolved.serverId,
-          serverUrl,
-          ...(storedOAuthConfig.resourceUrl
-            ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
-            : {}),
-          kind: isRegistry ? "registry" : "generic",
-          ...(isRegistry
-            ? {
-                registryServerId: storedOAuthConfig.registryServerId,
-                useRegistryOAuthProxy: true,
-              }
-            : {}),
-          clientInformation: {
-            clientId: tokens.clientId,
-            ...(tokens.clientSecret
-              ? { clientSecret: tokens.clientSecret }
-              : {}),
-          },
-          tokens: normalizedTokens,
-        });
+      const resolved = tryResolveProjectServer(serverName);
+      const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
+      if (!resolved) {
         localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error: "OAuth server is not synced; cannot store tokens securely",
+        };
       }
+      if (!normalizedTokens) {
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error:
+            "OAuth token response missing access_token; cannot import tokens to Convex",
+        };
+      }
+      if (!tokens.clientId) {
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error:
+            "OAuth client information missing client_id; cannot import tokens to Convex",
+        };
+      }
+      const storedOAuthConfig = readStoredOAuthConfig(serverName);
+      const isRegistry =
+        !!storedOAuthConfig.registryServerId &&
+        storedOAuthConfig.useRegistryOAuthProxy === true;
+      await importHostedOAuthTokens({
+        projectId: resolved.projectId,
+        serverId: resolved.serverId,
+        serverUrl,
+        ...(storedOAuthConfig.resourceUrl
+          ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+          : {}),
+        kind: isRegistry ? "registry" : "generic",
+        ...(isRegistry
+          ? {
+              registryServerId: storedOAuthConfig.registryServerId,
+              useRegistryOAuthProxy: true,
+            }
+          : {}),
+        clientInformation: {
+          clientId: tokens.clientId,
+          ...(tokens.clientSecret ? { clientSecret: tokens.clientSecret } : {}),
+        },
+        tokens: normalizedTokens,
+      });
+      localStorage.removeItem(`mcp-tokens-${serverName}`);
 
       const serverConfig = {
         url: serverUrl,
