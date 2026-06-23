@@ -3,23 +3,36 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        },
+        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Resolve the Inspector package version through the package export so hosted templates keep working when Inspector is launched with npx.",
-      "id": "inspector-npx-version-path"
+      "summary": "Resolve Inspector runtime paths through package self-references and add a regression check for bundled/published layouts.",
+      "id": "bundled-runtime-paths"
     }
   ],
   "releases": [
     {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "3.10.0",
+      "changesets": [
+        "bundled-runtime-paths"
+      ],
+      "newVersion": "3.10.1"
+    },
+    {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.18.0",
+      "oldVersion": "2.18.1",
       "changesets": [
-        "inspector-npx-version-path"
+        "bundled-runtime-paths"
       ],
-      "newVersion": "2.18.1"
+      "newVersion": "2.18.2"
     }
   ]
 }
