@@ -1,7 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 
-export interface FakeOAuthMcpServer {
+export interface FakeMcpServer {
   origin: string;
   serverUrl: string;
   requests: Array<{
@@ -17,6 +17,26 @@ const ACCESS_TOKEN = "e2e-access-token";
 const REFRESH_TOKEN = "e2e-refresh-token";
 const CLIENT_ID = "e2e-client-id";
 const AUTH_CODE = "e2e-auth-code";
+
+function createInitializeResult(parsedBody: unknown, serverName: string) {
+  return {
+    jsonrpc: "2.0",
+    id:
+      typeof parsedBody === "object" && parsedBody
+        ? (parsedBody as { id?: unknown }).id
+        : 1,
+    result: {
+      protocolVersion: "2025-11-25",
+      capabilities: {
+        tools: {},
+      },
+      serverInfo: {
+        name: serverName,
+        version: "0.0.0",
+      },
+    },
+  };
+}
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
@@ -63,8 +83,8 @@ function parseBody(rawBody: string, contentType: string | undefined): unknown {
   return rawBody;
 }
 
-export async function startFakeOAuthMcpServer(): Promise<FakeOAuthMcpServer> {
-  const requests: FakeOAuthMcpServer["requests"] = [];
+export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
+  const requests: FakeMcpServer["requests"] = [];
 
   const server = http.createServer(
     async (request: IncomingMessage, response: ServerResponse) => {
@@ -106,23 +126,11 @@ export async function startFakeOAuthMcpServer(): Promise<FakeOAuthMcpServer> {
           return;
         }
 
-        sendJson(response, 200, {
-          jsonrpc: "2.0",
-          id:
-            typeof parsedBody === "object" && parsedBody
-              ? (parsedBody as { id?: unknown }).id
-              : 1,
-          result: {
-            protocolVersion: "2025-11-25",
-            capabilities: {
-              tools: {},
-            },
-            serverInfo: {
-              name: "fake-oauth-mcp",
-              version: "0.0.0",
-            },
-          },
-        });
+        sendJson(
+          response,
+          200,
+          createInitializeResult(parsedBody, "fake-oauth-mcp")
+        );
         return;
       }
 
@@ -205,6 +213,66 @@ export async function startFakeOAuthMcpServer(): Promise<FakeOAuthMcpServer> {
   const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("Fake OAuth MCP server did not receive a TCP address");
+  }
+
+  const origin = `http://127.0.0.1:${address.port}`;
+  return {
+    origin,
+    serverUrl: `${origin}/mcp`,
+    requests,
+    close: async () => {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+export async function startFakePlainMcpServer(): Promise<FakeMcpServer> {
+  const requests: FakeMcpServer["requests"] = [];
+
+  const server = http.createServer(
+    async (request: IncomingMessage, response: ServerResponse) => {
+      const host = request.headers.host;
+      const origin = `http://${host}`;
+      const url = new URL(request.url ?? "/", origin);
+      const rawBody = await readRequestBody(request);
+      const parsedBody = parseBody(rawBody, request.headers["content-type"]);
+
+      requests.push({
+        method: request.method ?? "GET",
+        path: url.pathname,
+        authorization: request.headers.authorization,
+        body: parsedBody,
+      });
+
+      if (request.method === "OPTIONS") {
+        response.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization,Content-Type,Accept",
+        });
+        response.end();
+        return;
+      }
+
+      if (url.pathname === "/mcp") {
+        sendJson(
+          response,
+          200,
+          createInitializeResult(parsedBody, "fake-plain-mcp")
+        );
+        return;
+      }
+
+      sendJson(response, 404, { error: "not_found" });
+    }
+  );
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Fake plain MCP server did not receive a TCP address");
   }
 
   const origin = `http://127.0.0.1:${address.port}`;
