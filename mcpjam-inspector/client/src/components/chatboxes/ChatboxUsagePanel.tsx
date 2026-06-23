@@ -23,6 +23,7 @@ import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareU
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 import { GenerateSessionsDialog } from "@/components/chatboxes/GenerateSessionsDialog";
+import { SessionReadinessStrip } from "@/components/chatboxes/session-readiness";
 import { buildChatboxSessionPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
@@ -75,7 +76,7 @@ export function ChatboxUsagePanel({
   const setSelectedThreadId = useCallback(
     (threadId: string | null) =>
       setSelection({ chatboxId: chatbox.chatboxId, threadId }),
-    [chatbox.chatboxId],
+    [chatbox.chatboxId]
   );
 
   const { threads, rebuild } = useUsageInsights({
@@ -131,9 +132,15 @@ export function ChatboxUsagePanel({
     }
     setSelection((current) => {
       if (current.chatboxId !== chatbox.chatboxId) {
-        return { chatboxId: chatbox.chatboxId, threadId: sortedThreads[0]?._id ?? null };
+        return {
+          chatboxId: chatbox.chatboxId,
+          threadId: sortedThreads[0]?._id ?? null,
+        };
       }
-      if (current.threadId && sortedThreads.some((t) => t._id === current.threadId)) {
+      if (
+        current.threadId &&
+        sortedThreads.some((t) => t._id === current.threadId)
+      ) {
         return current;
       }
       return {
@@ -145,11 +152,11 @@ export function ChatboxUsagePanel({
 
   const handleToggleChip = useCallback(
     (chip: UsageFilterChip) => setFilter((prev) => toggleChip(prev, chip)),
-    [],
+    []
   );
   const handleClearChip = useCallback(
     (key: string) => setFilter((prev) => removeChipByKey(prev, key)),
-    [],
+    []
   );
 
   // Topic-map dot click → open that session in the Sessions tab. Clear the
@@ -161,7 +168,7 @@ export function ChatboxUsagePanel({
       setFilter(EMPTY_USAGE_FILTER);
       onOpenSession?.(sessionId);
     },
-    [chatbox.chatboxId, onOpenSession],
+    [chatbox.chatboxId, onOpenSession]
   );
 
   const handleRebuild = useCallback(async () => {
@@ -186,7 +193,7 @@ export function ChatboxUsagePanel({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Rebuild failed. Try again in a few minutes.",
+          : "Rebuild failed. Try again in a few minutes."
       );
     } finally {
       if (rebuildNonceRef.current === myNonce) {
@@ -219,7 +226,7 @@ export function ChatboxUsagePanel({
     label: "Hide synthetic",
   };
   const isHideSyntheticActive = filter.chips.some(
-    (c) => chipKey(c) === chipKey(hideSyntheticChip),
+    (c) => chipKey(c) === chipKey(hideSyntheticChip)
   );
 
   return (
@@ -257,6 +264,7 @@ export function ChatboxUsagePanel({
                   Generate with AI
                 </Button>
               </div>
+              <SessionReadinessStrip chatboxId={chatbox.chatboxId} />
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ShareUsageThreadList
                   threads={sortedThreads}
@@ -275,7 +283,7 @@ export function ChatboxUsagePanel({
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
                     chatbox.namedHostId,
-                    selectedThreadId,
+                    selectedThreadId
                   )}`}
                 />
               ) : (

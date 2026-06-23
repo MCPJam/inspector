@@ -701,6 +701,7 @@ async function runOneSession(args: {
         synthetic: true,
         personaId: persona.id,
         personaLabel: persona.name,
+        ...(persona.personaRefId ? { personaRefId: persona.personaRefId } : {}),
         synthesisRunId: runId,
         turnTrace,
         resumeConfig,
@@ -780,6 +781,7 @@ async function runOneSession(args: {
         synthetic: true,
         personaId: persona.id,
         personaLabel: persona.name,
+        ...(persona.personaRefId ? { personaRefId: persona.personaRefId } : {}),
         synthesisRunId: runId,
         resumeConfig,
       });

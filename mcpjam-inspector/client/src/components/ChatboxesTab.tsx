@@ -14,6 +14,7 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { PersonasTab } from "@/components/chatboxes/PersonasTab";
 import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
 import { ChatboxHostCanvasPanel } from "@/components/chatboxes/ChatboxHostCanvasPanel";
 import {
@@ -53,10 +54,11 @@ interface ChatboxesTabProps {
   isAuthenticated: boolean;
 }
 
-type ChatboxTab = "publish" | "sessions" | "clusters";
+type ChatboxTab = "publish" | "personas" | "sessions" | "clusters";
 
 const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
   { value: "publish", label: "Publish" },
+  { value: "personas", label: "Personas" },
   { value: "sessions", label: "Sessions" },
   { value: "clusters", label: "Clusters" },
 ];
@@ -82,7 +84,7 @@ export function ChatboxesTab({
   // remount re-seeds tab and thread selection from it.
   const sessionDeepLinkThreadId = searchParams.get("session");
   const [tab, setTab] = useState<ChatboxTab>(() =>
-    sessionDeepLinkThreadId ? "sessions" : "publish",
+    sessionDeepLinkThreadId ? "sessions" : "publish"
   );
   const [panelView, setPanelView] = useState<PublishPanelView>("preview");
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
@@ -125,7 +127,7 @@ export function ChatboxesTab({
   // the new row. Latched per hostId so a transient null + concurrent
   // queries don't trigger duplicate mutations.
   const ensureChatboxForHost = useMutation(
-    "chatboxes:ensureChatboxForHost" as any,
+    "chatboxes:ensureChatboxForHost" as any
   );
   const ensureLatchRef = useRef<Set<string>>(new Set());
   // Tracks hostIds where ensure resolved successfully but the reactive
@@ -168,14 +170,20 @@ export function ChatboxesTab({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to provision swarm for host",
+            : "Failed to provision swarm for host"
         );
       });
     return () => {
       cancelled = true;
       if (stuckTimer !== undefined) clearTimeout(stuckTimer);
     };
-  }, [chatbox, effectiveAuth, ensureChatboxForHost, isLoading, previewedHostId]);
+  }, [
+    chatbox,
+    effectiveAuth,
+    ensureChatboxForHost,
+    isLoading,
+    previewedHostId,
+  ]);
   // Once the chatbox shows up, clear the stuck flag AND the per-host
   // ensure latch so a future drift (host's chatbox gets deleted later in
   // the same session) re-arms the ensure mutation instead of silently
@@ -216,8 +224,8 @@ export function ChatboxesTab({
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
           <p className="mt-3 text-sm font-medium">Pick a host</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the host bar at the top to choose which host's swarm you
-            want to manage.
+            Use the host bar at the top to choose which host's swarm you want to
+            manage.
           </p>
         </div>
       </div>
@@ -280,10 +288,7 @@ export function ChatboxesTab({
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "publish" ? (
-          <ResizablePanelGroup
-            direction="horizontal"
-            className="h-full"
-          >
+          <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={50} minSize={32}>
               <div className="h-full overflow-y-auto px-6 py-6">
                 <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -348,7 +353,7 @@ export function ChatboxesTab({
                   <div
                     className={cn(
                       "absolute inset-0",
-                      panelView === "preview" ? "" : "hidden",
+                      panelView === "preview" ? "" : "hidden"
                     )}
                   >
                     <ChatboxPreviewPane
@@ -369,6 +374,8 @@ export function ChatboxesTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
+        ) : tab === "personas" ? (
+          <PersonasTab chatbox={chatbox} />
         ) : tab === "sessions" ? (
           <ChatboxUsagePanel
             chatbox={chatbox}
@@ -423,8 +430,8 @@ function ChatboxPreviewPane({
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
           <p className="mt-3 text-sm font-medium">No share link yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Publish the swarm to generate a share link, then come back
-            here to preview it.
+            Publish the swarm to generate a share link, then come back here to
+            preview it.
           </p>
         </div>
       </div>
