@@ -29,7 +29,9 @@ import { synthesizeServerBody } from "./adapter.js";
 
 const hosts = new Hono();
 const require = createRequire(import.meta.url);
-const inspectorPkg = require("../../../package.json") as { version?: string };
+const inspectorPkg = require("@mcpjam/inspector/package.json") as {
+  version?: string;
+};
 
 // Stamped into the mcpjam template's mcpProfile version (cosmetic; only the
 // mcpjam template reads it). Mirrors the inspector build version the UI threads
