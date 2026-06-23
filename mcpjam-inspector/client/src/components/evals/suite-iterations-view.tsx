@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { compareRunsBySequence } from "./helpers";
 import { SuiteHeader } from "./suite-header";

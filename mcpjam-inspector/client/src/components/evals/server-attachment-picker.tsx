@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useMutation, useConvexAuth } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";

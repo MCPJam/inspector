@@ -8,7 +8,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";

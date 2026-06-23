@@ -14,7 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avata
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { getInitials } from "@/lib/utils";
 import { ChevronDown, Clock, CreditCard, Globe, Lock } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,

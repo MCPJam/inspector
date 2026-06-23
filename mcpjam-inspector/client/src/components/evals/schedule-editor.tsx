@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import {

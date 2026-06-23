@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Clock, Globe, Lock, Users } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import {
   type ChatboxMember,

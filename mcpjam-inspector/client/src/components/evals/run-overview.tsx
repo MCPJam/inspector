@@ -37,7 +37,7 @@ import {
   EVAL_DESTRUCTIVE_BUTTON_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const RUN_ROW_STAGGER_CAP = 20;
 

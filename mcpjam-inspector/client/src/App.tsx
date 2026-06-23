@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";

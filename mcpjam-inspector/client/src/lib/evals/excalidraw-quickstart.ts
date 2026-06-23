@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import posthog from "posthog-js";
 import type { ConvexReactClient } from "convex/react";
 import {

@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Loader2, Plus, Sparkles, Users } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import { Button } from "@mcpjam/design-system/button";

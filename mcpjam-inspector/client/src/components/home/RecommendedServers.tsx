@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Loader2,
   Plus,

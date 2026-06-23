@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useConvex } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";

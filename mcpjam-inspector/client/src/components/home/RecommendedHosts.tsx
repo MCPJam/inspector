@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
 import { useAppNavigate, buildHostsPath } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";

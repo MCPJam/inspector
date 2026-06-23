@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import { isMCPJamProvidedModel } from "@/shared/types";
