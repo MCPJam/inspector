@@ -38,6 +38,7 @@ const {
   mockUpdateServer,
   mockUpdateServerWithClientSecret,
   mockUseDbUserReady,
+  mockHostedMode,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -61,6 +62,7 @@ const {
   mockUpdateServer: vi.fn(),
   mockUpdateServerWithClientSecret: vi.fn(),
   mockUseDbUserReady: vi.fn(() => false),
+  mockHostedMode: vi.fn(() => false),
 }));
 
 vi.mock("sonner", () => ({
@@ -79,6 +81,19 @@ vi.mock("convex/react", () => ({
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: mockUseDbUserReady,
 }));
+
+vi.mock("@/lib/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/config")>();
+  return {
+    ...actual,
+    get HOSTED_MODE() {
+      return mockHostedMode();
+    },
+    get SANITIZE_OAUTH_TRACES() {
+      return mockHostedMode();
+    },
+  };
+});
 
 vi.mock("@/state/mcp-api", () => ({
   testConnection: testConnectionMock,
@@ -276,6 +291,7 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 }
 
 beforeEach(() => {
+  mockHostedMode.mockReturnValue(false);
   mockUseDbUserReady.mockReturnValue(true);
   vi.mocked(authFetch).mockReset();
   vi.mocked(authFetch).mockResolvedValue({
@@ -716,7 +732,7 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
-  it("imports debugger-applied OAuth tokens before reconnecting a synced local server", async () => {
+  it("imports debugger-applied OAuth tokens before reconnecting a synced server", async () => {
     reconnectServerMock.mockResolvedValueOnce({
       success: true,
       initInfo: null,
@@ -773,6 +789,55 @@ describe("useServerState OAuth callback failures", () => {
         serverName: "demo-server",
       })
     );
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+  });
+
+  it("imports debugger-applied OAuth tokens before reconnecting in hosted mode", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 3600,
+          clientId: "hosted-client-id",
+        },
+        "https://hosted.example.com/mcp"
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).toHaveBeenCalledWith({
+      projectId: "project_default",
+      serverId: "srv_demo",
+      serverUrl: "https://hosted.example.com/mcp",
+      kind: "generic",
+      clientInformation: {
+        clientId: "hosted-client-id",
+      },
+      tokens: {
+        access_token: "hosted-access-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      },
+    });
+    expect(reconnectServerMock).toHaveBeenCalledWith(
+      "srv_demo",
+      expect.objectContaining({ url: "https://hosted.example.com/mcp" }),
+      expect.objectContaining({
+        projectId: "project_default",
+        serverName: "demo-server",
+      })
+    );
+    expect(localStorage.getItem("mcp-client-demo-server")).toBeNull();
+    expect(localStorage.getItem("mcp-serverUrl-demo-server")).toBeNull();
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
   });
 
