@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,8 @@ const repoRoot = path.resolve(
 );
 
 const targetRoots = [
+  "sdk/src",
+  "mcpjam-inspector/bin",
   "mcpjam-inspector/server",
   "mcpjam-inspector/lib",
   "cli/src",
@@ -41,6 +43,8 @@ const skippedFileSuffixes = [
   ".test.tsx",
 ];
 
+// Literal-only by design: this catches the published crash class without
+// banning normal source-relative imports.
 const checks = [
   {
     label: "relative package.json require",
@@ -82,15 +86,33 @@ function shouldScanFile(filePath) {
 }
 
 function* walk(dir) {
-  for (const entry of readdirSync(dir)) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
     const fullPath = path.join(dir, entry);
-    const stat = statSync(fullPath);
+    let stat;
+    try {
+      stat = lstatSync(fullPath);
+    } catch {
+      continue;
+    }
+
     if (stat.isDirectory()) {
       if (!skippedDirectoryNames.has(entry)) {
         yield* walk(fullPath);
       }
       continue;
     }
+
+    if (stat.isSymbolicLink()) {
+      continue;
+    }
+
     if (stat.isFile() && shouldScanFile(fullPath)) {
       yield fullPath;
     }
