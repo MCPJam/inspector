@@ -3,43 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Add Cline as a built-in tools-only client template and enable progressive tool discovery by default for Goose hosts.",
-      "id": "bright-cline-hosts"
+      "summary": "Resolve the Inspector package version through the package export so hosted templates keep working when Inspector is launched with npx.",
+      "id": "inspector-npx-version-path"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.22.0",
-      "changesets": [
-        "bright-cline-hosts"
-      ],
-      "newVersion": "1.23.0"
-    },
-    {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.17.0",
+      "type": "patch",
+      "oldVersion": "2.18.0",
       "changesets": [
-        "bright-cline-hosts"
+        "inspector-npx-version-path"
       ],
-      "newVersion": "2.18.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.18.1"
     }
   ]
 }

@@ -1,77 +1,37 @@
-diff --git a/.changeset/bright-cline-hosts.md b/.changeset/bright-cline-hosts.md
+diff --git a/.changeset/inspector-npx-version-path.md b/.changeset/inspector-npx-version-path.md
 deleted file mode 100644
-index 6815f4947..000000000
---- a/.changeset/bright-cline-hosts.md
+index f199b884f..000000000
+--- a/.changeset/inspector-npx-version-path.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
+-"@mcpjam/inspector": patch
 ----
 -
--Add Cline as a built-in tools-only client template and enable progressive tool discovery by default for Goose hosts.
+-Resolve the Inspector package version through the package export so hosted templates keep working when Inspector is launched with npx.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 53c19a9fa..8d640ba82 100644
+index 8d640ba82..ea5b5bf16 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.17.0",
-+  "version": "2.18.0",
+-  "version": "2.18.0",
++  "version": "2.18.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -129,7 +129,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.22.0",
-+    "@mcpjam/sdk": "^1.23.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 73c3062ba..7707c89b2 100644
+index 7707c89b2..fef43cdbb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.17.0",
-+      "version": "2.18.0",
+-      "version": "2.18.0",
++      "version": "2.18.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -359,7 +359,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.22.0",
-+        "@mcpjam/sdk": "^1.23.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -36879,7 +36879,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.22.0",
-+      "version": "1.23.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/amazon-bedrock": "^3.0.101",
-diff --git a/sdk/package.json b/sdk/package.json
-index e577cc127..54b93c5e4 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.22.0",
-+  "version": "1.23.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",
