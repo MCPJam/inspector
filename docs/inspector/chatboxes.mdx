@@ -1,0 +1,135 @@
+---
+title: "Chatboxes"
+description: "Publish shareable chat interfaces for your MCP servers, manage synthetic personas, and monitor session readiness"
+icon: "message-square"
+---
+
+Chatboxes let you publish a shareable chat interface for an MCP server host. From the Chatboxes tab you can configure the published experience, run synthetic sessions to stress-test your server, and review how those sessions performed.
+
+## Tabs
+
+The Chatboxes tab is divided into four sections:
+
+| Tab | What it does |
+|-----|-------------|
+| **Publish** | Configure and preview the public-facing chat interface for a host. |
+| **Personas** | Manage a durable roster of synthetic users and launch swarm runs. |
+| **Sessions** | Browse real and synthetic chat sessions, filter by topic cluster, and inspect individual threads. |
+| **Clusters** | View topic clusters automatically derived from session traffic. |
+
+## Personas tab
+
+The Personas tab is where you build and manage the cast of synthetic users that run against your chatbox. Each character has a name, role, notes, and an optional goal. Characters are reusable across runs and accumulate a track record over time.
+
+### Character grid
+
+The left panel shows all characters for the current chatbox. Each card displays the character's name, role, a source badge (**Custom**, **AI**, or **From traffic**), and any notes.
+
+Click a card to select it (highlighted with a ring) and load its track record in the right panel. Click again to deselect.
+
+### Creating a character
+
+Click **New character** in the toolbar to open the creation dialog. Fill in:
+
+- **Name** — a short label for the character (e.g., "Curious First-Time User").
+- **Role** — what the character is doing (e.g., "Evaluating the product for their team").
+- **Goal** — what they're trying to accomplish. Used in future grading (Phase 3).
+- **Notes** — background, context, or behaviors to guide the simulation.
+
+Name and role are required. Click **Add character** to save.
+
+### Seeding from traffic
+
+If your chatbox has topic clusters derived from real sessions, **Seed from traffic** chips appear in the toolbar — one per cluster that doesn't already have a character. Click a chip to automatically create a character whose persona is grounded in that cluster's theme. The chip disappears once a character has been seeded from that cluster.
+
+### Running a swarm
+
+Select one or more characters (up to 10) and click **Run swarm** to open the Generate sessions dialog pre-seeded with those characters. The dialog skips straight to the Review stage so you can confirm the roster before launching.
+
+<Note>
+Running a swarm on a chatbox that uses your organization's model key will consume provider credits. A cost estimate is shown in the Review stage before you confirm.
+</Note>
+
+### Track record panel
+
+The right panel shows the selected character's history across all synthetic runs:
+
+- **Runs** — number of swarm runs this character has participated in.
+- **Sessions** — total synthetic sessions generated for this character.
+- **Issues** — total readiness issues found across all sessions.
+- **Avg coverage** — average fraction of the chatbox's advertised tools exercised per session.
+
+Below the stats, a verdict breakdown shows how many sessions were **ready**, **needs attention**, or **not ready**. If any tools failed repeatedly, the most common failing tools are listed as chips.
+
+When no sessions exist yet, the panel prompts you to run a swarm to start building the track record.
+
+## Generate sessions dialog
+
+The **Generate with AI** button in the Sessions tab (and **Run swarm** from the Personas tab) opens the Generate sessions dialog. It has three stages:
+
+### Configure stage
+
+If you have saved characters, a **Run saved characters** grid appears at the top. Select characters and click **Review selected** to jump straight to the Review stage with those characters pre-loaded.
+
+Below the grid (or when no characters exist), you can generate a fresh set of personas by configuring:
+
+- **Personas** — number of synthetic users to generate (1–10).
+- **Sessions per persona** — how many sessions each persona runs (1–5).
+- **Max turns** — maximum conversation turns per session (1–20).
+
+A cost estimate is shown based on these settings. Click **Generate personas** to have AI draft a persona slate, then proceed to Review.
+
+### Review stage
+
+The Review stage shows the persona slate — either generated or loaded from your roster. Each persona has a name, role, and notes that you can edit inline. Use the checkboxes to include or exclude individual personas from the run.
+
+Warnings appear here if:
+- The chatbox uses your organization's model key (credit spend estimate shown).
+- The chatbox requires tool approval (synthetic sessions cannot exercise approval-required tools).
+
+Click **Run simulation** to start. The button is disabled if no personas are selected or more than 10 are checked.
+
+### Running stage
+
+A progress panel shows the run status and a session count as sessions complete. When the run finishes, click **View sessions** to jump to the Sessions tab filtered to that run.
+
+## Sessions tab
+
+The Sessions tab lists all chat sessions for the chatbox — both real user sessions and synthetic ones.
+
+### Session list
+
+Each row shows:
+- Session title or first message preview.
+- Rating (if the user rated the session).
+- Topic cluster label (if assigned).
+- For synthetic sessions: a **persona chip** (violet) showing which character ran the session, and a **readiness badge** showing the verdict.
+
+A **readiness rollup strip** appears above the list whenever at least one synthetic session has been analyzed. It shows the count of ready / needs attention / not ready sessions, total issues, average tool coverage, and the most common failing tools.
+
+### Readiness badges
+
+Synthetic session rows show a compact verdict pill:
+
+| Badge | Meaning |
+|-------|---------|
+| **Ready** (green) | No significant issues found. |
+| **Needs attention** (amber) | Minor issues or partial coverage. |
+| **Not ready** (red) | Errors or hallucinated tools detected. |
+| **Analyzing** (spinner) | Readiness analysis is still running. |
+| **Readiness failed** | The analysis could not complete. |
+
+A **· partial** suffix appears when the tool inventory was unavailable during analysis.
+
+### Session detail
+
+Click a session to open the detail panel. For synthetic sessions, an **insight bar** appears at the top of the detail showing:
+
+- The overall verdict badge.
+- Tool call error rate (e.g., "2/4 tool calls failed").
+- Tool coverage percentage.
+- Count of undeclared (hallucinated) tools, if any.
+- Host-response latency across turns.
+- A list of individual issues with severity icons.
+
+The insight bar is only shown for synthetic sessions. Real user sessions open directly to the conversation view.
