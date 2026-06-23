@@ -23,6 +23,10 @@ export interface PersonaSlate {
   name: string;
   role: string;
   notes: string;
+  /** Gradable objective (Phase 3); rides into the run + driver prompt. */
+  goal?: string;
+  /** Durable roster row id; stamped onto the synthetic session at ingestion. */
+  personaRefId?: string;
 }
 
 export type PersonaSource = "manual" | "generated" | "cluster";

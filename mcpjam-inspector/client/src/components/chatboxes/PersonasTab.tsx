@@ -114,6 +114,10 @@ export function PersonasTab({ chatbox }: { chatbox: ChatboxSettings }) {
         name: p.name,
         role: p.role,
         notes: p.notes,
+        // Thread durable identity + objective so the run pursues/grades the
+        // goal and the synthetic session is stamped with the durable ref.
+        ...(p.goal ? { goal: p.goal } : {}),
+        personaRefId: p._id,
       })),
     [selectedPersonas]
   );

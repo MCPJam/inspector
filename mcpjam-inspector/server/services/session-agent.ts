@@ -22,6 +22,18 @@ export interface PersonaSlate {
   name: string;
   role: string;
   notes: string;
+  /**
+   * Optional gradable objective (Phase 3). Carried into the run so the backend
+   * persona-driver prompt pursues it and Phase 3 can grade against it. Absent
+   * for AI-generated (unsaved) slates.
+   */
+  goal?: string;
+  /**
+   * Durable roster row id this slate was projected from, when launched from a
+   * saved persona. Stamped onto the synthetic `chatSessions.personaRefId` at
+   * ingestion so the persona track record can join on the durable key.
+   */
+  personaRefId?: string;
 }
 
 /**
@@ -167,11 +179,7 @@ export async function createRun(
   chatboxId: string,
   personas: PersonaSlate[],
   sessionsPerPersona: number,
-  maxTurns: number,
-  // Phase 2: when the swarm is launched from selected roster personas, pass
-  // their durable refs. The backend resolves them into the same persona
-  // payload shape and merges with any inline `personas`.
-  personaRefIds?: string[]
+  maxTurns: number
 ): Promise<{ runId: string }> {
   const data = await postJson<{
     ok?: boolean;
@@ -181,12 +189,14 @@ export async function createRun(
     `${convexHttpUrl}/session-simulation/runs/create`,
     convexAuthToken,
     {
+      // Personas carry `goal` inline so it's snapshotted into the run and feeds
+      // the backend persona-driver prompt. (`personaRefId` rides the same slate
+      // for ingestion stamping; the backend ignores it on run-create.)
       projectId,
       chatboxId,
       personas,
       sessionsPerPersona,
       maxTurns,
-      ...(personaRefIds && personaRefIds.length > 0 ? { personaRefIds } : {}),
     },
     NON_LLM_TIMEOUT_MS
   );

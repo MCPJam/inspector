@@ -30,7 +30,7 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration",
+      "Server missing CONVEX_HTTP_URL configuration"
     );
   }
   return url;
@@ -65,6 +65,11 @@ const personaSlateSchema = z.object({
   name: z.string().min(1),
   role: z.string(),
   notes: z.string(),
+  // Optional gradable objective (Phase 3) + durable roster ref, present when
+  // launched from saved roster personas. `goal` rides into the run record /
+  // driver prompt; `personaRefId` is stamped onto the synthetic session.
+  goal: z.string().optional(),
+  personaRefId: z.string().optional(),
 });
 
 const startSimulationSchema = z.object({
@@ -77,7 +82,7 @@ const startSimulationSchema = z.object({
 });
 
 function resolveRequiredServers(
-  servers: Array<{ serverId: string; serverName?: string; optional?: boolean }>,
+  servers: Array<{ serverId: string; serverName?: string; optional?: boolean }>
 ): { selectedServerIds: string[]; selectedServerNames: string[] } {
   const required = servers.filter((s) => s.optional !== true);
   return {
@@ -96,19 +101,19 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "chatboxId required",
+        "chatboxId required"
       );
     }
     const body = parseWithSchema(
       generatePersonasSchema,
-      await readJsonBody<unknown>(c),
+      await readJsonBody<unknown>(c)
     );
     const convexHttpUrl = requireConvexHttpUrl();
     // selectedServerIds may be empty (no required servers): the manager
     // comes back connection-less, the snapshot captures zero servers, and
     // the backend grounds personas in the chatbox name instead of tools.
     const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
-      body.servers,
+      body.servers
     );
 
     const result = await withManager(
@@ -125,13 +130,13 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
           chatboxId,
           accessVersion: body.accessVersion,
           serverNames: selectedServerNames,
-        },
+        }
       ),
       async (manager) => {
         const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
           manager,
           selectedServerIds,
-          { logPrefix: "session-simulation.generate-personas" },
+          { logPrefix: "session-simulation.generate-personas" }
         );
         const personas = await generatePersonas(
           toolSnapshot,
@@ -149,14 +154,14 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
             id: chatboxId,
             ...(body.chatboxName ? { name: body.chatboxName } : {}),
             resolvedServerNames: selectedServerIds,
-          },
+          }
         );
         return { personas };
-      },
+      }
     );
 
     return result;
-  }),
+  })
 );
 
 chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
@@ -167,12 +172,12 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "chatboxId required",
+        "chatboxId required"
       );
     }
     const body = parseWithSchema(
       startSimulationSchema,
-      await readJsonBody<unknown>(c),
+      await readJsonBody<unknown>(c)
     );
     const convexHttpUrl = requireConvexHttpUrl();
     const authHeader = c.req.header("authorization");
@@ -180,7 +185,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       throw new WebRouteError(
         401,
         ErrorCode.UNAUTHORIZED,
-        "Authorization header required",
+        "Authorization header required"
       );
     }
 
@@ -192,7 +197,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       throw new WebRouteError(
         runtime.status,
         ErrorCode.INTERNAL_ERROR,
-        runtime.error,
+        runtime.error
       );
     }
 
@@ -200,7 +205,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     // factory returns a connection-less manager and the sessions run
     // toolless, exactly like a real no-opt-in visitor's chat.
     const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
-      body.servers,
+      body.servers
     );
 
     // BYOK is now supported on synthetic runs: the runner's
@@ -225,7 +230,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       chatboxId,
       body.personas as PersonaSlate[],
       body.sessionsPerPersona,
-      body.maxTurns,
+      body.maxTurns
     );
 
     const projectId = body.projectId;
@@ -247,8 +252,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     // payloads authorize against the right chatbox version. Falling back
     // to body.accessVersion keeps the door open for an explicit client
     // override should the dialog ever start sending one.
-    const accessVersion =
-      runtime.config.accessVersion ?? body.accessVersion;
+    const accessVersion = runtime.config.accessVersion ?? body.accessVersion;
 
     setImmediate(() => {
       startSimulation({
@@ -292,7 +296,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
               // access is authorized against the current version.
               accessVersion,
               serverNames: selectedServerNames,
-            },
+            }
           );
           return {
             manager,
@@ -312,52 +316,50 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     });
 
     return { runId };
-  }),
+  })
 );
 
-chatboxSessions.get(
-  "/:chatboxId/simulate-sessions/:runId",
-  async (c) =>
-    handleRoute(c, async () => {
-      const bearerToken = assertBearerToken(c);
-      const chatboxId = c.req.param("chatboxId");
-      const runId = c.req.param("runId");
-      if (!chatboxId) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          "chatboxId required",
-        );
-      }
-      if (!runId) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          "runId required",
-        );
-      }
-      const projectId = c.req.query("projectId");
-      if (!projectId) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          "projectId required",
-        );
-      }
-      const convexHttpUrl = requireConvexHttpUrl();
-      const { run, threadIds } = await getRun(
-        convexHttpUrl,
-        bearerToken,
-        projectId,
-        runId,
+chatboxSessions.get("/:chatboxId/simulate-sessions/:runId", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const chatboxId = c.req.param("chatboxId");
+    const runId = c.req.param("runId");
+    if (!chatboxId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "chatboxId required"
       );
-      // Use 404 (not 403) on mismatch so the response doesn't leak whether
-      // the runId exists under a different chatbox.
-      if (run.chatboxId !== chatboxId) {
-        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Run not found");
-      }
-      return { run, threadIds };
-    }),
+    }
+    if (!runId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "runId required"
+      );
+    }
+    const projectId = c.req.query("projectId");
+    if (!projectId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId required"
+      );
+    }
+    const convexHttpUrl = requireConvexHttpUrl();
+    const { run, threadIds } = await getRun(
+      convexHttpUrl,
+      bearerToken,
+      projectId,
+      runId
+    );
+    // Use 404 (not 403) on mismatch so the response doesn't leak whether
+    // the runId exists under a different chatbox.
+    if (run.chatboxId !== chatboxId) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Run not found");
+    }
+    return { run, threadIds };
+  })
 );
 
 export default chatboxSessions;

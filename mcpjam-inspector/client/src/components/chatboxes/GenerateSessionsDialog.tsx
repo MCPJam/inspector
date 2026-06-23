@@ -34,6 +34,10 @@ interface PersonaSlate {
   name: string;
   role: string;
   notes: string;
+  /** Gradable objective (Phase 3); snapshotted into the run + driver prompt. */
+  goal?: string;
+  /** Durable roster row id; stamped onto the synthetic session at ingestion. */
+  personaRefId?: string;
 }
 
 interface PersonaEditState extends PersonaSlate {
@@ -183,6 +187,8 @@ export function GenerateSessionsDialog({
         name: p.name,
         role: p.role,
         notes: p.notes,
+        ...(p.goal ? { goal: p.goal } : {}),
+        personaRefId: p._id,
         selected: true,
       }))
     );
