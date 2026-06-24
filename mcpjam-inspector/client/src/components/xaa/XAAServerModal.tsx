@@ -333,9 +333,12 @@ export function XAAServerModal({
                     </button>
                   </TooltipTrigger>
                   <TooltipContent variant="muted" side="top" className="max-w-xs">
-                    Leave blank to read it from the MCP server&apos;s OAuth
-                    metadata (its <code className="font-mono">.well-known</code>{" "}
-                    discovery endpoints).
+                    Leave blank to auto-discover it: the inspector reads the MCP
+                    server&apos;s protected-resource metadata (
+                    <code className="font-mono">
+                      /.well-known/oauth-protected-resource
+                    </code>
+                    ) to find which authorization server protects it.
                   </TooltipContent>
                 </Tooltip>
               </div>
