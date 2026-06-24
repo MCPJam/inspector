@@ -21,6 +21,12 @@ import type { ServerClientSecretResult } from "../utils/server-secrets.js";
 // request body.
 export interface ResolvedServerTarget {
   tokenEndpoint: string;
+  /**
+   * The authorization server's canonical issuer. This — NOT the token endpoint
+   * — is the ID-JAG `aud` claim the resource AS validates against, so the mint
+   * must sign with it.
+   */
+  authzIssuer: string;
   clientId?: string;
   clientSecret?: string;
 }
@@ -75,7 +81,7 @@ export async function discoverServerTargetTokenEndpoint(
     explicitIssuer?: string;
   },
   httpsOnly: boolean
-): Promise<string> {
+): Promise<{ issuer: string; tokenEndpoint: string }> {
   let issuer = args.explicitIssuer;
   if (!issuer && args.resource) {
     issuer = await discoverIssuerFromResourceMetadata(args.resource, httpsOnly);
@@ -111,7 +117,12 @@ export async function discoverServerTargetTokenEndpoint(
         metadataUrl: candidate,
       });
       if (verdict.tokenEndpoint) {
-        return verdict.tokenEndpoint;
+        // Prefer the AS's self-declared canonical issuer from metadata; fall
+        // back to the requested issuer. This becomes the ID-JAG `aud`.
+        return {
+          issuer: verdict.issuer ?? issuer,
+          tokenEndpoint: verdict.tokenEndpoint,
+        };
       }
     }
   }
@@ -163,7 +174,7 @@ export async function resolveServerTarget(deps: {
     );
   }
 
-  const tokenEndpoint = await discoverServerTargetTokenEndpoint(
+  const discovered = await discoverServerTargetTokenEndpoint(
     {
       resource: resolved.serverUrl ?? undefined,
       explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
@@ -172,7 +183,8 @@ export async function resolveServerTarget(deps: {
   );
 
   return {
-    tokenEndpoint,
+    tokenEndpoint: discovered.tokenEndpoint,
+    authzIssuer: discovered.issuer,
     clientId: resolved.clientId ?? undefined,
     clientSecret: resolved.clientSecret ?? undefined,
   };
@@ -257,7 +269,9 @@ export async function mintXaaAccessToken(args: {
     issuer: args.issuer,
     subject: args.subject,
     email: args.email,
-    audience: target.tokenEndpoint,
+    // The ID-JAG `aud` is the resource authorization server's issuer (what it
+    // validates against), NOT its token endpoint.
+    audience: target.authzIssuer,
     resource: args.resource ?? "",
     clientId: target.clientId ?? "",
     scope: args.scope,

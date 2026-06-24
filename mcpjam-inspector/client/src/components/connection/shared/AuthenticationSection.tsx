@@ -766,6 +766,10 @@ export function AuthenticationSection({
                           ? "Saved — enter a new value to replace"
                           : "Client secret (for confidential clients)"
                       }
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
+                      data-form-type="other"
                       className="h-10 pr-10"
                     />
                     <button
