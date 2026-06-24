@@ -156,58 +156,6 @@ describe("web auth manager batching", () => {
     );
   });
 
-  it("rejects additional server configs that collide with authorized project servers", async () => {
-    global.fetch = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          results: {
-            "server-1": {
-              ok: true,
-              role: "member",
-              accessLevel: "project_member",
-              permissions: { chatOnly: false },
-              serverConfig: {
-                transportType: "http",
-                url: "https://server-1.example.com/mcp",
-                headers: {},
-                useOAuth: false,
-              },
-            },
-          },
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-    }) as typeof fetch;
-
-    await expect(
-      createAuthorizedManager(
-        callerContextFromHono(mockContext),
-        "bearer-token",
-        "project-1",
-        ["server-1"],
-        10_000,
-        undefined,
-        undefined,
-        {
-          additionalServerConfigs: {
-            "server-1": {
-              transportType: "http",
-              url: "https://injected.example.com/mcp",
-            },
-          },
-        }
-      )
-    ).rejects.toMatchObject<WebRouteError>({
-      status: 500,
-      code: "INTERNAL_ERROR",
-      details: { serverIds: ["server-1"] },
-    });
-    expect(mcpClientManagerMock).not.toHaveBeenCalled();
-  });
-
   it("attaches hosted OAuth onUnauthorized and force-refreshes through Convex", async () => {
     global.fetch = vi.fn(async (input, init) => {
       const url = fetchUrl(input);

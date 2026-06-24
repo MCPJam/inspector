@@ -24,7 +24,6 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
-import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
@@ -104,8 +103,7 @@ export function McpjamAgentThread({
   // Both the backend route and the persistence path require a resolved
   // model + projectId. On cold load either can be undefined for a few
   // frames; gate every submit affordance on both being present.
-  const isReady =
-    session.model != null && projectId != null && session.serversReady;
+  const isReady = session.model != null && projectId != null;
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -207,9 +205,7 @@ export function McpjamAgentThread({
       onChange={setDraft}
       onSubmit={() => handleSubmit(draft)}
       ready={isReady}
-      loadingMessage={
-        session.serversReady ? "Loading project…" : "Loading MCP servers…"
-      }
+      loadingMessage="Loading project…"
       placeholder="Continue the conversation…"
       isStreaming={isStreaming}
       onStop={() => session.stop()}
@@ -304,33 +300,31 @@ export function McpjamAgentThread({
     <MarkdownLinkBaseProvider base="https://docs.mcpjam.com" trustLinks>
       <ChatboxHostStyleProvider value="mcpjam">
         <ChatboxHostThemeProvider value={themeMode}>
-          <WebManagedServersProvider value>
-            <div
+        <div
+          className={cn(
+            "chatbox-host-shell flex flex-col gap-4 min-h-0",
+            fillsParent
+              ? "h-full"
+              : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
+            className
+          )}
+          data-host-style="mcpjam"
+          style={shellStyle}
+        >
+          {body}
+          {composer}
+          {session.error && (
+            <p
               className={cn(
-                "chatbox-host-shell flex flex-col gap-4 min-h-0",
-                fillsParent
-                  ? "h-full"
-                  : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
-                className
+                "text-xs text-destructive",
+                isFull && "mx-auto w-full max-w-4xl px-4",
+                isSidebar && "w-full px-3"
               )}
-              data-host-style="mcpjam"
-              style={shellStyle}
             >
-              {body}
-              {composer}
-              {session.error && (
-                <p
-                  className={cn(
-                    "text-xs text-destructive",
-                    isFull && "mx-auto w-full max-w-4xl px-4",
-                    isSidebar && "w-full px-3"
-                  )}
-                >
-                  {session.error.message ?? "Something went wrong."}
-                </p>
-              )}
-            </div>
-          </WebManagedServersProvider>
+              {session.error.message ?? "Something went wrong."}
+            </p>
+          )}
+        </div>
         </ChatboxHostThemeProvider>
       </ChatboxHostStyleProvider>
     </MarkdownLinkBaseProvider>

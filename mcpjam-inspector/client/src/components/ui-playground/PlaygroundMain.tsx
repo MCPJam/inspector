@@ -99,11 +99,12 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
-import { useResolvedSelectedMcpServers } from "@/hooks/use-resolved-selected-mcp-servers";
+import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import {
   snapshotFromHostConfig,
   type HostSnapshot,
@@ -540,14 +541,26 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     organizationId: activeProject?.organizationId ?? null,
   });
-  const {
-    serversById,
-    selectedServerIds: hostedSelectedServerIds,
-    oauthTokens: hostedOAuthTokens,
-  } = useResolvedSelectedMcpServers({
+  const { serversById, serversByName } = useProjectServers({
+    isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
-    selectedServerNames: selectedServers,
   });
+  const hostedSelectedServerIds = useMemo(
+    () =>
+      selectedServers
+        .map((name) => serversByName.get(name))
+        .filter((serverId): serverId is string => !!serverId),
+    [selectedServers, serversByName]
+  );
+  const hostedOAuthTokens = useMemo(
+    () =>
+      buildOAuthTokensByServerId(
+        selectedServers,
+        (name) => serversByName.get(name),
+        (name) => appState.servers[name]?.oauthTokens?.access_token
+      ),
+    [selectedServers, serversByName, appState.servers]
+  );
 
   // Mirror the previewed host's chat-execution fields (system prompt,
   // temperature, tool approval, selected servers) into the chat session
