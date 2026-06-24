@@ -30,7 +30,7 @@ function renderLogger(
         continueLabel: "Continue",
         ...actions,
       }}
-      summary={{ serverUrl: "https://mcp.example.com", negativeTestMode: "valid" }}
+      summary={{ serverUrl: "https://mcp.example.com" }}
     />,
   );
   return { onContinue, onRunAll };
@@ -68,5 +68,33 @@ describe("XAAFlowLogger run controls", () => {
     expect(
       screen.getByRole("button", { name: /running/i }),
     ).toBeDisabled();
+  });
+
+  it("labels client id and scope in the run bar", () => {
+    render(
+      <XAAFlowLogger
+        flowState={createInitialXAAFlowState({
+          serverUrl: "https://mcp.example.com",
+          currentStep: "received_id_jag",
+        })}
+        hasProfile
+        actions={{
+          onConfigure: vi.fn(),
+          onReset: vi.fn(),
+          onContinue: vi.fn(),
+          continueLabel: "Continue",
+        }}
+        summary={{
+          serverUrl: "https://mcp.example.com",
+          clientId: "client_bc147d46f04cb865",
+          scope: "mcp.access",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Client ID")).toBeInTheDocument();
+    expect(screen.getByText("client_bc147d46f04cb865")).toBeInTheDocument();
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.getByText("mcp.access")).toBeInTheDocument();
   });
 });
