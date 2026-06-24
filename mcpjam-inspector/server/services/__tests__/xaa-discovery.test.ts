@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDiscoveryCandidates,
+  buildResourceMetadataCandidates,
   evaluateDiscovery,
+  extractAuthorizationServer,
   JWT_BEARER_GRANT,
 } from "../xaa-discovery.js";
 
@@ -37,6 +39,47 @@ describe("buildDiscoveryCandidates", () => {
   it("uses an explicit well-known URL verbatim", () => {
     const url = "https://issuer.example.com/.well-known/openid-configuration";
     expect(buildDiscoveryCandidates(url)).toEqual([url]);
+  });
+});
+
+describe("buildResourceMetadataCandidates", () => {
+  it("inserts the well-known segment before the resource path (RFC 9728 §3.1)", () => {
+    expect(
+      buildResourceMetadataCandidates("https://mcp.example.com/mcp"),
+    ).toEqual([
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "https://mcp.example.com/.well-known/oauth-protected-resource",
+    ]);
+  });
+
+  it("uses the bare root form for a path-less resource", () => {
+    expect(buildResourceMetadataCandidates("https://mcp.example.com")).toEqual([
+      "https://mcp.example.com/.well-known/oauth-protected-resource",
+    ]);
+  });
+});
+
+describe("extractAuthorizationServer", () => {
+  it("returns the first issuer from authorization_servers", () => {
+    expect(
+      extractAuthorizationServer({
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: [
+          "https://as.example.com",
+          "https://other.example.com",
+        ],
+      }),
+    ).toBe("https://as.example.com");
+  });
+
+  it("returns undefined when no authorization server is advertised", () => {
+    expect(extractAuthorizationServer({ resource: "x" })).toBeUndefined();
+    expect(
+      extractAuthorizationServer({ authorization_servers: [] }),
+    ).toBeUndefined();
+    expect(
+      extractAuthorizationServer({ authorization_servers: [""] }),
+    ).toBeUndefined();
   });
 });
 
