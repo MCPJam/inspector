@@ -12,17 +12,18 @@ import type { CompatProvenance, HostCompatProfile } from "./types";
  * Each entry carries the facts the registry can't give us:
  *   - identity (label/logo) and `provenance` (how much to trust the matrix).
  *   - `rendersMcpApps`: does this host render MCP Apps (`ui://`) widgets at
- *     all? Every modern host does EXCEPT Codex — a CLI that carries an
- *     `mcpAppsCapabilities` matrix for protocol-bucket reasons but has no
- *     rendering surface. That "is it a CLI" fact isn't in the registry, so
- *     it's explicit here. (ChatGPT/Copilot render BOTH MCP Apps and the
- *     OpenAI bridge — `rendersOpenAiApps` is resolved separately below.)
+ *     all? Headless clients such as Codex, n8n, Perplexity, and Cline carry
+ *     capability matrices for protocol-bucket reasons but have no rendering
+ *     surface. That "is it headless?" fact isn't in the registry, so it's
+ *     explicit here.
+ *     (ChatGPT/Copilot render BOTH MCP Apps and the OpenAI bridge —
+ *     `rendersOpenAiApps` is resolved separately below.)
  *
  * The granular *capabilities* (which widget features each host supports —
  * serverResources, message, sandbox, …) still come live from the registry,
  * so the report never drifts from the playground's emulation.
  *
- * Provenance: probe = captured from a real host (Cursor 3.4.17);
+ * Provenance: probe = captured from a real host;
  * vendor-doc = published vendor table (Copilot; ChatGPT's OpenAI surface);
  * assumed = best-effort preset, unverified.
  */
@@ -30,17 +31,94 @@ type MarketHost = {
   id: string;
   label: string;
   logoSrc: string;
+  logoSrcByTheme?: { light: string; dark: string };
   provenance: CompatProvenance;
   rendersMcpApps: boolean;
 };
 
 const MARKET_HOSTS: readonly MarketHost[] = [
-  { id: "claude", label: "Claude", logoSrc: "/claude_logo.png", provenance: "assumed", rendersMcpApps: true },
-  { id: "chatgpt", label: "ChatGPT", logoSrc: "/openai_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "cursor", label: "Cursor", logoSrc: "/cursor_logo.png", provenance: "probe", rendersMcpApps: true },
-  { id: "copilot", label: "Copilot", logoSrc: "/copilot_logo.png", provenance: "vendor-doc", rendersMcpApps: true },
+  {
+    id: "claude",
+    label: "Claude",
+    logoSrc: "/claude_logo.png",
+    provenance: "assumed",
+    rendersMcpApps: true,
+  },
+  {
+    id: "chatgpt",
+    label: "ChatGPT",
+    logoSrc: "/openai_logo.png",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
+  // Le Chat renders MCP Apps (via `ui/initialize`) and the normalized
+  // template advertises the standard MCP UI extension for that surface.
+  // Captured from a probe.
+  {
+    id: "mistral",
+    label: "Mistral",
+    logoSrc: "/mistral_logo.png",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "goose",
+    label: "Goose",
+    logoSrc: "/goose_logo_light.png",
+    logoSrcByTheme: {
+      light: "/goose_logo_light.png",
+      dark: "/goose_logo_dark.png",
+    },
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    logoSrc: "/cursor_logo.png",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    id: "copilot",
+    label: "Copilot",
+    logoSrc: "/copilot_logo.png",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
   // Codex is a CLI — it renders no widgets, of either flavor.
-  { id: "codex", label: "Codex", logoSrc: "/codex-logo.svg", provenance: "assumed", rendersMcpApps: false },
+  {
+    id: "codex",
+    label: "Codex",
+    logoSrc: "/codex-logo.svg",
+    provenance: "assumed",
+    rendersMcpApps: false,
+  },
+  {
+    id: "n8n",
+    label: "n8n",
+    logoSrc: "/n8n_logo.svg",
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    logoSrc: "/perplexity_logo.svg",
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    logoSrc: "/cline_logo_light.svg",
+    logoSrcByTheme: {
+      light: "/cline_logo_light.svg",
+      dark: "/cline_logo_dark.svg",
+    },
+    provenance: "probe",
+    rendersMcpApps: false,
+  },
 ];
 
 /**

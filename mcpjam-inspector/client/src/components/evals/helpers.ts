@@ -9,7 +9,7 @@ import {
   TagGroupAggregate,
 } from "./types";
 import { computeIterationResult } from "./pass-criteria";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
@@ -115,9 +115,14 @@ export function computeIterationSummary(items: EvalIteration[]) {
   let durationCount = 0;
 
   items.forEach((iteration) => {
-    if (iteration.result === "passed") summary.passed += 1;
-    else if (iteration.result === "failed") summary.failed += 1;
-    else if (iteration.result === "cancelled") summary.cancelled += 1;
+    const result = computeIterationResult(iteration);
+    if (result === "passed") summary.passed += 1;
+    else if (
+      result === "failed" ||
+      result === "timed_out"
+    )
+      summary.failed += 1;
+    else if (result === "cancelled") summary.cancelled += 1;
     else summary.pending += 1;
 
     summary.tokens += iteration.tokensUsed || 0;
@@ -166,7 +171,7 @@ export function aggregateSuite(
         acc.pending += 1;
       } else if (result === "passed") {
         acc.passed += 1;
-      } else if (result === "failed") {
+      } else if (result === "failed" || result === "timed_out") {
         acc.failed += 1;
       } else if (result === "cancelled") {
         acc.cancelled += 1;
@@ -205,7 +210,7 @@ export function aggregateSuite(
       // do not count pending/running
     } else if (result === "passed") {
       entry.passed += 1;
-    } else if (result === "failed") {
+    } else if (result === "failed" || result === "timed_out") {
       entry.failed += 1;
     } else if (result === "cancelled") {
       entry.cancelled += 1;
@@ -252,6 +257,7 @@ export function sortExploreCasesBySignal(
 
     const computed = computeIterationResult(latest);
     if (computed === "failed") return 0;
+    if (computed === "timed_out") return 0;
     if (computed === "pending") return 1;
     if (computed === "cancelled") return 1;
     if (c.isNegativeTest) return 1;
@@ -305,6 +311,8 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-success/50";
     case RESULT_STATUS.FAILED:
       return "border-l-destructive/50";
+    case RESULT_STATUS.TIMED_OUT:
+      return "border-l-warning/50";
     case RESULT_STATUS.PENDING:
     case "running":
       return "border-l-warning/50";
@@ -354,6 +362,9 @@ export function evalOverviewEntryLeftBorderClass(
   if (r.result === "failed") {
     return evalStatusLeftBorderClasses(RESULT_STATUS.FAILED);
   }
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.TIMED_OUT);
+  }
   return "border-l-muted-foreground/35";
 }
 
@@ -369,6 +380,9 @@ export function evalOverviewEntryMiniBarClass(
     return "bg-success/50";
   }
   if (r.result === "failed") return "bg-destructive/50";
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return "bg-warning/50";
+  }
   return "bg-muted-foreground/50";
 }
 
@@ -393,6 +407,9 @@ export function evalOverviewEntrySelectedRowClass(
   if (r.result === "failed") {
     return "bg-destructive/10 ring-2 ring-destructive/35 ring-inset";
   }
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return "bg-warning/10 ring-2 ring-warning/40 ring-inset";
+  }
   return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
 }
 
@@ -406,6 +423,9 @@ export function evalOverviewEntryOutcomeTitle(
   }
   if (r.result === "passed") return "Last run passed";
   if (r.result === "failed") return "Last run failed";
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return "Last run timed out";
+  }
   return `Last run: ${r.status}`;
 }
 
@@ -418,6 +438,9 @@ export function evalOverviewEntryLastRunStatusLabel(
   if (r.status === "running" || r.status === "pending") return "Running";
   if (r.result === "passed") return "Passed";
   if (r.result === "failed" || r.status === "failed") return "Failed";
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return "Timed out";
+  }
   if (r.result === "cancelled" || r.status === "cancelled") {
     return "Cancelled";
   }
@@ -437,6 +460,9 @@ export function evalOverviewEntryLastRunStatusClass(
   if (r.result === "passed") return "text-success";
   if (r.result === "failed" || r.status === "failed") {
     return "text-destructive";
+  }
+  if (r.result === "timed_out" || r.status === "timed_out") {
+    return "text-warning";
   }
   if (r.result === "cancelled" || r.status === "cancelled") {
     return "text-muted-foreground";

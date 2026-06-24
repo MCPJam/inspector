@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,

@@ -42,6 +42,7 @@ async function runCli(
           ...process.env,
           MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
           MCPJAM_TELEMETRY_DISABLED: "1",
+          NODE_NO_WARNINGS: "1",
           ...options.env,
         },
       },
@@ -1426,9 +1427,11 @@ test("tools call --ui validates render flags before executing the tool", async (
     ]);
 
     assert.equal(result.exitCode, 2);
+    // stderr may carry Node/tsx warnings (e.g. DEP0205), so scan for the JSON line.
     assert.match(
-      (JSON.parse(result.stderr) as { error?: { message?: string } }).error
-        ?.message ?? "",
+      (JSON.parse(lastJsonLine(result.stderr)) as {
+        error?: { message?: string };
+      }).error?.message ?? "",
       /Invalid theme "blue"/,
     );
     assert.deepEqual(server.requests, []);
@@ -1460,9 +1463,11 @@ test("tools call --ui validates frontend-url before executing the tool", async (
     ]);
 
     assert.equal(result.exitCode, 2);
+    // stderr may carry Node/tsx warnings (e.g. DEP0205), so scan for the JSON line.
     assert.match(
-      (JSON.parse(result.stderr) as { error?: { message?: string } }).error
-        ?.message ?? "",
+      (JSON.parse(lastJsonLine(result.stderr)) as {
+        error?: { message?: string };
+      }).error?.message ?? "",
       /Invalid --frontend-url "not a url"/,
     );
     assert.deepEqual(server.requests, []);

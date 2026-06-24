@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { compareRunsBySequence } from "./helpers";
 import { SuiteHeader } from "./suite-header";
@@ -161,7 +161,6 @@ export function SuiteIterationsView({
   navigation,
   onSetupCi,
   onCreateTestCase,
-  onCreateWidgetProbe,
   onGenerateTestCases,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
@@ -214,7 +213,6 @@ export function SuiteIterationsView({
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
-  onCreateWidgetProbe?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
@@ -725,7 +723,6 @@ export function SuiteIterationsView({
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
-            onCreateWidgetProbe={onCreateWidgetProbe}
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
@@ -782,6 +779,11 @@ export function SuiteIterationsView({
                   onSelectTab={(tab) =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
                       openCompare: tab === "runs",
+                      replace: true,
+                    })
+                  }
+                  onDraftSaved={(newTestCaseId) =>
+                    navigation.toTestEdit(suite._id, newTestCaseId, {
                       replace: true,
                     })
                   }
@@ -875,6 +877,13 @@ export function SuiteIterationsView({
                     onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                     testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
                     userMap={userMap}
+                    onGenerateTestCases={onGenerateTestCases}
+                    canGenerateTestCases={canGenerateTestCases}
+                    generateTestCasesDisabledReason={
+                      generateTestCasesDisabledReason
+                    }
+                    isGeneratingTestCases={isGeneratingTestCases}
+                    onCreateTestCase={onCreateTestCase}
                   />
                 </motion.div>
               ) : runsViewMode === "runs" ? (
@@ -1012,6 +1021,13 @@ export function SuiteIterationsView({
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
+                      onGenerateTestCases={onGenerateTestCases}
+                      canGenerateTestCases={canGenerateTestCases}
+                      generateTestCasesDisabledReason={
+                        generateTestCasesDisabledReason
+                      }
+                      isGeneratingTestCases={isGeneratingTestCases}
+                      onCreateTestCase={onCreateTestCase}
                     />
                   )}
                 </motion.div>

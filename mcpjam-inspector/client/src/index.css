@@ -89,6 +89,35 @@
     display: none;
   }
 
+  .bg-brand-500 {
+    background-color: var(
+      --bg-brand-500,
+      var(--bg-basic-orange-strong, #ff8a00)
+    );
+  }
+
+  .text-white-default {
+    color: var(--text-white-default, #ffffff);
+  }
+
+  /* Mistral "M" mark colors — consumed by MistralStaticAvatar
+     (`mistral-avatar.tsx`) via `--mistral-spinner-{brand,white}`. The old
+     `.mistral-spinner-indicator` selector and `--mistral-spinner-{badge,strong}`
+     vars fed the retired avatar-ring spinner; the thinking indicator is now
+     Le Chat's SMIL five-square loader (`mistral-spinner.tsx`), which carries
+     its own brand hex, so those are dropped. */
+  .mistral-mark-colors {
+    --mistral-spinner-brand: #fa500e;
+    --mistral-spinner-white: #ffffff;
+  }
+
+  .dark .mistral-mark-colors,
+  .app-theme-scope.dark .mistral-mark-colors,
+  [data-thread-theme="dark"] .mistral-mark-colors {
+    --mistral-spinner-brand: #fa500f;
+    --mistral-spinner-white: #ffffff;
+  }
+
   /* Trace timeline waterfall — category bar fills */
   .trace-waterfall-bar-prompt {
     background-color: var(--trace-waterfall-bar-prompt);
@@ -110,8 +139,7 @@
   .trace-waterfall-bar-tool,
   .trace-waterfall-bar-step,
   .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28),
       0 1px 3px rgb(15 23 42 / 0.08);
   }
   .dark .trace-waterfall-bar-prompt,
@@ -124,8 +152,7 @@
   .app-theme-scope.dark .trace-waterfall-bar-tool,
   .app-theme-scope.dark .trace-waterfall-bar-step,
   .app-theme-scope.dark .trace-waterfall-bar-error {
-    box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12),
       0 1px 4px rgb(0 0 0 / 0.26);
   }
   .trace-waterfall-row-selected {
@@ -351,6 +378,230 @@
   }
 }
 
+/* n8n thinking indicator — MCPJam's three-dot bounce wave recolored to n8n's
+   coral brand red (#FF6D5A, the n8n logo fill). Shares the
+   `mcpjam-mark-dot-wave` keyframes and reduced-motion fallback. */
+.n8n-mark-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.25rem;
+}
+
+.n8n-mark-indicator__dot {
+  display: inline-block;
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 9999px;
+  background-color: #ff6d5a;
+  animation: mcpjam-mark-dot-wave 1.25s ease-in-out infinite;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.n8n-mark-indicator__dot--1 {
+  animation-delay: 0ms;
+}
+
+.n8n-mark-indicator__dot--2 {
+  animation-delay: 160ms;
+}
+
+.n8n-mark-indicator__dot--3 {
+  animation-delay: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .n8n-mark-indicator__dot {
+    animation: thinking-dot-pulse 1.5s ease-in-out infinite;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Perplexity thinking indicator — captured verbatim from perplexity.ai. A 20px
+   overflow-hidden window onto a wide SVG (`viewBox 0 0 1248 24`) holding the
+   Perplexity mark drawn as 52 progressive rotation frames. The strip steps left
+   one frame at a time (`translate 0% → -100%`, `steps(52)`), so a single mark
+   sits in the window and flips frame-to-frame in place. Stroke is `currentColor`;
+   the component sets a themed foreground tone. */
+@keyframes perplexity-indicator {
+  0% {
+    transform: translateZ(0) translate(0%);
+  }
+  100% {
+    transform: translateZ(0) translate(-100%);
+  }
+}
+
+.perplexity-indicator__strip {
+  height: 100%;
+  width: auto;
+  flex-shrink: 0;
+  /* Sprite sheet: 52 mark frames tiled across the strip, each exactly the width
+     of the 20px window. `steps(52)` snaps the strip one whole frame at a time so
+     a single mark sits in the window and flips frame-to-frame (a page-flip / in-
+     place rotation). `linear` here is wrong — it slides the strip continuously,
+     so several marks sweep across the window at once. 3s ≈ 17fps reads as a calm
+     morph; tweak the duration to taste. */
+  animation: perplexity-indicator 3s steps(52) infinite;
+  animation-fill-mode: both;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .perplexity-indicator__strip {
+    /* Freeze on the first frame (the full symmetric mark) instead of looping. */
+    animation: none;
+    transform: translate(0%);
+  }
+}
+
+/* Mistral Le Chat "Thinking" shimmer label — verbatim port of Le Chat's
+   `animate-shimmer-text` rule (captured from chat.mistral.ai DevTools). A
+   200%-wide gradient clips to the glyphs and a bright stripe sweeps
+   150% → -50% over 2s ease-in-out infinite. Pairs with the SMIL five-square
+   loader in `indicators/mistral-spinner.tsx`.
+
+   `--mistral-shimmer-{base,highlight}` derive the two tones so `data-theme`
+   can swap them. Dark mode is the verbatim capture (base
+   rgba(255,255,255,.498), highlight #fff); the light override inverts to a
+   dark base/highlight below. */
+.mistral-shimmer-text {
+  --mistral-shimmer-base: rgba(255, 255, 255, 0.498);
+  --mistral-shimmer-highlight: #ffffff;
+  background-image: linear-gradient(
+    90deg,
+    var(--mistral-shimmer-base) 0%,
+    var(--mistral-shimmer-base) 40%,
+    var(--mistral-shimmer-highlight) 50%,
+    var(--mistral-shimmer-base) 60%,
+    var(--mistral-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mistral-shimmer-text 2s ease-in-out infinite;
+  will-change: background-position;
+}
+
+/* Light mode: Le Chat's capture was dark-theme; mirror it on light with a
+   dark base + near-black highlight so the bright stripe still reads. */
+.mistral-shimmer-text[data-theme="light"] {
+  --mistral-shimmer-base: rgba(0, 0, 0, 0.498);
+  --mistral-shimmer-highlight: #000000;
+}
+
+@keyframes mistral-shimmer-text {
+  0%,
+  20% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mistral-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* Notion AI "Working" shimmer label — verbatim port of Notion's own
+   `.nds-shimmer-text` rule (captured from notion.so DevTools, light theme).
+   A 200%-wide gradient clips to the glyphs and a band sweeps across over
+   1.5s linear infinite. Pairs with `indicators/notion-shimmer.tsx`.
+
+   `--nds-shimmer-{faded,solid}` derive the two tones so `data-theme` can swap
+   them. Light is the verbatim capture (faded #d4d3cf = --c-texDis, solid
+   #7d7a75 = --c-texSec); the dark override is reconstructed (the probe was
+   light theme). Keyframe endpoints are reconstructed to reproduce the sweep —
+   only the name, 200% size, 1.5s linear timing, and the resting `200% 50%`
+   position came across the wire. */
+.nds-shimmer-text {
+  --nds-shimmer-faded: #d4d3cf;
+  --nds-shimmer-solid: #7d7a75;
+
+  background-image: linear-gradient(
+    to right,
+    var(--nds-shimmer-faded) 0%,
+    var(--nds-shimmer-solid) 50%,
+    var(--nds-shimmer-faded) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 200% 50%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: nds-shimmer-text 1.5s linear infinite;
+  will-change: background-position;
+}
+
+/* Dark mode: Notion's capture was light-theme; mirror it on dark with a
+   muted base + lighter band so the sweep still reads against dark chrome. */
+.nds-shimmer-text[data-theme="dark"] {
+  --nds-shimmer-faded: #5a5a57;
+  --nds-shimmer-solid: #c2c0bb;
+}
+
+@keyframes nds-shimmer-text {
+  from {
+    background-position: 200% 50%;
+  }
+  to {
+    background-position: 0% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nds-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentcolor;
+  }
+}
+
+/* Notion AI loader icon. Notion draws this glyph on a <canvas> (48x32 backing,
+   shown 24x16 at 0.3 opacity) via requestAnimationFrame — there's no markup to
+   port, so it was captured frame-by-frame from notion.so: 47 frames, 48x32 px
+   each, measured loop ~1.567s. Replayed as a horizontal sprite strip stepped
+   one frame at a time (steps(47)); background-size halves the 2x-DPR sprite so
+   each frame shows at 24px crisp. */
+.notion-loader-icon {
+  width: 24px;
+  height: 16px;
+  flex: none;
+  opacity: 0.55;
+  background-image: url(/notion-icon-sprite.png);
+  background-repeat: no-repeat;
+  background-size: 1128px 16px; /* 47 frames × 24px */
+  animation: notion-loader-icon 1.567s steps(47) infinite;
+}
+
+/* The captured sprite is a dark-gray stroke (Notion drew it on a light
+   theme). On dark chrome that's invisible, so invert it to light gray. */
+.notion-loader-icon[data-theme="dark"] {
+  filter: invert(1);
+}
+
+@keyframes notion-loader-icon {
+  to {
+    background-position: -1128px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notion-loader-icon {
+    animation: none;
+    background-position: 0 0;
+  }
+}
+
 .claude-loading-indicator__stage {
   isolation: isolate;
 }
@@ -376,14 +627,12 @@
 }
 
 .claude-loading-indicator__strip--900 {
-  animation:
-    claude-strip-900-position 1.7s linear infinite,
+  animation: claude-strip-900-position 1.7s linear infinite,
     claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
-  animation:
-    claude-strip-800-position 1.7s linear infinite,
+  animation: claude-strip-800-position 1.7s linear infinite,
     claude-strip-800-visibility 1.7s step-end infinite;
 }
 
@@ -1067,7 +1316,36 @@
  * utility. Falls back to the system mono stack offline.
  */
 @theme {
-  --font-metric:
-    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Goose Desktop thinking indicator (`indicators/goose-icon.tsx`).
+   Renders the Goose mark static — no entrance pop-in or bob loop. */
+.goose-icon-indicator {
+  transform-origin: 0 100%;
+}
+
+/* Cline thinking indicator (`indicators/cline-mark.tsx`). No busy-state
+   animation was captured from the Cline probe, so this is a neutral generic
+   loading pulse on the brand mark — not Cline's real thinking effect. */
+.cline-mark-indicator {
+  animation: cline-mark-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cline-mark-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cline-mark-indicator {
+    animation: none;
+    opacity: 0.8;
+  }
 }

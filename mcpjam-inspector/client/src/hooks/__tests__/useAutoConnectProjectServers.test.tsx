@@ -349,7 +349,8 @@ describe("useAutoConnectProjectServers", () => {
       { serverName: "beta", error: "beta exploded" }
     );
     expect(mocks.toastError).toHaveBeenCalledWith(
-      "Failed to reconnect 1 server."
+      "Failed to reconnect 1 server.",
+      { duration: Infinity }
     );
   });
 

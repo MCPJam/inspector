@@ -18,7 +18,7 @@
  *
  * Style presets:
  *   - "chatgpt" | "copilot" | "mcpjam" → true
- *   - "claude"  | "cursor"  | "codex"  → false
+ *   - "claude"  | "cursor"  | "codex" | "goose" → false
  *   - anything else → undefined (falls through; ultimate default is false)
  */
 
@@ -60,6 +60,7 @@ export function compatPresetForHostStyle(
     case "claude":
     case "cursor":
     case "codex":
+    case "goose":
       return false;
     default:
       return undefined;

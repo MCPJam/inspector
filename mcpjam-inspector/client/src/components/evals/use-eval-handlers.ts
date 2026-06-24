@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useConvex } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";
@@ -18,7 +18,8 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { getEffectiveSuiteServers } from "./helpers";
-import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
+import { draftTestCaseId } from "./draft-test-case";
+import { isPinnedOnly, isPinnedTurn } from "@/shared/prompt-turns";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -28,11 +29,11 @@ import {
   getEvalApiEndpoints,
   runEvals,
   runEvalTestCase,
+  type GenerationOptions,
 } from "@/lib/apis/evals-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
-import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
@@ -165,6 +166,11 @@ export type HandleGenerateEvalTestsOptions = {
     name?: string;
     resolvedServerNames: string[];
   };
+  /**
+   * Optional generation knobs (per-bucket case mix, vary-user-styles) forwarded
+   * to the backend. Absent → today's default generation.
+   */
+  generationOptions?: GenerationOptions;
 };
 
 interface UseEvalHandlersProps {
@@ -227,7 +233,6 @@ export function useEvalHandlers({
   );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
-  const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
     null
   );
@@ -310,13 +315,23 @@ export function useEvalHandlers({
 
       let probesSkippedMissingConfig = 0;
       for (const testCase of testCases) {
-        // Widget probes carry no models and no prompt — they must never fall
-        // into the LLM fan-out below (a probe with a suite default model
-        // would otherwise run as an empty-prompt LLM case). The sentinel
-        // model/provider strings satisfy the wire schema; the server forks
-        // probes off the LLM path before any model resolution.
-        if (testCase.caseType === "widget_probe") {
-          if (!testCase.probeConfig) {
+        // Model-free render checks (legacy widget_probe OR a unified case whose
+        // turns are all pinned) carry no models — they must never fall into the
+        // LLM fan-out below (a model-free case with a suite default model would
+        // otherwise run as an empty-prompt LLM case). The sentinel
+        // model/provider strings satisfy the wire schema; the server runs them
+        // model-free (routing on the pinned turns / legacy adapter).
+        if (
+          isPinnedOnly({
+            caseType: testCase.caseType,
+            promptTurns: testCase.promptTurns,
+          })
+        ) {
+          const pinnedTurns = Array.isArray(testCase.promptTurns)
+            ? testCase.promptTurns.filter(isPinnedTurn)
+            : [];
+          // Need either the new pinned turns or the legacy probeConfig to run.
+          if (pinnedTurns.length === 0 && !testCase.probeConfig) {
             probesSkippedMissingConfig++;
             continue;
           }
@@ -327,8 +342,15 @@ export function useEvalHandlers({
             model: "widget-probe",
             provider: "none",
             expectedToolCalls: [],
-            caseType: "widget_probe",
-            probeConfig: testCase.probeConfig,
+            ...(pinnedTurns.length > 0
+              ? { promptTurns: testCase.promptTurns }
+              : {}),
+            ...(testCase.caseType === "widget_probe"
+              ? { caseType: "widget_probe" as const }
+              : {}),
+            ...(testCase.probeConfig
+              ? { probeConfig: testCase.probeConfig }
+              : {}),
             testCaseId: testCase._id,
           });
           continue;
@@ -501,7 +523,7 @@ export function useEvalHandlers({
           );
         }
 
-        toast.success("Replay completed!", {
+        toast.success("Replay started!", {
           id: replayToastId,
         });
       } catch (error) {
@@ -749,7 +771,7 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
         });
 
-        posthog.capture("eval_suite_run_completed", {
+        posthog.capture("eval_suite_run_start_requests_completed", {
           location: "evals_tab",
           platform: detectPlatform(),
           environment: detectEnvironment(),
@@ -767,7 +789,7 @@ export function useEvalHandlers({
           toast.success(
             runPlans.length > 1
               ? `All ${runPlans.length} host runs started.`
-              : "Eval run completed!",
+              : "Eval run started!",
           );
 
           // Drop the user on the new run's detail page so they can see
@@ -858,7 +880,7 @@ export function useEvalHandlers({
       // run-test-case endpoints only execute model-driven cases, and probes
       // intentionally carry no models. Without this branch the model guard
       // below would surface a misleading "Add a model first".
-      if (testCase.caseType === "widget_probe") {
+      if (isPinnedOnly(testCase)) {
         toast.info("Render checks run with the full suite or on its schedule.");
         return null;
       }
@@ -1259,141 +1281,20 @@ export function useEvalHandlers({
     }
   }, [runToDelete, deletingRunId, mutations.deleteRunMutation]);
 
-  // Handle create test case - creates directly without modal
+  // New cases are NOT written to Convex on click. Doing so polluted suites
+  // with "Untitled" cases every time the New case menu was opened. Instead we
+  // open the editor on a client-side draft (testId sentinel `draft:<kind>`);
+  // the editor persists via `createTestCase` only when the user presses Save.
+  // See ./draft-test-case.ts and test-template-editor's draft handling.
   const handleCreateTestCase = useCallback(
-    async (suiteId: string) => {
-      if (isCreatingTestCase) return;
-
-      setIsCreatingTestCase(true);
-
-      try {
-        const testCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          {
-            suiteId,
-          }
-        );
-
-        const collectedModels = collectUniqueModelsFromTestCases(testCases);
-        const modelsToUse =
-          collectedModels.length > 0
-            ? collectedModels
-            : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
-
-        const testCaseId = await mutations.createTestCaseMutation({
-          suiteId: suiteId,
-          title: "Untitled test case",
-          query: "",
-          models: modelsToUse, // Copy models from suite configuration
-        });
-
-        toast.success("Test case created");
-
-        // Track test case created
-        posthog.capture("eval_test_case_created", {
-          location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suiteId,
-          test_case_id: testCaseId,
-          num_models: modelsToUse.length,
-        });
-
-        // Open the editor so the new case is configurable (test-detail is iterations-only).
-        navigateAfterTestCaseMutation({
-          type: "test-edit",
-          suiteId,
-          testId: testCaseId,
-        });
-
-        return testCaseId;
-      } catch (error) {
-        console.error("Failed to create test case:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to create test case")
-        );
-        return null;
-      } finally {
-        setIsCreatingTestCase(false);
-      }
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("prompt"),
+      });
     },
-    [
-      isCreatingTestCase,
-      mutations.createTestCaseMutation,
-      convex,
-      navigateAfterTestCaseMutation,
-    ]
-  );
-
-  // Create a widget probe case (synthetic monitor): no LLM/prompt — a pinned
-  // tool call rendered in the browser harness, gated by widget render checks.
-  // Created with placeholder probeConfig values the probe editor immediately
-  // prompts the user to fix; seeded with a widgetRendered check so an
-  // unedited probe still asserts something meaningful.
-  const handleCreateWidgetProbe = useCallback(
-    async (suiteId: string) => {
-      if (isCreatingTestCase) return;
-
-      setIsCreatingTestCase(true);
-
-      try {
-        const suite = await convex.query("testSuites:getTestSuite" as any, {
-          suiteId,
-        });
-        const firstServer: string =
-          (suite ? getEffectiveSuiteServers(suite)[0] : undefined) ?? "server";
-
-        const testCaseId = await mutations.createTestCaseMutation({
-          suiteId,
-          title: "Untitled render check",
-          query: "",
-          models: [],
-          caseType: "widget_probe",
-          probeConfig: {
-            serverName: firstServer,
-            toolName: PROBE_TOOL_NAME_PLACEHOLDER,
-            arguments: {},
-          },
-          predicates: {
-            mode: "replace",
-            list: [{ type: "widgetRendered" }],
-          },
-        });
-
-        toast.success("Render check created");
-
-        posthog.capture("eval_test_case_created", {
-          location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suiteId,
-          test_case_id: testCaseId,
-          case_type: "widget_probe",
-        });
-
-        navigateAfterTestCaseMutation({
-          type: "test-edit",
-          suiteId,
-          testId: testCaseId,
-        });
-
-        return testCaseId;
-      } catch (error) {
-        console.error("Failed to create render check:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to create render check")
-        );
-        return null;
-      } finally {
-        setIsCreatingTestCase(false);
-      }
-    },
-    [
-      isCreatingTestCase,
-      mutations.createTestCaseMutation,
-      convex,
-      navigateAfterTestCaseMutation,
-    ]
+    [navigateAfterTestCaseMutation]
   );
 
   // Handle delete test case - opens confirmation modal
@@ -1589,6 +1490,9 @@ export function useEvalHandlers({
           ...(postOptions?.serverAttachment
             ? { serverAttachment: postOptions.serverAttachment }
             : {}),
+          ...(postOptions?.generationOptions
+            ? { generationOptions: postOptions.generationOptions }
+            : {}),
         });
 
         if (outcome.apiReturnedTests === 0) {
@@ -1727,7 +1631,6 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
-    handleCreateWidgetProbe,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,
@@ -1745,7 +1648,6 @@ export function useEvalHandlers({
     deletingRunId,
     runToDelete,
     setRunToDelete,
-    isCreatingTestCase,
     deletingTestCaseId,
     duplicatingTestCaseId,
     testCaseToDelete,

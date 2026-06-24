@@ -16,7 +16,7 @@ import {
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import type { ContentBlock } from "@modelcontextprotocol/client";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {

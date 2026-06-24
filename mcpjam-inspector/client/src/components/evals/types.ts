@@ -259,8 +259,14 @@ export type EvalIteration = {
    * `getTestIterationBlob` regardless of which source feeds it.
    */
   preferLegacyBlob?: boolean;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
+  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
   actualToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -296,7 +302,13 @@ export type CompareRunRecord = {
   modelLabel: string;
   provider: string;
   model: string;
-  status: "idle" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "idle"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
   /**
    * When `status === "running"` and there is no iteration yet, true if this run
    * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
@@ -306,7 +318,7 @@ export type CompareRunRecord = {
   error?: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  result: "pending" | "passed" | "failed" | "cancelled" | null;
+  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out" | null;
   metrics: {
     durationMs: number | null;
     toolCallCount: number;
@@ -369,7 +381,13 @@ export type EvalSuiteRun = {
      */
     judgeConfig?: EvalJudgeConfig;
   };
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
   summary?: EvalSuiteRunSummary;
   passCriteria?: {
     minimumPassRate: number;
@@ -382,7 +400,13 @@ export type EvalSuiteRun = {
    * re-confirming the override.
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
-  result?: "pending" | "passed" | "failed" | "cancelled";
+  result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
+  stoppedAt?: number;
+  stopReason?:
+    | "user_cancelled"
+    | "run_timeout"
+    | "iteration_timeout"
+    | "stale_worker";
   source?: "ui" | "sdk" | "api" | "schedule";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
@@ -567,7 +591,7 @@ export type EvalRunDiff = {
     framework: string | null;
     createdAt: number;
     completedAt: number | null;
-    result?: "pending" | "passed" | "failed" | "cancelled";
+    result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
     summary: EvalSuiteRunSummary | null;
   };
   compareRun: {
@@ -577,7 +601,7 @@ export type EvalRunDiff = {
     framework: string | null;
     createdAt: number;
     completedAt: number | null;
-    result?: "pending" | "passed" | "failed" | "cancelled";
+    result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
     summary: EvalSuiteRunSummary | null;
   };
   metrics: {

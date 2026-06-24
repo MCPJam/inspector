@@ -426,6 +426,26 @@ describe("POST /api/mcp/chat-v2", () => {
       });
     });
 
+    // PR 4 (chat SSE wire-parity net): the test above checks presence + relative
+    // order via arrayContaining; this snapshots the EXACT ordered trace-event
+    // sequence so the upcoming facade migration (PR 5) can't change the wire
+    // shape unnoticed. Direct (user-key) path — whose facade `direct + ui` path
+    // is brand-new, so the highest-risk half to protect.
+    it("direct path: exact trace-event sequence is stable (wire parity)", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+
+      const traceEventSequence = capturedStreamEvents
+        .filter((event) => event?.type === "data-trace-event")
+        .map((event) => event.data?.type);
+      expect(traceEventSequence).toMatchSnapshot();
+    });
+
     it("uses provided temperature", async () => {
       const { streamText } = await import("ai");
 
@@ -912,6 +932,57 @@ describe("POST /api/mcp/chat-v2", () => {
 
     afterEach(() => {
       delete process.env.CONVEX_HTTP_URL;
+    });
+
+    // PR 4 part 2 (cloud SSE wire-parity net): lock the exact trace-event
+    // sequence for the MCPJam-provided cloud path. PR 5 collapses this handler
+    // — and cloud BYOK, which wraps it (handleHostedOrgChatModel calls
+    // handleMCPJamFreeChatModel with /stream/org) — onto one facade hosted
+    // call; this snapshot proves the wire shape is unchanged.
+    it("cloud (MCPJam-provided) path: exact trace-event sequence is stable (wire parity)", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
+          projectId: "project_123",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const traceEventSequence = capturedStreamEvents
+          .filter((event) => event?.type === "data-trace-event")
+          .map((event) => event.data?.type);
+        expect(traceEventSequence).toMatchSnapshot();
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
 
     it("persists completed MCPJam conversations when chatSessionId is present", async () => {

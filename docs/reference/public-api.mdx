@@ -41,6 +41,10 @@ What you can do with it today:
 - **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **Manage a project's hosts** — list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full host config),
+  rename, and delete the named model + capability profiles you run chats and
+  eval suites against
 - **List a project's chatboxes** — name, access mode, attached servers, and
   share link — and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
@@ -204,6 +208,8 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
 | `GET /projects/{projectId}/servers` | The project's saved MCP servers |
 | `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+| `GET`, `POST /projects/{projectId}/hosts` | List hosts, or create one from a template or full config |
+| `GET`, `PATCH`, `DELETE /projects/{projectId}/hosts/{hostId}` | Read, rename/edit, or delete a host |
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):

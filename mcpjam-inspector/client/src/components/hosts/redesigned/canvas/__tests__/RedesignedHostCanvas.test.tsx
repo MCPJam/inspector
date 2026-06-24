@@ -197,6 +197,31 @@ describe("RedesignedHostCanvas", () => {
     expect(openLinksBtn!.className).not.toMatch(/\bhp-cap--off\b/);
   });
 
+  it("shows Mistral host capabilities from the standard MCP Apps client extension", () => {
+    const draft = emptyHostConfigInputV2({
+      hostStyle: "mistral",
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+      },
+    });
+    const { container } = renderCanvas({ draft });
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const scope = within(node as HTMLElement);
+
+    expect(scope.getByText("Client capabilities")).toBeInTheDocument();
+    expect(scope.getByText("extensions")).toBeInTheDocument();
+    expect(scope.getByText("io.modelcontextprotocol/ui")).toBeInTheDocument();
+    expect(scope.getByText("Host capabilities")).toBeInTheDocument();
+    expect(scope.getByText("openLinks")).toBeInTheDocument();
+    expect(scope.getByText("serverTools")).toBeInTheDocument();
+  });
+
   it("renders both Project Computers islands when the feature is enabled", () => {
     const draft = emptyHostConfigInputV2();
     draft.builtInToolIds = ["web_search"];

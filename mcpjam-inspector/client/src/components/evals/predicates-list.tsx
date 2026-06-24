@@ -25,13 +25,30 @@ export function parseIterationPredicates(
     if (!row.predicate || typeof row.predicate !== "object") continue;
     const predicate = row.predicate as Record<string, unknown>;
     if (typeof predicate.type !== "string") continue;
+    // Preserve a per-turn scope when present so the UI can group a turn's
+    // checks under that turn (and the case-level list can exclude them).
+    const scope = parseTurnScope(row.scope);
     out.push({
       predicate: predicate as unknown as Predicate,
       passed: row.passed,
       reason: row.reason,
+      ...(scope ? { scope } : {}),
     });
   }
   return out.length > 0 ? out : null;
+}
+
+/** Validate `{ kind: "turn", promptIndex }` defensively (metadata is unknown). */
+function parseTurnScope(
+  value: unknown,
+): { kind: "turn"; promptIndex: number } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const s = value as Record<string, unknown>;
+  if (s.kind !== "turn") return undefined;
+  if (typeof s.promptIndex !== "number" || !Number.isInteger(s.promptIndex)) {
+    return undefined;
+  }
+  return { kind: "turn", promptIndex: s.promptIndex };
 }
 
 /**

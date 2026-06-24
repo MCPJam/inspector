@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
@@ -976,6 +976,7 @@ export function OAuthFlowRoute() {
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    oauthServerModalNonce,
     posthog,
   } = useAppRouteContext();
 
@@ -1031,13 +1032,23 @@ export function OAuthFlowRoute() {
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
         onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+        openProfileModalSignal={oauthServerModalNonce}
       />
     </ErrorBoundary>
   );
 }
 
 export function XAAFlowRoute() {
-  const { xaaEnabled, appState, activeOrganizationId } = useAppRouteContext();
+  const {
+    xaaEnabled,
+    appState,
+    displayServerConfigs,
+    activeOrganizationId,
+    convexProjectId,
+    setSelectedServer,
+    saveServerConfigWithoutConnecting,
+    xaaServerModalNonce,
+  } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
   return (
@@ -1049,9 +1060,17 @@ export function XAAFlowRoute() {
       }
     >
       <XAAFlowTab
-        serverConfigs={appState.servers}
+        // The saved project catalog (clientId, scopes, hasClientSecret,
+        // xaaAuthzIssuer), not the runtime connection entries — the latter
+        // drop the persisted OAuth config, so the Configure modal and the
+        // runner saw a confidential server as a public client with no issuer.
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
+        projectId={convexProjectId ?? null}
+        onSelectServer={setSelectedServer}
+        onSaveServerConfig={saveServerConfigWithoutConnecting}
+        openServerModalSignal={xaaServerModalNonce}
       />
     </ErrorBoundary>
   );
@@ -1227,6 +1246,11 @@ export default function App() {
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
+  // Bumped to ask the active debugger route to open its own "configure server"
+  // modal (XAA / OAuth) instead of the generic Add Server modal — see the
+  // onAddServerRequested wiring on the header server picker below.
+  const [xaaServerModalNonce, setXaaServerModalNonce] = useState(0);
+  const [oauthServerModalNonce, setOauthServerModalNonce] = useState(0);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -1418,7 +1442,7 @@ export default function App() {
               return {
                 success: false,
                 error:
-                  "Your guest session expired. Reopen the chatbox link and try again.",
+                  "Your guest session expired. Reopen the swarm link and try again.",
               };
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;
@@ -1768,12 +1792,44 @@ export default function App() {
     typeof currentUser?.createdAt === "number" &&
     currentUser.createdAt >= FIRST_RUN_PLAYGROUND_ROLLOUT_MS;
   const isHostedDefaultRoute =
-    activeTab === "servers" || activeTab === "clients";
+    activeTab === "home" || activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
+  const shouldHoldHostedHomeRouteForAppReady =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    activeTab === "home" &&
+    effectiveHostedShellGateState === "ready" &&
+    (isAuthLoading ||
+      !isAuthenticated ||
+      isLoadingRemoteProjects ||
+      !areServersHydrated ||
+      !activeProjectId ||
+      activeProjectId === "none");
+  const shouldRouteToFirstRunOnboarding =
+    !isHostedChatRoute &&
+    !isWorkOsLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    !hasSeenFirstRunOnboarding &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    isFirstRunEligible(
+      hasAnyFirstRunBlockingProjectServers,
+      activeTab,
+      !!workOsUser,
+      remoteFirstRunOnboardingShown,
+      isNewSignedInAccount
+    );
+  const shouldHoldHostedHomeRouteForFirstRunRedirect =
+    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -2333,64 +2389,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-
-    if (isWorkOsLoading) {
-      return;
-    }
-
-    if (effectiveHostedShellGateState !== "ready") {
-      return;
-    }
-
-    if (isAuthenticated && currentUser === undefined) {
-      return;
-    }
-
-    if (hasSeenFirstRunOnboarding) {
-      return;
-    }
-
-    // Hosted guests need Convex auth and their actor-owned project before
-    // Playground can auto-connect Excalidraw against the right project.
-    if (
-      HOSTED_MODE &&
-      (!isAuthenticated ||
-        isLoadingRemoteProjects ||
-        !activeProjectId ||
-        activeProjectId === "none")
-    ) {
-      return;
-    }
-
-    if (
-      isFirstRunEligible(
-        hasAnyFirstRunBlockingProjectServers,
-        activeTab,
-        !!workOsUser,
-        remoteFirstRunOnboardingShown,
-        isNewSignedInAccount
-      )
-    ) {
+    if (shouldRouteToFirstRunOnboarding) {
       navigateApp(routePaths.playground);
     }
-  }, [
-    activeProjectId,
-    activeTab,
-    currentUser,
-    effectiveHostedShellGateState,
-    hasSeenFirstRunOnboarding,
-    hasAnyFirstRunBlockingProjectServers,
-    isAuthenticated,
-    isHostedChatRoute,
-    isLoadingRemoteProjects,
-    isNewSignedInAccount,
-    isWorkOsLoading,
-    remoteFirstRunOnboardingShown,
-    workOsUser,
-  ]);
+  }, [shouldRouteToFirstRunOnboarding]);
 
   // When the active project changes (org switch, project delete, manual switch),
   // snap to Servers — staying on App Builder/Chat would leave the user pointed
@@ -2594,7 +2596,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
+    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
+      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
+      // `undefined`; redirecting then would strand a flagged-in user who
+      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
+      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
@@ -2891,7 +2897,11 @@ export default function App() {
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
-  if (shouldHoldHostedDefaultRouteForAuth) {
+  if (
+    shouldHoldHostedDefaultRouteForAuth ||
+    shouldHoldHostedHomeRouteForAppReady ||
+    shouldHoldHostedHomeRouteForFirstRunRedirect
+  ) {
     return <LoadingScreen />;
   }
 
@@ -2945,8 +2955,31 @@ export default function App() {
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
-          onConnect: handleConnect,
+          // XAA targets are saved server configs, never live connections.
+          // Adding one from the header picker must NOT launch a browser OAuth
+          // flow (handleConnect does a full-page redirect to the auth server,
+          // which strands the user on an error page when the client isn't
+          // registered). Save without connecting, then select it as the target.
+          onConnect:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? async (formData) => {
+                  await saveServerConfigWithoutConnecting(formData);
+                  const name = formData.name?.trim();
+                  if (name) setSelectedServer(name);
+                }
+              : handleConnect,
           onReconnect: handleReconnect,
+          // The XAA / OAuth debuggers add servers through their own purpose-built
+          // modals (target URL + client credentials + simulated identity), not
+          // the generic Add Server modal. Route the header "Add Server" click to
+          // the active debugger's modal so it matches the in-canvas "Configure"
+          // button; other tabs fall back to the generic modal (prop omitted).
+          onAddServerRequested:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? () => setXaaServerModalNonce((n) => n + 1)
+              : activeTab === "oauth-flow"
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -3090,6 +3123,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    xaaServerModalNonce,
+    oauthServerModalNonce,
   };
 
   const appContent = (

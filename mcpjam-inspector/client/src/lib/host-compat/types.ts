@@ -34,6 +34,7 @@ export type HostCompatReport = {
   hostId: string;
   hostLabel: string;
   logoSrc: string;
+  logoSrcByTheme?: { light: string; dark: string };
   verdict: CompatVerdict;
   provenance: CompatProvenance;
   findings: CompatFinding[];
@@ -78,6 +79,7 @@ export type HostCompatProfile = {
   id: string;
   label: string;
   logoSrc: string;
+  logoSrcByTheme?: { light: string; dark: string };
   /** Dominant provenance for this profile's facts. */
   provenance: CompatProvenance;
   /** Renders MCP Apps widgets (`_meta.ui.resourceUri`). */

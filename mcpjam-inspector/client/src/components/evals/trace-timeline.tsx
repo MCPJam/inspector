@@ -28,6 +28,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
+import { mcpErrorCodeLabel } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -219,6 +220,16 @@ function compareSpans(a: EvalTraceSpan, b: EvalTraceSpan): number {
   if (categoryDiff !== 0) return categoryDiff;
   if (a.endMs !== b.endMs) return a.endMs - b.endMs;
   return a.name.localeCompare(b.name);
+}
+
+/** Output tokens per second for an llm span, or null when not computable. */
+function spanThroughputPerSec(
+  outputTokens: number | undefined,
+  durationMs: number,
+): number | null {
+  // Guard against divide-by-near-zero (cached / sub-ms responses → Infinity).
+  if (typeof outputTokens !== "number" || durationMs < 50) return null;
+  return outputTokens / (durationMs / 1000);
 }
 
 function formatDuration(ms: number): string {
@@ -1553,6 +1564,57 @@ function TimelineDetailPane({
                 </>
               ) : null}
             </div>
+
+            {row.kind === "span"
+              ? (() => {
+                  const span = row.span;
+                  const throughput =
+                    span.category === "llm"
+                      ? spanThroughputPerSec(span.outputTokens, durationMs)
+                      : null;
+                  const items: Array<{ label: string; value: string }> = [];
+                  if (span.provider)
+                    items.push({ label: "Provider", value: span.provider });
+                  if (span.finishReason)
+                    items.push({
+                      label: "Finish",
+                      value: span.finishReason,
+                    });
+                  if (typeof span.ttfcMs === "number")
+                    items.push({
+                      label: "TTFC",
+                      value: formatDuration(span.ttfcMs),
+                    });
+                  if (throughput !== null)
+                    items.push({
+                      label: "Throughput",
+                      value: `${throughput.toFixed(1)} tok/s`,
+                    });
+                  if (span.responseId)
+                    items.push({
+                      label: "Response ID",
+                      value: span.responseId,
+                    });
+                  if (items.length === 0) return null;
+                  return (
+                    <div
+                      data-testid="trace-span-metadata"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                    >
+                      {items.map((item) => (
+                        <span key={item.label} className="truncate">
+                          <span className="text-muted-foreground/70">
+                            {item.label}:{" "}
+                          </span>
+                          <span className="font-medium text-foreground">
+                            {item.value}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()
+              : null}
           </div>
         </div>
 
@@ -1606,6 +1668,18 @@ function TimelineDetailPane({
               <pre className="max-h-40 overflow-auto rounded-md border border-destructive/50 bg-destructive/50 p-3 text-xs whitespace-pre-wrap break-words text-foreground">
                 {toolErrorExcerpt}
               </pre>
+            ) : null}
+            {typeof row.span.mcpErrorCode === "number" ? (
+              <div
+                data-testid="trace-mcp-error-code"
+                className="text-[11px] tabular-nums text-muted-foreground"
+                title="MCP-layer error code. -32602/-32601 etc. are server JSON-RPC errors; -32000 (connection closed) / -32001 (request timeout) are transport/client failures, not server faults."
+              >
+                <span className="text-muted-foreground/70">MCP error: </span>
+                <span className="font-medium text-foreground">
+                  {mcpErrorCodeLabel(row.span.mcpErrorCode)}
+                </span>
+              </div>
             ) : null}
           </div>
         </div>

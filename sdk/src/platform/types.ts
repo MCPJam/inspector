@@ -149,6 +149,176 @@ export interface PlatformEvalSuiteCreated {
   };
 }
 
+/**
+ * Public match-option vocabulary, mirroring the suite/case UI controls. The
+ * route layer translates these to the internal match-option model.
+ */
+export interface PublicMatchOptions {
+  /**
+   * `any` = order ignored; `in-order` = expected calls must appear in order
+   * (extra calls allowed between them); `exact` = exact sequence.
+   */
+  toolCallOrder: "any" | "in-order" | "exact";
+  /** `unlimited`, or the max number of unexpected extra tool calls allowed. */
+  extraToolCalls: "unlimited" | number;
+  /** Argument comparison strictness. */
+  arguments: "ignore" | "partial" | "exact";
+}
+
+/**
+ * A deterministic pass/fail check. `type` is the check vocabulary (e.g.
+ * `responseContains`, `toolCalledWith`); the remaining fields depend on it.
+ */
+export interface PublicCheck {
+  type: string;
+  [key: string]: unknown;
+}
+
+/** Per-case check override: how the case's checks combine with suite defaults. */
+export interface PublicCheckOverride {
+  mode: "inherit" | "replace" | "extend";
+  list: PublicCheck[];
+}
+
+export interface PlatformExpectedToolCall {
+  tool: string;
+  arguments?: Record<string, unknown>;
+}
+
+export interface PlatformEvalSuiteSettings {
+  /** Minimum pass rate as a percentage, 0–100. */
+  minimumAccuracy: number | null;
+  matchOptions: PublicMatchOptions | null;
+  checks: PublicCheck[];
+  judge: { enabled: boolean; model: string | null };
+}
+
+export interface PlatformEvalSuiteHost {
+  id: string;
+  name: string;
+  /** Server names this host runs against, when resolved. */
+  servers?: string[];
+}
+
+export interface PlatformEvalSuiteSchedule {
+  enabled: boolean;
+  /** Interval in minutes; preserved (not cleared) when `enabled` is false. */
+  intervalMinutes: number | null;
+}
+
+/**
+ * Full eval suite, returned by `GET`/`PATCH /eval-suites/{id}`. Public-model
+ * shape — the route layer maps this to/from the internal Convex suite. Tolerant
+ * reader: unknown fields pass through.
+ */
+export interface PlatformEvalSuiteDetail {
+  id: string;
+  name: string | null;
+  description: string | null;
+  projectId: string | null;
+  /** Server selection by name. */
+  environment: { servers: string[] };
+  /** Suite-level execution config; null when none is pinned. */
+  executionConfig: {
+    model: string;
+    systemPrompt: string;
+    temperature: number;
+  } | null;
+  /** Host attachments (multi-host). */
+  hosts: PlatformEvalSuiteHost[];
+  settings: PlatformEvalSuiteSettings;
+  schedule: PlatformEvalSuiteSchedule;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface PlatformEvalCaseModel {
+  model: string;
+  provider?: string;
+}
+
+export interface PlatformEvalCaseTurn {
+  prompt: string;
+  expectedToolCalls: PlatformExpectedToolCall[];
+  expectedOutput?: string;
+}
+
+/**
+ * A single eval test case. `kind: 'render-check'` cases carry `renderCheck`
+ * instead of a prompt. Public-model shape; the route maps to the internal case.
+ */
+export interface PlatformEvalCase {
+  id: string;
+  title: string;
+  kind: "prompt" | "render-check";
+  /** First-turn prompt (← internal query); null for render-check cases. */
+  prompt: string | null;
+  /** Multi-turn sequence, when present. */
+  turns?: PlatformEvalCaseTurn[];
+  expectedToolCalls: PlatformExpectedToolCall[];
+  expectedOutput?: string;
+  /** Iterations to run per eval run (← internal runs). */
+  iterations: number;
+  isNegative: boolean;
+  scenario?: string;
+  /** Execution models (plural — preserves compare behavior). */
+  models: PlatformEvalCaseModel[];
+  matchOptions?: PublicMatchOptions;
+  checks?: PublicCheckOverride;
+  renderCheck?: {
+    server: string;
+    tool: string;
+    arguments?: Record<string, unknown>;
+    renderTimeoutMs?: number;
+  };
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface PlatformEvalSuiteDeleted {
+  id: string;
+  deleted: true;
+}
+
+export interface PlatformEvalCaseDeleted {
+  id: string;
+  deleted: true;
+}
+
+/** A host in a project (list projection). */
+export interface PlatformHost {
+  id: string;
+  name: string;
+  hostConfigId: string;
+  modelId: string;
+  serverCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Full host detail, including the resolved host config DTO. */
+export interface PlatformHostDetail {
+  id: string;
+  name: string;
+  /** Resolved host-config v2 DTO (model, capabilities, hostContext, …). */
+  config: Record<string, unknown>;
+}
+
+export interface PlatformHostDeleted {
+  id: string;
+  deleted: true;
+}
+
+/** `200` response of `POST /eval-suites/{id}/cases/generate`. */
+export interface PlatformEvalCasesGenerated {
+  /** The backend LLM that authored the cases — NOT the case execution model. */
+  generationModel: string;
+  created: PlatformEvalCase[];
+  counts: { normal?: number; negative?: number };
+  /** Drafts that were generated but failed to persist (never silently dropped). */
+  skipped?: Array<{ title: string; error: string }>;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   testCaseId: string | null;

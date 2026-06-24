@@ -52,6 +52,7 @@ describe("compatPresetForHostStyle", () => {
     expect(compatPresetForHostStyle("claude")).toBe(false);
     expect(compatPresetForHostStyle("cursor")).toBe(false);
     expect(compatPresetForHostStyle("codex")).toBe(false);
+    expect(compatPresetForHostStyle("goose")).toBe(false);
   });
 
   it("returns undefined for unknown styles or non-string input", () => {

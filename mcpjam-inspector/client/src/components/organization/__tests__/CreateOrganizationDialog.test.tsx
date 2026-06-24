@@ -56,6 +56,7 @@ describe("CreateOrganizationDialog", () => {
     });
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Upgrade to create more projects.",
+      { duration: Infinity },
     );
   });
 });

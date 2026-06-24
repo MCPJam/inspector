@@ -26,7 +26,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
 import { hostConfigField } from "@/lib/host-config-field-schema";
-import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
+import {
+  hostSupportsWidgetRendering,
+  isRecord,
+} from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -1385,7 +1388,9 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
-  const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
+  const advertised = hostSupportsWidgetRendering(draft.clientCapabilities, {
+    hostStyle: draft.hostStyle,
+  });
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1511,6 +1516,15 @@ function McpAppsCapabilityMatrix({
       nextCaps.extensions = exts;
     } else {
       delete nextCaps.extensions;
+    }
+    // Mistral's normalized template starts from `clientCapabilities: {}`
+    // evidence but advertises the standard MCP UI extension because Le Chat
+    // demonstrated Apps rendering. When the user explicitly turns support
+    // off, keep a tiny inert marker so the switch can represent "off" without
+    // adding unrelated capabilities. Toggling back on flows through
+    // withMcpUiExtension above and restores the standard MCP UI extension.
+    if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
+      nextCaps.extensions = {};
     }
     let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);

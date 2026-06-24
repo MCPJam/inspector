@@ -1,11 +1,19 @@
 import claudeLogo from "/claude_logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import mistralLogo from "/mistral_logo.png";
+import gooseLogoDark from "/goose_logo_dark.png";
+import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
+import n8nLogo from "/n8n_logo.svg";
+import perplexityLogo from "/perplexity_logo.svg";
+import clineLogoDark from "/cline_logo_dark.svg";
+import clineLogoLight from "/cline_logo_light.svg";
+import notionLogo from "/notion_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -32,13 +40,31 @@ import {
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
 } from "@/config/mcpjam-client-context";
+import {
+  MISTRAL_CHAT_BACKGROUND,
+  MISTRAL_FONT_CSS,
+  MISTRAL_PLATFORM,
+  getMistralStyleVariables,
+} from "@/config/mistral-client-context";
+import {
+  GOOSE_CHAT_BACKGROUND,
+  GOOSE_FONT_CSS,
+  GOOSE_PLATFORM,
+  getGooseStyleVariables,
+} from "@/config/goose-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
+import { GooseIconIndicator } from "./indicators/goose-icon";
 import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
+import { N8nMarkIndicator } from "./indicators/n8n-mark";
+import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
+import { ClineMarkIndicator } from "./indicators/cline-mark";
+import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
+import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
 import type {
   HostStyleDefinition,
   ResolvedMcpAppsCapabilities,
@@ -223,6 +249,34 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   widgetDisplayModeRequests: "accept",
 };
 
+/**
+ * Goose Desktop 1.38.0 captured MCP Apps surface. Goose renders MCP Apps and
+ * exposes a rich HostContext (theme, display modes, style variables), but the
+ * captured `ui/initialize.hostCapabilities` only advertised `openLinks`.
+ * Keep the rest off until a probe demonstrates those bridge methods.
+ */
+export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: false,
+  serverResources: false,
+  logging: false,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+  downloadFile: false,
+  requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
+};
+
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
 // when behavior matters, and refine as the inspector's enforcement layer
@@ -246,7 +300,7 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   chatUi: {
     label: "Claude",
     shortLabel: "Claude-style host",
-    pickerDescription: "Claude-style chatbox chrome",
+    pickerDescription: "Claude-style swarm chrome",
     logoSrc: claudeLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
@@ -313,11 +367,91 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   chatUi: {
     label: "ChatGPT",
     shortLabel: "ChatGPT-style host",
-    pickerDescription: "OpenAI-style chatbox chrome",
+    pickerDescription: "OpenAI-style swarm chrome",
     logoSrc: openaiLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: ChatGptDotIndicator,
+  },
+};
+
+/**
+ * Mistral Le Chat host style. Le Chat is a real MCP Apps host — it renders
+ * widgets through `ui/initialize`. One capture reported base MCP
+ * `clientCapabilities: {}` despite rendering Apps; the template normalizes
+ * that to the standard `io.modelcontextprotocol/ui` advertisement while this
+ * style keeps the Apps-side host surface faithful to the captured behavior.
+ *
+ * Style variables are captured from Le Chat's `host-context-changed` payload;
+ * the chat surface is Le Chat's near-black (#111115) dark / white light. The
+ * loading indicator is Le Chat's iconic morphing five-square loader plus a
+ * shimmering "Thinking" label (see `indicators/mistral-spinner.tsx`).
+ */
+export const MISTRAL_HOST_STYLE: HostStyleDefinition = {
+  id: "mistral",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MISTRAL_PLATFORM,
+    fontCss: MISTRAL_FONT_CSS,
+    // Keep this preset keyed to the Apps-side `ui/initialize` evidence:
+    // no PIP, no downloadFile, no teardown claims, no `window.openai` shim,
+    // and a text+image message surface.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      availableDisplayModes: ["inline", "fullscreen"],
+      toolCancelled: false,
+      resourceTeardown: false,
+      toolInfo: false,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: false,
+      downloadFile: false,
+      requestTeardown: false,
+      widgetDisplayModeRequests: "accept",
+    },
+    hostCapabilitiesAugment: {
+      message: { image: {} },
+    },
+    resolveStyleVariables: getMistralStyleVariables,
+  },
+  chatUi: {
+    label: "Mistral",
+    shortLabel: "Mistral-style host",
+    pickerDescription: "Mistral web host",
+    logoSrc: mistralLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MISTRAL_CHAT_BACKGROUND[theme],
+    loadingIndicator: MistralSpinnerIndicator,
+  },
+};
+
+/**
+ * Goose Desktop host style. Captured from Goose 1.38.0: base MCP advertises
+ * `io.modelcontextprotocol/ui`, the iframe completes `ui/initialize`, and the
+ * host provides Cash Sans style variables. It does not expose `window.openai`,
+ * so Apps SDK widgets need an MCP Apps bridge or text fallback.
+ */
+export const GOOSE_HOST_STYLE: HostStyleDefinition = {
+  id: "goose",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: GOOSE_PLATFORM,
+    fontCss: GOOSE_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_GOOSE_SURFACE,
+    resolveStyleVariables: getGooseStyleVariables,
+  },
+  chatUi: {
+    label: "Goose",
+    shortLabel: "Goose-style host",
+    pickerDescription: "Goose Desktop host",
+    logoSrc: gooseLogoLight,
+    logoSrcByTheme: {
+      light: gooseLogoLight,
+      dark: gooseLogoDark,
+    },
+    family: "chatgpt",
+    resolveChatBackground: (theme) => GOOSE_CHAT_BACKGROUND[theme],
+    loadingIndicator: GooseIconIndicator,
   },
 };
 
@@ -539,7 +673,129 @@ export const AGENTCORE_HOST_STYLE: HostStyleDefinition = {
     // MCPJam, whose neutral tokens AgentCore borrows.
     family: "claude",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
-    loadingIndicator: MCPJamMarkIndicator,
+    // AgentCore is a text-only AWS runtime with no chat surface of its own, so
+    // it shows the generic Codex/Cursor "Thinking" shimmer rather than a
+    // branded mark. (Its "claude" family is for bubble chrome only — it opts
+    // out of the claude.ai streaming-footer mark in loading-indicator-content.)
+    loadingIndicator: CodexShineIndicator,
+  },
+};
+
+/**
+ * n8n MCP Client Tool host style. The real n8n client is a workflow-node
+ * tool caller with no MCP Apps rendering surface, so its MCP matrix stays
+ * at the no-claims baseline. The chat chrome is just MCPJam's neutral
+ * stand-in with n8n identity; it exists so users can run the same simulated
+ * turns through an n8n-shaped MCP initialize profile.
+ */
+export const N8N_HOST_STYLE: HostStyleDefinition = {
+  id: "n8n",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "n8n",
+    shortLabel: "n8n-style host",
+    pickerDescription: "n8n MCP Client Tool (tools-only)",
+    logoSrc: n8nLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // MCPJam's three-dot wave recolored to n8n's coral brand red.
+    loadingIndicator: N8nMarkIndicator,
+  },
+};
+
+/**
+ * Perplexity MCP client host style. The captured Perplexity probe exposes
+ * only the base MCP initialize layer (`mcp@0.1.0`) with no capabilities and
+ * no snapshot, so this preset mirrors a headless tool-calling client.
+ */
+export const PERPLEXITY_HOST_STYLE: HostStyleDefinition = {
+  id: "perplexity",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Perplexity",
+    shortLabel: "Perplexity-style host",
+    pickerDescription: "Perplexity MCP client (tools-only)",
+    logoSrc: perplexityLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // Scrolling Perplexity-mark sprite strip (the mark morphing/rotating in
+    // place), captured verbatim from a live perplexity.ai probe.
+    loadingIndicator: PerplexityMarkIndicator,
+  },
+};
+
+/**
+ * Cline host style. Captured from a Cline 3.89.2 probe: protocol 2025-11-25,
+ * an empty `clientCapabilities` object, and no uploaded snapshot — so Cline is
+ * a bare, tools-only MCP consumer with no MCP Apps/UI extension and no widget
+ * rendering surface. The MCP matrix stays at the no-claims baseline. The chat
+ * chrome is MCPJam's neutral stand-in with Cline identity; there's no captured
+ * thinking animation, so the busy state reuses the brand mark + "Thinking"
+ * label (same shape as the Goose indicator).
+ */
+export const CLINE_HOST_STYLE: HostStyleDefinition = {
+  id: "cline",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Cline",
+    shortLabel: "Cline-style host",
+    pickerDescription: "Cline MCP client (tools-only)",
+    logoSrc: clineLogoLight,
+    logoSrcByTheme: {
+      light: clineLogoLight,
+      dark: clineLogoDark,
+    },
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // No captured Cline thinking animation; reuse the brand mark + label.
+    loadingIndicator: ClineMarkIndicator,
+  },
+};
+
+/**
+ * Notion AI agent host style. The Notion client is a bare, tools-only MCP
+ * consumer (empty capabilities, no MCP Apps/UI extension), so its MCP matrix
+ * stays at the no-claims baseline and there's no widget rendering surface.
+ * The chat chrome is MCPJam's neutral stand-in with Notion identity; what
+ * makes it feel like Notion is the shimmer "Working" thinking indicator
+ * (captured from notion.so DevTools).
+ */
+export const NOTION_HOST_STYLE: HostStyleDefinition = {
+  id: "notion",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Notion",
+    shortLabel: "Notion-style host",
+    pickerDescription: "Notion AI agent (tools-only)",
+    logoSrc: notionLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    // Notion's shimmer-text "Working" label, ported from a live notion.so probe.
+    loadingIndicator: NotionShimmerIndicator,
   },
 };
 
@@ -589,10 +845,16 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  MISTRAL_HOST_STYLE,
+  GOOSE_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
+  N8N_HOST_STYLE,
+  PERPLEXITY_HOST_STYLE,
+  CLINE_HOST_STYLE,
+  NOTION_HOST_STYLE,
 ];

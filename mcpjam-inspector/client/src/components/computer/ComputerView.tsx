@@ -1,5 +1,5 @@
 import { Component, useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";

@@ -65,6 +65,7 @@ import {
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
+import type { Harness } from "@mcpjam/sdk";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -114,6 +115,9 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
+   *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
+  harness?: Harness;
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -440,6 +444,7 @@ export async function streamWebChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
+    provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
@@ -455,6 +460,7 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    ...(persist.harness ? { harness: persist.harness } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: cleanupStream,

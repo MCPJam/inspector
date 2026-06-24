@@ -19,6 +19,14 @@ export default defineConfig({
     "@hono/node-server",
     "hono",
     "ai",
+    // The AI SDK *harness* packages bundle their own `ai@7-canary` (a regular
+    // dependency, so it installs nested and never collides with the server's
+    // top-level `ai@6`). Keep them external so they're required from
+    // node_modules at runtime — bundling them would make esbuild rewrite their
+    // internal `import "ai"` to the external (v6) `ai` above and break the v7
+    // harness.
+    "@ai-sdk/harness",
+    "@ai-sdk/harness-claude-code",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
     "@ai-sdk/deepseek",
@@ -55,7 +63,9 @@ export default defineConfig({
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
     "@mcpjam/sdk/host-config/internal",
+    "@mcpjam/sdk/host-config/templates",
     "@mcpjam/sdk/platform",
+    "@mcpjam/sdk/public-api",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -71,7 +81,15 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/host-config/internal.js",
       ),
+      "@mcpjam/sdk/host-config/templates": join(
+        rootDir,
+        "../sdk/dist/host-config/templates/index.js",
+      ),
       "@mcpjam/sdk/platform": join(rootDir, "../sdk/dist/platform/index.js"),
+      "@mcpjam/sdk/public-api": join(
+        rootDir,
+        "../sdk/dist/public-api/index.js",
+      ),
     };
   },
 });

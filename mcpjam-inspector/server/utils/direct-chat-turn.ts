@@ -7,7 +7,10 @@ import {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
-import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  normalizeFinishReason,
+} from "@/shared/eval-trace";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -265,6 +268,12 @@ export interface DirectChatTurnEngineErrorEvent {
 export interface RunDirectChatTurnOptions {
   llmModel: ReturnType<typeof createLlmModel>;
   modelId: string;
+  /**
+   * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.
+   * "anthropic"). Threaded from the caller's model config — never derived from
+   * `modelId`. Optional: when omitted, llm/step spans simply lack `provider`.
+   */
+  provider?: string;
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
@@ -361,6 +370,8 @@ export interface RunDirectChatTurnHandle {
   result: ReturnType<typeof streamText>;
   traceContext: ReturnType<typeof createAiSdkEvalTraceContext>;
   traceTurn: DirectChatTurnTraceTurn;
+  /** Model id for this turn — lets headless consumers build the real turnTrace. */
+  modelId: string;
   /** Removes the abort listener (idempotent). Call from a finally block. */
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
@@ -431,6 +442,7 @@ export function runDirectChatTurn(
   const {
     llmModel,
     modelId,
+    provider,
     messageHistory,
     systemPrompt,
     temperature,
@@ -477,6 +489,10 @@ export function runDirectChatTurn(
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
+  // Time-to-first-chunk capture (OTel gen_ai.response.time_to_first_chunk):
+  // absolute Date.now() of the first streamed chunk for each step, set once in
+  // `onChunk`. `onStepFinish` turns it into `ttfcMs` relative to step start.
+  const stepFirstChunkAt = new Map<number, number>();
   let turnFinished = false;
   let aborted = abortSignal?.aborted === true;
   let listenerAttached = false;
@@ -644,6 +660,10 @@ export function runDirectChatTurn(
         : {};
     },
     onChunk: async ({ chunk }) => {
+      // First streamed chunk of this step → TTFC anchor (any chunk type).
+      if (!stepFirstChunkAt.has(currentStepIndex)) {
+        stepFirstChunkAt.set(currentStepIndex, Date.now());
+      }
       if (chunk.type === "text-delta") {
         // Parity callback fires alongside the trace surface so
         // streaming-text consumers (mirrors `onLiveTextDelta` on the
@@ -707,6 +727,17 @@ export function runDirectChatTurn(
         stepUsage,
       );
 
+      const stepStartAt = traceContext.openSteps.get(currentStepIndex)?.startAt;
+      const firstChunkAt = stepFirstChunkAt.get(currentStepIndex);
+      const ttfcMs =
+        typeof stepStartAt === "number" && typeof firstChunkAt === "number"
+          ? Math.max(0, firstChunkAt - stepStartAt)
+          : undefined;
+      const responseTimestamp =
+        step?.response?.timestamp instanceof Date
+          ? step.response.timestamp.toISOString()
+          : undefined;
+
       emitAiSdkOnStepFinish(traceContext, Date.now(), {
         modelId,
         inputTokens: stepUsage?.inputTokens,
@@ -714,6 +745,11 @@ export function runDirectChatTurn(
         totalTokens: stepUsage?.totalTokens,
         messageStartIndex,
         messageEndIndex,
+        finishReason: normalizeFinishReason(step?.finishReason),
+        provider,
+        responseId: step?.response?.id,
+        responseTimestamp,
+        ttfcMs,
       });
 
       setToolSpanMessageRangesFromResults(
@@ -890,6 +926,7 @@ export function runDirectChatTurn(
     result,
     traceContext,
     traceTurn,
+    modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
   };
@@ -903,6 +940,13 @@ export interface DirectChatTurnHeadlessResult {
   spans: Awaited<
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
+  /**
+   * The turn's real `PersistedTurnTrace`, built from the engine's own
+   * `traceTurn` accumulator + `recordedSpans` — the SAME construction the
+   * streaming `onPersist` path uses (see runDirectChatTurn). Lets the unified
+   * turn facade hand direct + hosted callers an identical trace shape.
+   */
+  turnTrace: PersistedTurnTrace;
   /** True if the abort signal fired mid-turn. The caller should drop the result on true. */
   aborted: boolean;
 }
@@ -924,12 +968,26 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    // Build the real turnTrace from the engine's own accumulator — mirrors the
+    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
+    // and streaming produce the identical PersistedTurnTrace.
+    const turnTrace: PersistedTurnTrace = {
+      turnId: handle.traceTurn.turnId,
+      promptIndex: handle.traceTurn.promptIndex,
+      startedAt: handle.traceTurn.turnStartedAt,
+      endedAt: Date.now(),
+      spans: [...handle.traceContext.recordedSpans],
+      usage: handle.traceTurn.turnUsage,
+      finishReason: finishReason ?? undefined,
+      modelId: handle.modelId,
+    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
+      turnTrace,
       aborted: handle.isAborted(),
     };
   } finally {

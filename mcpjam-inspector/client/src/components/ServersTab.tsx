@@ -123,7 +123,7 @@ import {
   SNAPPY_RAIL,
 } from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";

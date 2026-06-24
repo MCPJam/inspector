@@ -63,6 +63,116 @@ beforeEach(() => {
   mockCapture.mockClear();
 });
 
+describe("harness span metadata", () => {
+  const llmSpans = (finishReason?: string): EvalTraceSpan[] => [
+    { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 1000, stepIndex: 0 },
+    {
+      id: "step-0-llm",
+      parentId: "step-0",
+      name: "LLM",
+      category: "llm",
+      startMs: 0,
+      endMs: 1000,
+      stepIndex: 0,
+      modelId: "claude-opus-4-8",
+      provider: "anthropic",
+      outputTokens: 200,
+      responseId: "msg_abc",
+      ttfcMs: 240,
+      ...(finishReason ? { finishReason } : {}),
+    },
+  ];
+
+  it("shows provider, finish reason, TTFC, and throughput in the detail pane (llm row)", () => {
+    render(<TraceTimeline recordedSpans={llmSpans("length")} transcriptMessages={[]} />);
+    // Step rows are hidden; the llm row is the last label button.
+    const labelButtons = screen.getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    const meta = screen.getByTestId("trace-span-metadata");
+    expect(meta.textContent).toContain("anthropic");
+    // finish reason surfaces as plain text (no special badge).
+    expect(meta.textContent).toContain("length");
+    expect(meta.textContent).toContain("TTFC");
+    // 200 output tokens / 1.0s = 200.0 tok/s
+    expect(meta.textContent).toContain("200.0 tok/s");
+  });
+
+  it("omits throughput on non-llm rows", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "c1",
+        toolName: "read_me",
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByText(/tok\/s/)).toBeNull();
+  });
+
+  it("shows the JSON-RPC error code on a failed tool span", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "create_view",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        status: "error",
+        toolCallId: "c1",
+        toolName: "create_view",
+        mcpErrorCode: -32602,
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("create_view"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    const codeEl = screen.getByTestId("trace-mcp-error-code");
+    // Neutral "MCP error" label + standard code name (not "JSON-RPC … server").
+    expect(codeEl.textContent).toContain("-32602");
+    expect(codeEl.textContent).toContain("Invalid params");
+    expect(codeEl.textContent).not.toContain("JSON-RPC error code");
+  });
+
+  it("omits the error-code line when no mcpErrorCode is present", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "c1",
+        toolName: "read_me",
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByTestId("trace-mcp-error-code")).toBeNull();
+  });
+});
+
 describe("selectAxisTickPercents", () => {
   it("uses only endpoints when unmeasured, zero, or very narrow", () => {
     expect(selectAxisTickPercents(-1)).toEqual([0, 100]);

@@ -119,7 +119,6 @@ export function loadDebugPreregisteredCredentials({
   serverUrl: string;
 }): {
   clientId?: string;
-  clientSecret?: string;
 } {
   try {
     const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
@@ -128,9 +127,14 @@ export function loadDebugPreregisteredCredentials({
     }
 
     const parsed = JSON.parse(storedClientInfo);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify({ client_id: parsed.client_id || undefined }),
+      );
+    }
     return {
       clientId: parsed.client_id || undefined,
-      clientSecret: parsed.client_secret || undefined,
     };
   } catch {
     return {};

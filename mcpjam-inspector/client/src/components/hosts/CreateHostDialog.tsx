@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -19,6 +19,7 @@ import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
+  getHostTemplateLogoSrc,
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
@@ -52,11 +53,11 @@ export function CreateHostDialog({
   // it), so hiding it here can't strand the selection on a missing tile.
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const visibleTemplates = HOST_TEMPLATES.filter(
-    (t) => t.id !== "claude-code" || claudeCodeEnabled,
+    (t) => t.id !== "claude-code" || claudeCodeEnabled
   );
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
-    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
+    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID
   );
   const [isSaving, setIsSaving] = useState(false);
 
@@ -160,12 +161,12 @@ export function CreateHostDialog({
                       "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
-                        : "border-border hover:bg-accent/50",
+                        : "border-border hover:bg-accent/50"
                     )}
                     aria-pressed={isSelected}
                   >
                     <img
-                      src={template.logoSrc}
+                      src={getHostTemplateLogoSrc(template, themeMode)}
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
@@ -193,10 +194,7 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button
-            onClick={handleCreate}
-            disabled={!name.trim() || isSaving}
-          >
+          <Button onClick={handleCreate} disabled={!name.trim() || isSaving}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Create
           </Button>

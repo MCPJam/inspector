@@ -221,6 +221,27 @@ describe("evaluateAllHosts (real registry)", () => {
     expect(codex?.verdict).toBe("degraded");
   });
 
+  it("treats n8n as a headless tools-only client", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const n8n = reports.find((r) => r.hostId === "n8n");
+    expect(n8n?.verdict).toBe("degraded");
+    expect(n8n?.findings[0].title).toMatch(/fall back to text/);
+  });
+
+  it("treats Perplexity as a headless tools-only client", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const perplexity = reports.find((r) => r.hostId === "perplexity");
+    expect(perplexity?.verdict).toBe("degraded");
+    expect(perplexity?.findings[0].title).toMatch(/fall back to text/);
+  });
+
+  it("treats Cline as a headless tools-only client", () => {
+    const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const cline = reports.find((r) => r.hostId === "cline");
+    expect(cline?.verdict).toBe("degraded");
+    expect(cline?.findings[0].title).toMatch(/fall back to text/);
+  });
+
   it("renders MCP Apps widgets in ChatGPT (does NOT fall back to text)", () => {
     const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
     const chatgpt = reports.find((r) => r.hostId === "chatgpt");
@@ -230,6 +251,24 @@ describe("evaluateAllHosts (real registry)", () => {
     ).toBe(false);
     // Its only gaps are info-level (serverResources / logging), so: Works.
     expect(chatgpt?.verdict).toBe("works");
+  });
+
+  it("renders MCP Apps widgets in Goose but reports scanned bridge gaps", () => {
+    const clean = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
+    const gooseClean = clean.reports.find((r) => r.hostId === "goose");
+    expect(
+      gooseClean?.findings.some((f) => /fall back to text/.test(f.title)),
+    ).toBe(false);
+    expect(gooseClean?.verdict).toBe("works");
+
+    const scanned = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {
+      message: ["w"],
+    });
+    const gooseScanned = scanned.reports.find((r) => r.hostId === "goose");
+    expect(gooseScanned?.verdict).toBe("degraded");
+    expect(
+      gooseScanned?.findings.some((f) => /ui\/message/.test(f.detail)),
+    ).toBe(true);
   });
 
   it("surfaces Cursor's follow-up gap only for a widget that actually uses it", () => {

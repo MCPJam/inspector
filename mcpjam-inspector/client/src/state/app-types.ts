@@ -66,6 +66,11 @@ export interface ServerWithName {
    * server uses bearer auth and to keep the saved token hidden-but-preserved.
    */
   hasBearerToken?: boolean;
+  /**
+   * Optional issuer override for the cross-app authorization test target.
+   * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
+   */
+  xaaAuthzIssuer?: string;
 }
 
 export interface Project {

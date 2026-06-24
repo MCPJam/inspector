@@ -11,7 +11,7 @@ import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
 export function parseModelAliases(
   aliasString: string,
-  provider: ModelProvider,
+  provider: ModelProvider
 ): ModelDefinition[] {
   return aliasString
     .split(",")
@@ -47,7 +47,7 @@ export function buildAvailableModels(params: {
     azure: Boolean(getAzureBaseUrl()),
     ollama: isOllamaRunning,
     openrouter: Boolean(
-      hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
+      hasToken("openrouter") && getOpenRouterSelectedModels().length > 0
     ),
     meta: false,
   } as const;
@@ -71,7 +71,7 @@ export function buildAvailableModels(params: {
       name: modelId,
       provider: "custom" as const,
       customProviderName: cp.name,
-    })),
+    }))
   );
 
   let models: ModelDefinition[] = cloud;
@@ -94,7 +94,7 @@ export type OrgVisibleConfig = {
  */
 export function isOrgProviderAvailable(
   orgConfig: OrgVisibleConfig | undefined,
-  providerKey: string,
+  providerKey: string
 ): boolean {
   if (!orgConfig?.providers) return false;
   return orgConfig.providers.some((p) => {
@@ -118,7 +118,7 @@ export function isOrgProviderAvailable(
  * so hosted local-runtime Ollama providers appear in the model picker.
  */
 export function buildAvailableModelsFromOrgConfig(
-  orgConfig: OrgVisibleConfig | undefined,
+  orgConfig: OrgVisibleConfig | undefined
 ): ModelDefinition[] {
   if (!orgConfig?.providers) {
     // No org config loaded yet — return only MCPJam-provided models
@@ -142,16 +142,18 @@ export function buildAvailableModelsFromOrgConfig(
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
-    (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret,
+    (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret
   );
-  if (openRouterConfig?.selectedModels && openRouterConfig.selectedModels.length > 0) {
-    const openRouterModels: ModelDefinition[] = openRouterConfig.selectedModels.map(
-      (id) => ({
+  if (
+    openRouterConfig?.selectedModels &&
+    openRouterConfig.selectedModels.length > 0
+  ) {
+    const openRouterModels: ModelDefinition[] =
+      openRouterConfig.selectedModels.map((id) => ({
         id,
         name: id,
         provider: "openrouter" as const,
-      }),
-    );
+      }));
     models.push(...openRouterModels);
   }
 
@@ -159,15 +161,18 @@ export function buildAvailableModelsFromOrgConfig(
   // the usable model set is org-specific (Bedrock model access is granted per
   // AWS account), so SUPPORTED_MODELS has no static bedrock entries.
   const bedrockConfig = orgConfig.providers.find(
-    (p) => p.providerKey === "bedrock" && p.enabled && p.hasSecret,
+    (p) => p.providerKey === "bedrock" && p.enabled && p.hasSecret
   );
-  if (bedrockConfig?.selectedModels && bedrockConfig.selectedModels.length > 0) {
+  if (
+    bedrockConfig?.selectedModels &&
+    bedrockConfig.selectedModels.length > 0
+  ) {
     const bedrockModels: ModelDefinition[] = bedrockConfig.selectedModels.map(
       (id) => ({
         id,
         name: id,
         provider: "bedrock" as const,
-      }),
+      })
     );
     models.push(...bedrockModels);
   }
@@ -272,6 +277,21 @@ export interface ModelMenuItem {
   customProviderName?: string;
 }
 
+const OWN_PROVIDER_SOURCES = new Set([
+  "azure",
+  "bedrock",
+  "custom",
+  "ollama",
+  "openrouter",
+]);
+
+export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
+  if (OWN_PROVIDER_SOURCES.has(model.provider)) {
+    return false;
+  }
+  return isMCPJamProvidedModel(String(model.id));
+}
+
 export interface ModelMenuGroup<T extends ModelMenuItem> {
   /** Group key — provider name, or `custom:<slug>` for custom providers. */
   provider: string;
@@ -288,7 +308,7 @@ export interface ModelMenuGroup<T extends ModelMenuItem> {
  */
 export function buildModelMenuGroups<T extends ModelMenuItem>(
   models: T[],
-  options: { hideProvidedModels?: boolean } = {},
+  options: { hideProvidedModels?: boolean } = {}
 ): ModelMenuGroup<T>[] {
   const { hideProvidedModels = false } = options;
 
@@ -312,18 +332,23 @@ export function buildModelMenuGroups<T extends ModelMenuItem>(
   for (const provider of sortedKeys) {
     const list = byProvider.get(provider) ?? [];
     const filtered = hideProvidedModels
-      ? list.filter((m) => !isMCPJamProvidedModel(String(m.id)))
+      ? list.filter((m) => !isMCPJamProvidedModelMenuItem(m))
       : list;
     if (filtered.length === 0) continue;
 
-    const provided = filtered.filter((m) => isMCPJamProvidedModel(String(m.id)));
+    const provided = filtered.filter((m) => isMCPJamProvidedModelMenuItem(m));
     const configured = filtered.filter(
-      (m) => !isMCPJamProvidedModel(String(m.id)),
+      (m) => !isMCPJamProvidedModelMenuItem(m)
     );
     const title = getProviderDisplayName(provider);
 
     if (provided.length > 0) {
-      groups.push({ provider, title, providerType: "provided", models: provided });
+      groups.push({
+        provider,
+        title,
+        providerType: "provided",
+        models: provided,
+      });
     }
     if (configured.length > 0) {
       groups.push({
@@ -339,7 +364,7 @@ export function buildModelMenuGroups<T extends ModelMenuItem>(
 }
 
 export const getDefaultModel = (
-  availableModels: ModelDefinition[],
+  availableModels: ModelDefinition[]
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
     "anthropic/claude-haiku-4.5",

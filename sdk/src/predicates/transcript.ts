@@ -13,6 +13,7 @@ import type { EvalTraceInput } from "../eval-reporting-types.js";
 import type {
   IterationTranscript,
   RenderObservationSummary,
+  ToolErrorRecord,
   TranscriptToolCall,
   TranscriptUsage,
 } from "./types.js";
@@ -66,6 +67,54 @@ export interface BuildTranscriptInput {
   finalAssistantMessage?: string;
   /** Widget render observation summaries, when the runner captured any. */
   renderObservations?: RenderObservationSummary[];
+  /**
+   * Tool errors the runner observed outside the trace. A model-free pinned
+   * tool call has no trace for `extractToolErrors` to read, so its failures
+   * (content-error / protocol-error) must be passed explicitly — otherwise
+   * `noToolErrors` would pass falsely. Merged with trace-derived errors.
+   */
+  toolErrors?: ToolErrorRecord[];
+}
+
+/**
+ * Per-turn signals the runner captured for a single prompt turn. The runner
+ * already groups tool calls / assistant message / render observations by turn
+ * (`promptSummaries`); this is the slice handed to per-turn check evaluation.
+ */
+export interface TurnTranscriptInput {
+  /** Tool calls observed during this turn only. */
+  toolCalls: TranscriptToolCall[];
+  /** This turn's assistant message text, if any. */
+  finalAssistantMessage?: string;
+  /** Tool errors observed during this turn only. */
+  toolErrors?: ToolErrorRecord[];
+  /** Widget render observations recorded during this turn only. */
+  renderObservations?: RenderObservationSummary[];
+  /** Token usage for this turn, if measured (rarely available per-turn). */
+  usage?: TranscriptUsage;
+}
+
+/**
+ * Assemble a turn-scoped {@link IterationTranscript} from per-turn signals.
+ * Unlike {@link buildIterationTranscript} there is no trace to parse — the
+ * runner supplies already-extracted per-turn data. Feeding this slice to the
+ * existing `evaluatePredicates` makes "the final message", "the first tool",
+ * "calls to X" all resolve to the turn, with no change to the evaluator core.
+ */
+export function buildTurnTranscript(
+  input: TurnTranscriptInput,
+): IterationTranscript {
+  return {
+    toolCalls: input.toolCalls,
+    toolErrors: input.toolErrors ?? [],
+    ...(input.finalAssistantMessage !== undefined
+      ? { finalAssistantMessage: input.finalAssistantMessage }
+      : {}),
+    ...(input.usage ? { usage: input.usage } : {}),
+    ...(input.renderObservations && input.renderObservations.length > 0
+      ? { renderObservations: input.renderObservations }
+      : {}),
+  };
 }
 
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
@@ -75,9 +124,13 @@ export function buildIterationTranscript(
   const finalAssistantMessage =
     input.finalAssistantMessage ??
     extractFinalAssistantMessage(messagesOf(input.trace));
+  const toolErrors = [
+    ...extractToolErrors(input.trace),
+    ...(input.toolErrors ?? []),
+  ];
   return {
     toolCalls: input.toolCalls,
-    toolErrors: extractToolErrors(input.trace),
+    toolErrors,
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     ...(input.usage ? { usage: input.usage } : {}),
     ...(input.renderObservations && input.renderObservations.length > 0

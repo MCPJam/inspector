@@ -13,6 +13,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import type { HostThemeMode } from "@/lib/client-styles";
 import {
   fieldDiverges,
   groupHostConfigFields,
@@ -33,6 +34,7 @@ interface HostConfigComparisonMatrixProps {
   showDescriptions?: boolean;
   /** Remove a column; omitted when only one host remains. */
   onRemoveHost?: (hostId: string) => void;
+  themeMode?: HostThemeMode;
 }
 
 /**
@@ -48,6 +50,7 @@ export function HostConfigComparisonMatrix({
   divergingOnly = false,
   showDescriptions = false,
   onRemoveHost,
+  themeMode = "light",
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -95,6 +98,7 @@ export function HostConfigComparisonMatrix({
                 key={s.hostId}
                 subject={s}
                 onRemove={onRemoveHost}
+                themeMode={themeMode}
               />
             ))}
           </tr>
@@ -162,7 +166,7 @@ function SectionRows({
         <th
           colSpan={colSpan}
           scope="colgroup"
-          className="sticky top-[64px] z-20 bg-secondary border-y border-border px-5 py-2 text-left"
+          className="sticky top-[64px] z-20 bg-muted border-y border-border px-5 py-2 text-left"
         >
           <motion.div
             className="flex items-baseline gap-3"
@@ -234,7 +238,7 @@ function SubsectionRows({
       <tr>
         <td
           colSpan={colSpan}
-          className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
+          className="px-5 pt-5 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
         >
           {label}
         </td>
@@ -481,13 +485,16 @@ function TriStateCellValue({
 function HostColumnHeader({
   subject,
   onRemove,
+  themeMode,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
+  themeMode: HostThemeMode;
 }) {
   const logoSrc = getChatboxHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
+    themeMode,
   );
   const reduceMotion = useReducedMotion();
 

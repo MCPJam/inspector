@@ -12,7 +12,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useOrganizationMutations } from "@/hooks/useOrganizations";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 interface CreateOrganizationDialogProps {
   open: boolean;

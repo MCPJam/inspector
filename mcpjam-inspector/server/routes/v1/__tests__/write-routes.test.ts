@@ -969,6 +969,8 @@ describe("v1 write routes", () => {
         notes: null,
         createdAt: 1,
         completedAt: 2,
+        stoppedAt: null,
+        stopReason: null,
       });
     });
 

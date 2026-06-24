@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
 import {
   BILLING_FEATURE_BY_TAB,
+  formatBillingLimitReachedMessage,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
   getPremiumnessGateForTab,
@@ -101,7 +102,22 @@ describe("getBillingErrorMessage", () => {
       "fallback"
     );
 
-    expect(message).toMatch(/^Eval iteration limit reached\. Resets /);
+    expect(message).toMatch(
+      /^This organization has reached its eval iteration limit \(25\)\. Resets /
+    );
+  });
+
+  it("ignores invalid eval reset timestamps", () => {
+    const message = formatBillingLimitReachedMessage(
+      "maxEvalIterationsPerMonth",
+      25,
+      true,
+      { resetsAt: Number.POSITIVE_INFINITY }
+    );
+
+    expect(message).toBe(
+      "This organization has reached its eval iteration limit (25). Upgrade to continue."
+    );
   });
 
   it("formats backend limit payloads for project chatboxes", () => {
@@ -117,7 +133,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This project has reached its chatbox limit (5). Upgrade to continue."
+      "This project has reached its swarm limit (5). Upgrade to continue."
     );
   });
 
@@ -205,7 +221,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Team to continue."
+      "Swarms is not included in the Free plan. Upgrade to Team to continue."
     );
   });
 
@@ -224,7 +240,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Team."
+      "Swarms is not included in the Free plan. Ask an organization owner to upgrade to Team."
     );
   });
 

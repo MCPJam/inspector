@@ -2,7 +2,7 @@ import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { Layers } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { EmptyState } from "@/components/ui/empty-state";
 import {

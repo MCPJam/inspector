@@ -7,13 +7,6 @@ import {
 } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@mcpjam/design-system/dropdown-menu";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -28,6 +21,7 @@ import {
   Plus,
   RotateCw,
   Settings,
+  Square,
   Sparkles,
   X,
 } from "lucide-react";
@@ -48,9 +42,10 @@ import {
   SuiteAggregate,
 } from "./types";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { GenerateCasesConfigPopover } from "./generate-cases-config-popover";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { ValidatorsSection } from "./validators-section";
 import {
@@ -112,12 +107,6 @@ interface SuiteHeaderProps {
   evalRunsDisabledReason?: string | null;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
-  /**
-   * Create a widget probe case (synthetic monitor). When present AND the
-   * synthetic-monitors flag is on, "New case" becomes a two-option menu
-   * (prompt test / widget probe); otherwise the plain button renders.
-   */
-  onCreateWidgetProbe?: () => void;
   /** Per-case runs from the test cases list / sidebar; not shown in the suite header. */
   onRunTestCase?: (testCase: EvalCase) => void;
   /** When true, per-case runs (row play + header run-first) are disabled. */
@@ -179,7 +168,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
-    onCreateWidgetProbe,
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
@@ -192,7 +180,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
-  const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -209,6 +196,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       return bTime - aTime;
     })[0];
   }, [runs]);
+  const latestRunIsInProgress =
+    latestRunForMetadata?.status === "running" ||
+    latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
     setEditedName(suite.name);
@@ -258,10 +248,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           suite_id: suite._id,
           server_attachment_id: serverAttachmentId,
         });
-        toast.success("Server attachment updated");
+        toast.success("Server group updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update server attachment")
+          getBillingErrorMessage(error, "Failed to update server group")
         );
       }
     },
@@ -293,10 +283,56 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning = rerunningSuiteId === suite._id;
+  const isRerunning =
+    rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
+  const activeSuiteRun =
+    latestRunForMetadata &&
+    (latestRunForMetadata.status === "running" ||
+      latestRunForMetadata.status === "pending")
+      ? latestRunForMetadata
+      : null;
+  const isCancellingActiveSuiteRun =
+    activeSuiteRun != null && cancellingRunId === activeSuiteRun._id;
+
+  const suiteStopCta =
+    activeSuiteRun && !readOnlyConfig ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => onCancelRun(activeSuiteRun._id)}
+              disabled={isCancellingActiveSuiteRun}
+              aria-label="Stop suite run"
+              aria-busy={isCancellingActiveSuiteRun}
+            >
+              {isCancellingActiveSuiteRun ? (
+                <Loader2
+                  className="h-3.5 w-3.5 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : (
+                <Square className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+              {isCancellingActiveSuiteRun ? "Stopping..." : "Stop"}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="bottom"
+          className="max-w-[16rem]"
+        >
+          Stop the current suite run
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
 
   const isMobile = useIsMobile();
 
@@ -464,9 +500,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
       ? (() => {
+          if (suiteStopCta) {
+            return suiteStopCta;
+          }
+
           const testCaseCount = testCases?.length ?? 0;
           const isRunAllDisabled = Boolean(
             isRerunning ||
+              activeSuiteRun ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
@@ -479,6 +520,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
+            : activeSuiteRun
+            ? "A suite run is already in progress."
             : isRerunning || replayingRunId != null
             ? "A suite or replay is already in progress."
             : runningTestCaseId != null
@@ -647,7 +690,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (showTestCaseCtas && Boolean(onCreateTestCase));
   const overviewHasExportOrRun =
     Boolean(onOpenExportSuite) ||
-    (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
+    (!hideRunActions &&
+      (Boolean(activeSuiteRun) || replayableLatestRun || !readOnlyConfig));
 
   return (
     <div
@@ -783,84 +827,73 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-l border-border/40 pl-3">
             {overviewRunAllCta}
             {showTestCaseCtas && onGenerateTestCases ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5"
-                      onClick={onGenerateTestCases}
-                      disabled={!canGenerateTestCases || isGeneratingTestCases}
-                      aria-busy={isGeneratingTestCases}
-                    >
-                      {isGeneratingTestCases ? (
-                        <Loader2
-                          className="h-3.5 w-3.5 shrink-0 animate-spin"
-                          aria-hidden
-                        />
-                      ) : (
-                        <Sparkles
-                          className="h-3.5 w-3.5 shrink-0"
-                          aria-hidden
-                        />
-                      )}
-                      Generate
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  side="bottom"
-                  align="start"
-                  sideOffset={8}
-                  className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-                >
-                  {isGeneratingTestCases
-                    ? "Generating test cases…"
-                    : !canGenerateTestCases
-                    ? generateTestCasesDisabledReason ??
-                      "Configure suite servers before generating cases."
-                    : "Generate suggested cases from your server's tools."}
-                </TooltipContent>
-              </Tooltip>
+              <div className="inline-flex items-center">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 rounded-r-none"
+                        onClick={onGenerateTestCases}
+                        disabled={
+                          !canGenerateTestCases || isGeneratingTestCases
+                        }
+                        aria-busy={isGeneratingTestCases}
+                      >
+                        {isGeneratingTestCases ? (
+                          <Loader2
+                            className="h-3.5 w-3.5 shrink-0 animate-spin"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Sparkles
+                            className="h-3.5 w-3.5 shrink-0"
+                            aria-hidden
+                          />
+                        )}
+                        Generate
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                    className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
+                  >
+                    {isGeneratingTestCases
+                      ? "Generating test cases…"
+                      : !canGenerateTestCases
+                      ? generateTestCasesDisabledReason ??
+                        "Configure suite servers before generating cases."
+                      : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+                  </TooltipContent>
+                </Tooltip>
+                <GenerateCasesConfigPopover
+                  suiteId={suite._id}
+                  onGenerate={onGenerateTestCases}
+                  disabled={!canGenerateTestCases}
+                  isGenerating={isGeneratingTestCases}
+                  disabledReason={generateTestCasesDisabledReason}
+                />
+              </div>
             ) : null}
             {showTestCaseCtas && onCreateTestCase ? (
-              syntheticMonitorsEnabled && onCreateWidgetProbe ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1.5"
-                    >
-                      <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      New case
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => onCreateTestCase()}>
-                      Prompt test
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onCreateWidgetProbe()}>
-                      Render check
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5"
-                  onClick={onCreateTestCase}
-                >
-                  <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  New case
-                </Button>
-              )
+              // One case type now. A render check is just a case whose turn is
+              // toggled to "Render check" inside the editor — no separate entry.
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5"
+                onClick={onCreateTestCase}
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                New case
+              </Button>
             ) : null}
           </div>
         ) : null}
@@ -879,7 +912,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Button>
             ) : null}
 
-            {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+            {suiteStopCta}
+
+            {!activeSuiteRun &&
+            !hideRunActions &&
+            !readOnlyConfig &&
+            hasServersConfigured ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">
@@ -911,7 +949,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Tooltip>
             ) : null}
 
-            {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
+            {!activeSuiteRun &&
+            !hideRunActions &&
+            (replayableLatestRun || !readOnlyConfig) ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">

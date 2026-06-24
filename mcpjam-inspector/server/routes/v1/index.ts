@@ -19,6 +19,7 @@ import prompts from "./prompts.js";
 import resources from "./resources.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
+import hosts from "./hosts.js";
 import evalIngest from "./eval-ingest.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
@@ -59,18 +60,31 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // GET lists a project's suites (read, guest-allowed). POST /eval-suites
   // CREATES a suite (write) and is intentionally guest-DENIED.
   { pattern: /^\/projects\/[^/]+\/eval-suites$/, methods: ["GET"] },
+  // GET reads one suite's settings / its cases (reads, guest-allowed). The
+  // PATCH/DELETE on these paths are WRITES and stay guest-DENIED (default-deny).
+  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+$/, methods: ["GET"] },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases$/,
+    methods: ["GET"],
+  },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases\/[^/]+$/,
+    methods: ["GET"],
+  },
   { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/ },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
+  },
   { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
   { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
 ];
 
 export function isGuestAllowedV1Request(
   method: string,
-  fullPath: string,
+  fullPath: string
 ): boolean {
   // `c.req.path` is the full request path; strip the mount prefix so the
   // patterns above stay readable and relative.
@@ -79,7 +93,7 @@ export function isGuestAllowedV1Request(
   return GUEST_ALLOWED_V1_RULES.some(
     (rule) =>
       rule.pattern.test(relative) &&
-      (!rule.methods || rule.methods.includes(upper)),
+      (!rule.methods || rule.methods.includes(upper))
   );
 }
 
@@ -110,6 +124,7 @@ v1.route("/", prompts);
 v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
+v1.route("/", hosts);
 v1.route("/", evalIngest);
 v1.route("/", oauth);
 v1.route("/", catalog);

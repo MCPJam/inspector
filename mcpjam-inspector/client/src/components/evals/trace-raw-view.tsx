@@ -13,7 +13,7 @@
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
 import type { ModelMessage } from "ai";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { JsonEditor } from "@/components/ui/json-editor";

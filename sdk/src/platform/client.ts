@@ -7,8 +7,16 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
+  PlatformEvalCase,
+  PlatformEvalCaseDeleted,
+  PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformEvalSuiteDeleted,
+  PlatformEvalSuiteDetail,
+  PlatformHost,
+  PlatformHostDeleted,
+  PlatformHostDetail,
   PlatformMe,
   PlatformPage,
   PlatformProject,
@@ -167,6 +175,83 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Hosts ────────────────────────────────────────────────────────────
+
+  listHosts(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformHost>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      {},
+      options
+    );
+  }
+
+  getHost(
+    params: { projectId: string; hostId: string },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/hosts` — create a host either from a built-in template
+   * (`{ name, template, theme? }`) or from a full host config
+   * (`{ name, config }`). Returns the created host detail.
+   */
+  createHost(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateHost(
+    params: { projectId: string; hostId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteHost(
+    params: {
+      projectId: string;
+      hostId: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformHostDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body ?? {} },
+      options
+    );
+  }
+
   /**
    * `POST /projects/{p}/eval-runs` — validates and creates the run, then
    * detaches execution and responds 202. Poll `getEvalRun` until terminal.
@@ -261,6 +346,175 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/runs`,
       { query: { limit: params.limit } },
+      options
+    );
+  }
+
+  // ── Eval suite/case editing ──────────────────────────────────────────
+
+  getEvalSuite(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      {},
+      options
+    );
+  }
+
+  updateEvalSuite(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEvalSuite(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      {},
+      options
+    );
+  }
+
+  setEvalSuiteSchedule(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
+      { body: params.body },
+      options
+    );
+  }
+
+  listEvalCases(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalCase>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
+      {},
+      options
+    );
+  }
+
+  getEvalCase(
+    params: { projectId: string; suiteId: string; caseId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      {},
+      options
+    );
+  }
+
+  createEvalCase(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateEvalCase(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEvalCase(
+    params: { projectId: string; suiteId: string; caseId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCaseDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      {},
+      options
+    );
+  }
+
+  generateEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCasesGenerated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
+      { body: params.body },
       options
     );
   }
@@ -391,7 +645,7 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions
@@ -426,7 +680,10 @@ export class PlatformApiClient {
       }
     }
     const timeoutHandle = setTimeout(
-      () => controller.abort(new Error(`Request timed out after ${this.timeoutMs}ms`)),
+      () =>
+        controller.abort(
+          new Error(`Request timed out after ${this.timeoutMs}ms`)
+        ),
       this.timeoutMs
     );
 
@@ -447,7 +704,9 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         aborted
           ? `Request to ${path} timed out after ${this.timeoutMs}ms`
-          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(error)}`,
+          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
+              error
+            )}`,
         aborted ? "TIMEOUT" : "NETWORK_ERROR",
         { status: 0, endpoint: path, cause: error }
       );

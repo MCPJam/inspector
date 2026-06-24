@@ -111,6 +111,10 @@ export type ModelProvider =
   | "custom";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
+  "mistralai/mistral-small-2603",
+  "mistralai/mistral-medium-3-5",
+  "mistralai/mistral-large-2512",
+  "mistralai/devstral-2512",
   "openai/gpt-oss-120b",
   "openai/gpt-4o-mini",
   "openai/gpt-5-nano",
@@ -152,6 +156,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
   "z-ai/glm-5.1",
+  "z-ai/glm-5.2",
   "minimax/minimax-m2.1",
   "minimax/minimax-m2.7",
   "qwen/qwen3.6-plus",
@@ -164,6 +169,8 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
 ];
 
 const MCPJAM_GUEST_GATED_MODEL_IDS = [
+  "mistralai/mistral-medium-3-5",
+  "mistralai/mistral-large-2512",
   "openai/gpt-5.4",
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
@@ -317,6 +324,10 @@ export enum Model {
   // Mistral models
   MISTRAL_LARGE_LATEST = "mistral-large-latest",
   MISTRAL_SMALL_LATEST = "mistral-small-latest",
+  MISTRAL_SMALL_2603 = "mistral-small-2603",
+  MISTRAL_MEDIUM_3_5 = "mistral-medium-3-5",
+  MISTRAL_LARGE_2512 = "mistral-large-2512",
+  DEVSTRAL_2512 = "devstral-2512",
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
@@ -511,6 +522,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 131072,
   },
+  freeModel(
+    "mistralai/mistral-small-2603",
+    "Mistral Small 4",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/mistral-medium-3-5",
+    "Mistral Medium 3.5",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/mistral-large-2512",
+    "Mistral Large 3 2512",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/devstral-2512",
+    "Devstral 2 2512",
+    "mistral",
+    262144
+  ),
   freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
   {
     id: "openai/gpt-5-nano",
@@ -644,6 +679,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
+    id: "z-ai/glm-5.2",
+    name: "GLM 5.2 (Free)",
+    provider: "z-ai",
+    contextLength: 1000000,
+  },
+  {
     id: "minimax/minimax-m2.1",
     name: "MiniMax M2.1 (Free)",
     provider: "minimax",
@@ -658,6 +699,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel("qwen/qwen3.5-flash-02-23", "Qwen 3.5 Flash 02-23", "qwen"),
   freeModel("qwen/qwen3-max-thinking", "Qwen 3 Max Thinking", "qwen"),
   // Mistral models
+  {
+    id: Model.MISTRAL_SMALL_2603,
+    name: "Mistral Small 4",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.MISTRAL_MEDIUM_3_5,
+    name: "Mistral Medium 3.5",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.MISTRAL_LARGE_2512,
+    name: "Mistral Large 3 2512",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.DEVSTRAL_2512,
+    name: "Devstral 2 2512",
+    provider: "mistral",
+    contextLength: 262144,
+  },
   {
     id: Model.MISTRAL_LARGE_LATEST,
     name: "Mistral Large",
@@ -810,6 +875,8 @@ export interface ServerFormData {
   clientSecret?: string;
   hasClientSecret?: boolean;
   clearClientSecret?: boolean;
+  /** Optional issuer override for the cross-app authorization test target. */
+  xaaAuthzIssuer?: string;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

@@ -1,9 +1,7 @@
 import {
   clearOAuthData,
-  getStoredTokens,
   initiateOAuth,
   readStoredOAuthConfig,
-  refreshOAuthTokens,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { ServerWithName } from "./app-types";
@@ -69,16 +67,20 @@ function sanitizeOAuthSetupHeaders(
 
 function readStoredClientInfo(serverName: string): {
   client_id?: string;
-  client_secret?: string;
 } {
   try {
     const raw = localStorage.getItem(`mcp-client-${serverName}`);
     if (!raw) return {};
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify({ client_id: nonEmptyString(parsed?.client_id) }),
+      );
+    }
     return {
       client_id: nonEmptyString(parsed?.client_id),
-      client_secret: nonEmptyString(parsed?.client_secret),
     };
   } catch {
     return {};
@@ -129,7 +131,6 @@ function buildReconnectOAuthOptions(
 ): MCPOAuthOptions {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
-  const storedTokens = getStoredTokens(server.name);
   const profile = server.oauthFlowProfile;
   const protocolMode =
     profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
@@ -151,12 +152,9 @@ function buildReconnectOAuthOptions(
     clientId:
       nonEmptyString(server.oauthTokens?.client_id) ??
       nonEmptyString(profile?.clientId) ??
-      nonEmptyString(storedTokens?.client_id) ??
       storedClientInfo.client_id,
-    clientSecret:
-      nonEmptyString(server.oauthTokens?.client_secret) ??
-      nonEmptyString(profile?.clientSecret) ??
-      storedClientInfo.client_secret,
+    clientSecret: undefined,
+    hasClientSecret: Boolean(server.hasClientSecret),
     protocolMode,
     protocolVersion:
       protocolMode !== "auto"
@@ -194,42 +192,16 @@ export async function ensureAuthorizedForReconnect(
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
-  // If OAuth was configured, try to refresh or re-initiate. Local mode does
-  // not hydrate `server.oauthTokens` from localStorage at startup, so a
-  // page-reload + auto-reconnect arrives here with `oauthTokens: undefined`
-  // even when a refresh_token sits in localStorage. Probe getStoredTokens
-  // too so the silent refresh runs; refreshOAuthTokens self-reads from
-  // localStorage anyway and returns success: false cleanly if nothing is
-  // persisted.
-  let refreshTrace: OAuthTrace | undefined;
-  const hasRefreshCandidate =
-    server.oauthTokens || getStoredTokens(server.name);
-  if (hasRefreshCandidate) {
-    const refreshed = await refreshOAuthTokens(server.name, {
-      onTraceUpdate: options?.onTraceUpdate,
-    });
-    if (refreshed.success && refreshed.serverConfig) {
-      return {
-        kind: "ready",
-        serverConfig: refreshed.serverConfig,
-        tokens: getStoredTokens(server.name),
-        oauthTrace: refreshed.oauthTrace,
-      };
-    }
-    refreshTrace = refreshed.oauthTrace;
-  }
-
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
   const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
 
   if (options?.allowInteractiveOAuthFlow === false) {
     if (url) {
-      return buildOAuthReauthRequired(server.name, refreshTrace);
+      return buildOAuthReauthRequired(server.name);
     }
     return {
       kind: "error",
-      error: "OAuth refresh failed and no URL present",
-      oauthTrace: refreshTrace,
+      error: "OAuth authorization required and no URL present",
     };
   }
 
@@ -245,7 +217,7 @@ export async function ensureAuthorizedForReconnect(
       return {
         kind: "ready",
         serverConfig: init.serverConfig,
-        tokens: getStoredTokens(server.name),
+        tokens: undefined,
         oauthTrace: init.oauthTrace,
       };
     }
@@ -259,5 +231,8 @@ export async function ensureAuthorizedForReconnect(
     };
   }
 
-  return { kind: "error", error: "OAuth refresh failed and no URL present" };
+  return {
+    kind: "error",
+    error: "OAuth authorization required and no URL present",
+  };
 }

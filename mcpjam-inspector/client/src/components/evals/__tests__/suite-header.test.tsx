@@ -333,6 +333,50 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
+  it("shows Stop in the playground header for an active suite run", async () => {
+    const user = userEvent.setup();
+    const onCancelRun = vi.fn();
+    const activeRun = {
+      ...baseRun,
+      _id: "run-active",
+      status: "running" as const,
+      completedAt: null,
+    };
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runs={[activeRun]}
+        onCancelRun={onCancelRun}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        readOnlyConfig={false}
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", {
+        name: /Run all cases in this suite/i,
+      })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Stop suite run" }));
+    expect(onCancelRun).toHaveBeenCalledWith("run-active");
+  });
+
   it("forwards iterationOverride on Run all even without a match-options override", async () => {
     const user = userEvent.setup();
     const onRerun = vi.fn();

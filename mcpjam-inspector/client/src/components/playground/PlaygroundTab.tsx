@@ -14,6 +14,7 @@ import {
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import LoadingScreen from "@/components/LoadingScreen";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -218,6 +219,14 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
+
+  if (playgroundState.loadingState.kind === "skeleton") {
+    return (
+      <div className="fixed inset-0 z-[100] bg-background">
+        <LoadingScreen />
+      </div>
+    );
+  }
 
   return (
     <PlaygroundStateProvider value={playgroundState}>

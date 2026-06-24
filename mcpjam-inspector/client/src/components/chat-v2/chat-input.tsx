@@ -847,6 +847,7 @@ export function ChatInput({
                   selectedModels={effectiveSelectedModels}
                   onSelectedModelsChange={onSelectedModelsChange}
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
+                  respondToProviderTabIntent
                 />
               )}
             </div>

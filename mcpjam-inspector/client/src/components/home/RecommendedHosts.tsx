@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
 import { useAppNavigate, buildHostsPath } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
 import {
+  getHostTemplateLogoSrc,
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
@@ -27,7 +28,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const [creatingId, setCreatingId] = useState<HostTemplateId | null>(null);
 
   const recommended = HOST_TEMPLATES.filter((t) =>
-    RECOMMENDED_HOST_IDS.includes(t.id),
+    RECOMMENDED_HOST_IDS.includes(t.id)
   );
 
   async function handleCreate(templateId: HostTemplateId, label: string) {
@@ -56,7 +57,9 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   return (
     <section className="rounded-xl border border-border/60">
       <div className="border-b border-border/60 px-4 py-2">
-        <h2 className="text-[13px] font-medium text-foreground">Recommended clients</h2>
+        <h2 className="text-[13px] font-medium text-foreground">
+          Recommended clients
+        </h2>
       </div>
 
       <ul>
@@ -64,7 +67,10 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
           const isCreating = creatingId === template.id;
           const isLast = i === recommended.length - 1;
           return (
-            <li key={template.id} className={isLast ? "" : "border-b border-border/40"}>
+            <li
+              key={template.id}
+              className={isLast ? "" : "border-b border-border/40"}
+            >
               <button
                 type="button"
                 disabled={isCreating || !projectId}
@@ -73,7 +79,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
               >
                 <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60">
                   <img
-                    src={template.logoSrc}
+                    src={getHostTemplateLogoSrc(template, themeMode)}
                     alt=""
                     className="size-3.5 object-contain"
                   />
