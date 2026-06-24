@@ -18,6 +18,27 @@ type SerializeOptions = {
   redactSecrets: boolean;
 };
 
+function hasBearerAuthorizationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") {
+    return false;
+  }
+
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.trim().toLowerCase().startsWith("bearer ")
+  );
+}
+
+function hasRedactedBearerFlag(config: unknown): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as Record<string, unknown>).hasBearerToken === true
+  );
+}
+
 function serializeServersInternal(
   servers: Record<string, ServerWithName>,
   options: SerializeOptions
@@ -197,6 +218,10 @@ export function deserializeServersFromConvex(
       hasClientSecret: serverData.hasClientSecret === true,
       hasEnv: serverData.hasEnv === true,
       hasHeaders: serverData.hasHeaders === true,
+      hasBearerToken:
+        serverData.hasBearerToken === true ||
+        hasRedactedBearerFlag(serverData.config) ||
+        hasBearerAuthorizationHeader(config.requestInit?.headers),
     };
 
     const xaaAuthzIssuer =
@@ -338,6 +363,34 @@ export function serversHaveChanged(
     if (Boolean(localServer.hasEnv) !== Boolean(remoteServer.hasEnv))
       return true;
     if (Boolean(localServer.hasHeaders) !== Boolean(remoteServer.hasHeaders))
+      return true;
+    const localHasBearerToken =
+      localServer.hasBearerToken === true ||
+      hasRedactedBearerFlag(localServer.config) ||
+      hasBearerAuthorizationHeader(
+        (localServer.config as any)?.requestInit?.headers
+      );
+    const localBearerFlagIsPresent =
+      Object.prototype.hasOwnProperty.call(localServer, "hasBearerToken") ||
+      hasRedactedBearerFlag(localServer.config);
+    const remoteHasBearerToken =
+      remoteServer.hasBearerToken === true ||
+      hasRedactedBearerFlag(remoteServer.config) ||
+      hasBearerAuthorizationHeader((remoteRequestInit as any)?.headers);
+    const remoteBearerFlagIsMissing =
+      !Object.prototype.hasOwnProperty.call(remoteServer, "hasBearerToken") &&
+      !Object.prototype.hasOwnProperty.call(
+        remoteServer.config ?? {},
+        "hasBearerToken"
+      );
+    const remoteBearerIsUnknown =
+      remoteHeadersAreRedacted &&
+      remoteBearerFlagIsMissing &&
+      !localBearerFlagIsPresent;
+    if (
+      !remoteBearerIsUnknown &&
+      Boolean(localHasBearerToken) !== Boolean(remoteHasBearerToken)
+    )
       return true;
 
     // Check OAuth profile (handle both flat and nested structures)

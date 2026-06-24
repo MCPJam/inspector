@@ -60,6 +60,13 @@ export interface ServerWithName {
   hasEnv?: boolean;
   hasHeaders?: boolean;
   /**
+   * Whether a redacted HTTP config carried an `Authorization: Bearer …`
+   * header. The header value itself is stripped before reaching the browser
+   * (like env/headers), so the edit form relies on this flag to know the
+   * server uses bearer auth and to keep the saved token hidden-but-preserved.
+   */
+  hasBearerToken?: boolean;
+  /**
    * Optional issuer override for the cross-app authorization test target.
    * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
    */
