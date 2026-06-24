@@ -2722,6 +2722,7 @@ export function PlaygroundMain({
       ? undefined
       : {
           hosts: hostList,
+          projectId: multiHostProjectId,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
           multiHostEnabled,

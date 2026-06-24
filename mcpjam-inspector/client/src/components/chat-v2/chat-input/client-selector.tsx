@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -22,6 +22,14 @@ import {
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import {
+  HOST_TEMPLATES,
+  type HostTemplateId,
+} from "@/lib/client-templates";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
+
+// Same quick-add lineup as the global host bar (HostOverlayBar).
+const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -33,6 +41,8 @@ import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
  */
 export interface ClientSelectorData {
   hosts: HostListItem[];
+  /** Project the hosts belong to — required to create new hosts. */
+  projectId: string | null;
   /** Lead host id — the single active client / first compare column. */
   currentHostId: string | null;
   /** Persisted compare lineup (from `usePersistedHost`). */
@@ -61,6 +71,7 @@ function compactHostLabel(name: string): string {
 
 export function ClientSelector({
   hosts,
+  projectId,
   currentHostId,
   selectedHostIds,
   multiHostEnabled,
@@ -77,6 +88,10 @@ export function ClientSelector({
 }: ClientSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [createTemplateId, setCreateTemplateId] = useState<
+    HostTemplateId | undefined
+  >(undefined);
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
@@ -199,7 +214,14 @@ export function ClientSelector({
     onPromoteLead(hostId);
   };
 
+  const openCreateWithTemplate = (templateId?: HostTemplateId) => {
+    setCreateTemplateId(templateId);
+    setShowCreate(true);
+    setIsOpen(false);
+  };
+
   return (
+    <>
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -396,8 +418,59 @@ export function ClientSelector({
               );
             })}
           </CommandList>
+
+          {projectId ? (
+            <div className="flex items-center gap-1 border-t p-1">
+              <button
+                type="button"
+                onClick={() => openCreateWithTemplate(undefined)}
+                className="flex flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+                data-testid="client-add-host"
+              >
+                <Plus className="size-3.5" />
+                <span>Add host</span>
+              </button>
+              <span className="flex items-center gap-0.5 pr-1">
+                {QUICK_ADD_TEMPLATES.map((id) => {
+                  const template = HOST_TEMPLATES.find((t) => t.id === id);
+                  if (!template) return null;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-label={`Add ${template.label} host`}
+                      title={`Add ${template.label}`}
+                      data-testid={`client-quick-add-${id}`}
+                      onClick={() => openCreateWithTemplate(id)}
+                      className="inline-flex size-6 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                    >
+                      <img
+                        src={template.logoSrc}
+                        alt=""
+                        className="size-4 object-contain"
+                      />
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+          ) : null}
         </Command>
       </PopoverContent>
     </Popover>
+
+    {projectId ? (
+      <CreateHostDialog
+        isOpen={showCreate}
+        onClose={() => {
+          setShowCreate(false);
+          setCreateTemplateId(undefined);
+        }}
+        projectId={projectId}
+        initialTemplateId={createTemplateId}
+        onCreated={(hostId) => onHostChange(hostId)}
+      />
+    ) : null}
+    </>
   );
 }
