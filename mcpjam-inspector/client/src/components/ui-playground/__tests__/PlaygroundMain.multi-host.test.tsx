@@ -707,7 +707,7 @@ describe("PlaygroundMain — multi-host render path", () => {
 
   // --- Reviewer-flagged blockers ---
 
-  it("chat-input run picker is controlled: receives the SAME selectedHostIds + setters as the grid uses (Blocker 1)", () => {
+  it("chat-input client chip is controlled: receives the SAME selectedHostIds + setters as the grid uses (Blocker 1)", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-mini",
@@ -726,25 +726,27 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    // The standalone "Compare" picker moved into the chat-input run pill:
-    // host compare is now wired through `ChatInput`'s `hostCompare` prop. It
+    // The standalone "Compare" picker moved into the chat-input client chip:
+    // host state is now wired through `ChatInput`'s `clientSelector` prop. It
     // must get the same array (by ref) and the same setters PlaygroundMain
     // owns — guarding against a regression to a separate `usePersistedHost`
     // instance (separate array refs + setter identities that drift).
     expect(mockChatInput).toHaveBeenCalled();
-    const hostCompare =
+    const clientSelector =
       mockChatInput.mock.calls[mockChatInput.mock.calls.length - 1][0]
-        .hostCompare;
-    expect(hostCompare).toBeDefined();
-    expect(hostCompare.selectedHostIds).toBe(multiHostFixture.selectedHostIds);
-    expect(hostCompare.multiHostEnabled).toBe(true);
-    expect(typeof hostCompare.onSelectedHostIdsChange).toBe("function");
-    expect(typeof hostCompare.onMultiHostEnabledChange).toBe("function");
-    expect(typeof hostCompare.onPromoteLead).toBe("function");
+        .clientSelector;
+    expect(clientSelector).toBeDefined();
+    expect(clientSelector.selectedHostIds).toBe(
+      multiHostFixture.selectedHostIds,
+    );
+    expect(clientSelector.multiHostEnabled).toBe(true);
+    expect(typeof clientSelector.onSelectedHostIdsChange).toBe("function");
+    expect(typeof clientSelector.onMultiHostEnabledChange).toBe("function");
+    expect(typeof clientSelector.onPromoteLead).toBe("function");
 
-    // Setter from the run picker maps to the parent's hook setter (single
+    // Setter from the client chip maps to the parent's hook setter (single
     // source of truth — no separate hook instance to drift away).
-    hostCompare.onSelectedHostIdsChange(["h-B", "h-A"]);
+    clientSelector.onSelectedHostIdsChange(["h-B", "h-A"]);
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-B", "h-A"]);
 
     // `usePersistedHost` was called with `multiHostProjectId` — the
@@ -752,7 +754,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(usePersistedHostProjectIds.length).toBeGreaterThan(0);
   });
 
-  it("run picker host state matches multiHostProjectId scope in shared-project flows (Blocker 2)", () => {
+  it("client chip host state matches multiHostProjectId scope in shared-project flows (Blocker 2)", () => {
     // Mirror the shared-project shape: `appState.projects[active]`
     // has a `sharedProjectId` distinct from the local `activeProjectId`.
     // The grid's `usePersistedHost` is scoped to `convexProjectId`; the
@@ -783,12 +785,14 @@ describe("PlaygroundMain — multi-host render path", () => {
     // Grid's `usePersistedHost` is scoped to `convexProjectId`.
     expect(usePersistedHostProjectIds.at(-1)).toBe("convex-shared-id");
 
-    // The run picker received the SAME lifted array — its reads align with
+    // The client chip received the SAME lifted array — its reads align with
     // the grid's storage scope (one source of truth, not two).
-    const hostCompare =
+    const clientSelector =
       mockChatInput.mock.calls[mockChatInput.mock.calls.length - 1][0]
-        .hostCompare;
-    expect(hostCompare?.selectedHostIds).toBe(multiHostFixture.selectedHostIds);
+        .clientSelector;
+    expect(clientSelector?.selectedHostIds).toBe(
+      multiHostFixture.selectedHostIds,
+    );
   });
 
   it("slot 0 unresolved (lead host missing) → single-pane fallback (Blocker 3)", () => {

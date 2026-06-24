@@ -33,33 +33,6 @@ import {
   isMCPJamProvidedModelMenuItem,
 } from "@/components/chat-v2/shared/model-helpers";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
-import type { HostListItem } from "@/hooks/useClients";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
-
-/**
- * Optional host/client compare wiring (playground only). When provided, the
- * picker becomes a unified "run" control: a `Clients | Models` switch chooses
- * which axis to compare across, the trigger shows the lead client logo next to
- * the lead model logo, and the Clients axis renders the project's hosts with
- * the same multi-select machinery the Models axis uses. Host-compare and
- * model-compare are mutually exclusive — entering one collapses the other
- * (enforced by the parent's `onMultiHostEnabledChange` /
- * `onMultiModelEnabledChange`). Omitting this prop keeps the legacy
- * model-only behaviour for every other surface (ChatTabV2, the host builder).
- */
-export interface ModelSelectorHostCompare {
-  hosts: HostListItem[];
-  /** Lead host id (from `usePreviewedHostId`). */
-  currentHostId: string | null;
-  /** Persisted compare lineup (from `usePersistedHost`). */
-  selectedHostIds: string[];
-  multiHostEnabled: boolean;
-  onSelectedHostIdsChange: (ids: string[]) => void;
-  onMultiHostEnabledChange: (enabled: boolean) => void;
-  /** Promote a host to lead — wraps `replaceLeadHostId(projectId, hostId)`. */
-  onPromoteLead: (hostId: string) => void;
-  maxSelectedHosts?: number;
-}
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -95,8 +68,6 @@ interface ModelSelectorProps {
    * on the configured tab. Only the chat-input instance opts in.
    */
   respondToProviderTabIntent?: boolean;
-  /** See {@link ModelSelectorHostCompare}. Playground-only. */
-  hostCompare?: ModelSelectorHostCompare;
 }
 
 type GroupKey = string;
@@ -163,16 +134,10 @@ export function ModelSelector({
   align = "start",
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
-  hostCompare,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
     "provided"
-  );
-  // Which axis the unified picker compares across. Only meaningful when
-  // `hostCompare` is provided; defaults to the axis that is currently active.
-  const [compareAxis, setCompareAxis] = useState<"clients" | "models">(
-    hostCompare?.multiHostEnabled ? "clients" : "models"
   );
   const [search, setSearch] = useState("");
   const keepPopoverOpenRef = useRef(false);
@@ -215,17 +180,6 @@ export function ModelSelector({
       setSearch("");
     }
   }, [isOpen, currentModel]);
-
-  // When the popover opens, snap the axis to whichever compare is currently
-  // active so the user lands on the relevant list. We only sync on open (not
-  // on every `multiHostEnabled` change) so a mid-session axis flip isn't
-  // yanked back while the user is still picking.
-  useEffect(() => {
-    if (isOpen && hostCompare) {
-      setCompareAxis(hostCompare.multiHostEnabled ? "clients" : "models");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
 
   useEffect(() => {
     return () => {
@@ -379,76 +333,6 @@ export function ModelSelector({
   );
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
-
-  // ---- Host/client compare (playground only) ------------------------------
-  const hostList = hostCompare?.hosts ?? [];
-  const maxSelectedHosts = hostCompare?.maxSelectedHosts ?? 3;
-  const hostsById = useMemo(() => {
-    const map = new Map<string, HostListItem>();
-    for (const host of hostList) map.set(host.hostId, host);
-    return map;
-  }, [hostList]);
-  // Mirror `selectedModelsData`: fall back to the lead host when the persisted
-  // compare array is empty so the list always has a selection to anchor on.
-  const effectiveSelectedHostIds = useMemo(() => {
-    if (!hostCompare) return [];
-    if (hostCompare.selectedHostIds.length > 0) return hostCompare.selectedHostIds;
-    return hostCompare.currentHostId ? [hostCompare.currentHostId] : [];
-  }, [hostCompare]);
-  const hostSelectedSet = useMemo(
-    () => new Set(effectiveSelectedHostIds),
-    [effectiveSelectedHostIds]
-  );
-  const leadHostId =
-    effectiveSelectedHostIds[0] ?? hostCompare?.currentHostId ?? null;
-  const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
-  const leadHostName = leadHost?.name ?? "";
-  const leadHostLogo = leadHostName
-    ? resolveHostLogoByDisplayName(leadHostName)
-    : null;
-  const hostLimitReached =
-    effectiveSelectedHostIds.length >= maxSelectedHosts;
-  const isComparingHosts =
-    !!hostCompare &&
-    hostCompare.multiHostEnabled &&
-    effectiveSelectedHostIds.length > 1;
-
-  const handleSelectAxis = (axis: "clients" | "models") => {
-    if (!hostCompare || axis === compareAxis) return;
-    // Non-destructive: just swap the visible list. Mutual exclusion is enforced
-    // the moment the user actually adds a 2nd item on the other axis (the
-    // parent's onMulti*EnabledChange clears the opposing compare then).
-    requestPopoverStayOpen();
-    setCompareAxis(axis);
-  };
-
-  const handleHostRowToggle = (hostId: string) => {
-    if (!hostCompare) return;
-    requestPopoverStayOpen();
-    const isSelected = hostSelectedSet.has(hostId);
-    const nextSelectedHostIds = isSelected
-      ? effectiveSelectedHostIds.filter((id) => id !== hostId)
-      : [...effectiveSelectedHostIds, hostId];
-    // Never collapse to empty — the lead has to stay.
-    if (nextSelectedHostIds.length === 0) return;
-    hostCompare.onSelectedHostIdsChange(nextSelectedHostIds);
-    hostCompare.onMultiHostEnabledChange(nextSelectedHostIds.length > 1);
-  };
-
-  const handlePromoteLeadHost = (hostId: string) => {
-    if (!hostCompare || hostId === leadHostId) return;
-    requestPopoverStayOpen();
-    hostCompare.onPromoteLead(hostId);
-  };
-
-  const showCompareSwitch = !!hostCompare;
-  const showHostList = !!hostCompare && compareAxis === "clients";
-  const showModelBody = !hostCompare || compareAxis === "models";
-  // When comparing clients the badge counts hosts; otherwise it's the model
-  // label (which already carries its own "+N" when comparing models).
-  const runTriggerLabel = isComparingHosts
-    ? `${leadHostName} +${effectiveSelectedHostIds.length - 1}`
-    : triggerLabel;
 
   // React to the global "open Your providers tab" intent (out-of-credits
   // BYOK). Only the opted-in instance subscribes to a live nonce; others read
@@ -669,38 +553,19 @@ export function ModelSelector({
                 variant="ghost"
                 size="sm"
                 disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80",
-                  hostCompare
-                    ? "max-w-[220px] gap-1 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:px-1"
-                    : "max-w-[180px] @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
-                )}
+                className="h-8 max-w-[180px] rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
               >
-                {hostCompare ? (
-                  leadHostLogo ? (
-                    <img
-                      src={leadHostLogo}
-                      alt=""
-                      className="size-4 shrink-0 rounded-[3px] object-contain"
-                    />
-                  ) : (
-                    <span
-                      aria-hidden
-                      className="size-4 shrink-0 rounded-full bg-muted"
-                    />
-                  )
-                ) : null}
                 <ProviderLogo
                   provider={leadModel.provider}
                   customProviderName={leadModel.customProviderName}
                 />
                 <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                  {runTriggerLabel}
+                  {triggerLabel}
                 </span>
               </Button>
             </PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="top">{runTriggerLabel}</TooltipContent>
+          <TooltipContent side="top">{triggerLabel}</TooltipContent>
         </Tooltip>
 
         <PopoverContent
@@ -711,39 +576,12 @@ export function ModelSelector({
         >
           <Command shouldFilter={true}>
             <CommandInput
-              placeholder={showHostList ? "Search clients" : "Search models"}
+              placeholder="Search models"
               value={search}
               onValueChange={setSearch}
             />
 
-            {showCompareSwitch ? (
-              <div className="flex items-center gap-2 border-b px-2.5 py-1.5">
-                <span className="shrink-0 text-[11px] text-muted-foreground">
-                  Compare
-                </span>
-                <div className="flex flex-1 gap-1">
-                  {(["models", "clients"] as const).map((axis) => (
-                    <button
-                      key={axis}
-                      type="button"
-                      onClick={() => handleSelectAxis(axis)}
-                      className={cn(
-                        "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                        compareAxis === axis
-                          ? "bg-muted text-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      )}
-                      data-testid={`compare-axis-${axis}`}
-                      data-active={compareAxis === axis ? "true" : "false"}
-                    >
-                      {axis === "models" ? "Models" : "Clients"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {showModelBody && canUseMultiModel ? (
+            {canUseMultiModel ? (
               <>
                 <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
                   <span className="text-xs text-muted-foreground">
@@ -810,7 +648,7 @@ export function ModelSelector({
               </>
             ) : null}
 
-            {showModelBody ? (() => {
+            {(() => {
               const hasBothSections =
                 modelSections.provided.length > 0 &&
                 modelSections.configured.length > 0;
@@ -888,143 +726,7 @@ export function ModelSelector({
                   </CommandList>
                 </>
               );
-            })() : null}
-
-            {showHostList ? (
-              <>
-                {effectiveSelectedHostIds.length > 1 ? (
-                  <div
-                    className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-                    title="First chip is the lead client. Click a chip to promote it."
-                  >
-                    {effectiveSelectedHostIds.map((hostId, index) => {
-                      const host = hostsById.get(hostId);
-                      const isLead = index === 0;
-                      const name = host?.name ?? hostId;
-                      const logo = resolveHostLogoByDisplayName(name);
-                      return (
-                        <button
-                          key={hostId}
-                          type="button"
-                          className={cn(
-                            "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
-                            isLead
-                              ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
-                          )}
-                          onClick={() => handlePromoteLeadHost(hostId)}
-                        >
-                          {logo ? (
-                            <img
-                              src={logo}
-                              alt=""
-                              className="size-3 shrink-0 object-contain"
-                            />
-                          ) : (
-                            <span
-                              aria-hidden
-                              className="size-3 shrink-0 rounded-full bg-muted"
-                            />
-                          )}
-                          <span className="truncate">{name}</span>
-                          {!isLead ? (
-                            <span
-                              role="button"
-                              tabIndex={-1}
-                              aria-label={`Remove ${name}`}
-                              className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleHostRowToggle(hostId);
-                              }}
-                            >
-                              <X className="h-2.5 w-2.5" />
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                    {hostLimitReached ? (
-                      <span className="w-full text-[10px] text-muted-foreground">
-                        Max {maxSelectedHosts}. Remove one to add another.
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <CommandList className="max-h-[min(320px,45vh)]">
-                  <CommandEmpty>No matching clients.</CommandEmpty>
-                  {hostList.length <= 1 ? (
-                    <div className="px-2.5 py-2 text-[11px] text-muted-foreground">
-                      Add a second client to start comparing.
-                    </div>
-                  ) : null}
-                  {hostList.map((host) => {
-                    const isSelected = hostSelectedSet.has(host.hostId);
-                    const isLimitedOut = !isSelected && hostLimitReached;
-                    const logo = resolveHostLogoByDisplayName(host.name);
-
-                    const row = (
-                      <CommandItem
-                        key={host.hostId}
-                        value={`${host.name} ${host.hostId}`}
-                        onSelect={() => handleHostRowToggle(host.hostId)}
-                        disabled={isLimitedOut}
-                        className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
-                        data-testid={`compare-host-row-${host.hostId}`}
-                      >
-                        {logo ? (
-                          <img
-                            src={logo}
-                            alt=""
-                            className="size-3.5 shrink-0 object-contain"
-                          />
-                        ) : (
-                          <span
-                            aria-hidden
-                            className="size-3.5 shrink-0 rounded-full bg-muted"
-                          />
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-sm">
-                          {host.name}
-                        </span>
-                        <div
-                          className={cn(
-                            "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                            isSelected
-                              ? "border-primary bg-primary shadow-sm"
-                              : "border-border/60 bg-transparent hover:border-border"
-                          )}
-                          aria-hidden
-                        >
-                          {isSelected ? (
-                            <Check
-                              strokeWidth={3}
-                              className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                            />
-                          ) : null}
-                        </div>
-                      </CommandItem>
-                    );
-
-                    return isLimitedOut ? (
-                      <Tooltip key={host.hostId}>
-                        <TooltipTrigger asChild>
-                          <div className="rounded-sm transition-colors hover:bg-accent/60">
-                            {row}
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          You can compare up to {maxSelectedHosts} clients at once
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      row
-                    );
-                  })}
-                </CommandList>
-              </>
-            ) : null}
+            })()}
           </Command>
         </PopoverContent>
       </Popover>

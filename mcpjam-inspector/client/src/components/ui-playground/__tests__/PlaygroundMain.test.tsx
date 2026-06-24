@@ -293,7 +293,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading,
     placeholder,
     pulseSubmit,
-    hostCompare,
+    clientSelector,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -303,12 +303,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
-    hostCompare?: unknown;
+    clientSelector?: unknown;
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
-      data-host-compare={hostCompare ? "true" : "false"}
+      data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -675,7 +675,7 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
     });
 
-    it("disables the chat-input host compare after the active session is shared", async () => {
+    it("drops the chat-input client chip after the active session is shared", async () => {
       const privateSessionLocal = {
         _id: "history-share-gate-1",
         chatSessionId: "chat-session-share-gate-1",
@@ -717,9 +717,9 @@ describe("PlaygroundMain", () => {
         );
       });
 
-      // Private sessions get the chat-input run picker's host compare wired up.
+      // Private sessions get the chat-input client chip wired up.
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
-        "data-host-compare",
+        "data-client-selector",
         "true",
       );
 
@@ -744,9 +744,9 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(capturedChatSessionOptions.directVisibility).toBe("project");
       });
-      // Shared sessions can't switch hosts — `hostCompare` is left undefined.
+      // Shared sessions can't switch hosts — `clientSelector` is left undefined.
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
-        "data-host-compare",
+        "data-client-selector",
         "false",
       );
     });

@@ -35,10 +35,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import {
-  ModelSelector,
-  type ModelSelectorHostCompare,
-} from "@/components/chat-v2/chat-input/model-selector";
+  ClientSelector,
+  type ClientSelectorData,
+} from "@/components/chat-v2/chat-input/client-selector";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -101,8 +102,8 @@ interface ChatInputProps {
   onSelectedModelsChange?: (models: ModelDefinition[]) => void;
   onMultiModelEnabledChange?: (enabled: boolean) => void;
   enableMultiModel?: boolean;
-  /** Playground-only: turns the model pill into a unified client + model run picker. */
-  hostCompare?: ModelSelectorHostCompare;
+  /** Playground-only: renders a client chip beside the model chip. */
+  clientSelector?: ClientSelectorData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -190,7 +191,7 @@ export function ChatInput({
   onSelectedModelsChange,
   onMultiModelEnabledChange,
   enableMultiModel = false,
-  hostCompare,
+  clientSelector,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -840,6 +841,13 @@ export function ChatInput({
                   </PopoverContent>
                 </Popover>
               )}
+              {!minimalMode && clientSelector ? (
+                <ClientSelector
+                  {...clientSelector}
+                  isLoading={isLoading}
+                  onOpenChange={onModelSelectorOpenChange}
+                />
+              ) : null}
               {!minimalMode && (
                 <ModelSelector
                   currentModel={currentModel}
@@ -853,7 +861,6 @@ export function ChatInput({
                   selectedModels={effectiveSelectedModels}
                   onSelectedModelsChange={onSelectedModelsChange}
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
-                  hostCompare={hostCompare}
                   respondToProviderTabIntent
                 />
               )}

@@ -579,7 +579,7 @@ export function PlaygroundMain({
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
   // wrote under a different storage scope.
-  const [previewedHostId] = usePreviewedHostId(
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
     convexProjectId ?? activeProjectId,
   );
   const { host: previewedHost } = useHost({
@@ -2715,19 +2715,21 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
-    // Unified run picker: the chat-input pill also drives client compare.
+    // Client chip in the chat input toolbar (sibling to the model chip).
     // Replaces the standalone "Compare" button that used to live in the
     // playground header. Shared sessions can't switch hosts, so leave it off.
-    hostCompare: isSharedSession
+    clientSelector: isSharedSession
       ? undefined
       : {
           hosts: hostList,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
           multiHostEnabled,
+          onHostChange: (hostId: string) => setPreviewedHostId(hostId),
           onSelectedHostIdsChange: setSelectedHostIds,
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
           onPromoteLead: handlePromoteLead,
+          enableMultiHost: canEnableMultiHost,
         },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,

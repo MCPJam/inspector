@@ -1,0 +1,403 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, X } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import { Switch } from "@mcpjam/design-system/switch";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@mcpjam/design-system/command";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { cn } from "@/lib/utils";
+import type { HostListItem } from "@/hooks/useClients";
+import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+
+/**
+ * Data needed to drive the chat-input client (host) chip. Mirrors the model
+ * selector's prop shape so the two chips behave the same way: click a row to
+ * switch the single lead, or flip "Multiple clients" to stack a compare
+ * lineup. Host compare and model compare stay mutually exclusive — that's
+ * enforced by the parent's `onMultiHostEnabledChange` /
+ * `onMultiModelEnabledChange`, not here.
+ */
+export interface ClientSelectorData {
+  hosts: HostListItem[];
+  /** Lead host id — the single active client / first compare column. */
+  currentHostId: string | null;
+  /** Persisted compare lineup (from `usePersistedHost`). */
+  selectedHostIds: string[];
+  multiHostEnabled: boolean;
+  /** Switch the single lead client (not comparing). */
+  onHostChange: (hostId: string) => void;
+  onSelectedHostIdsChange: (ids: string[]) => void;
+  onMultiHostEnabledChange: (enabled: boolean) => void;
+  /** Promote a host to lead within the compare lineup. */
+  onPromoteLead: (hostId: string) => void;
+  enableMultiHost?: boolean;
+  maxSelectedHosts?: number;
+}
+
+interface ClientSelectorProps extends ClientSelectorData {
+  disabled?: boolean;
+  isLoading?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  align?: "start" | "center" | "end";
+}
+
+function compactHostLabel(name: string): string {
+  return name || "Client";
+}
+
+export function ClientSelector({
+  hosts,
+  currentHostId,
+  selectedHostIds,
+  multiHostEnabled,
+  onHostChange,
+  onSelectedHostIdsChange,
+  onMultiHostEnabledChange,
+  onPromoteLead,
+  enableMultiHost = false,
+  maxSelectedHosts = 3,
+  disabled,
+  isLoading,
+  onOpenChange,
+  align = "start",
+}: ClientSelectorProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const keepPopoverOpenRef = useRef(false);
+  const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(isOpen);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) setSearch("");
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (
+        typeof window !== "undefined" &&
+        keepPopoverOpenTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Same keep-open trick as model-selector.tsx: clicks on the switch / chip
+  // strip flip this ref on so the next `onOpenChange(false)` is suppressed.
+  const requestPopoverStayOpen = () => {
+    keepPopoverOpenRef.current = true;
+    setIsOpen(true);
+    if (typeof window === "undefined") return;
+    if (keepPopoverOpenTimeoutRef.current !== null) {
+      window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+    }
+    keepPopoverOpenTimeoutRef.current = window.setTimeout(() => {
+      keepPopoverOpenRef.current = false;
+      keepPopoverOpenTimeoutRef.current = null;
+    }, 0);
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && keepPopoverOpenRef.current) return;
+    if (
+      typeof window !== "undefined" &&
+      keepPopoverOpenTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+      keepPopoverOpenTimeoutRef.current = null;
+    }
+    keepPopoverOpenRef.current = false;
+    setIsOpen(nextOpen);
+  };
+
+  const hostsById = useMemo(() => {
+    const map = new Map<string, HostListItem>();
+    for (const host of hosts) map.set(host.hostId, host);
+    return map;
+  }, [hosts]);
+
+  // When comparing, the lineup is the persisted array. Otherwise the single
+  // lead is `currentHostId` (the previewed host) — ignore any stale compare
+  // array so switching the single client always shows the right lead.
+  const effectiveSelectedHostIds = useMemo(() => {
+    if (multiHostEnabled && selectedHostIds.length > 0) return selectedHostIds;
+    return currentHostId ? [currentHostId] : [];
+  }, [multiHostEnabled, selectedHostIds, currentHostId]);
+
+  const selectedIds = useMemo(
+    () => new Set(effectiveSelectedHostIds),
+    [effectiveSelectedHostIds],
+  );
+
+  const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
+  const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
+  const leadHostName = leadHost?.name ?? "Select client";
+  const leadHostLogo = leadHost?.name
+    ? resolveHostLogoByDisplayName(leadHost.name)
+    : null;
+
+  const canUseMultiHost = enableMultiHost && hosts.length > 1;
+  const isComparing = multiHostEnabled && effectiveSelectedHostIds.length > 1;
+  const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
+  const triggerLabel = isComparing
+    ? `${compactHostLabel(leadHostName)} +${effectiveSelectedHostIds.length - 1}`
+    : compactHostLabel(leadHostName);
+
+  const handleToggleMultiHost = (enabled: boolean) => {
+    if (!canUseMultiHost) return;
+    requestPopoverStayOpen();
+    if (enabled) {
+      onSelectedHostIdsChange(effectiveSelectedHostIds);
+      onMultiHostEnabledChange(true);
+      return;
+    }
+    onSelectedHostIdsChange(leadHostId ? [leadHostId] : []);
+    onMultiHostEnabledChange(false);
+  };
+
+  const handleSingleSelect = (hostId: string) => {
+    if (hostId !== leadHostId) onHostChange(hostId);
+    setIsOpen(false);
+  };
+
+  const handleMultiSelect = (hostId: string) => {
+    requestPopoverStayOpen();
+    const isSelected = selectedIds.has(hostId);
+    const next = isSelected
+      ? effectiveSelectedHostIds.filter((id) => id !== hostId)
+      : [...effectiveSelectedHostIds, hostId];
+    // Never collapse to empty — at least the lead has to stay.
+    if (next.length === 0) return;
+    onSelectedHostIdsChange(next);
+  };
+
+  const handlePromoteLeadFromChip = (hostId: string) => {
+    if (hostId === leadHostId) return;
+    requestPopoverStayOpen();
+    onPromoteLead(hostId);
+  };
+
+  return (
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled || isLoading}
+              className="h-8 max-w-[170px] gap-1 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
+              data-testid="client-selector-trigger"
+            >
+              {leadHostLogo ? (
+                <img
+                  src={leadHostLogo}
+                  alt=""
+                  className="size-4 shrink-0 rounded-[3px] object-contain"
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  className="size-4 shrink-0 rounded-full bg-muted"
+                />
+              )}
+              <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                {triggerLabel}
+              </span>
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">{triggerLabel}</TooltipContent>
+      </Tooltip>
+
+      <PopoverContent
+        align={align}
+        className="w-[260px] p-0"
+        sideOffset={8}
+        collisionPadding={8}
+      >
+        <Command shouldFilter={true}>
+          <CommandInput
+            placeholder="Search clients"
+            value={search}
+            onValueChange={setSearch}
+          />
+
+          {canUseMultiHost ? (
+            <>
+              <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
+                <span className="text-xs text-muted-foreground">
+                  Multiple clients
+                </span>
+                <Switch
+                  checked={multiHostEnabled}
+                  onCheckedChange={handleToggleMultiHost}
+                  aria-label="Compare multiple clients"
+                  disabled={disabled || isLoading}
+                />
+              </div>
+
+              {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
+                <div
+                  className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
+                  title="First chip is the lead client. Click a chip to promote it."
+                >
+                  {effectiveSelectedHostIds.map((hostId, index) => {
+                    const host = hostsById.get(hostId);
+                    const isLead = index === 0;
+                    const name = host?.name ?? hostId;
+                    const logo = resolveHostLogoByDisplayName(name);
+                    return (
+                      <button
+                        key={hostId}
+                        type="button"
+                        className={cn(
+                          "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                          isLead
+                            ? "border-primary/25 bg-primary/5 text-foreground"
+                            : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => handlePromoteLeadFromChip(hostId)}
+                      >
+                        {logo ? (
+                          <img
+                            src={logo}
+                            alt=""
+                            className="size-3 shrink-0 object-contain"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            className="size-3 shrink-0 rounded-full bg-muted"
+                          />
+                        )}
+                        <span className="truncate">{name}</span>
+                        {!isLead ? (
+                          <span
+                            role="button"
+                            tabIndex={-1}
+                            aria-label={`Remove ${name}`}
+                            className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleMultiSelect(hostId);
+                            }}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                  {limitReached ? (
+                    <span className="w-full text-[10px] text-muted-foreground">
+                      Max {maxSelectedHosts}. Remove one to add another.
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <CommandList className="max-h-[min(320px,45vh)]">
+            <CommandEmpty>No matching clients.</CommandEmpty>
+            {hosts.map((host) => {
+              const isSelected = selectedIds.has(host.hostId);
+              const isLimitedOut =
+                multiHostEnabled && !isSelected && limitReached;
+              const logo = resolveHostLogoByDisplayName(host.name);
+
+              const row = (
+                <CommandItem
+                  key={host.hostId}
+                  value={`${host.name} ${host.hostId}`}
+                  onSelect={() =>
+                    multiHostEnabled
+                      ? handleMultiSelect(host.hostId)
+                      : handleSingleSelect(host.hostId)
+                  }
+                  disabled={isLimitedOut}
+                  className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                  data-testid={`client-row-${host.hostId}`}
+                >
+                  {logo ? (
+                    <img
+                      src={logo}
+                      alt=""
+                      className="size-3.5 shrink-0 object-contain"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="size-3.5 shrink-0 rounded-full bg-muted"
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {host.name}
+                  </span>
+                  {multiHostEnabled ? (
+                    <div
+                      className={cn(
+                        "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+                        isSelected
+                          ? "border-primary bg-primary shadow-sm"
+                          : "border-border/60 bg-transparent hover:border-border",
+                      )}
+                      aria-hidden
+                    >
+                      {isSelected ? (
+                        <Check
+                          strokeWidth={3}
+                          className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                        />
+                      ) : null}
+                    </div>
+                  ) : host.hostId === leadHostId ? (
+                    <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+                  ) : null}
+                </CommandItem>
+              );
+
+              return isLimitedOut ? (
+                <Tooltip key={host.hostId}>
+                  <TooltipTrigger asChild>
+                    <div className="rounded-sm transition-colors hover:bg-accent/60">
+                      {row}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    You can compare up to {maxSelectedHosts} clients at once
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                row
+              );
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
