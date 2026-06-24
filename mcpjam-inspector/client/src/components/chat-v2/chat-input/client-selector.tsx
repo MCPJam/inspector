@@ -22,8 +22,10 @@ import {
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import type { HostThemeMode } from "@/lib/client-styles";
 import {
   HOST_TEMPLATES,
+  getHostTemplateLogoSrc,
   type HostTemplateId,
 } from "@/lib/client-templates";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
@@ -52,7 +54,7 @@ const ORDERED_TEMPLATES = [
 
 // How many logos render inline before the rest collapse into the "⋯" overflow
 // (sized to fit the 260px dropdown alongside the "Add host" label).
-const QUICK_ADD_VISIBLE = 5;
+const QUICK_ADD_VISIBLE = 6;
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -86,6 +88,10 @@ interface ClientSelectorProps extends ClientSelectorData {
   isLoading?: boolean;
   onOpenChange?: (open: boolean) => void;
   align?: "start" | "center" | "end";
+  /** Resolved chat theme (host theme ?? app theme) so logos pick the right variant. */
+  themeMode?: HostThemeMode | null;
+  /** App-surface theme for portal-rendered modal content. */
+  modalThemeMode?: HostThemeMode | null;
 }
 
 function compactHostLabel(name: string): string {
@@ -108,6 +114,8 @@ export function ClientSelector({
   isLoading,
   onOpenChange,
   align = "start",
+  themeMode,
+  modalThemeMode = themeMode,
 }: ClientSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -186,22 +194,27 @@ export function ClientSelector({
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
-    [effectiveSelectedHostIds],
+    [effectiveSelectedHostIds]
   );
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
   const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
   const leadHostName = leadHost?.name ?? "Select client";
   const leadHostLogo = leadHost?.name
-    ? resolveHostLogoByDisplayName(leadHost.name)
+    ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
     : null;
 
   const canUseMultiHost = enableMultiHost && hosts.length > 1;
   const isComparing = multiHostEnabled && effectiveSelectedHostIds.length > 1;
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
-    ? `${compactHostLabel(leadHostName)} +${effectiveSelectedHostIds.length - 1}`
+    ? effectiveSelectedHostIds
+        .map((hostId) =>
+          compactHostLabel(hostsById.get(hostId)?.name ?? hostId)
+        )
+        .join(", ")
     : compactHostLabel(leadHostName);
+  const clientListMaxHeight = isComparing ? 160 : 220;
 
   const handleToggleMultiHost = (enabled: boolean) => {
     if (!canUseMultiHost) return;
@@ -245,263 +258,344 @@ export function ClientSelector({
 
   return (
     <>
-    <Popover open={isOpen} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={disabled || isLoading}
-              className="h-8 max-w-[170px] gap-1 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
-              data-testid="client-selector-trigger"
-            >
-              {leadHostLogo ? (
-                <img
-                  src={leadHostLogo}
-                  alt=""
-                  className="size-4 shrink-0 rounded-[3px] object-contain"
-                />
-              ) : (
-                <span
-                  aria-hidden
-                  className="size-4 shrink-0 rounded-full bg-muted"
-                />
-              )}
-              <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                {triggerLabel}
-              </span>
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">{triggerLabel}</TooltipContent>
-      </Tooltip>
-
-      <PopoverContent
-        align={align}
-        className="w-[260px] p-0"
-        sideOffset={8}
-        collisionPadding={8}
-      >
-        <Command shouldFilter={true}>
-          <CommandInput
-            placeholder="Search clients"
-            value={search}
-            onValueChange={setSearch}
-          />
-
-          {canUseMultiHost ? (
-            <>
-              <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
-                <span className="text-xs text-muted-foreground">
-                  Multiple clients
-                </span>
-                <Switch
-                  checked={multiHostEnabled}
-                  onCheckedChange={handleToggleMultiHost}
-                  aria-label="Compare multiple clients"
-                  disabled={disabled || isLoading}
-                />
-              </div>
-
-              {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
-                <div
-                  className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-                  title="First chip is the lead client. Click a chip to promote it."
-                >
-                  {effectiveSelectedHostIds.map((hostId, index) => {
-                    const host = hostsById.get(hostId);
-                    const isLead = index === 0;
-                    const name = host?.name ?? hostId;
-                    const logo = resolveHostLogoByDisplayName(name);
-                    return (
-                      <button
-                        key={hostId}
-                        type="button"
-                        className={cn(
-                          "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
-                          isLead
-                            ? "border-primary/25 bg-primary/5 text-foreground"
-                            : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
-                        )}
-                        onClick={() => handlePromoteLeadFromChip(hostId)}
-                      >
-                        {logo ? (
-                          <img
-                            src={logo}
-                            alt=""
-                            className="size-3 shrink-0 object-contain"
-                          />
-                        ) : (
-                          <span
-                            aria-hidden
-                            className="size-3 shrink-0 rounded-full bg-muted"
-                          />
-                        )}
-                        <span className="truncate">{name}</span>
-                        {!isLead ? (
-                          <span
-                            role="button"
-                            tabIndex={-1}
-                            aria-label={`Remove ${name}`}
-                            className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleMultiSelect(hostId);
-                            }}
-                          >
-                            <X className="h-2.5 w-2.5" />
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                  {limitReached ? (
-                    <span className="w-full text-[10px] text-muted-foreground">
-                      Max {maxSelectedHosts}. Remove one to add another.
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={disabled || isLoading}
+                className={cn(
+                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                  isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1"
+                )}
+                data-testid="client-selector-trigger"
+              >
+                {isComparing ? (
+                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                    {effectiveSelectedHostIds.map((hostId, index) => {
+                      const host = hostsById.get(hostId);
+                      const name = compactHostLabel(host?.name ?? hostId);
+                      const logo = resolveHostLogoByDisplayName(
+                        name,
+                        themeMode
+                      );
+                      return (
+                        <span
+                          key={hostId}
+                          className={cn(
+                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                            index === 0
+                              ? "border-primary/25 text-foreground"
+                              : "border-border/50 text-muted-foreground"
+                          )}
+                        >
+                          {logo ? (
+                            <img
+                              src={logo}
+                              alt=""
+                              className="size-3 shrink-0 object-contain"
+                            />
+                          ) : (
+                            <span
+                              aria-hidden
+                              className="size-3 shrink-0 rounded-full bg-muted"
+                            />
+                          )}
+                          <span className="truncate">{name}</span>
+                        </span>
+                      );
+                    })}
+                  </span>
+                ) : (
+                  <>
+                    {leadHostLogo ? (
+                      <img
+                        src={leadHostLogo}
+                        alt=""
+                        className="size-4 shrink-0 rounded-[3px] object-contain"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="size-4 shrink-0 rounded-full bg-muted"
+                      />
+                    )}
+                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                      {triggerLabel}
                     </span>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
-          ) : null}
-
-          <CommandList className="max-h-[min(320px,45vh)]">
-            <CommandEmpty>No matching clients.</CommandEmpty>
-            {hosts.map((host) => {
-              const isSelected = selectedIds.has(host.hostId);
-              const isLimitedOut =
-                multiHostEnabled && !isSelected && limitReached;
-              const logo = resolveHostLogoByDisplayName(host.name);
-
-              const row = (
-                <CommandItem
-                  key={host.hostId}
-                  value={`${host.name} ${host.hostId}`}
-                  onSelect={() =>
-                    multiHostEnabled
-                      ? handleMultiSelect(host.hostId)
-                      : handleSingleSelect(host.hostId)
-                  }
-                  disabled={isLimitedOut}
-                  className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
-                  data-testid={`client-row-${host.hostId}`}
-                >
-                  {logo ? (
+                  </>
+                )}
+                {isComparing ? (
+                  leadHostLogo ? (
                     <img
-                      src={logo}
+                      src={leadHostLogo}
                       alt=""
-                      className="size-3.5 shrink-0 object-contain"
+                      className="hidden size-4 shrink-0 rounded-[3px] object-contain @max-2xl/toolbar:block"
                     />
                   ) : (
                     <span
                       aria-hidden
-                      className="size-3.5 shrink-0 rounded-full bg-muted"
+                      className="hidden size-4 shrink-0 rounded-full bg-muted @max-2xl/toolbar:block"
                     />
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {host.name}
+                  )
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {isComparing ? "Clients" : "Client"}
+          </TooltipContent>
+        </Tooltip>
+
+        <PopoverContent
+          align={align}
+          className="max-h-[min(520px,calc(100vh-6rem))] w-[260px] overflow-hidden p-0"
+          side="top"
+          sideOffset={8}
+          avoidCollisions={false}
+          collisionPadding={8}
+        >
+          <Command shouldFilter={true}>
+            <CommandInput
+              placeholder="Search clients"
+              value={search}
+              onValueChange={setSearch}
+            />
+
+            {canUseMultiHost ? (
+              <>
+                <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
+                  <span className="text-xs text-muted-foreground">
+                    Multiple clients
                   </span>
-                  {multiHostEnabled ? (
-                    <div
-                      className={cn(
-                        "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                        isSelected
-                          ? "border-primary bg-primary shadow-sm"
-                          : "border-border/60 bg-transparent hover:border-border",
-                      )}
-                      aria-hidden
-                    >
-                      {isSelected ? (
-                        <Check
-                          strokeWidth={3}
-                          className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                        />
-                      ) : null}
-                    </div>
-                  ) : host.hostId === leadHostId ? (
-                    <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
-                  ) : null}
-                </CommandItem>
-              );
+                  <Switch
+                    checked={multiHostEnabled}
+                    onCheckedChange={handleToggleMultiHost}
+                    aria-label="Compare multiple clients"
+                    disabled={disabled || isLoading}
+                  />
+                </div>
 
-              return isLimitedOut ? (
-                <Tooltip key={host.hostId}>
-                  <TooltipTrigger asChild>
-                    <div className="rounded-sm transition-colors hover:bg-accent/60">
-                      {row}
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    You can compare up to {maxSelectedHosts} clients at once
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                row
-              );
-            })}
-          </CommandList>
-
-          {projectId ? (
-            <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
-              <button
-                type="button"
-                onClick={() => openCreateWithTemplate(undefined)}
-                className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
-                data-testid="client-add-host"
-              >
-                <Plus className="size-3.5" />
-                <span>Add host</span>
-              </button>
-              <span className="flex flex-1 items-center justify-between gap-0.5">
-                {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    aria-label={`Add ${template.label} host`}
-                    title={`Add ${template.label}`}
-                    data-testid={`client-quick-add-${template.id}`}
-                    onClick={() => openCreateWithTemplate(template.id)}
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
+                  <div
+                    className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
+                    title="First chip is the lead client. Click a chip to promote it."
                   >
-                    <img
-                      src={template.logoSrc}
-                      alt=""
-                      className="size-4 object-contain"
-                    />
-                  </button>
-                ))}
-              </span>
-              {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (
+                    {effectiveSelectedHostIds.map((hostId, index) => {
+                      const host = hostsById.get(hostId);
+                      const isLead = index === 0;
+                      const name = host?.name ?? hostId;
+                      const logo = resolveHostLogoByDisplayName(
+                        name,
+                        modalThemeMode
+                      );
+                      return (
+                        <button
+                          key={hostId}
+                          type="button"
+                          className={cn(
+                            "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                            isLead
+                              ? "border-primary/25 bg-primary/5 text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                          )}
+                          onClick={() => handlePromoteLeadFromChip(hostId)}
+                        >
+                          {logo ? (
+                            <img
+                              src={logo}
+                              alt=""
+                              className="size-3 shrink-0 object-contain"
+                            />
+                          ) : (
+                            <span
+                              aria-hidden
+                              className="size-3 shrink-0 rounded-full bg-muted"
+                            />
+                          )}
+                          <span className="truncate">{name}</span>
+                          {!isLead ? (
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              aria-label={`Remove ${name}`}
+                              className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleMultiSelect(hostId);
+                              }}
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                    {limitReached ? (
+                      <span className="w-full text-[10px] text-muted-foreground">
+                        Max {maxSelectedHosts}. Remove one to add another.
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            <CommandList
+              className="overscroll-contain pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent"
+              style={{
+                maxHeight: clientListMaxHeight,
+                overflowY: "auto",
+              }}
+            >
+              <CommandEmpty>No matching clients.</CommandEmpty>
+              {hosts.map((host) => {
+                const isSelected = selectedIds.has(host.hostId);
+                const isLimitedOut =
+                  multiHostEnabled && !isSelected && limitReached;
+                const logo = resolveHostLogoByDisplayName(
+                  host.name,
+                  modalThemeMode
+                );
+
+                const row = (
+                  <CommandItem
+                    key={host.hostId}
+                    value={`${host.name} ${host.hostId}`}
+                    onSelect={() =>
+                      multiHostEnabled
+                        ? handleMultiSelect(host.hostId)
+                        : handleSingleSelect(host.hostId)
+                    }
+                    disabled={isLimitedOut}
+                    className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                    data-testid={`client-row-${host.hostId}`}
+                  >
+                    {logo ? (
+                      <img
+                        src={logo}
+                        alt=""
+                        className="size-3.5 shrink-0 object-contain"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="size-3.5 shrink-0 rounded-full bg-muted"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {host.name}
+                    </span>
+                    {isComparing && host.hostId === leadHostId ? (
+                      <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
+                        Global
+                      </span>
+                    ) : null}
+                    {multiHostEnabled ? (
+                      <div
+                        className={cn(
+                          "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+                          isSelected
+                            ? "border-primary bg-primary shadow-sm"
+                            : "border-border/60 bg-transparent hover:border-border"
+                        )}
+                        aria-hidden
+                      >
+                        {isSelected ? (
+                          <Check
+                            strokeWidth={3}
+                            className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                          />
+                        ) : null}
+                      </div>
+                    ) : host.hostId === leadHostId ? (
+                      <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+                    ) : null}
+                  </CommandItem>
+                );
+
+                return isLimitedOut ? (
+                  <Tooltip key={host.hostId}>
+                    <TooltipTrigger asChild>
+                      <div className="rounded-sm transition-colors hover:bg-accent/60">
+                        {row}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      You can compare up to {maxSelectedHosts} clients at once
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  row
+                );
+              })}
+            </CommandList>
+
+            {projectId ? (
+              <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
                 <button
                   type="button"
-                  aria-label="More clients"
-                  title="More clients"
-                  data-testid="client-quick-add-more"
                   onClick={() => openCreateWithTemplate(undefined)}
-                  className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
+                  data-testid="client-add-host"
                 >
-                  <MoreHorizontal className="size-4" />
+                  <Plus className="size-3.5" />
+                  <span>Add host</span>
                 </button>
-              ) : null}
-            </div>
-          ) : null}
-        </Command>
-      </PopoverContent>
-    </Popover>
+                <span className="flex flex-1 items-center justify-between gap-0.5">
+                  {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map(
+                    (template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        aria-label={`Add ${template.label} host`}
+                        title={`Add ${template.label}`}
+                        data-testid={`client-quick-add-${template.id}`}
+                        onClick={() => openCreateWithTemplate(template.id)}
+                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                      >
+                        <img
+                          src={getHostTemplateLogoSrc(template, modalThemeMode)}
+                          alt=""
+                          className="size-4 object-contain"
+                        />
+                      </button>
+                    )
+                  )}
+                </span>
+                {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (
+                  <button
+                    type="button"
+                    aria-label="More clients"
+                    title="More clients"
+                    data-testid="client-quick-add-more"
+                    onClick={() => openCreateWithTemplate(undefined)}
+                    className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </Command>
+        </PopoverContent>
+      </Popover>
 
-    {projectId ? (
-      <CreateHostDialog
-        isOpen={showCreate}
-        onClose={() => {
-          setShowCreate(false);
-          setCreateTemplateId(undefined);
-        }}
-        projectId={projectId}
-        initialTemplateId={createTemplateId}
-        onCreated={(hostId) => onHostChange(hostId)}
-      />
-    ) : null}
+      {projectId ? (
+        <CreateHostDialog
+          isOpen={showCreate}
+          onClose={() => {
+            setShowCreate(false);
+            setCreateTemplateId(undefined);
+          }}
+          projectId={projectId}
+          initialTemplateId={createTemplateId}
+          onCreated={(hostId) => onHostChange(hostId)}
+        />
+      ) : null}
     </>
   );
 }

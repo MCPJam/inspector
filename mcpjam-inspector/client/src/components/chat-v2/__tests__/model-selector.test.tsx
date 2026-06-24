@@ -224,6 +224,10 @@ describe("ModelSelector", () => {
     expect(
       screen.getByRole("switch", { name: "Use multiple models" })
     ).toHaveAttribute("aria-checked", "true");
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveTextContent("GPT-4.1");
+    expect(trigger).toHaveTextContent("Claude 3.7 Sonnet");
+    expect(trigger).not.toHaveTextContent("+1");
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
   });
 

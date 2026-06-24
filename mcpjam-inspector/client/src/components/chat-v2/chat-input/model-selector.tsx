@@ -313,8 +313,9 @@ export function ModelSelector({
     !!onMultiModelEnabledChange &&
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
+  const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
   const triggerLabel =
-    multiModelEnabled && selectedModelsData.length > 1
+    isComparingModels
       ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
       : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
@@ -553,19 +554,61 @@ export function ModelSelector({
                 variant="ghost"
                 size="sm"
                 disabled={disabled || isLoading}
-                className="h-8 max-w-[180px] rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
+                className={cn(
+                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
+                )}
+                data-testid="model-selector-trigger"
               >
-                <ProviderLogo
-                  provider={leadModel.provider}
-                  customProviderName={leadModel.customProviderName}
-                />
-                <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                  {triggerLabel}
-                </span>
+                {isComparingModels ? (
+                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                    {selectedModelsData.map((model, index) => (
+                      <span
+                        key={String(model.id)}
+                        className={cn(
+                          "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                          index === 0
+                            ? "border-primary/25 text-foreground"
+                            : "border-border/50 text-muted-foreground",
+                        )}
+                      >
+                        <ProviderLogo
+                          provider={model.provider}
+                          customProviderName={model.customProviderName}
+                          className="size-3 shrink-0"
+                        />
+                        <span className="truncate">
+                          {compactModelLabel(model.name)}
+                        </span>
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  <>
+                    <ProviderLogo
+                      provider={leadModel.provider}
+                      customProviderName={leadModel.customProviderName}
+                    />
+                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                      {triggerLabel}
+                    </span>
+                  </>
+                )}
+                {isComparingModels ? (
+                  <ProviderLogo
+                    provider={leadModel.provider}
+                    customProviderName={leadModel.customProviderName}
+                    className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
+                  />
+                ) : null}
               </Button>
             </PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="top">{triggerLabel}</TooltipContent>
+          <TooltipContent side="top">
+            {multiModelEnabled && selectedModelsData.length > 1
+              ? "Models"
+              : "Model"}
+          </TooltipContent>
         </Tooltip>
 
         <PopoverContent

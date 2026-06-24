@@ -19,7 +19,7 @@
  * drive the test fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -404,6 +404,7 @@ const multiHostFixture = {
 const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
+const mockCreateHost = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
@@ -439,12 +440,18 @@ vi.mock("@/hooks/useClients", () => ({
     isLoading: false,
   }),
   useHostMutations: () => ({
-    createHost: vi.fn(),
+    createHost: mockCreateHost,
     updateHost: vi.fn(),
     deleteHost: vi.fn(),
     duplicateHost: vi.fn(),
   }),
 }));
+
+function readPreviewedHostId(projectId = "default"): string | null {
+  const raw = localStorage.getItem("mcp-previewed-host-id");
+  if (!raw) return null;
+  return (JSON.parse(raw) as Record<string, string | null>)[projectId] ?? null;
+}
 
 function makeHost(
   id: string,
@@ -474,6 +481,7 @@ function makeHost(
 
 describe("PlaygroundMain — multi-host render path", () => {
   const defaultProps = {
+    activeProjectId: "default",
     serverName: "test-server",
     pendingExecution: null,
     onExecutionInjected: vi.fn(),
@@ -507,7 +515,12 @@ describe("PlaygroundMain — multi-host render path", () => {
     mockChatInput.mockClear();
     mockSetSelectedHostIds.mockClear();
     mockSetMultiHostEnabled.mockClear();
+    mockCreateHost.mockResolvedValue({
+      hostId: "seeded-mcpjam",
+      hostConfigId: "seeded-mcpjam-config",
+    });
     usePersistedHostProjectIds.length = 0;
+    localStorage.clear();
     // Reset fixture defaults — individual tests opt in to deviations.
     multiHostFixture.multiHostEnabled = true;
     multiHostFixture.selectedHostIds = [];
@@ -517,6 +530,44 @@ describe("PlaygroundMain — multi-host render path", () => {
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
+  });
+
+  it("selects MCPJam as the previewed client when no current client is selected", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [
+      { hostId: "h-zed", name: "Zed" },
+      { hostId: "h-mcpjam", name: "MCPJam" },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("selects the seeded MCPJam host for empty projects", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValueOnce({
+      hostId: "h-seeded-mcpjam",
+      hostConfigId: "h-seeded-mcpjam-config",
+    });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "default",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-seeded-mcpjam");
+    });
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {

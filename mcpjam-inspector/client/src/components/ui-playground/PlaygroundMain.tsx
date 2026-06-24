@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import {
   AlertDialog,
@@ -81,8 +82,10 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
+  getChatboxShellStyle,
+  type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { usePostHog } from "posthog-js/react";
@@ -98,6 +101,7 @@ import {
   useHost,
   useHostList,
   useHostMutations,
+  type HostListItem,
   type HostDetail,
 } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
@@ -125,6 +129,7 @@ import {
 } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
+  ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
@@ -206,6 +211,47 @@ const CUSTOM_DEVICE_BASE = {
 };
 
 type ThreadThemeMode = "light" | "dark";
+
+interface PlaygroundCompareThemeScopeProps {
+  children: ReactNode;
+  hostStyle: ChatboxHostStyle;
+  hostCapabilitiesOverride: Record<string, unknown> | undefined;
+  chatUiOverride: ChatUiOverride | undefined;
+  effectiveThreadTheme: ThreadThemeMode;
+  hostShellStyle: CSSProperties;
+}
+
+function PlaygroundCompareThemeScope({
+  children,
+  hostStyle,
+  hostCapabilitiesOverride,
+  chatUiOverride,
+  effectiveThreadTheme,
+  hostShellStyle,
+}: PlaygroundCompareThemeScopeProps) {
+  return (
+    <ChatboxHostStyleProvider value={hostStyle}>
+      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+        <ChatboxChatUiOverrideProvider value={chatUiOverride}>
+          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+            <div
+              className={cn(
+                "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark"
+              )}
+              data-testid="playground-compare-shell"
+              data-host-style={hostStyle}
+              data-thread-theme={effectiveThreadTheme}
+              style={hostShellStyle}
+            >
+              {children}
+            </div>
+          </ChatboxHostThemeProvider>
+        </ChatboxChatUiOverrideProvider>
+      </ChatboxHostCapabilitiesOverrideProvider>
+    </ChatboxHostStyleProvider>
+  );
+}
 
 interface PlaygroundMainProps {
   activeProjectId?: string | null;
@@ -817,6 +863,7 @@ export function PlaygroundMain({
   const hostCapabilitiesOverride = usePreferencesStore(
     (s) => s.hostCapabilitiesOverride
   );
+  const chatUiOverride = usePreferencesStore((s) => s.chatUiOverride);
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode
   ) as ThreadThemeMode;
@@ -826,6 +873,11 @@ export function PlaygroundMain({
   const hostBackgroundColor =
     getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
+  const hostShellStyle = getChatboxShellStyle(
+    hostStyle,
+    effectiveThreadTheme,
+    chatUiOverride
+  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -883,6 +935,17 @@ export function PlaygroundMain({
     projectId: multiHostProjectId,
   });
   const { createHost: createPlaygroundHost } = useHostMutations();
+  const resolveFallbackHostId = useCallback(
+    (hosts: HostListItem[]): string | null => {
+      const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
+      if (mcpjamHost) return mcpjamHost.hostId;
+      const [firstHost] = [...hosts].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      return firstHost?.hostId ?? null;
+    },
+    []
+  );
   // Seed backstop: the global host bar (which normally auto-creates the
   // default "MCPJam" host for empty projects) is hidden on the playground,
   // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
@@ -903,15 +966,44 @@ export function PlaygroundMain({
       projectId: multiHostProjectId,
       name: "MCPJam",
       input: emptyHostConfigInputV2(),
-    }).catch(() => {
-      playgroundSeededHostRef.current = false;
-    });
+    })
+      .then(({ hostId }) => {
+        setPreviewedHostId(hostId);
+      })
+      .catch(() => {
+        playgroundSeededHostRef.current = false;
+      });
   }, [
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
     hostList.length,
     createPlaygroundHost,
+    setPreviewedHostId,
+  ]);
+  useEffect(() => {
+    if (
+      !isConvexAuthenticated ||
+      hostListLoading ||
+      !multiHostProjectId ||
+      hostList.length === 0
+    ) {
+      return;
+    }
+    const previewedHostIsValid =
+      previewedHostId !== null &&
+      hostList.some((host) => host.hostId === previewedHostId);
+    if (previewedHostIsValid) return;
+    const fallbackHostId = resolveFallbackHostId(hostList);
+    if (fallbackHostId) setPreviewedHostId(fallbackHostId);
+  }, [
+    isConvexAuthenticated,
+    hostListLoading,
+    multiHostProjectId,
+    hostList,
+    previewedHostId,
+    resolveFallbackHostId,
+    setPreviewedHostId,
   ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
@@ -3177,7 +3269,13 @@ export function PlaygroundMain({
 
       <div className="flex-1 min-h-0 overflow-hidden">
         {isMultiModelLayoutMode ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <PlaygroundCompareThemeScope
+            hostStyle={hostStyle}
+            hostCapabilitiesOverride={hostCapabilitiesOverride}
+            chatUiOverride={chatUiOverride}
+            effectiveThreadTheme={effectiveThreadTheme}
+            hostShellStyle={hostShellStyle}
+          >
             {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
               <MultiModelEmptyTraceDiagnosticsPanel
                 activeTraceViewMode={activeTraceViewMode}
@@ -3435,7 +3533,7 @@ export function PlaygroundMain({
                 </div>
               ) : null}
             </div>
-          </div>
+          </PlaygroundCompareThemeScope>
         ) : (
           <>
             {showLiveTraceDiagnostics && (

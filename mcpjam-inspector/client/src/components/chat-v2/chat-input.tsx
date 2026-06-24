@@ -846,6 +846,8 @@ export function ChatInput({
                   {...clientSelector}
                   isLoading={isLoading}
                   onOpenChange={onModelSelectorOpenChange}
+                  themeMode={resolvedThemeMode}
+                  modalThemeMode={globalThemeMode}
                 />
               ) : null}
               {!minimalMode && (

@@ -1300,6 +1300,9 @@ describe("PlaygroundMain", () => {
         />,
       );
 
+      const compareShell = screen.getByTestId("playground-compare-shell");
+      expect(compareShell).toHaveAttribute("data-thread-theme", "light");
+      expect(compareShell).not.toHaveClass("dark");
       expect(
         screen.getByText("Try one of these to get started"),
       ).toBeInTheDocument();
