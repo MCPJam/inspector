@@ -1306,6 +1306,10 @@ export function useServerState({
           ? secretOptions.headers
           : undefined
         : headers;
+      const hasBearerTokenForPayload =
+        headersForPayload !== undefined
+          ? hasBearerAuthorizationHeader(headersForPayload)
+          : getServerBearerTokenState(serverEntry);
       const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
@@ -1318,6 +1322,9 @@ export function useServerState({
         url,
         ...(headersForPayload !== undefined
           ? { headers: headersForPayload }
+          : {}),
+        ...(hasBearerTokenForPayload !== undefined
+          ? { hasBearerToken: hasBearerTokenForPayload }
           : {}),
         timeout: config?.timeout,
         clientCapabilities: config?.clientCapabilities,

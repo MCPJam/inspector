@@ -521,6 +521,7 @@ describe("useServerState CLI config import", () => {
           transportType: "http",
           url: "https://example.com/mcp",
           headers: { Authorization: "Bearer secret" },
+          hasBearerToken: true,
         }),
       ])
     );
@@ -2457,6 +2458,42 @@ describe("syncServerToConvex name-collision recovery", () => {
     );
     expect(mockCreateServer).not.toHaveBeenCalled();
     expect(mockConvexQuery).not.toHaveBeenCalled();
+  });
+
+  it("syncs bearer-token metadata when saving header secrets", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_bearer");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Bearer Server",
+        type: "http",
+        url: "https://bearer.example.com/mcp",
+        secretPatch: {
+          headers: { Authorization: "Bearer saved-token" },
+        },
+      });
+    });
+
+    expect(mockCreateServerWithClientSecret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Bearer Server",
+        headers: { Authorization: "Bearer saved-token" },
+        hasBearerToken: true,
+      })
+    );
   });
 
   it("uses create-if-missing when the loading-window query misses the existing row", async () => {
