@@ -255,6 +255,10 @@ export function XAAFlowTab({
           registrationId: selectedRegistration.id,
           audience,
           resource,
+          // Use the flow's simulated identity (not the server's user-12345
+          // default) so an app with Allowed Users set doesn't reject every
+          // negative test on `sub` before its own check is evaluated.
+          subject: runInput.userId || undefined,
           clientId: runInput.clientId || undefined,
           scope: runInput.scope || undefined,
         },
@@ -277,6 +281,7 @@ export function XAAFlowTab({
           projectId: target.projectId,
           audience,
           resource,
+          subject: runInput.userId || undefined,
           clientId: runInput.clientId || undefined,
           scope: runInput.scope || undefined,
         },
@@ -299,6 +304,7 @@ export function XAAFlowTab({
         tokenEndpoint: flowState.tokenEndpoint,
         audience,
         resource,
+        subject: runInput.userId || undefined,
         clientId: runInput.clientId || undefined,
         scope: runInput.scope || undefined,
       },
