@@ -98,6 +98,7 @@ export function IdJagInspector({
           data-testid="idjag-inspector-toggle"
           onClick={() => setExpanded((value) => !value)}
           aria-expanded={expanded}
+          aria-controls="idjag-inspector-body"
           className="flex min-w-0 flex-1 items-start gap-2 text-left"
         >
           {expanded ? (
@@ -138,7 +139,10 @@ export function IdJagInspector({
       </div>
 
       {expanded && (
-        <div className="space-y-4 border-t border-border px-4 pb-4 pt-4">
+        <div
+          id="idjag-inspector-body"
+          className="space-y-4 border-t border-border px-4 pb-4 pt-4"
+        >
           <div className="grid gap-2">
             {decoded.issues.length === 0 ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
