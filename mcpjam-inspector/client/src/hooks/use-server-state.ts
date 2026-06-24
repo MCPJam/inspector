@@ -131,6 +131,38 @@ function hasBearerAuthorizationHeader(
   );
 }
 
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasBearerToken"
+): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as Record<string, unknown>)[flag] === true
+  );
+}
+
+function getServerBearerTokenState(
+  server: ServerWithName | undefined
+): boolean | undefined {
+  if (!server) {
+    return undefined;
+  }
+
+  const config = server.config as {
+    requestInit?: RequestInit;
+    hasBearerToken?: true;
+  };
+  if (
+    getRedactedConfigFlag(config, "hasBearerToken") ||
+    hasBearerAuthorizationHeader(extractRequestHeaders(config.requestInit))
+  ) {
+    return true;
+  }
+
+  return server.hasBearerToken;
+}
+
 function omitAuthorizationHeader(
   headers?: Record<string, string>
 ): Record<string, string> | undefined {
@@ -765,6 +797,8 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
+      const runtimeHasBearerToken = getServerBearerTokenState(runtimeState);
+      const projectHasBearerToken = getServerBearerTokenState(server);
       // Env now lives on the Convex server doc and is returned by the
       // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
@@ -780,7 +814,7 @@ export function useServerState({
           runtimeState?.hasClientSecret ?? server.hasClientSecret,
         hasEnv: runtimeState?.hasEnv ?? server.hasEnv,
         hasHeaders: runtimeState?.hasHeaders ?? server.hasHeaders,
-        hasBearerToken: runtimeState?.hasBearerToken ?? server.hasBearerToken,
+        hasBearerToken: runtimeHasBearerToken ?? projectHasBearerToken,
       };
     }
 
@@ -2362,7 +2396,7 @@ export function useServerState({
         hasBearerToken:
           formData.secretPatch?.headers !== undefined
             ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
-            : existingServerForSave?.hasBearerToken,
+            : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
       };
@@ -2736,7 +2770,7 @@ export function useServerState({
         hasBearerToken:
           formData.secretPatch?.headers !== undefined
             ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
-            : existingServer?.hasBearerToken,
+            : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
       } as ServerWithName;

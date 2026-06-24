@@ -670,6 +670,54 @@ describe("useServerState effective server projection", () => {
     );
     expect(result.current.selectedMCPConfig).toBeUndefined();
   });
+
+  it("preserves runtime bearer-token state over a redacted Convex project row", () => {
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "persisted-server",
+      config: {
+        type: "http",
+        url: "https://persisted.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+      hasHeaders: true,
+    };
+    const runtimeServer: ServerWithName = {
+      ...persistedServer,
+      connectionStatus: "connected",
+      hasBearerToken: true,
+    };
+
+    appState.projects.default.servers = {
+      "persisted-server": persistedServer,
+    };
+    appState.servers = {
+      "persisted-server": runtimeServer,
+    };
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "default",
+      activeProjectServersFlat: [
+        {
+          _id: "srv_1",
+          name: "persisted-server",
+          hasHeaders: true,
+        },
+      ],
+    });
+
+    expect(
+      result.current.projectServers["persisted-server"].hasBearerToken
+    ).toBe(true);
+  });
 });
 
 describe("useServerState OAuth callback failures", () => {
