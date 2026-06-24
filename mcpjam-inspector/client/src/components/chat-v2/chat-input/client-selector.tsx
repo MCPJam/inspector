@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Plus, X } from "lucide-react";
+import { Check, MoreHorizontal, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -28,8 +28,31 @@ import {
 } from "@/lib/client-templates";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 
-// Same quick-add lineup as the global host bar (HostOverlayBar).
-const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
+// Quick-add priority. These templates surface first in the Add-host strip;
+// everything else follows in template order and spills into the overflow (⋯).
+const QUICK_ADD_ORDER: HostTemplateId[] = [
+  "mcpjam",
+  "claude",
+  "chatgpt",
+  "copilot",
+  "cursor",
+  "vscode",
+  "mistral",
+  "goose",
+];
+
+// Priority templates first, then any remaining templates in their natural order.
+const ORDERED_TEMPLATES = [
+  ...QUICK_ADD_ORDER.flatMap((id) => {
+    const template = HOST_TEMPLATES.find((t) => t.id === id);
+    return template ? [template] : [];
+  }),
+  ...HOST_TEMPLATES.filter((t) => !QUICK_ADD_ORDER.includes(t.id)),
+];
+
+// How many logos render inline before the rest collapse into the "⋯" overflow
+// (sized to fit the 260px dropdown alongside the "Add host" label).
+const QUICK_ADD_VISIBLE = 5;
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -420,39 +443,47 @@ export function ClientSelector({
           </CommandList>
 
           {projectId ? (
-            <div className="flex items-center gap-1 border-t p-1">
+            <div className="flex items-center gap-1 overflow-hidden border-t px-1.5 py-1.5">
               <button
                 type="button"
                 onClick={() => openCreateWithTemplate(undefined)}
-                className="flex flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+                className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
                 data-testid="client-add-host"
               >
                 <Plus className="size-3.5" />
                 <span>Add host</span>
               </button>
-              <span className="flex items-center gap-0.5 pr-1">
-                {QUICK_ADD_TEMPLATES.map((id) => {
-                  const template = HOST_TEMPLATES.find((t) => t.id === id);
-                  if (!template) return null;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      aria-label={`Add ${template.label} host`}
-                      title={`Add ${template.label}`}
-                      data-testid={`client-quick-add-${id}`}
-                      onClick={() => openCreateWithTemplate(id)}
-                      className="inline-flex size-6 items-center justify-center rounded-sm transition-colors hover:bg-accent"
-                    >
-                      <img
-                        src={template.logoSrc}
-                        alt=""
-                        className="size-4 object-contain"
-                      />
-                    </button>
-                  );
-                })}
+              <span className="flex items-center gap-0.5">
+                {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    aria-label={`Add ${template.label} host`}
+                    title={`Add ${template.label}`}
+                    data-testid={`client-quick-add-${template.id}`}
+                    onClick={() => openCreateWithTemplate(template.id)}
+                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                  >
+                    <img
+                      src={template.logoSrc}
+                      alt=""
+                      className="size-4 object-contain"
+                    />
+                  </button>
+                ))}
               </span>
+              {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (
+                <button
+                  type="button"
+                  aria-label="More clients"
+                  title="More clients"
+                  data-testid="client-quick-add-more"
+                  onClick={() => openCreateWithTemplate(undefined)}
+                  className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              ) : null}
             </div>
           ) : null}
         </Command>
