@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 
 import { clearPendingTopup, peekPendingTopup } from "@/hooks/useCreditTopup";

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, Copy, Check, ExternalLink } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { Diagnosis } from "./types";
 
 interface BlockedRequestCardProps {

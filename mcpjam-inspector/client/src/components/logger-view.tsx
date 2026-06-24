@@ -29,7 +29,7 @@ import {
 } from "@/stores/traffic-log-store";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { setServerLoggingLevel } from "@/state/mcp-api";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useSharedAppState } from "@/state/app-state-context";
 import type { ServerWithName } from "@/state/app-types";
 import {

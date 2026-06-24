@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Settings2 } from "lucide-react";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import type { EvalServerAttachment } from "@/components/evals/types";

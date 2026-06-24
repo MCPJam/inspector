@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,

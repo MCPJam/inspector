@@ -6,7 +6,7 @@ import {
   useState,
   type Dispatch,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   createLocalProjectId,
   type AppAction,

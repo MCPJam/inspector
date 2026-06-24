@@ -4,7 +4,7 @@ import {
   useCallback,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Separator } from "@mcpjam/design-system/separator";

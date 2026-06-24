@@ -42,7 +42,7 @@ import {
   SuiteAggregate,
 } from "./types";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { GenerateCasesConfigPopover } from "./generate-cases-config-popover";

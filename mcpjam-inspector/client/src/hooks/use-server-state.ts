@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type {
   HttpServerConfig,
   MCPServerConfig,

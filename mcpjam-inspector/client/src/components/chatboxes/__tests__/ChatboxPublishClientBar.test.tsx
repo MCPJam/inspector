@@ -114,6 +114,7 @@ describe("ChatboxPublishClientBar", () => {
 
     expect(toastMock.error).toHaveBeenCalledWith(
       "Failed to save servers: nope",
+      { duration: Infinity },
     );
   });
 

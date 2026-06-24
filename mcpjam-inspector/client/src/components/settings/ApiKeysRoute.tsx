@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Key, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { SettingsSection } from "../setting/SettingsSection";
 import { CreateApiKeyDialog } from "./api-keys/CreateApiKeyDialog";

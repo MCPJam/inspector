@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";

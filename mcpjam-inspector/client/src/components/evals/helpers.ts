@@ -9,7 +9,7 @@ import {
   TagGroupAggregate,
 } from "./types";
 import { computeIterationResult } from "./pass-criteria";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 

@@ -902,7 +902,8 @@ describe("OrganizationsTab billing", () => {
       });
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its member limit (3). Ask an organization owner to upgrade."
+      "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+      { duration: Infinity }
     );
   });
 
