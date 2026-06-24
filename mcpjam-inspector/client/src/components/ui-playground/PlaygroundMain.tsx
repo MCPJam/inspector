@@ -131,7 +131,6 @@ import {
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
-import { PlaygroundHostPicker } from "@/components/playground/PlaygroundHostPicker";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
@@ -2716,6 +2715,20 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    // Unified run picker: the chat-input pill also drives client compare.
+    // Replaces the standalone "Compare" button that used to live in the
+    // playground header. Shared sessions can't switch hosts, so leave it off.
+    hostCompare: isSharedSession
+      ? undefined
+      : {
+          hosts: hostList,
+          currentHostId: previewedHostId ?? null,
+          selectedHostIds,
+          multiHostEnabled,
+          onSelectedHostIdsChange: setSelectedHostIds,
+          onMultiHostEnabledChange: handleMultiHostEnabledChange,
+          onPromoteLead: handlePromoteLead,
+        },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
@@ -3082,23 +3095,9 @@ export function PlaygroundMain({
           leadHostInMultiHost={
             isMultiHostMode ? leadHost?.name ?? null : null
           }
-          leading={
-            // Phase 2: playground-scoped multi-host picker. Persists the
-            // multi-host array + toggle to localStorage but does NOT yet
-            // change the playground render path (that lands in Phase 4).
-            // The global `GlobalHostBar` remains the host pill for other
-            // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
-            isSharedSession ? null : (
-              <PlaygroundHostPicker
-                projectId={multiHostProjectId}
-                selectedHostIds={selectedHostIds}
-                multiHostEnabled={multiHostEnabled}
-                onSelectedHostIdsChange={setSelectedHostIds}
-                onMultiHostEnabledChange={handleMultiHostEnabledChange}
-                onPromoteLead={handlePromoteLead}
-              />
-            )
-          }
+          // The standalone "Compare" host picker moved into the chat-input
+          // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
+          // switching still lives in the global `GlobalHostBar`.
           trailing={
             effectiveHasMessages ? (
               <Tooltip>

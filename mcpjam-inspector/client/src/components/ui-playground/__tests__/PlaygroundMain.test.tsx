@@ -293,6 +293,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading,
     placeholder,
     pulseSubmit,
+    hostCompare,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -302,10 +303,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
+    hostCompare?: unknown;
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-host-compare={hostCompare ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -504,14 +507,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
-// Stub the playground host picker — its data hooks (Convex auth, host list,
-// previewed-host storage) are out of scope for these PlaygroundMain tests.
-vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
-  PlaygroundHostPicker: () => (
-    <div data-testid="playground-host-picker-stub" />
-  ),
-}));
-
 // Mock traffic log store
 vi.mock("@/stores/traffic-log-store", () => ({
   useTrafficLogStore: (selector: any) => {
@@ -680,7 +675,7 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
     });
 
-    it("hides the multi-host compare picker after the active session is shared", async () => {
+    it("disables the chat-input host compare after the active session is shared", async () => {
       const privateSessionLocal = {
         _id: "history-share-gate-1",
         chatSessionId: "chat-session-share-gate-1",
@@ -722,10 +717,11 @@ describe("PlaygroundMain", () => {
         );
       });
 
-      // Private sessions show the host picker by default.
-      expect(
-        screen.getByTestId("playground-host-picker-stub"),
-      ).toBeInTheDocument();
+      // Private sessions get the chat-input run picker's host compare wired up.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-host-compare",
+        "true",
+      );
 
       await act(async () => {
         const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
@@ -748,9 +744,11 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(capturedChatSessionOptions.directVisibility).toBe("project");
       });
-      expect(
-        screen.queryByTestId("playground-host-picker-stub"),
-      ).toBeNull();
+      // Shared sessions can't switch hosts — `hostCompare` is left undefined.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-host-compare",
+        "false",
+      );
     });
 
     it("keeps active playground thread visibility in sync after sharing", async () => {
