@@ -37,7 +37,6 @@ import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
-  type XAAFlowStep,
 } from "@/lib/xaa/types";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
@@ -92,7 +91,6 @@ export function XAAFlowTab({
   openServerModalSignal,
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
-  const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
   const [isRunningAll, setIsRunningAll] = useState(false);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
@@ -338,7 +336,6 @@ export function XAAFlowTab({
       email: runInput.email,
     };
     applyFlowState(buildFlowStateFromInput(runInput));
-    setFocusedStep(null);
   }, [applyFlowState, runInput]);
 
   const applyTargetReset = useCallback(
@@ -402,10 +399,6 @@ export function XAAFlowTab({
   }, [runSettings.userId, runSettings.email, rebuildFlow]);
 
   useEffect(() => {
-    setFocusedStep(null);
-  }, [flowState.currentStep]);
-
-  useEffect(() => {
     posthog.capture("xaa_tab_viewed", {
       location: "xaa_flow_tab",
       target_count: resourceApps.length + Object.keys(serverConfigs).length,
@@ -419,14 +412,6 @@ export function XAAFlowTab({
   const resetFlow = useCallback(() => {
     rebuildFlow();
   }, [rebuildFlow]);
-
-  const handleChangeNegativeTestMode = useCallback(
-    (mode: NegativeTestMode) => {
-      runSettings.setNegativeTestMode(mode);
-      setFocusedStep(null);
-    },
-    [runSettings]
-  );
 
   // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG
   // inspection step lints against the issuer actually stamped into `iss`, not
@@ -630,7 +615,6 @@ export function XAAFlowTab({
             <ResizablePanel defaultSize={52} minSize={30} className="min-w-0">
               <XAASequenceDiagram
                 flowState={flowState}
-                focusedStep={focusedStep}
                 hasProfile={isTestable}
                 onConfigure={() => setIsServerModalOpen(true)}
               />
@@ -647,14 +631,12 @@ export function XAAFlowTab({
               <XAAFlowLogger
                 flowState={flowState}
                 hasProfile={isTestable}
-                activeStep={focusedStep ?? flowState.currentStep}
-                onFocusStep={setFocusedStep}
+                activeStep={flowState.currentStep}
                 actions={{
                   onConfigure: () => setIsServerModalOpen(true),
                   onReset: isTestable ? () => resetFlow() : undefined,
                   onContinue: continueDisabled ? undefined : handleAdvance,
                   onRunAll: isTestable ? handleRunAll : undefined,
-                  onChangeNegativeTestMode: handleChangeNegativeTestMode,
                   continueLabel,
                   continueDisabled,
                   runAllDisabled,
@@ -667,7 +649,6 @@ export function XAAFlowTab({
                   authzServerIssuer: runInput.authzServerIssuer || undefined,
                   clientId: runInput.clientId || undefined,
                   scope: runInput.scope || undefined,
-                  negativeTestMode: runInput.negativeTestMode,
                 }}
               />
             </ResizablePanel>
@@ -679,7 +660,6 @@ export function XAAFlowTab({
           // there's a testable server, so they stay hidden until then.
           <XAASequenceDiagram
             flowState={flowState}
-            focusedStep={focusedStep}
             hasProfile={false}
             onConfigure={() => setIsServerModalOpen(true)}
           />

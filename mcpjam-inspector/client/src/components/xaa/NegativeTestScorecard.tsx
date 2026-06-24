@@ -9,7 +9,6 @@ import {
   Lock,
   ShieldAlert,
 } from "lucide-react";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -130,8 +129,8 @@ export function NegativeTestScorecard({
   const [overrideAccepted, setOverrideAccepted] = useState(false);
 
   // Reset the last run whenever the target changes — including when config is
-  // cleared (input → null). Without this, a stale "N failing" badge from a
-  // previous target lingers and contradicts the empty/locked body.
+  // cleared (input → null). Without this, stale result rows from a previous
+  // target linger and contradict the empty/locked body.
   const targetKey = input
     ? [
         input.registrationId ?? input.serverId ?? input.tokenEndpoint ?? "",
@@ -182,16 +181,6 @@ export function NegativeTestScorecard({
             rejects them.
           </p>
         </div>
-        {run.status === "done" && (
-          <Badge
-            variant={run.result.failures > 0 ? "destructive" : "secondary"}
-            className="shrink-0 text-[10px]"
-          >
-            {run.result.failures > 0
-              ? `${run.result.failures} failing`
-              : "all rejected"}
-          </Badge>
-        )}
         {expanded ? (
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
