@@ -15,6 +15,7 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -267,6 +268,10 @@ export function createHonoApp() {
     }),
   );
   app.route("/api/v1", v1Routes);
+
+  if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
+    app.route("/user_management", workosAuthkitRoutes);
+  }
 
   // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;

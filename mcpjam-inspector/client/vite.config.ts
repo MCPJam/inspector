@@ -156,11 +156,12 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
-        // Proxy WorkOS API calls during local dev to avoid browser CORS errors
+        // Proxy AuthKit calls through the local server so refresh tokens stay
+        // in an HttpOnly local session cookie instead of browser storage.
         "/user_management": {
-          target: "https://api.workos.com",
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
         ...(() => {
           const siteUrlFromEnv = env.VITE_CONVEX_SITE_URL;
