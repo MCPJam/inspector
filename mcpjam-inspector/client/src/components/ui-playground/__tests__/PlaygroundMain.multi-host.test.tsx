@@ -378,6 +378,7 @@ const mockSharedAppState = {
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
+  useOptionalSharedAppState: () => mockSharedAppState,
 }));
 
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {

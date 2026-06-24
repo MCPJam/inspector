@@ -127,8 +127,8 @@ vi.mock("@/lib/oauth/oauth-tokens", () => ({
   buildOAuthTokensByServerId: vi.fn(() => ({})),
 }));
 
-vi.mock("@/state/app-state-context", () => ({
-  useSharedAppState: () => ({
+vi.mock("@/state/app-state-context", () => {
+  const appState = {
     servers: {
       "server-1": {
         connectionStatus: "connected",
@@ -140,8 +140,12 @@ vi.mock("@/state/app-state-context", () => ({
       },
     },
     activeProjectId: "project-1",
-  }),
-}));
+  };
+  return {
+    useSharedAppState: () => appState,
+    useOptionalSharedAppState: () => appState,
+  };
+});
 
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (

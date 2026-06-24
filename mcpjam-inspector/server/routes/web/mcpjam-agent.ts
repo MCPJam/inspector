@@ -28,18 +28,28 @@
  * `http://localhost:8787/mcp`. If the worker is down the preflight below
  * degrades the agent to docs + web_search.
  *
+ * The agent also connects to whichever of the caller's OWN project MCP
+ * servers the client passes as `selectedServerIds`, so the same tools the
+ * user can call in Playground are callable here. The client sends only the
+ * servers it shows as CONNECTED (same client-side filter chat-v2 uses), and
+ * those ids are authorized through `createAuthorizedManager` (project
+ * membership + ownership, exactly like chat-v2) — strict, no special
+ * tolerance. The two MCPJam-owned servers ride alongside as
+ * `additionalServerConfigs`, which skip that project authorization because
+ * they aren't project-registered.
+ *
  * Differences vs `/api/web/chat-v2`:
- *   - The agent owns its own `MCPClientManager` hardcoded to the two
- *     servers. It does NOT go through `createAuthorizedManager`'s
- *     project-server resolution and does NOT register either server into
- *     any user's project.
+ *   - The two MCPJam-owned servers are NOT registered into any user's
+ *     project; they're injected as `additionalServerConfigs`.
  *   - Persists as `sourceType: "direct"` with `hostConfig: null` — the
  *     synthetic `"mcpjam-docs"` / `"mcpjam-platform"` ids would fail
  *     backend `selectedServerIds` validation against the project's
  *     `servers` rows. The chat appears in the user's history alongside
  *     other direct sessions; per-surface differentiation is client-side.
- *   - Rejects chatbox / appTools / selectedServerIds fields up front — this
- *     surface owns its tool set.
+ *   - Skips the eval-authoring tool snapshot (`captureToolSnapshot: false`)
+ *     because the persisted id list mixes synthetic and project ids.
+ *   - Rejects chatbox / appTools fields — this surface owns its tool set
+ *     beyond the user's own servers.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -71,6 +81,8 @@ import {
   ErrorCode,
   webError,
   mapRuntimeError,
+  createAuthorizedManager,
+  callerContextFromHono,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -117,10 +129,10 @@ function buildPlatformConfig(bearerToken: string): HttpServerConfig {
 // (`id`, `trigger`, `messageId`, …) on every turn. `hostedChatSchema` in
 // `auth.ts` tolerates this via `.passthrough()`; we match that pattern so
 // the AI SDK extras are silently passed through instead of rejected as
-// validation errors. Server-side use of the parsed body still only reads
-// the explicitly-declared fields below — there's no path here that routes
-// a tampered selectedServerIds / appTools / chatbox field into the
-// streamWebChatTurn call because we don't read them at all.
+// validation errors. Server-side use of the parsed body is limited to the
+// explicitly-declared fields below; user project `selectedServerIds` are still
+// authorized through `createAuthorizedManager` before any tool reaches the
+// model.
 const mcpjamAgentSchema = z
   .object({
     messages: z.array(z.any()).min(1),
@@ -137,6 +149,16 @@ const mcpjamAgentSchema = z
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
     respectToolVisibility: z.boolean().optional(),
+    // The caller's own CONNECTED project MCP servers to connect alongside the
+    // two MCPJam-owned servers. These ARE authorized against the project (the
+    // user must be a member and the servers must belong to it) via
+    // `createAuthorizedManager` below — the client can't reach a server it
+    // wouldn't be allowed to connect in Playground. Names are index-aligned
+    // display labels used only for OAuth/error messaging; `oauthTokens` maps
+    // serverId → access token for OAuth servers (same shape chat-v2 forwards).
+    selectedServerIds: z.array(z.string()).optional(),
+    selectedServerNames: z.array(z.string()).optional(),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 
@@ -151,29 +173,87 @@ mcpjamAgent.post("/", async (c) => {
     rpcCollector = createHostedRpcLogCollector(rawBody);
     const body = parseWithSchema(mcpjamAgentSchema, rawBody);
 
-    manager = new MCPClientManager(
-      {
-        [DOCS_SERVER_ID]: buildDocsConfig(),
-        [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken),
-      },
-      {
+    // The caller's CONNECTED project servers (the client sends only the ones
+    // it shows as connected, exactly like Playground/chat-v2 do — see
+    // `use-mcpjam-agent-session.ts`). Drop empties and the synthetic ids
+    // defensively so a malformed body can't shadow a built-in server.
+    const requestedServerEntries: Array<{ id: string; name?: string }> = [];
+    const seenRequestedServerIds = new Set<string>();
+    for (const [index, id] of (body.selectedServerIds ?? []).entries()) {
+      if (
+        typeof id !== "string" ||
+        id.length === 0 ||
+        id === DOCS_SERVER_ID ||
+        id === PLATFORM_SERVER_ID ||
+        seenRequestedServerIds.has(id)
+      ) {
+        continue;
+      }
+      seenRequestedServerIds.add(id);
+      const rawName = body.selectedServerNames?.[index];
+      const name =
+        typeof rawName === "string" && rawName.trim().length > 0
+          ? rawName.trim()
+          : undefined;
+      requestedServerEntries.push({ id, ...(name ? { name } : {}) });
+    }
+    const requestedServerIds = requestedServerEntries.map((entry) => entry.id);
+    const requestedServerNames = requestedServerEntries.map(
+      (entry) => entry.name ?? entry.id
+    );
+
+    // The two MCPJam-owned servers, always present.
+    const builtInServerConfigs = {
+      [DOCS_SERVER_ID]: buildDocsConfig(),
+      [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken),
+    };
+
+    if (requestedServerIds.length === 0) {
+      // No project servers connected — skip the Convex authorize round trip
+      // and stand up just the built-ins, as before.
+      manager = new MCPClientManager(builtInServerConfigs, {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
         rpcLogger: rpcCollector.rpcLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      }
-    );
+      });
+    } else {
+      // Build ONE manager owning both the user's project servers — authorized
+      // through the SAME Convex membership/ownership check chat-v2 uses, so
+      // this surface can't reach a server the user couldn't connect in
+      // Playground — and the two MCPJam-owned servers (injected as
+      // `additionalServerConfigs`, which skip project authorization). Strict,
+      // exactly like chat-v2: the client already filtered to connected
+      // servers, so there's nothing to tolerate here.
+      const authorized = await createAuthorizedManager(
+        callerContextFromHono(c),
+        bearerToken,
+        body.projectId,
+        requestedServerIds,
+        WEB_STREAM_TIMEOUT_MS,
+        body.oauthTokens,
+        MCP_APPS_CLIENT_CAPABILITIES,
+        {
+          serverNames: requestedServerNames,
+          rpcLogger: rpcCollector.rpcLogger,
+          additionalServerConfigs: builtInServerConfigs,
+        }
+      );
+      manager = authorized.manager;
+    }
 
     try {
-      // Preflight both servers in parallel: `getToolsForAiSdk` (inside
-      // `prepareChatV2`) fails the WHOLE turn when any selected server
-      // errors at connect/list time, so either server's outage (or the
-      // platform worker rejecting local dev's untrusted issuer) would
-      // otherwise take down the entire agent. Select only the servers that
-      // responded; connections and tool metadata are cached on the manager,
-      // so the later prepare doesn't repeat the round trips. With both
-      // down, the turn still runs on web_search + the bare model.
+      // Preflight every registered server in parallel: `getToolsForAiSdk`
+      // (inside `prepareChatV2`) fails the WHOLE turn when any selected server
+      // errors at connect/list time, so one server's outage (the platform
+      // worker rejecting local dev's untrusted issuer, or a flaky project
+      // server) would otherwise take down the entire agent. Select only the
+      // servers that responded; connections and tool metadata are cached on
+      // the manager, so the later prepare doesn't repeat the round trips. With
+      // everything down, the turn still runs on web_search + the bare model.
       const mcp = manager;
-      const candidateServerIds = [DOCS_SERVER_ID, PLATFORM_SERVER_ID];
+      // Every server registered on the manager: the two MCPJam-owned ones
+      // plus whichever of the caller's project servers authorized above.
+      const candidateServerIds = mcp.listServers();
       const preflights = await Promise.allSettled(
         candidateServerIds.map((serverId) => mcp.listTools(serverId))
       );

@@ -15,6 +15,7 @@ import { useChat, type UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport, generateId } from "ai";
 import { usePostHog } from "posthog-js/react";
 import { authFetch } from "@/lib/session-token";
+import { useResolvedSelectedMcpServers } from "@/hooks/use-resolved-selected-mcp-servers";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
@@ -66,6 +67,8 @@ export interface UseMcpjamAgentSessionResult {
   model: ModelDefinition | undefined;
   /** True while the persisted transcript is being seeded on mount. */
   hydrating: boolean;
+  /** True once connected MCP server names have been resolved to hosted ids. */
+  serversReady: boolean;
 }
 
 export function useMcpjamAgentSession(
@@ -112,6 +115,26 @@ export function useMcpjamAgentSession(
   useEffect(() => {
     modelRef.current = resolvedModel;
   }, [resolvedModel]);
+
+  // The servers the agent should be able to call tools on: the app-level
+  // selected server set that `ActiveHostServerReconciler` keeps aligned with
+  // connected/reconnecting servers, falling back to currently connected names
+  // for isolated surfaces. Then resolve names → hosted ids, same as
+  // Playground/chat-v2. The backend authorizes each id against the project
+  // (membership + ownership) before connecting, strictly — no "send
+  // everything" fallback.
+  const selectedServers = useResolvedSelectedMcpServers({ projectId });
+  const serversReady = selectedServers.isReady;
+  const serversReadyRef = useRef(serversReady);
+  useEffect(() => {
+    serversReadyRef.current = serversReady;
+  }, [serversReady]);
+  // Read through a ref so the transport body always sees the latest server
+  // list without rebuilding the transport (which would churn `useChat`).
+  const selectedServersRef = useRef(selectedServers);
+  useEffect(() => {
+    selectedServersRef.current = selectedServers;
+  }, [selectedServers]);
 
   // Transcript hydration: when we mount with a known session id, fetch the
   // persisted transcript and seed `useChat`. Without this, reload would
@@ -177,6 +200,11 @@ export function useMcpjamAgentSession(
           model: modelRef.current,
           projectId,
           chatSessionId,
+          selectedServerIds: selectedServersRef.current.selectedServerIds,
+          selectedServerNames: selectedServersRef.current.selectedServerNames,
+          ...(selectedServersRef.current.oauthTokens
+            ? { oauthTokens: selectedServersRef.current.oauthTokens }
+            : {}),
         }),
       }),
     [chatSessionId, projectId]
@@ -245,6 +273,7 @@ export function useMcpjamAgentSession(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      if (!serversReadyRef.current) return;
       // Mint an id on first submit when the caller didn't provide one,
       // so the persistence path has something to dedupe on.
       if (!providedSessionId && seededForRef.current === null) {
@@ -274,5 +303,6 @@ export function useMcpjamAgentSession(
     stop,
     model: resolvedModel,
     hydrating,
+    serversReady,
   };
 }

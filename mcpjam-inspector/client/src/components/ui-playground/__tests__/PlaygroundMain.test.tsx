@@ -531,6 +531,7 @@ const mockSharedAppState = {
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
+  useOptionalSharedAppState: () => mockSharedAppState,
 }));
 
 // Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
