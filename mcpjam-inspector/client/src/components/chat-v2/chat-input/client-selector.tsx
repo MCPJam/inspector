@@ -443,7 +443,7 @@ export function ClientSelector({
           </CommandList>
 
           {projectId ? (
-            <div className="flex items-center gap-1 overflow-hidden border-t px-1.5 py-1.5">
+            <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
               <button
                 type="button"
                 onClick={() => openCreateWithTemplate(undefined)}
@@ -453,7 +453,7 @@ export function ClientSelector({
                 <Plus className="size-3.5" />
                 <span>Add host</span>
               </button>
-              <span className="flex items-center gap-0.5">
+              <span className="flex flex-1 items-center justify-between gap-0.5">
                 {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map((template) => (
                   <button
                     key={template.id}
