@@ -181,7 +181,7 @@ export function XAAIdpCard() {
       </div>
 
       {!HOSTED_MODE && (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+        <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
           <span>
             These are local URLs. Your authorization server can only fetch them

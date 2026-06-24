@@ -137,7 +137,7 @@ describe("NegativeTestScorecard", () => {
     await waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
   });
 
-  it("clears a stale result badge when the target changes (e.g. config cleared)", async () => {
+  it("clears stale results when the target changes (e.g. config cleared)", async () => {
     runMock.mockResolvedValue({
       failures: 1,
       results: [
@@ -162,13 +162,10 @@ describe("NegativeTestScorecard", () => {
       screen.getByRole("button", { name: /run negative tests/i }),
     );
 
-    // Badge reflects the completed run against this target.
     await waitFor(() =>
-      expect(screen.getByText("1 failing")).toBeInTheDocument(),
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
     );
 
-    // Clearing the configuration drops the target (input → null). The stale
-    // "1 failing" badge must not linger over the now-empty/locked body.
     rerender(
       <NegativeTestScorecard
         input={null}
@@ -178,7 +175,7 @@ describe("NegativeTestScorecard", () => {
     );
 
     await waitFor(() =>
-      expect(screen.queryByText("1 failing")).toBeNull(),
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull(),
     );
   });
 

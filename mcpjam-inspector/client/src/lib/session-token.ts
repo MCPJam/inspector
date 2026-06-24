@@ -164,6 +164,38 @@ export async function initializeSessionToken(): Promise<string> {
 }
 
 /**
+ * Force a re-fetch of the dev session token.
+ *
+ * The local backend mints a fresh session token on every restart (see
+ * `services/session-token.ts#generateSessionToken`). After a dev-server
+ * restart the browser still holds the token cached at page load, so every
+ * `/api/*` call 401s until a hard refresh. Clearing the cache and re-fetching
+ * recovers transparently.
+ *
+ * In production the token is injected into the HTML and can't be refreshed at
+ * runtime, so the injected value is returned as-is.
+ *
+ * @returns The refreshed token, or null if it couldn't be obtained.
+ */
+export async function refreshSessionToken(): Promise<string | null> {
+  if (window.__MCP_SESSION_TOKEN__) {
+    cachedToken = window.__MCP_SESSION_TOKEN__;
+    return cachedToken;
+  }
+
+  // Drop the stale cache + any in-flight init so initializeSessionToken
+  // actually hits /api/session-token again instead of returning the old token.
+  cachedToken = null;
+  initPromise = null;
+
+  try {
+    return await initializeSessionToken();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get the session token synchronously.
  * Returns empty string if not yet initialized (will cause 401).
  *
@@ -391,6 +423,28 @@ export async function authFetch(
     : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
+
+  // Local session-token recovery (non-hosted). The dev backend regenerates its
+  // session token on every restart; if it restarted since page load the
+  // browser holds a stale token and each /api/* call 401s with a cryptic
+  // "Backend debug proxy error: 401 Unauthorized" until a manual page refresh.
+  // Re-fetch the current token and retry once so a backend restart doesn't
+  // strand the session. Skipped when the caller set its own Authorization, and
+  // when the 401 is the upstream MCP server demanding OAuth (refreshing the
+  // session token wouldn't change that outcome).
+  if (
+    response.status === 401 &&
+    shouldAttachSessionHeaders(input) &&
+    !callerProvidedAuthorization &&
+    response.headers?.get("X-MCP-Auth-Required") !== "oauth"
+  ) {
+    const staleToken = getSessionToken();
+    const refreshedToken = await refreshSessionToken();
+    if (refreshedToken && refreshedToken !== staleToken) {
+      const retryInit = buildAuthFetchInit(input, init, hostedAuthHeader);
+      return fetch(input, retryInit);
+    }
+  }
 
   // Retry on 401 only for paths we actually attached a hosted bearer to —
   // a 401 from `/api/health` shouldn't trigger a guest-session refresh.

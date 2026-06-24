@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  Lightbulb,
   Loader2,
   Pencil,
   Play,
@@ -23,13 +22,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
@@ -55,7 +47,6 @@ import type {
   XAACompatibilityReport,
 } from "@/lib/xaa/capability-preflight";
 import {
-  NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
   type NegativeTestMode,
 } from "@/shared/xaa.js";
@@ -64,14 +55,12 @@ interface XAAFlowLoggerProps {
   flowState: XAAFlowState;
   hasProfile: boolean;
   activeStep?: XAAFlowStep | null;
-  onFocusStep?: (step: XAAFlowStep) => void;
   actions: {
     onConfigure: () => void;
     onReset?: () => void;
     onContinue?: () => void;
     /** Run the whole flow — surfaced in the Continue split-button's menu. */
     onRunAll?: () => void;
-    onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
     continueLabel: string;
     continueDisabled?: boolean;
     runAllDisabled?: boolean;
@@ -84,7 +73,6 @@ interface XAAFlowLoggerProps {
     authzServerIssuer?: string;
     clientId?: string;
     scope?: string;
-    negativeTestMode: XAAFlowState["negativeTestMode"];
   };
 }
 
@@ -270,13 +258,9 @@ function PhaseHeader({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Phase {number} · {info.title}
         </span>
-        {info.specStep === null ? (
+        {info.specStep === null && (
           <Badge variant="outline" className="text-[10px] h-4 px-1.5">
             not part of the XAA grant
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px] h-4 px-1.5">
-            spec step {info.specStep}
           </Badge>
         )}
         {skipped && (
@@ -285,7 +269,6 @@ function PhaseHeader({
           </Badge>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">{info.blurb}</p>
     </div>
   );
 }
@@ -334,12 +317,12 @@ function PhaseRail({ currentStep }: { currentStep: XAAFlowStep }) {
                 "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
                 state === "active" &&
                   "bg-blue-500/10 font-medium text-blue-600 dark:text-blue-400",
-                state === "done" && "text-green-600 dark:text-green-400",
+                state === "done" && "text-foreground",
                 state === "pending" && "text-muted-foreground"
               )}
             >
               {state === "done" ? (
-                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                <CheckCircle2 className="h-3 w-3 shrink-0 text-green-600 dark:text-green-400" />
               ) : (
                 <span className="font-mono">{number}</span>
               )}
@@ -406,29 +389,10 @@ function NegativeProbeCallout({
   );
 }
 
-/** A "Tip" callout — visually distinct from diagnostics so static teaching
- * copy can't be mistaken for an error explanation. */
-function TeachableMoments({ moments }: { moments: string[] }) {
-  return (
-    <div className="space-y-1.5 border-l-2 border-blue-400/40 pl-3">
-      {moments.map((moment) => (
-        <p
-          key={moment}
-          className="flex items-start gap-1.5 text-xs text-muted-foreground"
-        >
-          <Lightbulb className="h-3.5 w-3.5 mt-px shrink-0 text-blue-400" />
-          <span>{moment}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
 export function XAAFlowLogger({
   flowState,
   hasProfile,
   activeStep,
-  onFocusStep,
   actions,
   summary,
 }: XAAFlowLoggerProps) {
@@ -511,8 +475,6 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
-  const negativeModeSummary =
-    NEGATIVE_TEST_MODE_DETAILS[summary.negativeTestMode];
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -660,45 +622,30 @@ export function XAAFlowLogger({
           <>
             <PhaseRail currentStep={flowState.currentStep} />
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Mode</span>
-                <Select
-                  value={summary.negativeTestMode}
-                  onValueChange={(nextValue) =>
-                    actions.onChangeNegativeTestMode?.(
-                      nextValue as NegativeTestMode
-                    )
-                  }
-                  disabled={!actions.onChangeNegativeTestMode}
-                >
-                  <SelectTrigger className="h-7 w-[180px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {NEGATIVE_TEST_MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode} className="text-xs">
-                        {NEGATIVE_TEST_MODE_DETAILS[mode].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {(summary.clientId || summary.scope) && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                {summary.clientId && (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-muted-foreground">
+                      Client ID
+                    </span>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {summary.clientId}
+                    </Badge>
+                  </div>
+                )}
+                {summary.scope && (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-muted-foreground">
+                      Scope
+                    </span>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {summary.scope}
+                    </Badge>
+                  </div>
+                )}
               </div>
-              {summary.clientId && (
-                <Badge variant="outline" className="text-xs">
-                  {summary.clientId}
-                </Badge>
-              )}
-              {summary.scope && (
-                <Badge variant="outline" className="text-xs">
-                  {summary.scope}
-                </Badge>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              {negativeModeSummary.description}
-            </p>
+            )}
           </>
         )}
       </div>
@@ -883,20 +830,6 @@ export function XAAFlowLogger({
                           {stepInfo.summary}
                         </p>
                       </div>
-                      {onFocusStep && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onFocusStep(group.step);
-                          }}
-                        >
-                          Focus
-                        </Button>
-                      )}
                     </button>
 
                     {expandedSteps.has(group.step) && (
@@ -952,11 +885,6 @@ export function XAAFlowLogger({
                           />
                         ))}
 
-                        {stepInfo.teachableMoments?.length ? (
-                          <TeachableMoments
-                            moments={stepInfo.teachableMoments}
-                          />
-                        ) : null}
                       </div>
                     )}
                   </div>
