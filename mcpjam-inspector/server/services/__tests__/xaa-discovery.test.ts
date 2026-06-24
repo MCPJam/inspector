@@ -72,6 +72,14 @@ describe("extractAuthorizationServer", () => {
     ).toBe("https://as.example.com");
   });
 
+  it("skips malformed entries and returns the first parseable issuer URL", () => {
+    expect(
+      extractAuthorizationServer({
+        authorization_servers: ["not a url", "  ", "https://as.example.com"],
+      }),
+    ).toBe("https://as.example.com");
+  });
+
   it("returns undefined when no authorization server is advertised", () => {
     expect(extractAuthorizationServer({ resource: "x" })).toBeUndefined();
     expect(
@@ -79,6 +87,9 @@ describe("extractAuthorizationServer", () => {
     ).toBeUndefined();
     expect(
       extractAuthorizationServer({ authorization_servers: [""] }),
+    ).toBeUndefined();
+    expect(
+      extractAuthorizationServer({ authorization_servers: ["not a url"] }),
     ).toBeUndefined();
   });
 });

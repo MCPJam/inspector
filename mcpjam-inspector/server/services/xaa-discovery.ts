@@ -75,10 +75,21 @@ export function buildResourceMetadataCandidates(input: string): string[] {
   return [root];
 }
 
+function isParseableUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Read the first authorization-server issuer out of an RFC 9728 PRM document.
- * Returns undefined when the document doesn't advertise one (e.g. the fetched
- * URL wasn't actually PRM), so callers can fall back to another discovery path.
+ * Read the first usable authorization-server issuer out of an RFC 9728 PRM
+ * document. Skips entries that aren't parseable URLs so a malformed entry
+ * doesn't abort discovery when a later entry is valid. Returns undefined when
+ * the document advertises none (e.g. the fetched URL wasn't actually PRM), so
+ * callers can fall back to another discovery path.
  */
 export function extractAuthorizationServer(
   metadata: Record<string, unknown>,
@@ -87,10 +98,16 @@ export function extractAuthorizationServer(
   if (!Array.isArray(servers)) {
     return undefined;
   }
-  const first = servers.find(
-    (s): s is string => typeof s === "string" && s.trim().length > 0,
-  );
-  return first?.trim();
+  for (const entry of servers) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (trimmed && isParseableUrl(trimmed)) {
+      return trimmed;
+    }
+  }
+  return undefined;
 }
 
 export type GrantSupportStatus = "pass" | "warn" | "fail";
