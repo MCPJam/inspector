@@ -333,7 +333,7 @@ export function XAAServerModal({
                     </button>
                   </TooltipTrigger>
                   <TooltipContent variant="muted" side="top" className="max-w-xs">
-                    Leave blank to auto-discover it: the inspector reads the MCP
+                    Leave blank to auto-discover it: MCPJam reads the MCP
                     server&apos;s protected-resource metadata (
                     <code className="font-mono">
                       /.well-known/oauth-protected-resource
