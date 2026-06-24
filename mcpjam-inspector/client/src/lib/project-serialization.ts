@@ -18,6 +18,19 @@ type SerializeOptions = {
   redactSecrets: boolean;
 };
 
+function hasBearerAuthorizationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") {
+    return false;
+  }
+
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.startsWith("Bearer ")
+  );
+}
+
 function serializeServersInternal(
   servers: Record<string, ServerWithName>,
   options: SerializeOptions
@@ -193,6 +206,9 @@ export function deserializeServersFromConvex(
       hasClientSecret: serverData.hasClientSecret === true,
       hasEnv: serverData.hasEnv === true,
       hasHeaders: serverData.hasHeaders === true,
+      hasBearerToken:
+        serverData.hasBearerToken === true ||
+        hasBearerAuthorizationHeader(config.requestInit?.headers),
     };
 
     // Handle oauthFlowProfile from legacy nested structure
@@ -326,6 +342,11 @@ export function serversHaveChanged(
     if (Boolean(localServer.hasEnv) !== Boolean(remoteServer.hasEnv))
       return true;
     if (Boolean(localServer.hasHeaders) !== Boolean(remoteServer.hasHeaders))
+      return true;
+    if (
+      Boolean(localServer.hasBearerToken) !==
+      Boolean(remoteServer.hasBearerToken)
+    )
       return true;
 
     // Check OAuth profile (handle both flat and nested structures)

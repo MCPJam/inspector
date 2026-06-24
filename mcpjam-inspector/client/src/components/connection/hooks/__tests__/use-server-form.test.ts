@@ -332,7 +332,10 @@ describe("useServerForm", () => {
     expect(result.current.authType).toBe("none");
     expect(result.current.customHeaders).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "Authorization", value: "Basic abc123" }),
+        expect.objectContaining({
+          key: "Authorization",
+          value: "Basic abc123",
+        }),
         expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
       ])
     );
@@ -413,6 +416,30 @@ describe("useServerForm", () => {
     });
     // Token value is stripped, but the form knows one is saved and stays clean.
     expect(result.current.bearerToken).toBe("");
+    expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("reads redacted bearer and header flags from config metadata", async () => {
+    const server = {
+      name: "Runtime redacted bearer server",
+      config: {
+        url: "https://example.com/mcp",
+        hasHeaders: true,
+        hasBearerToken: true,
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("bearer");
+    });
+    expect(result.current.hasStoredHeaders).toBe(true);
     expect(result.current.hasStoredBearerToken).toBe(true);
     expect(result.current.hasChanges).toBe(false);
   });

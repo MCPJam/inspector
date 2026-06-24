@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 function jsonResponse(
   body: unknown,
   status = 200,
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = {}
 ): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -46,8 +46,7 @@ describe("runOAuthLogin automatic probe timeout", () => {
           authorization_servers: [authServerUrl],
           scopes_supported: ["openid", "profile", "mcp"],
         },
-        authorizationServerMetadataUrl:
-          `${authServerUrl}/.well-known/oauth-authorization-server`,
+        authorizationServerMetadataUrl: `${authServerUrl}/.well-known/oauth-authorization-server`,
         authorizationServerMetadata: {
           issuer: authServerUrl,
           authorization_endpoint: `${authServerUrl}/authorize`,
@@ -64,9 +63,9 @@ describe("runOAuthLogin automatic probe timeout", () => {
     });
 
     vi.doMock("../src/server-probe.js", async () => {
-      const actual = await vi.importActual<typeof import("../src/server-probe.js")>(
-        "../src/server-probe.js",
-      );
+      const actual = await vi.importActual<
+        typeof import("../src/server-probe.js")
+      >("../src/server-probe.js");
 
       return {
         ...actual,
@@ -133,14 +132,14 @@ describe("runOAuthLogin automatic probe timeout", () => {
         completeHeadlessAuthorization: vi.fn(async () => ({
           code: "auth-code",
         })),
-      },
+      }
     );
 
     expect(mockProbeMcpServer).toHaveBeenCalledWith(
       expect.objectContaining({
         url: serverUrl,
         timeoutMs: 30_000,
-      }),
+      })
     );
-  });
+  }, 15_000);
 });

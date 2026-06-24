@@ -117,6 +117,20 @@ function extractRequestHeaders(
   ) as Record<string, string>;
 }
 
+function hasBearerAuthorizationHeader(
+  headers?: Record<string, string>
+): boolean {
+  if (!headers) {
+    return false;
+  }
+
+  return Object.entries(headers).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      value.startsWith("Bearer ")
+  );
+}
+
 function omitAuthorizationHeader(
   headers?: Record<string, string>
 ): Record<string, string> | undefined {
@@ -736,6 +750,11 @@ export function useServerState({
         lastConnectionTime:
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
+        hasClientSecret:
+          runtimeState?.hasClientSecret ?? server.hasClientSecret,
+        hasEnv: runtimeState?.hasEnv ?? server.hasEnv,
+        hasHeaders: runtimeState?.hasHeaders ?? server.hasHeaders,
+        hasBearerToken: runtimeState?.hasBearerToken ?? server.hasBearerToken,
       };
     }
 
@@ -2322,6 +2341,10 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServerForSave?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : existingServerForSave?.hasBearerToken,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2685,6 +2708,10 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServer?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : existingServer?.hasBearerToken,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(

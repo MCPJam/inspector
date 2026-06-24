@@ -51,12 +51,25 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const text = Buffer.concat(chunks).toString("utf-8");
-    const body = JSON.parse(text);
+    let body: Record<string, any>;
+    try {
+      if (!text.trim()) {
+        throw new Error("Empty request body");
+      }
+      body = JSON.parse(text);
+    } catch {
+      return respond(res, opts, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Parse error" },
+      });
+    }
+
     captured.push({
       headers: Object.fromEntries(
         Object.entries(req.headers).map(([k, v]) => [
           k,
-          Array.isArray(v) ? v.join(",") : v ?? "",
+          Array.isArray(v) ? v.join(",") : (v ?? ""),
         ])
       ),
       body,
@@ -390,7 +403,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
         headers: Object.fromEntries(
           Object.entries(req.headers).map(([k, v]) => [
             k,
-            Array.isArray(v) ? v.join(",") : v ?? "",
+            Array.isArray(v) ? v.join(",") : (v ?? ""),
           ])
         ),
         body,

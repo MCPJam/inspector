@@ -96,6 +96,15 @@ function getAuthorizationHeaderValue(
   return undefined;
 }
 
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasEnv" | "hasHeaders" | "hasBearerToken"
+): boolean {
+  return (
+    !!config && typeof config === "object" && (config as any)[flag] === true
+  );
+}
+
 function toComparableHeaders(
   headers: Array<{ key: string; value: string }>
 ): Array<{ key: string; value: string }> {
@@ -307,7 +316,11 @@ export function useServerForm(
       // Treat that as a bearer server whose token is stored-but-hidden, the
       // same way hasClientSecret / hasHeaders flag other stripped secrets.
       const hasStoredBearerTokenValue =
-        isHttpServer && !hasBearer && !hasOAuth && server.hasBearerToken === true;
+        isHttpServer &&
+        !hasBearer &&
+        !hasOAuth &&
+        (server.hasBearerToken === true ||
+          getRedactedConfigFlag(config, "hasBearerToken"));
       const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
         ? "oauth"
         : hasBearer || hasStoredBearerTokenValue
@@ -377,7 +390,9 @@ export function useServerForm(
       }
       setEnvVars(envArray);
       const hasStoredEnvValue =
-        !isHttpServer && server.hasEnv === true && envArray.length === 0;
+        !isHttpServer &&
+        (server.hasEnv === true || getRedactedConfigFlag(config, "hasEnv")) &&
+        envArray.length === 0;
       setHasStoredEnv(hasStoredEnvValue);
       setEnvRevealed(envArray.length > 0);
       setEnvDirty(false);
@@ -395,7 +410,10 @@ export function useServerForm(
       }
       setCustomHeaders(headersArray);
       const hasStoredHeadersValue =
-        isHttpServer && server.hasHeaders === true && headersArray.length === 0;
+        isHttpServer &&
+        (server.hasHeaders === true ||
+          getRedactedConfigFlag(config, "hasHeaders")) &&
+        headersArray.length === 0;
       setHasStoredHeaders(hasStoredHeadersValue);
       setHeadersRevealed(headersArray.length > 0);
       setHeadersDirty(false);
@@ -582,7 +600,8 @@ export function useServerForm(
         : undefined;
     const nextCustomHeaders = entries
       .filter(
-        ([key]) => !(revealedBearerToken !== undefined && isAuthorizationHeader(key))
+        ([key]) =>
+          !(revealedBearerToken !== undefined && isAuthorizationHeader(key))
       )
       .map(([key, value]) => createHeaderEntry(key, String(value)));
     setCustomHeaders(nextCustomHeaders);
