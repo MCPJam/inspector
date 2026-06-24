@@ -47,6 +47,19 @@ export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
   const router = createBrowserRouter([
+    ...(import.meta.env.DEV
+      ? [
+          {
+            path: "__e2e/oauth-debugger",
+            lazy: async () => {
+              const { OAuthDebuggerE2EHarness } = await import(
+                "./components/e2e/OAuthDebuggerE2EHarness"
+              );
+              return { Component: OAuthDebuggerE2EHarness };
+            },
+          },
+        ]
+      : []),
     {
       element: <App />,
       children: [

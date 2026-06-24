@@ -1,37 +1,59 @@
-diff --git a/.changeset/inspector-npx-version-path.md b/.changeset/inspector-npx-version-path.md
+diff --git a/.changeset/bundled-runtime-paths.md b/.changeset/bundled-runtime-paths.md
 deleted file mode 100644
-index f199b884f..000000000
---- a/.changeset/inspector-npx-version-path.md
+index 96015eb11..000000000
+--- a/.changeset/bundled-runtime-paths.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
+-"@mcpjam/cli": patch
 -"@mcpjam/inspector": patch
 ----
 -
--Resolve the Inspector package version through the package export so hosted templates keep working when Inspector is launched with npx.
+-Resolve Inspector runtime paths through package self-references and add a regression check for bundled/published layouts.
+diff --git a/cli/package.json b/cli/package.json
+index 2ab021463..5ce5526f2 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "3.10.0",
++  "version": "3.10.1",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 8d640ba82..ea5b5bf16 100644
+index ea5b5bf16..57c6ded85 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.18.0",
-+  "version": "2.18.1",
+-  "version": "2.18.1",
++  "version": "2.18.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 7707c89b2..fef43cdbb 100644
+index fef43cdbb..1ce004d70 100644
 --- a/package-lock.json
 +++ b/package-lock.json
+@@ -58,7 +58,7 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "3.10.0",
++      "version": "3.10.1",
+       "dependencies": {
+         "@mcpjam/sdk": "^1.22.0",
+         "@modelcontextprotocol/server": "^2.0.0-alpha.2",
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.18.0",
-+      "version": "2.18.1",
+-      "version": "2.18.1",
++      "version": "2.18.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
