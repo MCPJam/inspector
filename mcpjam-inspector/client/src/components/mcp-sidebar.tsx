@@ -248,6 +248,18 @@ const navigationSections: NavSection[] = [
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
       },
+      // {
+      //   title: "Tracing",
+      //   url: "/tracing",
+      //   icon: Activity,
+      // },
+    ],
+  },
+  {
+    // Auth-flow debuggers get their own section so they read as a related
+    // pair, separated from the surrounding nav by the section dividers.
+    id: "debuggers",
+    items: [
       {
         title: "OAuth Debugger",
         url: "/oauth-flow",
@@ -259,11 +271,6 @@ const navigationSections: NavSection[] = [
         icon: ShieldCheck,
         featureFlag: "xaa",
       },
-      // {
-      //   title: "Tracing",
-      //   url: "/tracing",
-      //   icon: Activity,
-      // },
     ],
   },
   {
