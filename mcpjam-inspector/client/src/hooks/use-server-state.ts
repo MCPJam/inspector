@@ -127,7 +127,7 @@ function hasBearerAuthorizationHeader(
   return Object.entries(headers).some(
     ([key, value]) =>
       key.trim().toLowerCase() === "authorization" &&
-      value.startsWith("Bearer ")
+      value.trim().toLowerCase().startsWith("bearer ")
   );
 }
 

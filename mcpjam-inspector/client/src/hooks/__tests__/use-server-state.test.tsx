@@ -2481,7 +2481,7 @@ describe("syncServerToConvex name-collision recovery", () => {
         type: "http",
         url: "https://bearer.example.com/mcp",
         secretPatch: {
-          headers: { Authorization: "Bearer saved-token" },
+          headers: { authorization: "bearer saved-token" },
         },
       });
     });
@@ -2490,7 +2490,7 @@ describe("syncServerToConvex name-collision recovery", () => {
       expect.objectContaining({
         projectId: "default",
         name: "Bearer Server",
-        headers: { Authorization: "Bearer saved-token" },
+        headers: { authorization: "bearer saved-token" },
         hasBearerToken: true,
       })
     );

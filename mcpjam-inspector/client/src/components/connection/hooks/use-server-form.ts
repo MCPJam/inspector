@@ -196,6 +196,7 @@ export function useServerForm(
 
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
+      let hasServerOAuth = false;
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
@@ -213,11 +214,11 @@ export function useServerForm(
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        hasOAuth =
+        hasServerOAuth =
           server.useOAuth === true ||
           hasOAuthTokens ||
-          hasStoredOAuthConfig ||
           server.oauthFlowProfile != null;
+        hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`
@@ -299,11 +300,12 @@ export function useServerForm(
             config.requestInit?.headers as Record<string, unknown> | undefined
           )
         : undefined;
+      const normalizedAuthorizationHeader = authorizationHeader?.trim();
       const hasBearer =
-        typeof authorizationHeader === "string" &&
-        authorizationHeader.startsWith("Bearer ");
+        typeof normalizedAuthorizationHeader === "string" &&
+        normalizedAuthorizationHeader.toLowerCase().startsWith("bearer ");
       const bearerTokenValue = hasBearer
-        ? authorizationHeader.replace("Bearer ", "")
+        ? normalizedAuthorizationHeader.slice("bearer ".length)
         : "";
       // Redacted configs strip the Authorization header but set hasBearerToken.
       // Treat that as a bearer server whose token is stored-but-hidden, the
@@ -311,13 +313,14 @@ export function useServerForm(
       const hasStoredBearerTokenValue =
         isHttpServer &&
         !hasBearer &&
-        !hasOAuth &&
         (server.hasBearerToken === true ||
           getRedactedConfigFlag(config, "hasBearerToken"));
-      const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
+      const resolvedAuthType: "oauth" | "bearer" | "none" = hasServerOAuth
         ? "oauth"
         : hasBearer || hasStoredBearerTokenValue
         ? "bearer"
+        : hasOAuth
+        ? "oauth"
         : "none";
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
@@ -405,7 +408,8 @@ export function useServerForm(
       const hasStoredHeadersValue =
         isHttpServer &&
         (server.hasHeaders === true ||
-          getRedactedConfigFlag(config, "hasHeaders")) &&
+          getRedactedConfigFlag(config, "hasHeaders") ||
+          hasStoredBearerTokenValue) &&
         headersArray.length === 0;
       setHasStoredHeaders(hasStoredHeadersValue);
       setHeadersRevealed(headersArray.length > 0);

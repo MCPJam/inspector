@@ -95,12 +95,46 @@ describe("serversHaveChanged redacted secrets", () => {
         useOAuth: false,
         hasHeaders: true,
         url: "https://example.test/mcp",
-        headers: { Authorization: "Bearer revealed" },
+        headers: { authorization: "bearer revealed" },
       },
     ]);
 
     expect(servers.s1.hasHeaders).toBe(true);
     expect(servers.s1.hasBearerToken).toBe(true);
+  });
+
+  it("infers remote bearer metadata from lowercase authorization headers", () => {
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        hasHeaders: true,
+        hasBearerToken: true,
+        config: {
+          url: "https://example.test/mcp",
+          requestInit: {
+            headers: { authorization: "bearer revealed" },
+          },
+        } as any,
+      },
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: false,
+          hasHeaders: true,
+          url: "https://example.test/mcp",
+          headers: { authorization: "bearer revealed" },
+        },
+      ])
+    ).toBe(false);
   });
 
   it("treats bearer-token metadata changes as server changes", () => {

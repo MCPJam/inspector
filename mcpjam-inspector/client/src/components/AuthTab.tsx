@@ -80,7 +80,7 @@ function hasBearerAuthorizationHeader(headers: unknown): boolean {
     ([key, value]) =>
       key.trim().toLowerCase() === "authorization" &&
       typeof value === "string" &&
-      value.startsWith("Bearer ")
+      value.trim().toLowerCase().startsWith("bearer ")
   );
 }
 
@@ -388,18 +388,8 @@ export const AuthTab = ({
   const isHttpServer = serverConfig && "url" in serverConfig;
   const supportsOAuth = isHttpServer;
 
-  // Check if OAuth is currently configured/in-use
-  const hasOAuthConfigured = Boolean(
-    serverName &&
-      serverEntry?.useOAuth !== false &&
-      (serverEntry?.useOAuth === true ||
-        serverEntry?.oauthTokens ||
-        getStoredTokens(serverName) ||
-        serverEntry?.connectionStatus === "oauth-flow")
-  );
   const hasBearerConfigured =
     Boolean(isHttpServer) &&
-    !hasOAuthConfigured &&
     (serverEntry?.hasBearerToken === true ||
       hasRedactedBearerFlag(serverConfig) ||
       hasRedactedBearerFlag(serverEntry?.config) ||
@@ -409,6 +399,17 @@ export const AuthTab = ({
       hasBearerAuthorizationHeader(
         (serverEntry?.config as any)?.requestInit?.headers
       ));
+  // Check if OAuth is currently configured/in-use. Stored OAuth tokens can be
+  // stale, so don't let them mask explicit bearer metadata.
+  const storedOAuthTokens = serverName ? getStoredTokens(serverName) : null;
+  const hasOAuthConfigured = Boolean(
+    serverName &&
+      serverEntry?.useOAuth !== false &&
+      (serverEntry?.useOAuth === true ||
+        serverEntry?.oauthTokens ||
+        (!hasBearerConfigured && storedOAuthTokens) ||
+        serverEntry?.connectionStatus === "oauth-flow")
+  );
   const authenticationLabel = !isHttpServer
     ? "Process-based"
     : hasOAuthConfigured
@@ -557,7 +558,7 @@ export const AuthTab = ({
               </div>
             </div>
 
-            {hasBearerConfigured ? (
+            {hasBearerConfigured && !hasOAuthConfigured ? (
               <div className="rounded-md border p-6 space-y-4">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5" />

@@ -27,7 +27,7 @@ function hasBearerAuthorizationHeader(headers: unknown): boolean {
     ([key, value]) =>
       key.trim().toLowerCase() === "authorization" &&
       typeof value === "string" &&
-      value.startsWith("Bearer ")
+      value.trim().toLowerCase().startsWith("bearer ")
   );
 }
 

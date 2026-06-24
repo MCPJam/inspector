@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-app-state", () => ({}));
 vi.mock("@/lib/config", () => ({
@@ -11,8 +11,13 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 }));
 
 import { useServerForm } from "../use-server-form";
+import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 
 describe("useServerForm", () => {
+  beforeEach(() => {
+    vi.mocked(hasOAuthConfig).mockReturnValue(false);
+  });
+
   it("defaults OAuth protocol mode to explicit latest", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -417,6 +422,30 @@ describe("useServerForm", () => {
     // Token value is stripped, but the form knows one is saved and stays clean.
     expect(result.current.bearerToken).toBe("");
     expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("lets hidden bearer metadata win over stale stored OAuth config", async () => {
+    vi.mocked(hasOAuthConfig).mockReturnValue(true);
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("bearer");
+    });
+    expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasStoredHeaders).toBe(true);
     expect(result.current.hasChanges).toBe(false);
   });
 

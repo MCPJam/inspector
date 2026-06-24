@@ -52,7 +52,7 @@ describe("AuthTab", () => {
     const serverConfig = httpConfig({
       requestInit: {
         headers: {
-          Authorization: "Bearer visible-token",
+          authorization: "bearer visible-token",
         },
       },
     });
@@ -116,7 +116,7 @@ describe("AuthTab", () => {
         serverConfig={serverConfig}
         serverEntry={createServer({
           config: serverConfig,
-          useOAuth: false,
+          useOAuth: undefined,
           hasBearerToken: true,
         })}
         serverName="test-server"
