@@ -266,6 +266,12 @@ export function EditServerFormContent({
             clientSecretError={formState.clientSecretError}
             projectId={projectId}
             hostedServerId={hostedServerId}
+            xaaAuthzIssuer={formState.xaaAuthzIssuer}
+            onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaSubject={formState.xaaSubject}
+            onXaaSubjectChange={formState.setXaaSubject}
+            xaaEmail={formState.xaaEmail}
+            onXaaEmailChange={formState.setXaaEmail}
           />
         </div>
       )}

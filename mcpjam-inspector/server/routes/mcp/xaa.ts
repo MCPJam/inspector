@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Context, MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
@@ -12,7 +12,6 @@ import {
 } from "../../../shared/xaa.js";
 import {
   getXAAIdpJwks,
-  getXAAIssuerUrl,
   initXAAIdpKeyPair,
 } from "../../services/xaa-idp-keypair.js";
 import {
@@ -21,6 +20,11 @@ import {
   issueNegativeIdJag,
 } from "../../services/xaa-idjag-signer.js";
 import {
+  buildJwtBearerBody,
+  getIssuerForRequest,
+  resolveServerTarget,
+} from "../../services/xaa-mint.js";
+import {
   executeOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
@@ -28,11 +32,9 @@ import {
 } from "../../utils/oauth-proxy.js";
 import {
   buildDiscoveryCandidates,
-  buildResourceMetadataCandidates,
   evaluateDiscovery,
-  extractAuthorizationServer,
 } from "../../services/xaa-discovery.js";
-import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { WebRouteError } from "../web/errors.js";
 import {
   fetchServerClientSecret,
   fetchXaaResourceAppSecret,
@@ -318,186 +320,6 @@ function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
   return parsed.data;
 }
 
-// Resolved authorization-server target for a server-target run. Every field
-// is pinned server-side from the stored server config; nothing is taken from
-// the request body.
-interface ResolvedServerTarget {
-  tokenEndpoint: string;
-  clientId?: string;
-  clientSecret?: string;
-}
-
-// RFC 9728: ask the resource (the MCP server URL) which authorization server
-// protects it, by reading authorization_servers[0] from its protected-resource
-// metadata. The resource URL is NOT itself an AS issuer, so this is the only
-// spec-defined way to learn the issuer when one isn't configured. Returns
-// undefined (rather than throwing) when no PRM/issuer is found, so the caller
-// can fall back to probing the resource URL directly.
-async function discoverIssuerFromResourceMetadata(
-  resource: string,
-  httpsOnly: boolean
-): Promise<string | undefined> {
-  let candidates: string[];
-  try {
-    candidates = buildResourceMetadataCandidates(resource);
-  } catch {
-    return undefined;
-  }
-
-  for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
-    if ("metadata" in result) {
-      const issuer = extractAuthorizationServer(result.metadata);
-      if (issuer) {
-        return issuer;
-      }
-    }
-  }
-
-  return undefined;
-}
-
-// Discover the token endpoint for a server target, reusing the same well-known
-// sweep as /discover-as. The issuer is resolved server-side (the client never
-// supplies it), in priority order:
-//   1. the stored xaaAuthzIssuer, if configured;
-//   2. otherwise the authorization server named in the resource's RFC 9728
-//      protected-resource metadata;
-//   3. otherwise the resource URL itself (legacy behavior — covers servers that
-//      self-host RFC 8414 metadata at the resource origin and serve no PRM).
-async function discoverServerTargetTokenEndpoint(
-  args: {
-    resource?: string;
-    explicitIssuer?: string;
-  },
-  httpsOnly: boolean
-): Promise<string> {
-  let issuer = args.explicitIssuer;
-  if (!issuer && args.resource) {
-    issuer = await discoverIssuerFromResourceMetadata(args.resource, httpsOnly);
-  }
-  // Legacy fallback: treat the resource URL as the issuer when neither a stored
-  // issuer nor a PRM-advertised one is available.
-  issuer = issuer || args.resource;
-
-  if (!issuer) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "The server has no URL or issuer to discover an authorization server from"
-    );
-  }
-
-  let candidates: string[];
-  try {
-    candidates = buildDiscoveryCandidates(issuer);
-  } catch {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "The server's authorization issuer is not a valid URL"
-    );
-  }
-
-  for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
-    if ("metadata" in result) {
-      const verdict = evaluateDiscovery(result.metadata, {
-        requestedIssuer: issuer,
-        metadataUrl: candidate,
-      });
-      if (verdict.tokenEndpoint) {
-        return verdict.tokenEndpoint;
-      }
-    }
-  }
-
-  throw new WebRouteError(
-    404,
-    ErrorCode.NOT_FOUND,
-    "Couldn't discover an authorization server. Set the issuer in Configure Server to Test."
-  );
-}
-
-// Resolve a server target's secret AND token endpoint entirely server-side.
-// The browser sends only serverId + projectId; the stored config dictates the
-// secret, client id, and the endpoint the secret may be posted to — so a
-// caller can never redirect the confidential secret elsewhere.
-async function resolveServerTarget(
-  options: CreateXaaRouterOptions,
-  args: {
-    serverId: string;
-    projectId?: string;
-    bearerToken: string;
-  }
-): Promise<ResolvedServerTarget> {
-  if (!options.resolveServerSecret) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Server-target runs are not available on this instance"
-    );
-  }
-  if (!args.projectId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "projectId is required for server-target runs"
-    );
-  }
-
-  const resolved = await options.resolveServerSecret({
-    serverId: args.serverId,
-    projectId: args.projectId,
-    bearerToken: args.bearerToken,
-  });
-
-  if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "The server has no URL or issuer to discover an authorization server from"
-    );
-  }
-
-  const tokenEndpoint = await discoverServerTargetTokenEndpoint(
-    {
-      resource: resolved.serverUrl ?? undefined,
-      explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
-    },
-    options.httpsOnlyProxy
-  );
-
-  return {
-    tokenEndpoint,
-    clientId: resolved.clientId ?? undefined,
-    clientSecret: resolved.clientSecret ?? undefined,
-  };
-}
-
-function getIssuerForRequest(
-  c: Context,
-  issuerBasePath: string,
-  trustForwardedHeaders: boolean
-): string {
-  const parsed = new URL(c.req.url);
-
-  if (trustForwardedHeaders) {
-    // Only the scheme is reconstructed from a forwarded header: the edge
-    // terminates TLS so c.req.url is http:// internally. The host already
-    // comes from the validated Host header in c.req.url, so we do NOT trust
-    // X-Forwarded-Host — honoring it would let a client inject an arbitrary
-    // issuer/jwks_uri (and a forged `iss` on the signed ID-JAG). Restrict to
-    // a known scheme so a forwarded value can't switch to another protocol.
-    const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-    if (proto === "https" || proto === "http") {
-      parsed.protocol = proto;
-    }
-  }
-
-  return getXAAIssuerUrl(`${parsed.origin}${issuerBasePath}`);
-}
-
 function decodeJwtPayloadUnsafe(token: string): ParsedJwtPayload {
   const parts = token.split(".");
   if (parts.length !== 3) {
@@ -707,7 +529,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         // stored server config. Everything is pinned by ASSIGNMENT — the
         // client-supplied tokenEndpoint/clientId/clientSecret/headers are
         // discarded so the confidential secret can't be redirected.
-        const resolved = await resolveServerTarget(options, {
+        const resolved = await resolveServerTarget({
+          resolveServerSecret: options.resolveServerSecret,
+          httpsOnly: options.httpsOnlyProxy,
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
@@ -758,14 +582,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const result = await executeOAuthProxy({
         url,
         method: "POST",
-        body: {
-          grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        body: buildJwtBearerBody({
           assertion: parsed.assertion,
-          ...(clientId ? { client_id: clientId } : {}),
-          ...(clientSecret ? { client_secret: clientSecret } : {}),
-          ...(parsed.scope ? { scope: parsed.scope } : {}),
-          ...(parsed.resource ? { resource: parsed.resource } : {}),
-        },
+          clientId,
+          clientSecret,
+          scope: parsed.scope,
+          resource: parsed.resource,
+        }),
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           ...(extraHeaders || {}),
@@ -967,7 +790,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         // resolved/discovered from the stored server config and pinned by
         // assignment; client-supplied endpoint/clientId/secret/headers are
         // discarded.
-        const resolved = await resolveServerTarget(options, {
+        const resolved = await resolveServerTarget({
+          resolveServerSecret: options.resolveServerSecret,
+          httpsOnly: options.httpsOnlyProxy,
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),

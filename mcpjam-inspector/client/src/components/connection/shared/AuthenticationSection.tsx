@@ -19,6 +19,7 @@ import {
 } from "@mcpjam/design-system/select";
 import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
 import type {
+  ServerFormAuthType,
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
@@ -26,8 +27,8 @@ import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-ap
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
-  authType: "oauth" | "bearer" | "none";
-  onAuthTypeChange: (value: "oauth" | "bearer" | "none") => void;
+  authType: ServerFormAuthType;
+  onAuthTypeChange: (value: ServerFormAuthType) => void;
   showAuthSettings: boolean;
   bearerToken: string;
   onBearerTokenChange: (value: string) => void;
@@ -60,6 +61,14 @@ interface AuthenticationSectionProps {
   /** Hosted-mode reveal context. Both must be provided to enable the Reveal button. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  // Cross-App Access (XAA) fields. Client id / secret / scopes reuse the props
+  // above; these are XAA-specific.
+  xaaAuthzIssuer?: string;
+  onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaSubject?: string;
+  onXaaSubjectChange?: (value: string) => void;
+  xaaEmail?: string;
+  onXaaEmailChange?: (value: string) => void;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -112,8 +121,16 @@ export function AuthenticationSection({
   clientSecretError,
   projectId = null,
   hostedServerId = null,
+  xaaAuthzIssuer = "",
+  onXaaAuthzIssuerChange,
+  xaaSubject = "",
+  onXaaSubjectChange,
+  xaaEmail = "",
+  onXaaEmailChange,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const [showAdvancedXaa, setShowAdvancedXaa] = useState(false);
+  const [isXaaSecretVisible, setIsXaaSecretVisible] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
@@ -279,7 +296,7 @@ export function AuthenticationSection({
           </label>
           <Select
             value={authType}
-            onValueChange={(value: "oauth" | "bearer" | "none") => {
+            onValueChange={(value: ServerFormAuthType) => {
               if (value !== "oauth") {
                 setShowAdvancedOAuth(false);
               }
@@ -293,6 +310,7 @@ export function AuthenticationSection({
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -653,6 +671,213 @@ export function AuthenticationSection({
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Cross-App Access (XAA) Settings */}
+        {showAuthSettings && authType === "xaa" && (
+          <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
+            {/* Identity provider — single option in v1; bring-your-own-IdP joins
+                here later without a relabel. */}
+            <div className="space-y-2 pt-3">
+              <label className="block text-sm font-medium text-foreground">
+                Identity provider
+              </label>
+              <Select value="mcpjam" disabled>
+                <SelectTrigger className="w-full h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mcpjam">
+                    MCPJam test identity provider
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                MCPJam signs a test identity for the cross-app access flow.
+              </p>
+            </div>
+
+            {/* Authorization server credentials (resource AS, leg 3) */}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
+                  Client ID
+                  <span className="text-destructive" aria-hidden="true">
+                    {" *"}
+                  </span>
+                </label>
+                <Input
+                  value={clientId}
+                  onChange={(e) => onClientIdChange(e.target.value)}
+                  placeholder="Client ID registered with the server's authorization server"
+                  aria-required
+                  className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
+                />
+                {clientIdError && (
+                  <p className="text-xs text-red-500">{clientIdError}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium text-foreground">
+                    Client Secret (Optional)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    {hasStoredClientSecret && !clearClientSecret && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs"
+                        onClick={onClearClientSecret}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                    {hasStoredClientSecret && clearClientSecret && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs"
+                        onClick={onUndoClearClientSecret}
+                      >
+                        Undo
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {hasStoredClientSecret && clearClientSecret ? (
+                  <p className="text-xs text-muted-foreground">
+                    Saved client secret will be removed when you save.
+                  </p>
+                ) : (
+                  <div className="relative">
+                    <Input
+                      type={isXaaSecretVisible ? "text" : "password"}
+                      value={clientSecret}
+                      onChange={(e) => onClientSecretChange(e.target.value)}
+                      placeholder={
+                        hasStoredClientSecret
+                          ? "Saved — enter a new value to replace"
+                          : "Client secret (for confidential clients)"
+                      }
+                      className="h-10 pr-10"
+                    />
+                    <button
+                      type="button"
+                      aria-label={
+                        isXaaSecretVisible
+                          ? "Hide client secret"
+                          : "Show client secret"
+                      }
+                      title={
+                        isXaaSecretVisible
+                          ? "Hide client secret"
+                          : "Show client secret"
+                      }
+                      onClick={() => setIsXaaSecretVisible((prev) => !prev)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                    >
+                      {isXaaSecretVisible ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                )}
+                {clientSecretError && (
+                  <p className="text-xs text-red-500">{clientSecretError}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
+                  Scopes
+                </label>
+                <Input
+                  value={oauthScopesInput}
+                  onChange={(e) => onOauthScopesChange(e.target.value)}
+                  placeholder="Optional scopes separated by spaces"
+                  className="h-10"
+                />
+              </div>
+            </div>
+
+            {/* Advanced: issuer + simulated identity */}
+            <button
+              type="button"
+              onClick={() => setShowAdvancedXaa(!showAdvancedXaa)}
+              className="w-full flex items-center gap-2 py-2 hover:bg-muted/50 transition-colors cursor-pointer"
+            >
+              {showAdvancedXaa ? (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <span className="text-xs font-medium text-muted-foreground">
+                Advanced
+              </span>
+            </button>
+
+            {showAdvancedXaa && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    Authorization Server Issuer
+                  </label>
+                  <Input
+                    value={xaaAuthzIssuer}
+                    onChange={(e) => onXaaAuthzIssuerChange?.(e.target.value)}
+                    placeholder="Auto-discovered if blank"
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="h-10"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave blank to auto-discover it from the server&apos;s
+                    protected-resource metadata.
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-border bg-background/40 p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Simulated identity — the test IdP mints a mock login for this
+                    user before the flow runs. Leave blank to use a test
+                    identity.
+                  </p>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-foreground">
+                      Subject (sub)
+                    </label>
+                    <Input
+                      value={xaaSubject}
+                      onChange={(e) => onXaaSubjectChange?.(e.target.value)}
+                      placeholder="user-12345"
+                      spellCheck={false}
+                      autoComplete="off"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-foreground">
+                      Email
+                    </label>
+                    <Input
+                      value={xaaEmail}
+                      onChange={(e) => onXaaEmailChange?.(e.target.value)}
+                      placeholder="demo.user@example.com"
+                      spellCheck={false}
+                      autoComplete="off"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
               </div>
             )}
           </div>

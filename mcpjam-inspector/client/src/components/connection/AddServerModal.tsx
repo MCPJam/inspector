@@ -444,6 +444,12 @@ export function AddServerModal({
               }
               clientIdError={formState.clientIdError}
               clientSecretError={formState.clientSecretError}
+              xaaAuthzIssuer={formState.xaaAuthzIssuer}
+              onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+              xaaSubject={formState.xaaSubject}
+              onXaaSubjectChange={formState.setXaaSubject}
+              xaaEmail={formState.xaaEmail}
+              onXaaEmailChange={formState.setXaaEmail}
             />
           )}
 
