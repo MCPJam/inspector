@@ -862,7 +862,8 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "OAuth authorization failed: access_denied: User denied access"
+      "OAuth authorization failed: access_denied: User denied access",
+      { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -891,7 +892,8 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "Error completing OAuth flow: Token exchange failed"
+      "Error completing OAuth flow: Token exchange failed",
+      { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -1270,7 +1272,8 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      { duration: Infinity }
     );
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
@@ -1293,7 +1296,8 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      { duration: Infinity }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
     expect(mockCreateServer).not.toHaveBeenCalled();
@@ -1329,7 +1333,8 @@ describe("useServerState OAuth callback failures", () => {
       error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
     });
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      { duration: Infinity }
     );
   });
 
@@ -1682,7 +1687,8 @@ describe("useServerState OAuth callback failures", () => {
       error: "Failed to resolve registry OAuth config: registry lookup failed",
     });
     expect(toastError).toHaveBeenCalledWith(
-      "Network error: Failed to resolve registry OAuth config: registry lookup failed"
+      "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+      { duration: Infinity }
     );
   });
 

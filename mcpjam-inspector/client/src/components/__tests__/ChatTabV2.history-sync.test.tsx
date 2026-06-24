@@ -704,7 +704,8 @@ describe("ChatTabV2 history sync", () => {
     );
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
-      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
+      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      { duration: Infinity }
     );
   });
 
