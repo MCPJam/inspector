@@ -94,7 +94,13 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useHost, useHostList, type HostDetail } from "@/hooks/useClients";
+import {
+  useHost,
+  useHostList,
+  useHostMutations,
+  type HostDetail,
+} from "@/hooks/useClients";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
@@ -872,10 +878,41 @@ export function PlaygroundMain({
     multiHostEnabled,
     setMultiHostEnabled,
   } = usePersistedHost(multiHostProjectId);
-  const { hosts: hostList } = useHostList({
+  const { hosts: hostList, isLoading: hostListLoading } = useHostList({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
+  const { createHost: createPlaygroundHost } = useHostMutations();
+  // Seed backstop: the global host bar (which normally auto-creates the
+  // default "MCPJam" host for empty projects) is hidden on the playground,
+  // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
+  // + a ref so it fires at most once and never duplicates.
+  const playgroundSeededHostRef = useRef(false);
+  useEffect(() => {
+    if (
+      !isConvexAuthenticated ||
+      hostListLoading ||
+      !multiHostProjectId ||
+      hostList.length > 0 ||
+      playgroundSeededHostRef.current
+    ) {
+      return;
+    }
+    playgroundSeededHostRef.current = true;
+    createPlaygroundHost({
+      projectId: multiHostProjectId,
+      name: "MCPJam",
+      input: emptyHostConfigInputV2(),
+    }).catch(() => {
+      playgroundSeededHostRef.current = false;
+    });
+  }, [
+    isConvexAuthenticated,
+    hostListLoading,
+    multiHostProjectId,
+    hostList.length,
+    createPlaygroundHost,
+  ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.

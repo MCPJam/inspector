@@ -2997,7 +2997,13 @@ export default function App() {
 
   const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
   const globalHostBarProps =
-    isAuthenticated && convexProjectId && !isEvalsTab
+    isAuthenticated &&
+    convexProjectId &&
+    !isEvalsTab &&
+    // The playground has its own client chip in the chat-input toolbar
+    // (switch / compare / add host), so the global host bar is redundant
+    // there. It stays on every other tab.
+    activeTab !== "playground"
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
