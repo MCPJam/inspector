@@ -587,6 +587,7 @@ export const evalTraceBlobV1Z = z.object({
   widgetSnapshots: z.array(evalTraceWidgetSnapshotZ).optional(),
   spans: z.array(evalTraceSpanZ).optional(),
   prompts: z.array(promptTraceSummaryZ).optional(),
+  videoBlobId: z.string().optional(),
 });
 
 export function msOffsetFromRunStart(
