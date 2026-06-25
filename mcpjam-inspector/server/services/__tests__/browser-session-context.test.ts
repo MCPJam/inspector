@@ -86,6 +86,7 @@ beforeEach(() => {
   runScriptedStepImpl.mockResolvedValue({
     ok: true,
     widgetToolCalls: [],
+    followUps: [],
     elapsedMs: 1,
   });
 });
@@ -701,6 +702,97 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
       passed: true,
     });
     expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("forwards prior widget tool calls across separate unified steps (widgetToolCalled sees an earlier interact's call)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    // Keep the widget mounted across render so the unified replay path is
+    // eligible (otherwise the widget is dismissed after render).
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+    harnessInstances[0]!.getMountedWidgetId.mockReturnValue("tc-1");
+
+    const checkoutCall = {
+      name: "checkout",
+      args: { cartId: "c1" },
+      ok: true,
+      elapsedMs: 1,
+    };
+    // Step 1 (interact: a click) triggers a widget→host call...
+    runScriptedStepImpl.mockResolvedValueOnce({
+      ok: true,
+      widgetToolCalls: [checkoutCall],
+      followUps: [],
+      elapsedMs: 1,
+    });
+    await ctx.replayInteractStep("create_view", {
+      kind: "click",
+      target: { role: { role: "button", name: "Checkout" } },
+    });
+    // Step 2 (a SEPARATE assert) must see the call the click triggered.
+    await ctx.evaluateWidgetAssertion("create_view", {
+      kind: "widgetToolCalled",
+      toolName: "create_view",
+      calledToolName: "checkout",
+    });
+
+    // The assert's runScriptedStep call must receive the accumulated calls.
+    const assertCallArg = runScriptedStepImpl.mock.calls.at(-1)?.[0];
+    expect(assertCallArg.priorWidgetToolCalls).toEqual([checkoutCall]);
+  });
+
+  it("drains a widget's render-time ui/message follow-up as a model turn", async () => {
+    // Auto-send-on-render: a widget that emits ui/message during its initial
+    // render must continue the model turn, not be silently dropped.
+    rendered();
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 1,
+      followUps: ["auto-sent on render"],
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    expect(ctx.drainFollowUps()).toEqual(["auto-sent on render"]);
+    // The trace observation stays a pure render record (no followUps leak).
+    const obs = ctx.widgetRenderObservations.find(
+      (o) => o.toolCallId === "tc-1",
+    );
+    expect(obs).toBeDefined();
+    expect((obs as Record<string, unknown>).followUps).toBeUndefined();
+  });
+
+  it("truncates an oversized render follow-up before it drives a model turn", async () => {
+    rendered();
+    const huge = "x".repeat(200_000);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 1,
+      followUps: [huge],
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const drained = ctx.drainFollowUps();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.length).toBeLessThan(huge.length);
   });
 
   it("records a failure when a scripted assertion fails", async () => {
