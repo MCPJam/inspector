@@ -21,6 +21,7 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -1622,8 +1623,10 @@ export async function runEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
+    // resolveSteps converts legacy promptTurns/probe rows so multi-turn cases
+    // without persisted `steps` count their real model calls, not a floored 1.
     modelStepCount: countModelSteps(
-      (testCase as { steps?: TestStep[] }).steps ?? []
+      resolveSteps(testCase as unknown as Parameters<typeof resolveSteps>[0])
     ),
   });
 
@@ -1992,8 +1995,10 @@ export async function streamEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
+    // resolveSteps converts legacy promptTurns/probe rows so multi-turn cases
+    // without persisted `steps` count their real model calls, not a floored 1.
     modelStepCount: countModelSteps(
-      (testCase as { steps?: TestStep[] }).steps ?? []
+      resolveSteps(testCase as unknown as Parameters<typeof resolveSteps>[0])
     ),
   });
 

@@ -107,6 +107,14 @@ const CONNECTION_OPENING_IDS = new Set([
   readServerResourceOperation.name,
 ]);
 
+// Operations that mutate state and therefore require user approval when the
+// host enables it — connection-opening tools plus state-changing writes like
+// cancelling an in-flight eval run.
+const APPROVAL_REQUIRED_IDS = new Set([
+  ...CONNECTION_OPENING_IDS,
+  cancelEvalRunOperation.name,
+]);
+
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
 // updated" default for context-free callers.
@@ -170,7 +178,7 @@ export function buildMcpjamTool(
   if (!operation) return null;
 
   const needsApproval =
-    CONNECTION_OPENING_IDS.has(id) && opts.requireToolApproval === true;
+    APPROVAL_REQUIRED_IDS.has(id) && opts.requireToolApproval === true;
 
   return tool({
     description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,

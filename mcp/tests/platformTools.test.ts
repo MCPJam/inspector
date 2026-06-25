@@ -235,7 +235,6 @@ describe("platform tool registration", () => {
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "run_eval_case",
-      "cancel_eval_run",
       "run_eval_suite",
       "create_eval_suite",
       "update_eval_suite",
@@ -244,9 +243,11 @@ describe("platform tool registration", () => {
       "update_eval_case",
       "generate_eval_cases",
     ]);
-    const DESTRUCTIVE_DELETES = new Set([
+    const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
       "delete_eval_case",
+      // Cancelling a run terminates in-flight work, so it announces destructive.
+      "cancel_eval_run",
     ]);
 
     for (const registration of registrations) {
@@ -256,8 +257,8 @@ describe("platform tool registration", () => {
           destructiveHint: false,
           idempotentHint: false,
         });
-      } else if (DESTRUCTIVE_DELETES.has(registration.name)) {
-        // Known-destructive deletes announce it explicitly.
+      } else if (DESTRUCTIVE_OPS.has(registration.name)) {
+        // Known-destructive ops (deletes + cancel) announce it explicitly.
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: true,

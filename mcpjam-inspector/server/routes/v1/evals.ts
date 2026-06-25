@@ -2489,9 +2489,23 @@ evals.post(
                 : {}),
             },
           ];
-      const steps = Array.isArray(draft.steps)
+      const normalizedSteps = Array.isArray(draft.steps)
         ? normalizeSteps(draft.steps)
-        : promptTurnsToSteps(promptTurns);
+        : [];
+      // Negative cases must carry no expected tool calls, so drop any
+      // `toolCalledWith` asserts that survive inside authored steps; and fall
+      // back to the promptTurns/query conversion when steps normalize to empty.
+      const draftSteps = isNeg
+        ? normalizedSteps.filter(
+            (s) =>
+              !(
+                s.kind === "assert" &&
+                (s.assertion as { type?: string }).type === "toolCalledWith"
+              )
+          )
+        : normalizedSteps;
+      const steps =
+        draftSteps.length > 0 ? draftSteps : promptTurnsToSteps(promptTurns);
       const args: Record<string, unknown> = {
         suiteId,
         title: draft.title,
