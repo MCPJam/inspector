@@ -28,7 +28,6 @@ import {
   authorEvalSuite,
   createConvexClients,
   resolveServerIdsOrThrow,
-  promptTurnSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
   type PreparedEvalRun,
@@ -38,7 +37,24 @@ import {
   matchOptionsSchema,
   casePredicatesSchema,
 } from "@/shared/eval-matching";
-import { probeConfigSchema, TEST_CASE_TYPES } from "@/shared/probe-config";
+import {
+  stepsSchema,
+  normalizeSteps,
+  deriveQuery,
+  isPromptStep,
+  isToolCallStep,
+  isAssertStep,
+  isWidgetAssertion,
+  promptTurnsToSteps,
+  probeConfigToToolCallStep,
+  type TestStep,
+} from "@/shared/steps";
+import type { TestCaseType, ProbeConfig } from "@/shared/probe-config";
+import type { PromptTurn } from "@/shared/steps";
+import {
+  assembleStepResults,
+  type EvalStepReplay,
+} from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
@@ -52,23 +68,201 @@ import {
 
 const evals = new Hono();
 
+// ── Public authoring contract: TestStep[] ↔ internal case fields ──────
+//
+// The public eval surface authors cases as an ordered `steps` array
+// (`TestStep[]` — see shared/steps.ts). The shared run/author pipeline now
+// executes from `steps`; the older per-case fields (`query` /
+// `expectedToolCalls`) remain as denormalized compatibility/display fields.
+// These routes preserve `steps` and project those display fields from the same
+// source so both contracts stay in sync.
+
+/** One turn projected from the steps array: a prompt + its following asserts. */
+type InternalExpectedToolCall = {
+  toolName: string;
+  arguments: Record<string, unknown>;
+};
+
+/** Collect the `toolCalledWith` predicate asserts that follow a prompt. */
+function expectedCallsFromAsserts(
+  steps: TestStep[]
+): InternalExpectedToolCall[] {
+  const out: InternalExpectedToolCall[] = [];
+  for (const step of steps) {
+    if (!isAssertStep(step)) continue;
+    const a = step.assertion;
+    if (isWidgetAssertion(a)) continue;
+    if (a.type === "toolCalledWith") {
+      out.push({ toolName: a.toolName, arguments: a.args.args ?? {} });
+    }
+  }
+  return out;
+}
+
+/**
+ * Internal display fields derived from a public `steps` array. `caseType` /
+ * `probeConfig` are route-local classifiers used to detect model-free
+ * render-check cases; the original `steps` array remains the persisted/run
+ * source of truth.
+ */
+type InternalCaseFields = {
+  query: string;
+  expectedToolCalls?: InternalExpectedToolCall[];
+  caseType?: TestCaseType;
+  probeConfig?: {
+    serverId?: string;
+    serverName: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    renderTimeoutMs?: number;
+  };
+};
+
+/**
+ * Project a public `steps` array onto legacy display/compat fields.
+ */
+function stepsToInternalCaseFields(steps: TestStep[]): InternalCaseFields {
+  const promptSteps = steps.filter(isPromptStep);
+  const toolCallSteps = steps.filter(isToolCallStep);
+
+  // Model-free render-check: a single deterministic toolCall, no prompt.
+  if (promptSteps.length === 0 && toolCallSteps.length === 1) {
+    const call = toolCallSteps[0]!;
+    return {
+      query: "",
+      caseType: "widget_probe",
+      probeConfig: {
+        ...(call.serverId ? { serverId: call.serverId } : {}),
+        serverName: call.serverName,
+        toolName: call.toolName,
+        arguments: call.arguments,
+        ...(call.renderTimeoutMs !== undefined
+          ? { renderTimeoutMs: call.renderTimeoutMs }
+          : {}),
+      },
+    };
+  }
+
+  // Prompt case. Group steps into turns by `prompt`; each turn's expected
+  // tool calls are the `toolCalledWith` asserts that follow it.
+  const turns: Array<{ prompt: string; asserts: TestStep[] }> = [];
+  let current: { prompt: string; asserts: TestStep[] } | undefined;
+  for (const step of steps) {
+    if (isPromptStep(step)) {
+      current = { prompt: step.prompt, asserts: [] };
+      turns.push(current);
+    } else if (current) {
+      current.asserts.push(step);
+    }
+  }
+
+  if (turns.length <= 1) {
+    const only = turns[0];
+    return {
+      query: only?.prompt ?? deriveQuery(steps),
+      expectedToolCalls: expectedCallsFromAsserts(steps),
+    };
+  }
+
+  return {
+    query: turns[0]!.prompt,
+    expectedToolCalls: [],
+  };
+}
+
+function withImplicitRenderAssertForSingleToolCall(
+  steps: TestStep[]
+): TestStep[] {
+  const normalized = normalizeSteps(steps);
+  if (normalized.length !== 1 || !isToolCallStep(normalized[0]!)) {
+    return normalized;
+  }
+  const call = normalized[0]!;
+  return [
+    call,
+    {
+      id: `${call.id}-rendered`,
+      kind: "assert",
+      assertion: { type: "widgetRendered", toolName: call.toolName },
+    },
+  ];
+}
+
 // ── Request schema ───────────────────────────────────────────────────
 
 const MAX_V1_TESTS = 100;
 
+// Public inline-test shape for run-create. The case body is the `steps`
+// contract (`TestStep[]`); model/provider/runs are required (no suite-level
+// defaults exist on the run path). `stepsToInternalCaseFields` projects each
+// case onto the internal run-schema fields before `prepareEvalRun`.
+const publicInlineTestSchema = z.object({
+  title: z.string().min(1),
+  steps: stepsSchema.min(1),
+  runs: z.number().int().positive().max(10),
+  model: z.string().min(1),
+  provider: z.string().min(1),
+  expectedOutput: z.string().optional(),
+  isNegativeTest: z.boolean().optional(),
+  scenario: z.string().optional(),
+  advancedConfig: z
+    .object({
+      system: z.string().optional(),
+      temperature: z.number().optional(),
+      toolChoice: z.any().optional(),
+    })
+    .passthrough()
+    .optional(),
+  matchOptions: matchOptionsSchema.optional(),
+  predicates: casePredicatesSchema.optional(),
+});
+type PublicInlineTest = z.infer<typeof publicInlineTestSchema>;
+
+/** Project a public inline test (`steps`) onto the internal run-schema test. */
+function publicInlineTestToRunTest(
+  test: PublicInlineTest
+): RunEvalsRequest["tests"][number] {
+  const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
+  return {
+    title: test.title,
+    steps: withImplicitRenderAssertForSingleToolCall(test.steps as TestStep[]),
+    query: derived.query,
+    runs: test.runs,
+    model: test.model,
+    provider: test.provider,
+    expectedToolCalls: derived.expectedToolCalls ?? [],
+    ...(test.expectedOutput !== undefined
+      ? { expectedOutput: test.expectedOutput }
+      : {}),
+    ...(test.isNegativeTest !== undefined
+      ? { isNegativeTest: test.isNegativeTest }
+      : {}),
+    ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+    ...(test.advancedConfig !== undefined
+      ? { advancedConfig: test.advancedConfig }
+      : {}),
+    ...(test.matchOptions !== undefined
+      ? { matchOptions: test.matchOptions }
+      : {}),
+    ...(test.predicates !== undefined ? { predicates: test.predicates } : {}),
+  };
+}
+
 // Public shape: the web RunEvalsRequestSchema minus hosted-app plumbing the
 // public surface must not accept (`convexAuthToken` comes from the bearer;
-// chatbox/access/storage fields are hosted-client concerns).
+// chatbox/access/storage fields are hosted-client concerns) and minus the
+// internal-contract `tests` (replaced by the public `steps`-based shape).
 const createEvalRunSchema = RunEvalsRequestSchema.omit({
   convexAuthToken: true,
   chatboxId: true,
   accessVersion: true,
   storageServerIds: true,
+  tests: true,
 })
   .extend({
     // Inline tests are optional on the public surface: a bare `suiteId`
     // rerun is the simplest possible call.
-    tests: RunEvalsRequestSchema.shape.tests.max(MAX_V1_TESTS).default([]),
+    tests: z.array(publicInlineTestSchema).max(MAX_V1_TESTS).default([]),
     // Optional on reruns: when omitted with a `suiteId`, the route derives
     // the suite's saved server selection (the set the run snapshot will
     // reference) via `testSuites:getSuiteRunServerSelection`, so the
@@ -84,21 +278,11 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
 
 // ── Author-only suite-create schema ──────────────────────────────────
 
-// An expected tool call may be given as a bare tool name or a {toolName,
-// arguments} object — the ergonomic authoring shape. `normalizeCreateTests…`
-// expands both into the wire `{ toolName, arguments }` the run schema expects.
-const expectedToolCallEntrySchema = z.union([
-  z.string().min(1),
-  z.object({
-    toolName: z.string().min(1),
-    arguments: z.record(z.string(), z.any()).optional(),
-  }),
-]);
-
 // Ergonomic body for author-only suite creation. NOT `RunEvalsRequestSchema`:
-// per-test `runs`/`model`/`provider`/`expectedToolCalls` are optional here and
-// filled from suite-level defaults by `normalizeCreateTestsToRunTests` before
-// the strict run schema validates them.
+// per-test `runs`/`model`/`provider` are optional here and filled from
+// suite-level defaults by `normalizeCreateTestsToRunTests` before the strict
+// run schema validates them. The case body is the public `steps` contract
+// (`TestStep[]`), projected to the internal case fields by that normalizer.
 const createEvalSuiteSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
@@ -112,46 +296,29 @@ const createEvalSuiteSchema = z.object({
   tags: z.array(z.string()).optional(),
   tests: z
     .array(
-      z
-        .object({
-          title: z.string().min(1),
-          // Required for prompt cases; widget_probe rows carry an empty query
-          // (normalized to "" in normalizeCreateTestsToRunTests). Enforced by
-          // the superRefine below so a prompt case can't be authored query-less.
-          query: z.string().optional(),
-          runs: z.number().int().min(1).max(10).optional(),
-          model: z.string().optional(),
-          provider: z.string().optional(),
-          expectedToolCalls: z.array(expectedToolCallEntrySchema).optional(),
-          expectedOutput: z.string().optional(),
-          isNegativeTest: z.boolean().optional(),
-          scenario: z.string().optional(),
-          promptTurns: z.array(promptTurnSchema).optional(),
-          advancedConfig: z
-            .object({
-              system: z.string().optional(),
-              temperature: z.number().optional(),
-              toolChoice: z.any().optional(),
-            })
-            .passthrough()
-            .optional(),
-          matchOptions: matchOptionsSchema.optional(),
-          predicates: casePredicatesSchema.optional(),
-          caseType: z.enum(TEST_CASE_TYPES).optional(),
-          probeConfig: probeConfigSchema.optional(),
-        })
-        .superRefine((testCase, ctx) => {
-          if (
-            testCase.caseType !== "widget_probe" &&
-            (testCase.query === undefined || testCase.query.length === 0)
-          ) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["query"],
-              message: "query is required for prompt cases",
-            });
-          }
-        })
+      z.object({
+        title: z.string().min(1),
+        // The unified test-step model. The first `prompt` step is the case
+        // query; `toolCalledWith` asserts are the expected tool calls; a
+        // single model-free `toolCall` step is a render-check.
+        steps: stepsSchema.min(1),
+        runs: z.number().int().min(1).max(10).optional(),
+        model: z.string().optional(),
+        provider: z.string().optional(),
+        expectedOutput: z.string().optional(),
+        isNegativeTest: z.boolean().optional(),
+        scenario: z.string().optional(),
+        advancedConfig: z
+          .object({
+            system: z.string().optional(),
+            temperature: z.number().optional(),
+            toolChoice: z.any().optional(),
+          })
+          .passthrough()
+          .optional(),
+        matchOptions: matchOptionsSchema.optional(),
+        predicates: casePredicatesSchema.optional(),
+      })
     )
     .min(1)
     .max(MAX_V1_TESTS),
@@ -163,7 +330,8 @@ type CreateEvalSuiteBody = z.infer<typeof createEvalSuiteSchema>;
  * Expand the ergonomic authoring tests into the full
  * `RunEvalsRequestSchema.shape.tests` element shape: fill `runs`, resolve
  * model/provider from suite defaults (deriving provider from a `provider/model`
- * id when neither is given), and normalize `expectedToolCalls` entries.
+ * id when neither is given), preserve each case's public `steps` array, and
+ * project denormalized `query` / `expectedToolCalls` display fields from it.
  */
 function normalizeCreateTestsToRunTests(
   tests: CreateEvalSuiteBody["tests"],
@@ -183,19 +351,17 @@ function normalizeCreateTestsToRunTests(
         `Cannot derive a provider for test "${test.title}". Pass a suite-level "provider", a per-test "provider", or a "provider/model" id.`
       );
     }
-    const expectedToolCalls = (test.expectedToolCalls ?? []).map((el) =>
-      typeof el === "string"
-        ? { toolName: el, arguments: {} }
-        : { toolName: el.toolName, arguments: el.arguments ?? {} }
-    );
+    const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
-      // widget_probe rows are authored query-less; the run schema accepts "".
-      query: test.query ?? "",
+      steps: withImplicitRenderAssertForSingleToolCall(
+        test.steps as TestStep[]
+      ),
+      query: derived.query,
       runs,
       model,
       provider,
-      expectedToolCalls,
+      expectedToolCalls: derived.expectedToolCalls ?? [],
       ...(test.expectedOutput !== undefined
         ? { expectedOutput: test.expectedOutput }
         : {}),
@@ -203,9 +369,6 @@ function normalizeCreateTestsToRunTests(
         ? { isNegativeTest: test.isNegativeTest }
         : {}),
       ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
-      ...(test.promptTurns !== undefined
-        ? { promptTurns: test.promptTurns }
-        : {}),
       ...(test.advancedConfig !== undefined
         ? { advancedConfig: test.advancedConfig }
         : {}),
@@ -213,10 +376,6 @@ function normalizeCreateTestsToRunTests(
         ? { matchOptions: test.matchOptions }
         : {}),
       ...(test.predicates !== undefined ? { predicates: test.predicates } : {}),
-      ...(test.caseType !== undefined ? { caseType: test.caseType } : {}),
-      ...(test.probeConfig !== undefined
-        ? { probeConfig: test.probeConfig }
-        : {}),
     };
   });
 }
@@ -427,12 +586,7 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 /**
  * Whether the run record already reached a terminal status. Used by the
@@ -475,8 +629,6 @@ function toRunDto(run: RunDoc) {
     notes: run.notes ?? null,
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
-    stoppedAt: run.stoppedAt ?? null,
-    stopReason: run.stopReason ?? null,
   };
 }
 
@@ -487,8 +639,7 @@ function toIterationDto(iteration: IterationDoc) {
   const isTerminal =
     iteration.status === "completed" ||
     iteration.status === "failed" ||
-    iteration.status === "cancelled" ||
-    iteration.status === "timed_out";
+    iteration.status === "cancelled";
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -509,6 +660,34 @@ function toIterationDto(iteration: IterationDoc) {
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
+  };
+}
+
+// Public per-authored-step result. Explicit projection (not a passthrough) so no
+// internal/blob field — `metadata`, `predicates`, `screenshotBlobId`,
+// `authoredStepId`, `stepResults` raw rows — can ever leak past this boundary.
+// `evidence` is omitted entirely when the step produced none.
+function toStepResultDto(step: EvalStepReplay) {
+  const ev = step.evidence;
+  const evidence = ev
+    ? {
+        ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
+        ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
+        ...(ev.videoUrl ? { videoUrl: ev.videoUrl } : {}),
+        ...(typeof ev.videoOffsetMs === "number"
+          ? { videoOffsetMs: ev.videoOffsetMs }
+          : {}),
+        ...(ev.source ? { source: ev.source } : {}),
+        ...(ev.locatorLabel ? { locatorLabel: ev.locatorLabel } : {}),
+      }
+    : undefined;
+  return {
+    stepId: step.stepId,
+    stepIndex: step.stepIndex,
+    kind: step.kind,
+    status: step.status,
+    reason: step.reason ?? null,
+    ...(evidence && Object.keys(evidence).length > 0 ? { evidence } : {}),
   };
 }
 
@@ -601,61 +780,75 @@ function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
   };
 }
 
-// A check is a predicate; the public vocabulary IS the internal predicate
-// vocabulary, so the only validation is structural (semantic checks run in
-// Convex). Reuse the case-predicate envelope's list schema for the array.
+// Public "checks" are whole-run global gates (`defaultPredicates` / case
+// `predicates` envelope). Scenario checks belong in `steps` as assert steps.
 const publicCheckSchema = z.object({ type: z.string().min(1) }).passthrough();
-
-function expectedCallsToInternal(
-  calls: Array<{ tool: string; arguments?: Record<string, unknown> }>
-): Array<{ toolName: string; arguments: Record<string, unknown> }> {
-  return calls.map((tc) => ({
-    toolName: tc.tool,
-    arguments: tc.arguments ?? {},
-  }));
-}
-
-function expectedCallsToPublic(
-  calls: any
-): Array<{ tool: string; arguments?: Record<string, unknown> }> {
-  if (!Array.isArray(calls)) return [];
-  return calls.map((tc) => ({
-    tool: String(tc?.toolName ?? tc?.tool ?? ""),
-    ...(tc?.arguments && Object.keys(tc.arguments).length > 0
-      ? { arguments: tc.arguments }
-      : {}),
-  }));
-}
 
 // ── Case DTO ─────────────────────────────────────────────────────────
 
 type CaseDoc = Record<string, any>;
 
+/**
+ * Project an internal case doc onto the public `steps` array (`TestStep[]`) —
+ * the inverse of `stepsToInternalCaseFields`. Reuses the shared adapters so the
+ * round-trip matches the authoring contract:
+ *   - `widget_probe` + `probeConfig` → a single `toolCall` step;
+ *   - multi-turn `promptTurns`        → `promptTurnsToSteps` (prompt + asserts);
+ *   - single-turn prompt case         → one `prompt` step + `toolCalledWith`
+ *                                       asserts from top-level `expectedToolCalls`.
+ */
+function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
+  const storedSteps = normalizeSteps(testCase.steps);
+  if (storedSteps.length > 0) {
+    return storedSteps;
+  }
+
+  if (testCase.caseType === "widget_probe" && testCase.probeConfig) {
+    return [
+      probeConfigToToolCallStep(
+        `${String(testCase._id)}-call`,
+        testCase.probeConfig as ProbeConfig
+      ),
+    ];
+  }
+
+  const turns = Array.isArray(testCase.promptTurns)
+    ? (testCase.promptTurns as PromptTurn[])
+    : [];
+  if (turns.length > 0) {
+    return promptTurnsToSteps(turns);
+  }
+
+  // Single-turn prompt case: synthesize a prompt step + its expected-call asserts.
+  const steps: TestStep[] = [
+    {
+      id: `${String(testCase._id)}-prompt`,
+      kind: "prompt",
+      prompt: typeof testCase.query === "string" ? testCase.query : "",
+    },
+  ];
+  const expected = Array.isArray(testCase.expectedToolCalls)
+    ? testCase.expectedToolCalls
+    : [];
+  expected.forEach((c: any, i: number) => {
+    steps.push({
+      id: `${String(testCase._id)}-expect-${i}`,
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: String(c?.toolName ?? ""),
+        args: { args: c?.arguments ?? {} },
+      },
+    });
+  });
+  return steps;
+}
+
 function toCaseDto(testCase: CaseDoc) {
-  const turns = Array.isArray(testCase.promptTurns) ? testCase.promptTurns : [];
-  const kind = testCase.caseType === "widget_probe" ? "render-check" : "prompt";
   return {
     id: String(testCase._id),
     title: testCase.title ?? "",
-    kind,
-    prompt:
-      kind === "render-check"
-        ? null
-        : typeof testCase.query === "string" && testCase.query.length > 0
-        ? testCase.query
-        : null,
-    ...(turns.length > 1
-      ? {
-          turns: turns.map((turn: any) => ({
-            prompt: turn.prompt ?? "",
-            expectedToolCalls: expectedCallsToPublic(turn.expectedToolCalls),
-            ...(turn.expectedOutput !== undefined
-              ? { expectedOutput: turn.expectedOutput }
-              : {}),
-          })),
-        }
-      : {}),
-    expectedToolCalls: expectedCallsToPublic(testCase.expectedToolCalls),
+    steps: internalCaseToSteps(testCase),
     ...(testCase.expectedOutput !== undefined
       ? { expectedOutput: testCase.expectedOutput }
       : {}),
@@ -676,20 +869,6 @@ function toCaseDto(testCase: CaseDoc) {
           checks: {
             mode: testCase.predicates.mode,
             list: testCase.predicates.list ?? [],
-          },
-        }
-      : {}),
-    ...(testCase.probeConfig
-      ? {
-          renderCheck: {
-            server: testCase.probeConfig.serverName,
-            tool: testCase.probeConfig.toolName,
-            ...(testCase.probeConfig.arguments
-              ? { arguments: testCase.probeConfig.arguments }
-              : {}),
-            ...(testCase.probeConfig.renderTimeoutMs !== undefined
-              ? { renderTimeoutMs: testCase.probeConfig.renderTimeoutMs }
-              : {}),
           },
         }
       : {}),
@@ -810,34 +989,14 @@ function deriveProvider(model: string, explicit: string | undefined): string {
 }
 
 // Public case body (create + update share this; create requires title).
+// The case body is the `steps` contract (`TestStep[]`); it REPLACES the old
+// `kind` / `prompt` / `turns` / `expectedToolCalls` / `renderCheck` vocabulary.
 const publicCaseBodyShape = {
   title: z.string().min(1).optional(),
-  kind: z.enum(["prompt", "render-check"]).optional(),
-  prompt: z.string().optional(),
-  turns: z
-    .array(
-      z.object({
-        prompt: z.string().min(1),
-        expectedToolCalls: z
-          .array(
-            z.object({
-              tool: z.string().min(1),
-              arguments: z.record(z.string(), z.any()).optional(),
-            })
-          )
-          .optional(),
-        expectedOutput: z.string().optional(),
-      })
-    )
-    .optional(),
-  expectedToolCalls: z
-    .array(
-      z.object({
-        tool: z.string().min(1),
-        arguments: z.record(z.string(), z.any()).optional(),
-      })
-    )
-    .optional(),
+  // Replaces the case test definition wholesale when provided. A `prompt` step
+  // is a model turn; a single model-free `toolCall` step is a render-check;
+  // `assert` steps (e.g. `toolCalledWith`) hold the expectations.
+  steps: stepsSchema.min(1).optional(),
   expectedOutput: z.string().optional(),
   iterations: z.number().int().min(1).max(10).optional(),
   isNegative: z.boolean().optional(),
@@ -857,14 +1016,6 @@ const publicCaseBodyShape = {
       list: z.array(publicCheckSchema),
     })
     .nullable()
-    .optional(),
-  renderCheck: z
-    .object({
-      server: z.string().min(1),
-      tool: z.string().min(1),
-      arguments: z.record(z.string(), z.unknown()).optional(),
-      renderTimeoutMs: z.number().int().positive().optional(),
-    })
     .optional(),
 } as const;
 
@@ -956,6 +1107,7 @@ function buildCaseMutationArgs(
   }
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
+  let isModelFreeStepsCase = false;
   if (body.title !== undefined) args.title = body.title;
   if (body.iterations !== undefined) args.runs = body.iterations;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
@@ -963,63 +1115,37 @@ function buildCaseMutationArgs(
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 
-  const existingKind =
-    opts.existingCaseType === "widget_probe" ? "render-check" : "prompt";
-  // A kind-less PATCH must preserve the existing kind. Kind is IMMUTABLE after
-  // create (updateTestCase doesn't accept caseType): reject a real change, and
-  // never forward caseType on update (so round-tripping a GET payload — which
-  // includes the matching kind — is a no-op, not a validation failure).
-  const isRenderCheck =
-    body.kind !== undefined
-      ? body.kind === "render-check"
-      : opts.existingCaseType === "widget_probe";
-  if (opts.forCreate) {
-    if (body.kind !== undefined)
-      args.caseType = isRenderCheck ? "widget_probe" : "prompt";
-  } else if (body.kind !== undefined && body.kind !== existingKind) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      `Case kind is immutable (this case is "${existingKind}"); create a new case to change it.`
+  // The case body is the `steps` contract. Project it onto the internal case
+  // fields. The derived kind (render-check ⇔ a single model-free `toolCall`
+  // step) is IMMUTABLE after create — updateTestCase doesn't accept caseType,
+  // so reject a real change on update and never forward caseType there.
+  if (body.steps !== undefined) {
+    const steps = withImplicitRenderAssertForSingleToolCall(
+      body.steps as TestStep[]
     );
-  }
+    args.steps = steps;
+    const derived = stepsToInternalCaseFields(steps);
+    isModelFreeStepsCase = derived.caseType === "widget_probe";
+    const derivedKind =
+      derived.caseType === "widget_probe" ? "render-check" : "prompt";
+    const existingKind =
+      opts.existingCaseType === "widget_probe" ? "render-check" : "prompt";
 
-  if (isRenderCheck) {
-    if (body.renderCheck) {
-      // PATCH preserves omitted fields: merge arguments/renderTimeoutMs onto
-      // the existing probeConfig instead of resetting them.
-      const existingProbe = opts.existingProbeConfig ?? {};
-      args.probeConfig = {
-        serverName: body.renderCheck.server,
-        toolName: body.renderCheck.tool,
-        arguments: body.renderCheck.arguments ?? existingProbe.arguments ?? {},
-        ...(body.renderCheck.renderTimeoutMs !== undefined
-          ? { renderTimeoutMs: body.renderCheck.renderTimeoutMs }
-          : existingProbe.renderTimeoutMs !== undefined
-          ? { renderTimeoutMs: existingProbe.renderTimeoutMs }
-          : {}),
-      };
+    if (!opts.forCreate && derivedKind !== existingKind) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `Case kind is immutable (this case is "${existingKind}"); create a new case to change it.`
+      );
     }
-    args.query = "";
-  } else {
-    if (body.turns !== undefined) {
-      args.promptTurns = body.turns.map((turn) => ({
-        id: randomUUID(),
-        prompt: turn.prompt,
-        expectedToolCalls: expectedCallsToInternal(
-          turn.expectedToolCalls ?? []
-        ),
-        ...(turn.expectedOutput !== undefined
-          ? { expectedOutput: turn.expectedOutput }
-          : {}),
-      }));
-      args.query = body.turns[0]?.prompt ?? "";
+
+    if (derived.caseType === "widget_probe") {
+      args.query = "";
     } else {
-      if (body.prompt !== undefined) args.query = body.prompt;
-      if (body.expectedToolCalls !== undefined)
-        args.expectedToolCalls = expectedCallsToInternal(
-          body.expectedToolCalls
-        );
+      args.query = derived.query;
+      if (derived.expectedToolCalls !== undefined) {
+        args.expectedToolCalls = derived.expectedToolCalls;
+      }
     }
   }
 
@@ -1029,7 +1155,7 @@ function buildCaseMutationArgs(
       provider: deriveProvider(m.model, m.provider),
     }));
   } else if (opts.forCreate) {
-    args.models = opts.defaultModels ?? [];
+    args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
   }
 
   // On create, a null override is meaningless (nothing to clear) — omit it so
@@ -1250,6 +1376,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     try {
       prepared = await prepareEvalRun(manager, {
         ...body,
+        // Project the public `steps`-based inline tests onto the internal
+        // run-schema test shape the pipeline still consumes.
+        tests: body.tests.map(publicInlineTestToRunTest),
         serverIds,
         serverNames,
         projectId,
@@ -1329,11 +1458,9 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   const body = parseWithSchema(createEvalSuiteSchema, rawBody);
 
   // Expand ergonomic tests into the strict run-schema element shape, then
-  // re-validate against the source-of-truth schema (re-checks the
-  // widget_probe ↔ probeConfig invariant the run path also enforces).
-  // Use parseWithSchema so a second-stage failure (e.g. widget_probe without
-  // probeConfig, or an invalid advancedConfig.toolChoice) surfaces as a 400
-  // VALIDATION_ERROR rather than an uncaught ZodError → 500.
+  // re-validate against the source-of-truth schema. Use parseWithSchema so a
+  // second-stage failure (for example, an invalid advancedConfig.toolChoice)
+  // surfaces as a 400 VALIDATION_ERROR rather than an uncaught ZodError → 500.
   const normalizedTests = parseWithSchema(
     RunEvalsRequestSchema.shape.tests,
     normalizeCreateTestsToRunTests(body.tests, {
@@ -1400,7 +1527,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled | timed_out).
+// (completed | failed | cancelled).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
@@ -1417,6 +1544,61 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   }
   requireProjectMatch(run, projectId, "Eval run");
   return v1Resource(c, toRunDto(run!));
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/cancel
+// Cancel an in-flight run. Reuses the existing `cancelTestSuiteRun` mutation
+// (marks the run + its pending/running iterations cancelled); the runner polls
+// run status every ~2s and aborts in-flight requests on its own. Idempotent on
+// an already-cancelled run; 409 on a run that already finished.
+evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  let run: RunDoc | null;
+  try {
+    run = await readClient.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  const status = String(run!.status);
+  // Already cancelled → no-op success (safe to retry a cancel).
+  if (status === "cancelled") {
+    return v1Resource(c, toRunDto(run!));
+  }
+  // Completed/failed runs can't be cancelled — surface a clear 409.
+  if (TERMINAL_RUN_STATUSES.has(status)) {
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      `Cannot cancel a run that already ${status}`
+    );
+  }
+
+  const { convexClient } = createConvexClients(token);
+  try {
+    await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  // Re-read so the response reflects the cancelled terminal state.
+  const updated = await readClient
+    .query("testSuites:getTestSuiteRun" as any, { runId })
+    .catch(() => null);
+  return v1Resource(c, toRunDto((updated ?? run)!));
 });
 
 // GET /v1/projects/:projectId/eval-runs/:runId/iterations?cursor=&limit=
@@ -1502,6 +1684,78 @@ evals.get(
       );
     }
     return v1Resource(c, trace);
+  }
+);
+
+// GET /v1/projects/:projectId/eval-runs/:runId/iterations/:iterationId/steps
+// One row per authored step, in order, with status + reason + evidence — the
+// public mirror of the fail-fast step engine. Verdicts come from the persisted
+// `metadata.stepResults`; evidence (screenshots/video/widget tool calls) from
+// the resolved trace envelope. Unlike `/trace`, a missing trace is NOT a 404:
+// step verdicts still return, just without evidence.
+evals.get(
+  "/projects/:projectId/eval-runs/:runId/iterations/:iterationId/steps",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const runId = c.req.param("runId");
+    const iterationId = c.req.param("iterationId");
+    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+    let iteration: IterationDoc | null;
+    try {
+      const [run, iter] = await Promise.all([
+        convex.query("testSuites:getTestSuiteRun" as any, { runId }),
+        convex.query("testSuites:getTestIteration" as any, { iterationId }),
+      ]);
+      requireProjectMatch(run, projectId, "Eval run");
+      iteration = iter as IterationDoc | null;
+      if (
+        !iteration ||
+        String(iteration.suiteRunId ?? "") !== runId
+      ) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval iteration not found"
+        );
+      }
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval iteration not found"
+        );
+      }
+      throw error;
+    }
+
+    const snapshot = (iteration.testCaseSnapshot ?? {}) as Record<string, any>;
+    const steps: TestStep[] = Array.isArray(snapshot.steps)
+      ? normalizeSteps(snapshot.steps as TestStep[])
+      : [];
+
+    // Evidence is best-effort: the trace blob may be absent (still-running or
+    // never-persisted iteration). Verdicts from metadata still return.
+    let envelope: Record<string, unknown> | undefined;
+    try {
+      const trace = await convex.action(
+        "testSuites:getTestIterationBlob" as any,
+        { iterationId }
+      );
+      if (trace && typeof trace === "object") {
+        envelope = trace as Record<string, unknown>;
+      }
+    } catch (error) {
+      if (!isConvexNotVisibleError(error)) throw error;
+    }
+
+    const assembled = assembleStepResults(
+      steps,
+      iteration.metadata as { stepResults?: any[]; skippedSteps?: any[] } | undefined,
+      envelope as Parameters<typeof assembleStepResults>[2]
+    );
+    return v1PageJson(c, assembled.map(toStepResultDto));
   }
 );
 
@@ -2193,9 +2447,32 @@ evals.post(
                     arguments: tc.arguments ?? {},
                   }
             );
+      const promptTurns = Array.isArray(draft.promptTurns)
+        ? draft.promptTurns.map((turn: any) => ({
+            id: typeof turn.id === "string" ? turn.id : randomUUID(),
+            prompt: turn.prompt ?? "",
+            expectedToolCalls: mapCalls(turn.expectedToolCalls),
+            ...(turn.expectedOutput !== undefined
+              ? { expectedOutput: turn.expectedOutput }
+              : {}),
+          }))
+        : [
+            {
+              id: randomUUID(),
+              prompt: typeof draft.query === "string" ? draft.query : "",
+              expectedToolCalls: mapCalls(draft.expectedToolCalls),
+              ...(draft.expectedOutput !== undefined
+                ? { expectedOutput: draft.expectedOutput }
+                : {}),
+            },
+          ];
+      const steps = Array.isArray(draft.steps)
+        ? normalizeSteps(draft.steps)
+        : promptTurnsToSteps(promptTurns);
       const args: Record<string, unknown> = {
         suiteId,
         title: draft.title,
+        steps,
         query: typeof draft.query === "string" ? draft.query : "",
         runs: typeof draft.runs === "number" ? draft.runs : 1,
         models: caseModels,
@@ -2206,18 +2483,6 @@ evals.post(
           : {}),
         ...(isNeg ? { isNegativeTest: true } : {}),
         ...(draft.scenario !== undefined ? { scenario: draft.scenario } : {}),
-        ...(Array.isArray(draft.promptTurns) && draft.promptTurns.length > 0
-          ? {
-              promptTurns: draft.promptTurns.map((turn: any) => ({
-                id: typeof turn.id === "string" ? turn.id : randomUUID(),
-                prompt: turn.prompt ?? "",
-                expectedToolCalls: mapCalls(turn.expectedToolCalls),
-                ...(turn.expectedOutput !== undefined
-                  ? { expectedOutput: turn.expectedOutput }
-                  : {}),
-              })),
-            }
-          : {}),
       };
       try {
         const caseId = await convexClient.mutation(

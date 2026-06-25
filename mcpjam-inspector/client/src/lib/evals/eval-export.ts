@@ -9,7 +9,28 @@ import {
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
-} from "@/shared/prompt-turns";
+  type TestStep,
+} from "@/shared/steps";
+import { stepsToPromptTurns } from "@/shared/steps";
+
+/**
+ * Resolve a case's prompt turns for export, preferring the unified `steps`
+ * model when present (the backend now emits `steps`, not `promptTurns`).
+ * Falls back to the legacy resolver for pre-migration rows.
+ */
+function resolveExportPromptTurns(source: {
+  steps?: unknown;
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+  query?: string;
+  expectedToolCalls?: unknown;
+  expectedOutput?: string;
+}): PromptTurn[] {
+  if (Array.isArray(source.steps)) {
+    return stepsToPromptTurns(source.steps as never);
+  }
+  return resolvePromptTurns(source);
+}
 
 export const SDK_EXPORT_INSTALL_SNIPPET = "npm install @mcpjam/sdk";
 
@@ -23,6 +44,8 @@ export type EvalExportDraftInput = {
     arguments: Record<string, any>;
   }>;
   expectedOutput?: string;
+  /** Canonical case definition; `promptTurns` kept for legacy export consumers. */
+  steps?: TestStep[];
   promptTurns?: PromptTurn[];
   isNegativeTest?: boolean;
   advancedConfig?: Record<string, unknown>;
@@ -88,7 +111,7 @@ export function normalizeEvalCaseForExport(
     scenario: normalizeOptionalString(testCase.scenario),
     expectedOutput: normalizeOptionalString(testCase.expectedOutput),
     expectedToolCalls: testCase.expectedToolCalls || [],
-    promptTurns: resolvePromptTurns(testCase),
+    promptTurns: resolveExportPromptTurns(testCase),
     advancedConfig:
       stripPromptTurnsFromAdvancedConfig(testCase.advancedConfig) ?? undefined,
     modelHints:
@@ -111,7 +134,7 @@ export function normalizeSuiteConfigTestForExport(
     scenario: normalizeOptionalString(test.scenario),
     expectedOutput: normalizeOptionalString(test.expectedOutput),
     expectedToolCalls: test.expectedToolCalls || [],
-    promptTurns: resolvePromptTurns(test),
+    promptTurns: resolveExportPromptTurns(test),
     advancedConfig:
       stripPromptTurnsFromAdvancedConfig(test.advancedConfig) ?? undefined,
     modelHints:

@@ -237,25 +237,30 @@ export interface PlatformEvalCaseModel {
   provider?: string;
 }
 
-export interface PlatformEvalCaseTurn {
-  prompt: string;
-  expectedToolCalls: PlatformExpectedToolCall[];
-  expectedOutput?: string;
+/**
+ * One authored test step — the unified test model (mirrors the inspector's
+ * `shared/steps.ts` `TestStep`). Typed permissively at this boundary
+ * (discriminated on `kind`); per-kind detail fields ride along.
+ *
+ * REPLACES the old per-case `kind` / `prompt` / `turns` / `expectedToolCalls`
+ * / `renderCheck` projection (Phase 2.5 clean break).
+ */
+export interface PlatformEvalStep {
+  id: string;
+  kind: "prompt" | "toolCall" | "interact" | "assert";
+  [field: string]: unknown;
 }
 
 /**
- * A single eval test case. `kind: 'render-check'` cases carry `renderCheck`
- * instead of a prompt. Public-model shape; the route maps to the internal case.
+ * A single eval test case. The case body is an ordered `steps` array
+ * (prompt / toolCall / interact / assert). Public-model shape; the route maps
+ * to/from the internal case.
  */
 export interface PlatformEvalCase {
   id: string;
   title: string;
-  kind: "prompt" | "render-check";
-  /** First-turn prompt (← internal query); null for render-check cases. */
-  prompt: string | null;
-  /** Multi-turn sequence, when present. */
-  turns?: PlatformEvalCaseTurn[];
-  expectedToolCalls: PlatformExpectedToolCall[];
+  /** Ordered test steps that define the case. */
+  steps: PlatformEvalStep[];
   expectedOutput?: string;
   /** Iterations to run per eval run (← internal runs). */
   iterations: number;
@@ -265,12 +270,6 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
-  renderCheck?: {
-    server: string;
-    tool: string;
-    arguments?: Record<string, unknown>;
-    renderTimeoutMs?: number;
-  };
   createdAt: number | null;
   updatedAt: number | null;
 }
@@ -337,6 +336,36 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+}
+
+/** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
+export interface PlatformEvalStepEvidence {
+  /** Widget→host tool calls the interaction triggered. */
+  toolCalls?: Array<{ name: string; args: unknown; ok: boolean; error?: string }>;
+  /** Resolved screenshot URL for the step's render/interaction. */
+  screenshotUrl?: string;
+  /** Resolved iteration replay `.webm` URL (same on every step of the run). */
+  videoUrl?: string;
+  /** Playback offset of this step within the replay video, when known. */
+  videoOffsetMs?: number;
+  /** "scripted" (authored) vs "computer_use" (model-driven) interaction. */
+  source?: "computer_use" | "scripted";
+  /** Human-readable interaction target (e.g. the button label). */
+  locatorLabel?: string;
+}
+
+/**
+ * One row per authored test step, in author order — the public mirror of the
+ * fail-fast step engine. `status` is the per-step verdict; `evidence` is present
+ * only when the step produced a screenshot / video / widget tool call.
+ */
+export interface PlatformEvalStepResult {
+  stepId: string;
+  stepIndex: number;
+  kind: "prompt" | "toolCall" | "interact" | "assert";
+  status: "ok" | "fail" | "skipped" | "pending";
+  reason: string | null;
+  evidence?: PlatformEvalStepEvidence;
 }
 
 /**

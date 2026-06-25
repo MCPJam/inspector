@@ -15,6 +15,7 @@ import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
+import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -24,46 +25,10 @@ export type ListToolsResultWithMetadata = ListToolsResult & {
 export type ToolServerMap = Record<string, string>;
 
 export type { TaskOptions };
+export { attachToolMetadata };
 
 // Re-export SDK type for task data
 export type TaskData = MCPTask;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function attachToolMetadata(
-  result: ListToolsResultWithMetadata,
-): ListToolsResultWithMetadata {
-  const toolsMetadata = result.toolsMetadata;
-  if (!toolsMetadata || !Array.isArray(result.tools)) return result;
-
-  return {
-    ...result,
-    tools: result.tools.map((tool) => {
-      const metadata = toolsMetadata[tool.name];
-      if (!metadata) return tool;
-      const toolMeta = tool._meta as Record<string, unknown> | undefined;
-      const toolUi = toolMeta?.ui;
-      const metadataUi = metadata.ui;
-      return {
-        ...tool,
-        _meta: {
-          ...toolMeta,
-          ...metadata,
-          ...(isRecord(toolUi) || isRecord(metadataUi)
-            ? {
-                ui: {
-                  ...(isRecord(toolUi) ? toolUi : {}),
-                  ...(isRecord(metadataUi) ? metadataUi : {}),
-                },
-              }
-            : {}),
-        },
-      };
-    }),
-  };
-}
 
 export type ToolExecutionResponse =
   | {

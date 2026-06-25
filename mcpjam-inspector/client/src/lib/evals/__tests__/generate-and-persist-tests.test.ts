@@ -67,7 +67,7 @@ describe("generateAndPersistEvalTests", () => {
     expect(mockCreateTestCase).toHaveBeenCalledTimes(1);
   });
 
-  it("persists promptTurns for generated multi-turn cases", async () => {
+  it("persists steps for generated multi-turn cases", async () => {
     mockQuery.mockResolvedValue([]);
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
@@ -108,21 +108,41 @@ describe("generateAndPersistEvalTests", () => {
       skipIfExistingCases: true,
     });
 
+    // The Convex mutation rejects `promptTurns`; the create path now sends the
+    // unified `steps` model derived from the generated turns. Each turn's
+    // prompt → a `prompt` step; its expected calls → `toolCalledWith` asserts.
     expect(mockCreateTestCase).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "Find the latest incident",
         expectedToolCalls: [{ toolName: "search_incidents", arguments: {} }],
-        promptTurns: [
+        steps: [
           expect.objectContaining({
-            id: "turn-1",
+            kind: "prompt",
             prompt: "Find the latest incident",
           }),
           expect.objectContaining({
-            id: "turn-2",
+            kind: "assert",
+            assertion: expect.objectContaining({
+              type: "toolCalledWith",
+              toolName: "search_incidents",
+            }),
+          }),
+          expect.objectContaining({
+            kind: "prompt",
             prompt: "Now get the full details for that one",
+          }),
+          expect.objectContaining({
+            kind: "assert",
+            assertion: expect.objectContaining({
+              type: "toolCalledWith",
+              toolName: "get_incident_details",
+            }),
           }),
         ],
       }),
+    );
+    expect(mockCreateTestCase).not.toHaveBeenCalledWith(
+      expect.objectContaining({ promptTurns: expect.anything() }),
     );
   });
 

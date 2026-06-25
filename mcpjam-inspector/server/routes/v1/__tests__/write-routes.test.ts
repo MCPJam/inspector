@@ -196,11 +196,12 @@ describe("v1 write routes", () => {
           tests: [
             {
               title: "echo works",
-              query: "Use the echo tool",
+              steps: [
+                { id: "s1", kind: "prompt", prompt: "Use the echo tool" },
+              ],
               runs: 1,
               model: "anthropic/claude-haiku-4.5",
               provider: "anthropic",
-              expectedToolCalls: [],
             },
           ],
         }
@@ -370,11 +371,12 @@ describe("v1 write routes", () => {
     describe("inline test model validation", () => {
       const inlineTest = (model: string, provider = "anthropic") => ({
         title: "echo works",
-        query: "Use the echo tool to say hi",
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "Use the echo tool to say hi" },
+        ],
         runs: 1,
         model,
         provider,
-        expectedToolCalls: [],
       });
 
       function mockHappyCreate() {
@@ -721,11 +723,10 @@ describe("v1 write routes", () => {
           tests: [
             {
               title: "case",
-              query: "do it",
+              steps: [{ id: "s1", kind: "prompt", prompt: "do it" }],
               runs: 1,
               model: "anthropic/claude-haiku-4.5",
               provider: "anthropic",
-              expectedToolCalls: [],
             },
           ],
         }
@@ -733,6 +734,12 @@ describe("v1 write routes", () => {
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
         suiteRerun: false,
+        tests: [
+          expect.objectContaining({
+            steps: [{ id: "s1", kind: "prompt", prompt: "do it" }],
+            query: "do it",
+          }),
+        ],
       });
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(1)
@@ -743,8 +750,18 @@ describe("v1 write routes", () => {
   describe("POST /eval-suites (author-only)", () => {
     const VALID_CASE = {
       title: "echo works",
-      query: "Use the echo tool",
-      expectedToolCalls: ["echo"],
+      steps: [
+        { id: "s1", kind: "prompt", prompt: "Use the echo tool" },
+        {
+          id: "s2",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "echo",
+            args: { args: {} },
+          },
+        },
+      ],
     };
 
     it("rejects a body with no cases (400) before any side effect", async () => {
@@ -787,7 +804,7 @@ describe("v1 write routes", () => {
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
     });
 
-    it("rejects a prompt case with no query (400), but not a widget_probe", async () => {
+    it("rejects a case with no steps (400)", async () => {
       const res = await request(
         makeApp(),
         "POST",
@@ -796,7 +813,7 @@ describe("v1 write routes", () => {
           name: "Fresh suite",
           serverIds: ["s1"],
           model: "anthropic/claude-haiku-4.5",
-          tests: [{ title: "no query" }],
+          tests: [{ title: "no steps" }],
         }
       );
       expect(res.status).toBe(400);
@@ -806,10 +823,7 @@ describe("v1 write routes", () => {
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     });
 
-    it("maps a second-stage validation failure to 400, not 500", async () => {
-      // A widget_probe case without probeConfig passes the create-schema but
-      // fails the run-schema superRefine. parseWithSchema must turn that into a
-      // 400 VALIDATION_ERROR rather than letting a raw ZodError become a 500.
+    it("rejects a case with an empty steps array (400)", async () => {
       const res = await request(
         makeApp(),
         "POST",
@@ -818,7 +832,7 @@ describe("v1 write routes", () => {
           name: "Fresh suite",
           serverIds: ["s1"],
           model: "anthropic/claude-haiku-4.5",
-          tests: [{ ...VALID_CASE, caseType: "widget_probe" }],
+          tests: [{ title: "empty steps", steps: [] }],
         }
       );
       expect(res.status).toBe(400);
@@ -872,7 +886,10 @@ describe("v1 write routes", () => {
       expect(authoredArgs.suiteId).toBeNull();
       expect(authoredArgs.suiteName).toBe("Fresh suite");
       expect(authoredArgs.resolvedServerIds).toEqual(["s1"]);
-      // The case's ergonomic string tool call is normalized to the run shape.
+      // The case's `steps` stay on the authored payload and are projected onto
+      // denormalized display fields: prompt -> query, assert -> expected call.
+      expect(authoredArgs.tests[0].steps).toEqual(VALID_CASE.steps);
+      expect(authoredArgs.tests[0].query).toBe("Use the echo tool");
       expect(authoredArgs.tests[0].expectedToolCalls).toEqual([
         { toolName: "echo", arguments: {} },
       ]);
@@ -969,8 +986,6 @@ describe("v1 write routes", () => {
         notes: null,
         createdAt: 1,
         completedAt: 2,
-        stoppedAt: null,
-        stopReason: null,
       });
     });
 

@@ -1,6 +1,7 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
+import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 import {
   buildHostedEvalServerBatchRequest,
   buildServerBatchRequest,
@@ -8,8 +9,9 @@ import {
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { ConvexError, type Value } from "convex/values";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import type { PromptTurn } from "@/shared/steps";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 
 export const EVALS_API_ENDPOINTS = {
@@ -47,6 +49,9 @@ type ToolListResponse = {
     description?: string;
     inputSchema?: unknown;
     serverId?: string;
+    /** Tool `_meta` — carries the widget UI markers (ui.resourceUri /
+     *  openai/outputTemplate) used to detect widget-rendering tools. */
+    _meta?: Record<string, unknown>;
   }>;
 };
 
@@ -127,11 +132,18 @@ type RunTestCaseRequest = EvalRequestWithServers & {
       }>;
       expectedOutput?: string;
     }>;
+    steps?: Array<unknown>;
     advancedConfig?: Record<string, unknown>;
     matchOptions?: EvalMatchOptions;
+    predicates?: Record<string, unknown>;
   };
   /** One-off run override; does not persist on the case. */
   matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * Scope this single-case run to one attached host. The server resolves the
+   * host config through the same path suite runs use.
+   */
+  namedHostId?: string;
   /**
    * One-off, per-Run override for the suite's hostConfig. Edited live in
    * the test case editor's host header. Recorded on the iteration
@@ -282,8 +294,29 @@ async function postEvalRequest<TResponse>(
       typeof errorBody?.message === "string"
         ? errorBody.message
         : typeof errorBody?.error === "string"
-          ? errorBody.error
-          : `Request failed (${response.status})`;
+        ? errorBody.error
+        : `Request failed (${response.status})`;
+
+    // Billing/entitlement caps (HTTP 402): the server forwards the original
+    // ConvexError payload on `details` (code "billing_limit_reached" /
+    // "billing_feature_not_included"). Rebuild a ConvexError so the shared
+    // billing helpers (`extractBillingErrorPayload` / `getBillingErrorMessage`)
+    // recognize it and render the proper upgrade message + reset time, rather
+    // than echoing the generic top-level message.
+    const billingPayload = (
+      errorBody as { details?: { code?: unknown } } | null | undefined
+    )?.details;
+    if (
+      billingPayload &&
+      typeof billingPayload === "object" &&
+      ((billingPayload as { code?: unknown }).code ===
+        "billing_limit_reached" ||
+        (billingPayload as { code?: unknown }).code ===
+          "billing_feature_not_included")
+    ) {
+      throw new ConvexError(billingPayload as Value);
+    }
+
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
     notifyMCPJamLimitError({
@@ -316,7 +349,9 @@ export async function listEvalTools(
     hosted: async () => {
       const toolsByServer = await Promise.all(
         request.serverIds.map(async (serverNameOrId) => {
-          const response = await listHostedTools({ serverNameOrId });
+          const response = attachToolMetadata(
+            await listHostedTools({ serverNameOrId }),
+          );
           return (response.tools ?? []).map((tool: any) => ({
             ...tool,
             serverId: serverNameOrId,
@@ -451,7 +486,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedServerBatch(request) as JsonRecord
+    ? (mergeHostedServerBatch(request) as JsonRecord)
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {

@@ -31,6 +31,7 @@ import {
   runEvalTestCase,
   streamEvalTestCase,
 } from "../evals-api";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
@@ -255,6 +256,56 @@ describe("evals-api hosted mode", () => {
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+  });
+
+  it("rebuilds the eval-iteration billing error so getBillingErrorMessage renders the upgrade message", async () => {
+    // The server forwards the original Convex billing payload on `details`
+    // (HTTP 402). runEvals must rethrow it as a ConvexError so the shared
+    // billing helpers recognize it instead of echoing the generic message.
+    const resetsAt = 1782000000000;
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "BILLING_LIMIT_REACHED",
+          message: 'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+          details: {
+            code: "billing_limit_reached",
+            message:
+              'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+            limit: "maxEvalIterationsPerMonth",
+            gateKey: "maxEvalIterationsPerMonth",
+            plan: "free",
+            currentValue: 31,
+            allowedValue: 25,
+            upgradePlan: "team",
+            enforcementState: "enforcing",
+            resetsAt,
+            windowKind: "day",
+          },
+        },
+        402
+      )
+    );
+
+    let caught: unknown;
+    try {
+      await runEvals({
+        projectId: "project-1",
+        suiteName: "Hosted Suite",
+        tests: [{ title: "Test", query: "Hello", runs: 1 }],
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = getBillingErrorMessage(caught, "Failed to start eval run");
+    expect(message).toContain("Eval iteration limit reached");
+    expect(message).not.toContain("Failed to start eval run");
+    // Billing limits must NOT trigger the rate-limit dialog.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("posts hosted guest quick runs with the project/server payload", async () => {
@@ -533,9 +584,25 @@ describe("evals-api hosted mode", () => {
     listHostedToolsMock
       .mockResolvedValueOnce({
         tools: [{ name: "tool_a", description: "Tool A" }],
+        toolsMetadata: {
+          tool_a: {
+            ui: { resourceUri: "ui://server-a/tool-a.html" },
+          },
+        },
       })
       .mockResolvedValueOnce({
-        tools: [{ name: "tool_b", description: "Tool B" }],
+        tools: [
+          {
+            name: "tool_b",
+            description: "Tool B",
+            _meta: { ui: { visibility: ["model", "app"] } },
+          },
+        ],
+        toolsMetadata: {
+          tool_b: {
+            ui: { resourceUri: "ui://server-b/tool-b.html" },
+          },
+        },
       });
 
     const result = await listEvalTools({
@@ -551,6 +618,15 @@ describe("evals-api hosted mode", () => {
       serverNameOrId: "Server B",
     });
     expect(result.tools.map((tool) => tool.name)).toEqual(["tool_a", "tool_b"]);
+    expect(result.tools[0]?._meta).toEqual({
+      ui: { resourceUri: "ui://server-a/tool-a.html" },
+    });
+    expect(result.tools[1]?._meta).toEqual({
+      ui: {
+        visibility: ["model", "app"],
+        resourceUri: "ui://server-b/tool-b.html",
+      },
+    });
     expect(
       authFetchMock.mock.calls.some(
         (call) => typeof call[0] === "string" && call[0].includes("/api/mcp/")

@@ -43,16 +43,18 @@ import {
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import {
-  type PromptTurn,
-  countModelTurns,
-  isPinnedOnly,
-} from "@/shared/prompt-turns";
+  countModelSteps,
+  isModelFree,
+  normalizeSteps,
+  probeConfigToToolCallStep,
+  stepsSchema,
+  type TestStep,
+} from "@/shared/steps";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
   resolveCaseSuccessPredicates,
   casePredicatesSchema,
-  predicateSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
 
@@ -64,91 +66,73 @@ const toolChoiceSchema = z.union([
   }),
 ]);
 
-export const promptTurnSchema = z.object({
-  id: z.string(),
-  prompt: z.string(),
-  expectedToolCalls: z.array(
-    z.object({
-      toolName: z.string(),
-      arguments: z.record(z.string(), z.any()),
-    }),
-  ),
-  expectedOutput: z.string().optional(),
-  // When present, this turn is model-free: the runner executes the pinned tool
-  // call and renders its widget (the per-turn successor to a `widget_probe`'s
-  // top-level `probeConfig`). Reuses the same pinned-call shape.
-  pinnedToolCall: probeConfigSchema.optional(),
-  // Per-turn deterministic checks. Without this, Zod strips the unknown key and
-  // turn checks are silently dropped before reaching Convex / the runner.
-  // Semantic + turn-scopable validation happens at the Convex mutation boundary.
-  checks: z.array(predicateSchema).optional(),
-});
-
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
   tests: z.array(
-    z.object({
-      title: z.string(),
-      query: z.string(),
-      runs: z.number().int().positive().max(10),
-      model: z.string(),
-      provider: z.string(),
-      expectedToolCalls: z.array(
-        z.object({
-          toolName: z.string(),
-          arguments: z.record(z.string(), z.any()),
-        }),
-      ),
-      isNegativeTest: z.boolean().optional(),
-      scenario: z.string().optional(),
-      expectedOutput: z.string().optional(),
-      promptTurns: z.array(promptTurnSchema).optional(),
-      advancedConfig: z
-        .object({
-          system: z.string().optional(),
-          temperature: z.number().optional(),
-          toolChoice: toolChoiceSchema.optional(),
-        })
-        .passthrough()
-        .optional(),
-      matchOptions: matchOptionsSchema.optional(),
-      // Case-level predicate gate override; threaded through every Zod
-      // boundary on the wire so it doesn't get silently stripped
-      // (feedback_zod_strips_unthreaded_fields).
-      predicates: casePredicatesSchema.optional(),
-      // Widget-probe discriminant + pinned tool call. Same silent-strip
-      // rationale as `predicates` above. Probe entries carry display-only
-      // model/provider sentinels to satisfy the required fields; the
-      // runner forks off the LLM path before any model resolution and
-      // `assertSuiteRunWithinCap` excludes them from LLM-call math.
-      caseType: z.enum(TEST_CASE_TYPES).optional(),
-      probeConfig: probeConfigSchema.optional(),
-    }).superRefine((test, ctx) => {
-      // Cross-field invariant the runner and cap math both assume. The cap
-      // excludes rows purely by caseType while the runner only forks off
-      // the LLM path when probeConfig is ALSO present — a widget_probe row
-      // without probeConfig would be cap-exempt yet still execute as an
-      // LLM case (cap bypass). The reverse direction mirrors the backend's
-      // assertValidResolvedTestCaseState, which rejects stray probeConfig
-      // on prompt cases; failing fast here beats a late Convex error.
-      if (test.caseType === "widget_probe" && !test.probeConfig) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["probeConfig"],
-          message: "probeConfig is required when caseType is widget_probe",
-        });
-      }
-      if (test.caseType !== "widget_probe" && test.probeConfig) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["probeConfig"],
-          message: "probeConfig is only allowed on widget_probe cases",
-        });
-      }
-    }),
+    z
+      .object({
+        title: z.string(),
+        query: z.string(),
+        runs: z.number().int().positive().max(10),
+        model: z.string(),
+        provider: z.string(),
+        expectedToolCalls: z.array(
+          z.object({
+            toolName: z.string(),
+            arguments: z.record(z.string(), z.any()),
+          })
+        ),
+        isNegativeTest: z.boolean().optional(),
+        scenario: z.string().optional(),
+        expectedOutput: z.string().optional(),
+        // Unified `TestStep[]` model — the source of truth for execution.
+        // Declared explicitly so Zod does not silently strip it off the wire
+        // (feedback_zod_strips_unthreaded_fields).
+        steps: stepsSchema.min(1),
+        advancedConfig: z
+          .object({
+            system: z.string().optional(),
+            temperature: z.number().optional(),
+            toolChoice: toolChoiceSchema.optional(),
+          })
+          .passthrough()
+          .optional(),
+        matchOptions: matchOptionsSchema.optional(),
+        // Case-level predicate gate override; threaded through every Zod
+        // boundary on the wire so it doesn't get silently stripped
+        // (feedback_zod_strips_unthreaded_fields).
+        predicates: casePredicatesSchema.optional(),
+        // Widget-probe discriminant + pinned tool call. Same silent-strip
+        // rationale as `predicates` above. Probe entries carry display-only
+        // model/provider sentinels to satisfy the required fields; the
+        // runner forks off the LLM path before any model resolution and
+        // `assertSuiteRunWithinCap` excludes them from LLM-call math.
+        caseType: z.enum(TEST_CASE_TYPES).optional(),
+        probeConfig: probeConfigSchema.optional(),
+      })
+      .superRefine((test, ctx) => {
+        // Compatibility-field invariant: `steps` are the execution source of
+        // truth, but when callers also send legacy widget-probe metadata, the
+        // discriminant and payload must agree so later layers never see a
+        // malformed mixed contract.
+        if (test.caseType === "widget_probe" && !test.probeConfig) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["probeConfig"],
+            message: "probeConfig is required when caseType is widget_probe",
+          });
+        }
+        if (test.caseType !== "widget_probe" && test.probeConfig) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["probeConfig"],
+            message: "probeConfig is only allowed on widget_probe cases",
+          });
+        }
+      })
   ),
   serverIds: z
     .array(z.string())
@@ -180,6 +164,13 @@ export const RunEvalsRequestSchema = z.object({
    * MAX_TOTAL_LLM_CALLS.
    */
   iterationOverride: z.number().int().min(1).max(10).optional(),
+  /**
+   * Run-only case subset (Convex testCase ids). When set, the run is scoped
+   * to just these suite cases instead of every case — a single filter on the
+   * run snapshot, with precreate + the runner unchanged. Used by single-case
+   * runs from the public /api/v1 surface; the persisted suite is untouched.
+   */
+  caseIds: z.array(z.string().min(1)).min(1).optional(),
   /**
    * One-off match-option override for this run only. Resolved on top of
    * suite defaults + case overrides into each iteration's snapshot;
@@ -248,7 +239,9 @@ export const RunTestCaseRequestSchema = z.object({
       isNegativeTest: z.boolean().optional(),
       runs: z.number().int().positive().max(10).optional(),
       expectedOutput: z.string().optional(),
-      promptTurns: z.array(promptTurnSchema).optional(),
+      // Unified `TestStep[]` override for a single-case quick run. Declared so
+      // Zod doesn't strip it off the wire.
+      steps: stepsSchema.min(1).optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
@@ -276,6 +269,11 @@ export const RunTestCaseRequestSchema = z.object({
    * NOT mutate the persisted case's `matchOptions`.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * Scope this single-case run to a single host attached to the suite. Mirrors
+   * suite-run host selection and reuses `loadSuiteHostConfig`.
+   */
+  namedHostId: z.string().optional(),
   /**
    * One-off hostConfig override for this single-case run. Subset of
    * `HostConfigInputV2`; recorded on the iteration snapshot so the trace
@@ -309,7 +307,7 @@ export const MAX_TOTAL_LLM_CALLS = 300;
 
 export function assertSuiteRunWithinCap(
   request: RunEvalsRequest,
-  configCount = 1,
+  configCount = 1
 ) {
   const override = request.iterationOverride;
   // Each iteration issues one model call per prompt turn; counting only `runs`
@@ -317,20 +315,18 @@ export function assertSuiteRunWithinCap(
   // zero model calls and are excluded entirely.
   const totalCalls =
     request.tests.reduce((sum, t) => {
-      if (isPinnedOnly(t)) return sum;
       const iterations = override ?? t.runs ?? 0;
-      // Count only model-driven turns — pinned (render-check) turns issue no
-      // LLM call, so a hybrid case shouldn't over-count its budget. Floor at 1
-      // for legacy single-turn cases that carry no promptTurns array.
-      const turns = Math.max(countModelTurns(t.promptTurns), 1);
-      return sum + iterations * turns;
+      // Every wire case carries `steps`: count only `prompt` steps (each issues
+      // one model call; `toolCall`/`interact`/`assert` issue none). A model-free
+      // (no-prompt) case contributes nothing to the LLM budget.
+      return sum + iterations * countModelSteps(t.steps ?? []);
     }, 0) * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
-      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS }
     );
   }
 }
@@ -351,17 +347,22 @@ export function buildCapEntriesFromPersistedCases(
     title?: string;
     runs?: number;
     models?: Array<{ model: string; provider: string }>;
-    promptTurns?: unknown;
-    caseType?: string;
-  }>,
+    steps?: unknown;
+  }>
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
-    const promptTurns = Array.isArray(testCase.promptTurns)
-      ? (testCase.promptTurns as RunEvalsRequest["tests"][number]["promptTurns"])
-      : undefined;
-    const pinnedOnly = isPinnedOnly(testCase);
-    const fanout = pinnedOnly ? 1 : Math.max(testCase.models?.length ?? 0, 1);
+    const steps = (
+      Array.isArray(testCase.steps) && testCase.steps.length > 0
+        ? testCase.steps
+        : [{ id: "legacy-cap-prompt", kind: "prompt", prompt: "" }]
+    ) as RunEvalsRequest["tests"][number]["steps"];
+    // Model-free cases (no `prompt` step) need one cap entry; model cases fan
+    // out per model. The cap reducer counts `prompt` steps, so a model-free
+    // case contributes 0 LLM calls regardless of fanout — the entry carries
+    // `steps` so the reducer sees the real count.
+    const modelFree = isModelFree(steps ?? []);
+    const fanout = modelFree ? 1 : Math.max(testCase.models?.length ?? 0, 1);
     for (let i = 0; i < fanout; i++) {
       entries.push({
         title: testCase.title ?? "",
@@ -370,10 +371,7 @@ export function buildCapEntriesFromPersistedCases(
         model: "cap-check",
         provider: "none",
         expectedToolCalls: [],
-        ...(promptTurns ? { promptTurns } : {}),
-        // Preserve the discriminator the cap reducer (`isPinnedOnly`) reads to
-        // exclude model-free cases from the LLM-call budget.
-        ...(pinnedOnly ? { caseType: "widget_probe" as const } : {}),
+        steps,
       });
     }
   }
@@ -405,26 +403,22 @@ export function buildCapEntriesFromPersistedCases(
  * Tracked as a follow-up.)
  */
 export function assertBareRerunCasesRunnable(
-  cases:
-    | Array<{
-        title?: string;
-        models?: Array<{ model: string; provider: string }>;
-        model?: string;
-        provider?: string;
-        caseType?: string;
-        promptTurns?: unknown;
-      }>
-    | null,
+  cases: Array<{
+    title?: string;
+    models?: Array<{ model: string; provider: string }>;
+    model?: string;
+    provider?: string;
+    steps?: unknown;
+  }> | null
 ): void {
   const unrunnable = (cases ?? [])
     .filter(
       (c) =>
-        // Model-free pinned cases (legacy widget_probe OR a unified case whose
-        // turns are all pinned) need no model and ARE runnable — don't flag
-        // them as unrunnable prompt cases.
-        !isPinnedOnly({ caseType: c.caseType, promptTurns: c.promptTurns }) &&
+        // Model-free cases (every step is a `toolCall`/no `prompt`) need no
+        // model and ARE runnable — don't flag them as unrunnable prompt cases.
+        !isModelFree(Array.isArray(c.steps) ? c.steps : []) &&
         !(c.models && c.models.length > 0) &&
-        !(c.model && c.provider),
+        !(c.model && c.provider)
     )
     .map((c) => c.title?.trim() || "(untitled)");
   if (unrunnable.length > 0) {
@@ -435,7 +429,7 @@ export function assertBareRerunCasesRunnable(
         `have no model of their own and rely on the suite default model, ` +
         `which is only applied for interactive launches. Add a per-case ` +
         `model to run on a schedule or via the API: ${unrunnable.join(", ")}.`,
-      { unrunnableCases: unrunnable },
+      { unrunnableCases: unrunnable }
     );
   }
 }
@@ -450,19 +444,21 @@ export function assertBareRerunCasesRunnable(
 export function assertTestCaseRunWithinCap(
   request: RunTestCaseRequest,
   configCount = 1,
-  resolved?: { promptTurnsLength?: number },
+  resolved?: { modelStepCount?: number }
 ) {
   const iterations = request.testCaseOverrides?.runs ?? 1;
-  const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
-  const resolvedTurns = resolved?.promptTurnsLength;
-  const turns = Math.max(overrideTurns ?? resolvedTurns ?? 0, 1);
+  const overrideCalls = request.testCaseOverrides?.steps
+    ? countModelSteps(request.testCaseOverrides.steps)
+    : undefined;
+  const resolvedCalls = resolved?.modelStepCount;
+  const turns = Math.max(overrideCalls ?? resolvedCalls ?? 0, 1);
   const totalCalls = iterations * turns * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
-      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS }
     );
   }
 }
@@ -479,9 +475,7 @@ export const ServerAttachmentInputSchema = z.object({
   resolvedServerNames: z.array(z.string().min(1)).min(1),
 });
 
-export type ServerAttachmentInput = z.infer<
-  typeof ServerAttachmentInputSchema
->;
+export type ServerAttachmentInput = z.infer<typeof ServerAttachmentInputSchema>;
 
 // Per-bucket case counts for configurable generation. Field names mirror the
 // backend `CaseMix`. Each bucket is bounded; the backend additionally caps the
@@ -545,15 +539,16 @@ export type GenerateNegativeTestsRequest = z.infer<
  */
 async function loadSuiteDefaultMatchOptions(
   convexClient: ConvexHttpClient,
-  suiteId?: string,
+  suiteId?: string
 ): Promise<MatchOptionsDTO | undefined> {
   if (!suiteId) return undefined;
   try {
     const suite = await convexClient.query("testSuites:getTestSuite" as any, {
       suiteId,
     });
-    return (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ??
-      undefined;
+    return (
+      (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ?? undefined
+    );
   } catch {
     return undefined;
   }
@@ -568,10 +563,8 @@ async function loadSuiteDefaultMatchOptions(
  */
 async function loadSuiteDefaultPredicates(
   convexClient: ConvexHttpClient,
-  suiteId?: string,
-): Promise<
-  import("@/shared/eval-matching").Predicate[] | undefined
-> {
+  suiteId?: string
+): Promise<import("@/shared/eval-matching").Predicate[] | undefined> {
   if (!suiteId) return undefined;
   try {
     const suite = await convexClient.query("testSuites:getTestSuite" as any, {
@@ -584,6 +577,54 @@ async function loadSuiteDefaultPredicates(
   } catch {
     return undefined;
   }
+}
+
+async function loadSuiteEnvironment(
+  convexClient: ConvexHttpClient,
+  suiteId?: string
+): Promise<unknown> {
+  if (!suiteId) return undefined;
+  try {
+    const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+      suiteId,
+    });
+    return (suite as { environment?: unknown } | undefined)?.environment;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildRuntimeEnvironmentWithBindings(args: {
+  resolvedServerIds: string[];
+  suiteEnvironment: unknown;
+}) {
+  const rawBindings = (
+    args.suiteEnvironment as
+      | {
+          serverBindings?: Array<{
+            serverName?: unknown;
+            projectServerId?: unknown;
+          }>;
+        }
+      | undefined
+  )?.serverBindings;
+  const serverBindings = Array.isArray(rawBindings)
+    ? rawBindings.flatMap((binding) =>
+        typeof binding.serverName === "string" &&
+        typeof binding.projectServerId === "string"
+          ? [
+              {
+                serverName: binding.serverName,
+                projectServerId: binding.projectServerId,
+              },
+            ]
+          : []
+      )
+    : [];
+  return {
+    servers: args.resolvedServerIds,
+    ...(serverBindings.length > 0 ? { serverBindings } : {}),
+  };
 }
 
 export function createConvexClients(convexAuthToken: string) {
@@ -605,7 +646,7 @@ export function createConvexClients(convexAuthToken: string) {
 
 export function resolveServerIdsOrThrow(
   requestedIds: string[],
-  clientManager: MCPClientManager,
+  clientManager: MCPClientManager
 ): string[] {
   const available = clientManager.listServers();
   const resolved: string[] = [];
@@ -620,7 +661,7 @@ export function resolveServerIdsOrThrow(
         404,
         ErrorCode.NOT_FOUND,
         `Could not start eval because "${requestedId}" is not connected. Reconnect the server and try again.`,
-        { serverId: requestedId },
+        { serverId: requestedId }
       );
     }
 
@@ -649,7 +690,7 @@ function normalizeForComparison(obj: any): any {
 export function filterAndRemapReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   resolvedServerIds: string[],
-  persistedServerIds: string[],
+  persistedServerIds: string[]
 ): MCPServerReplayConfig[] {
   const persistedIdByResolvedId = new Map<string, string>();
 
@@ -714,7 +755,7 @@ export type PreparedEvalRun = {
   recorder: SuiteRunRecorder;
   /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
-   * terminal run status (completed/failed/cancelled/timed_out); callers that detach
+   * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
    * finalize via `recorder` for errors thrown outside the runner's own
    * try.
@@ -744,20 +785,51 @@ export function probeIdentityKey(entry: {
 /**
  * Dedupe key for `prepareEvalRun`'s per-case upsert map. Prompt rows keep
  * the historical title+query key (the per-model fan-out sends one row per
- * model of the same case and must reassemble); probe rows key by probe
- * identity — title+query would merge distinct same-titled probes (all
- * probes share query "") or collide a probe with a prompt row, silently
- * dropping probeConfig or pushing prompt models into a probe entry.
+ * model of the same case and must reassemble). Step-native rows key by
+ * normalized steps so distinct same-titled render checks do not collide and
+ * prompt models are not pushed into a model-free entry.
  */
 export function buildUpsertCaseKey(test: {
   title: string;
   query: string;
+  steps?: TestStep[];
   caseType?: TestCaseType;
   probeConfig?: ProbeConfig;
 }): string {
+  const steps = resolveAuthoringSteps(test);
+  if (steps && steps.length > 0) {
+    return `${test.title}-${test.query}-${JSON.stringify(
+      normalizeForComparison(steps)
+    )}`;
+  }
   return test.caseType === "widget_probe"
     ? probeIdentityKey(test)
     : `${test.title}-${test.query}`;
+}
+
+function legacyProbeConfigToSteps(probeConfig: ProbeConfig): TestStep[] {
+  const call = probeConfigToToolCallStep("step-1", probeConfig);
+  return [
+    call,
+    {
+      id: "step-2",
+      kind: "assert",
+      assertion: { type: "widgetRendered", toolName: call.toolName },
+    },
+  ];
+}
+
+function resolveAuthoringSteps(test: {
+  steps?: unknown;
+  caseType?: TestCaseType;
+  probeConfig?: ProbeConfig;
+}): TestStep[] | undefined {
+  const steps = normalizeSteps(test.steps);
+  if (steps.length > 0) return steps;
+  if (test.caseType === "widget_probe" && test.probeConfig) {
+    return legacyProbeConfigToSteps(test.probeConfig);
+  }
+  return undefined;
 }
 
 /**
@@ -830,17 +902,16 @@ export async function authorEvalSuite(args: {
       isNegativeTest?: boolean;
       scenario?: string;
       expectedOutput?: string;
-      promptTurns?: PromptTurn[];
+      steps?: TestStep[];
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
       predicates?: import("@/shared/eval-matching").CasePredicates;
-      caseType?: TestCaseType;
-      probeConfig?: ProbeConfig;
     }
   >();
 
   for (const test of tests) {
+    const authoringSteps = resolveAuthoringSteps(test);
     const key = buildUpsertCaseKey(test);
     if (!testCaseMap.has(key)) {
       testCaseMap.set(key, {
@@ -852,17 +923,15 @@ export async function authorEvalSuite(args: {
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
         expectedOutput: test.expectedOutput,
-        promptTurns: test.promptTurns,
+        steps: authoringSteps,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
-        caseType: test.caseType,
-        probeConfig: test.probeConfig,
       });
     }
     // Probe entries carry display-only model sentinels — never collect them
     // into the case's persisted model list.
-    if (test.caseType !== "widget_probe") {
+    if (!isModelFree(authoringSteps)) {
       testCaseMap.get(key)!.models.push({
         model: test.model,
         provider: test.provider,
@@ -894,181 +963,152 @@ export async function authorEvalSuite(args: {
     if (suiteRerun) {
       // skip upsert
     } else {
-    const existingTestCases = await convexClient.query(
-      "testSuites:listTestCases" as any,
-      { suiteId: resolvedSuiteId },
-    );
-
-    for (const [, testCaseData] of testCaseMap.entries()) {
-      // Match within the same case category. Probes match by the pinned-call
-      // identity used for the wire dedupe above (they all share query "", so
-      // title+query would adopt the first same-titled case — probe or
-      // prompt — as the update target); prompts match by title+query as
-      // before but never against a probe case.
-      const existingTestCase = existingTestCases?.find((tc: any) =>
-        testCaseData.caseType === "widget_probe"
-          ? tc.caseType === "widget_probe" &&
-            probeIdentityKey(tc) === probeIdentityKey(testCaseData)
-          : tc.caseType !== "widget_probe" &&
-            tc.title === testCaseData.title &&
-            tc.query === testCaseData.query,
+      const existingTestCases = await convexClient.query(
+        "testSuites:listTestCases" as any,
+        { suiteId: resolvedSuiteId }
       );
 
-      try {
-      if (existingTestCase) {
-        const normalize = (val: any) =>
-          val === undefined || val === null ? null : val;
+      for (const [, testCaseData] of testCaseMap.entries()) {
+        const testCaseStepsKey = JSON.stringify(
+          normalizeForComparison(testCaseData.steps || [])
+        );
+        const hasStepKey = (testCaseData.steps?.length ?? 0) > 0;
+        const existingTestCase = existingTestCases?.find((tc: any) => {
+          if (tc.title !== testCaseData.title) return false;
+          if (hasStepKey || Array.isArray(tc.steps)) {
+            return (
+              JSON.stringify(normalizeForComparison(tc.steps || [])) ===
+              testCaseStepsKey
+            );
+          }
+          return tc.query === testCaseData.query;
+        });
 
-        const modelsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.models || []),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.models || []));
-        const runsChanged =
-          normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
-        const expectedToolCallsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.expectedToolCalls || []),
-          ) !==
-          JSON.stringify(
-            normalizeForComparison(testCaseData.expectedToolCalls || []),
-          );
-        const isNegativeTestChanged =
-          normalize(existingTestCase.isNegativeTest) !==
-          normalize(testCaseData.isNegativeTest);
-        const scenarioChanged =
-          normalize(existingTestCase.scenario) !==
-          normalize(testCaseData.scenario);
-        const expectedOutputChanged =
-          normalize(existingTestCase.expectedOutput) !==
-          normalize(testCaseData.expectedOutput);
-        const promptTurnsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.promptTurns || []),
-          ) !==
-          JSON.stringify(
-            normalizeForComparison(testCaseData.promptTurns || []),
-          );
-        const judgeRequirementChanged =
-          normalize(existingTestCase.judgeRequirement) !==
-          normalize(testCaseData.judgeRequirement);
-        const advancedConfigChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.advancedConfig),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
-        const matchOptionsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.matchOptions),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
-        const predicatesChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.predicates),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.predicates));
-        // caseType is immutable after create and updateTestCase rejects
-        // probeConfig on prompt cases — a wire probe entry that collides
-        // with an existing PROMPT case by title+query must not push probe
-        // fields at it (the category mismatch is unresolvable here).
-        const existingIsProbe = existingTestCase.caseType === "widget_probe";
-        const probeConfigChanged =
-          existingIsProbe &&
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.probeConfig),
-          ) !==
-            JSON.stringify(normalizeForComparison(testCaseData.probeConfig));
+        try {
+          if (existingTestCase) {
+            const normalize = (val: any) =>
+              val === undefined || val === null ? null : val;
 
-        const hasChanges =
-          modelsChanged ||
-          runsChanged ||
-          expectedToolCallsChanged ||
-          isNegativeTestChanged ||
-          scenarioChanged ||
-          expectedOutputChanged ||
-          promptTurnsChanged ||
-          judgeRequirementChanged ||
-          advancedConfigChanged ||
-          matchOptionsChanged ||
-          predicatesChanged ||
-          probeConfigChanged;
+            const modelsChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.models || [])
+              ) !==
+              JSON.stringify(normalizeForComparison(testCaseData.models || []));
+            const runsChanged =
+              normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
+            const expectedToolCallsChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.expectedToolCalls || [])
+              ) !==
+              JSON.stringify(
+                normalizeForComparison(testCaseData.expectedToolCalls || [])
+              );
+            const isNegativeTestChanged =
+              normalize(existingTestCase.isNegativeTest) !==
+              normalize(testCaseData.isNegativeTest);
+            const scenarioChanged =
+              normalize(existingTestCase.scenario) !==
+              normalize(testCaseData.scenario);
+            const expectedOutputChanged =
+              normalize(existingTestCase.expectedOutput) !==
+              normalize(testCaseData.expectedOutput);
+            const stepsChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.steps || [])
+              ) !==
+              JSON.stringify(normalizeForComparison(testCaseData.steps || []));
+            const judgeRequirementChanged =
+              normalize(existingTestCase.judgeRequirement) !==
+              normalize(testCaseData.judgeRequirement);
+            const advancedConfigChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.advancedConfig)
+              ) !==
+              JSON.stringify(
+                normalizeForComparison(testCaseData.advancedConfig)
+              );
+            const matchOptionsChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.matchOptions)
+              ) !==
+              JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
+            const predicatesChanged =
+              JSON.stringify(
+                normalizeForComparison(existingTestCase.predicates)
+              ) !==
+              JSON.stringify(normalizeForComparison(testCaseData.predicates));
+            const hasChanges =
+              modelsChanged ||
+              runsChanged ||
+              expectedToolCallsChanged ||
+              isNegativeTestChanged ||
+              scenarioChanged ||
+              expectedOutputChanged ||
+              stepsChanged ||
+              judgeRequirementChanged ||
+              advancedConfigChanged ||
+              matchOptionsChanged ||
+              predicatesChanged;
 
-        if (hasChanges) {
-          await convexClient.mutation("testSuites:updateTestCase" as any, {
-            testCaseId: existingTestCase._id,
-            models: testCaseData.models,
-            runs: testCaseData.runs,
-            expectedToolCalls: sanitizeForConvexTransport(
-              testCaseData.expectedToolCalls,
-            ),
-            isNegativeTest: testCaseData.isNegativeTest,
-            scenario: testCaseData.scenario,
-            expectedOutput: testCaseData.expectedOutput,
-            promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-            advancedConfig: sanitizeForConvexTransport(
-              testCaseData.advancedConfig,
-            ),
-            matchOptions: testCaseData.matchOptions,
-            predicates: testCaseData.predicates,
-            // Threaded only when the PERSISTED case is a probe (see
-            // existingIsProbe above).
-            ...(existingIsProbe && testCaseData.probeConfig
-              ? {
-                  probeConfig: sanitizeForConvexTransport(
-                    testCaseData.probeConfig,
-                  ),
-                }
-              : {}),
+            if (hasChanges) {
+              await convexClient.mutation("testSuites:updateTestCase" as any, {
+                testCaseId: existingTestCase._id,
+                models: testCaseData.models,
+                runs: testCaseData.runs,
+                expectedToolCalls: sanitizeForConvexTransport(
+                  testCaseData.expectedToolCalls
+                ),
+                isNegativeTest: testCaseData.isNegativeTest,
+                scenario: testCaseData.scenario,
+                expectedOutput: testCaseData.expectedOutput,
+                steps: sanitizeForConvexTransport(testCaseData.steps),
+                advancedConfig: sanitizeForConvexTransport(
+                  testCaseData.advancedConfig
+                ),
+                matchOptions: testCaseData.matchOptions,
+                predicates: testCaseData.predicates,
+              });
+            }
+            committedCases.push({
+              id: String(existingTestCase._id),
+              name: testCaseData.title,
+            });
+          } else {
+            await convexClient.mutation("testSuites:createTestCase" as any, {
+              suiteId: resolvedSuiteId,
+              title: testCaseData.title,
+              query: testCaseData.query,
+              models: testCaseData.models,
+              runs: testCaseData.runs,
+              expectedToolCalls: sanitizeForConvexTransport(
+                testCaseData.expectedToolCalls
+              ),
+              isNegativeTest: testCaseData.isNegativeTest,
+              scenario: testCaseData.scenario,
+              expectedOutput: testCaseData.expectedOutput,
+              steps: sanitizeForConvexTransport(testCaseData.steps),
+              judgeRequirement: testCaseData.judgeRequirement,
+              advancedConfig: sanitizeForConvexTransport(
+                testCaseData.advancedConfig
+              ),
+              matchOptions: testCaseData.matchOptions,
+              predicates: testCaseData.predicates,
+            });
+            committedCases.push({ name: testCaseData.title });
+          }
+        } catch (error) {
+          failedCases.push({
+            id: existingTestCase ? String(existingTestCase._id) : undefined,
+            name: testCaseData.title,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          logger.warn("[evals] Failed to upsert test case", {
+            suiteId: resolvedSuiteId,
+            title: testCaseData.title,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
-        committedCases.push({
-          id: String(existingTestCase._id),
-          name: testCaseData.title,
-        });
-      } else {
-        await convexClient.mutation("testSuites:createTestCase" as any, {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          query: testCaseData.query,
-          models: testCaseData.models,
-          runs: testCaseData.runs,
-          expectedToolCalls: sanitizeForConvexTransport(
-            testCaseData.expectedToolCalls,
-          ),
-          isNegativeTest: testCaseData.isNegativeTest,
-          scenario: testCaseData.scenario,
-          expectedOutput: testCaseData.expectedOutput,
-          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-          judgeRequirement: testCaseData.judgeRequirement,
-          advancedConfig: sanitizeForConvexTransport(
-            testCaseData.advancedConfig,
-          ),
-          matchOptions: testCaseData.matchOptions,
-          predicates: testCaseData.predicates,
-          caseType: testCaseData.caseType,
-          ...(testCaseData.probeConfig
-            ? {
-                probeConfig: sanitizeForConvexTransport(
-                  testCaseData.probeConfig,
-                ),
-              }
-            : {}),
-        });
-        committedCases.push({ name: testCaseData.title });
       }
-      } catch (error) {
-        failedCases.push({
-          id: existingTestCase ? String(existingTestCase._id) : undefined,
-          name: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        logger.warn("[evals] Failed to upsert test case", {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
     }
   } else {
     const createdSuite = await convexClient.mutation(
@@ -1079,7 +1119,7 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
-      },
+      }
     );
 
     if (!createdSuite?._id) {
@@ -1097,26 +1137,18 @@ export async function authorEvalSuite(args: {
           models: testCaseData.models,
           runs: testCaseData.runs,
           expectedToolCalls: sanitizeForConvexTransport(
-            testCaseData.expectedToolCalls,
+            testCaseData.expectedToolCalls
           ),
           isNegativeTest: testCaseData.isNegativeTest,
           scenario: testCaseData.scenario,
           expectedOutput: testCaseData.expectedOutput,
-          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+          steps: sanitizeForConvexTransport(testCaseData.steps),
           judgeRequirement: testCaseData.judgeRequirement,
           advancedConfig: sanitizeForConvexTransport(
-            testCaseData.advancedConfig,
+            testCaseData.advancedConfig
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
-          caseType: testCaseData.caseType,
-          ...(testCaseData.probeConfig
-            ? {
-                probeConfig: sanitizeForConvexTransport(
-                  testCaseData.probeConfig,
-                ),
-              }
-            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {
@@ -1144,13 +1176,16 @@ export async function authorEvalSuite(args: {
           suiteId: resolvedSuiteId,
         });
       } catch (rollbackError) {
-        logger.warn("[evals] Failed to roll back empty suite after all cases failed", {
-          suiteId: resolvedSuiteId,
-          error:
-            rollbackError instanceof Error
-              ? rollbackError.message
-              : String(rollbackError),
-        });
+        logger.warn(
+          "[evals] Failed to roll back empty suite after all cases failed",
+          {
+            suiteId: resolvedSuiteId,
+            error:
+              rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError),
+          }
+        );
       }
       throw new WebRouteError(
         400,
@@ -1158,7 +1193,7 @@ export async function authorEvalSuite(args: {
         `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
           `First failure: ${firstError}. ` +
           `Suite creation aborted because it would have zero cases.`,
-        { caseUpsert: { committed: committedCases, failed: failedCases } },
+        { caseUpsert: { committed: committedCases, failed: failedCases } }
       );
     }
   }
@@ -1184,7 +1219,7 @@ export async function authorEvalSuite(args: {
  */
 export async function prepareEvalRun(
   clientManager: MCPClientManager,
-  request: RunEvalsWithManagerRequest,
+  request: RunEvalsWithManagerRequest
 ): Promise<PreparedEvalRun> {
   const {
     suiteId,
@@ -1204,6 +1239,7 @@ export async function prepareEvalRun(
     passCriteria,
     suiteRerun,
     iterationOverride,
+    caseIds,
     matchOptionsOverride,
     namedHostId,
     refreshSnapshot,
@@ -1216,14 +1252,14 @@ export async function prepareEvalRun(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Provide suiteId or suiteName",
+      "Provide suiteId or suiteName"
     );
   }
   if (!suiteId && !projectId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "projectId is required when creating a new eval suite",
+      "projectId is required when creating a new eval suite"
     );
   }
 
@@ -1233,15 +1269,31 @@ export async function prepareEvalRun(
   // path below re-derives the same cases for execution.
   if (suiteId && tests.length === 0) {
     const { convexClient: capClient } = createConvexClients(convexAuthToken);
-    const persistedCases = (await capClient.query(
+    const allPersistedCases = (await capClient.query(
       "testSuites:listTestCases" as any,
-      { suiteId },
+      { suiteId }
     )) as Parameters<typeof buildCapEntriesFromPersistedCases>[0] | null;
+    // Single-case runs narrow cap-math (and the runnable check) to the chosen
+    // case(s) so a one-case run of a large suite isn't rejected by the suite's
+    // total cap. Mirrors the backend snapshot filter; same caseIds.
+    const persistedCases =
+      caseIds && caseIds.length
+        ? ((allPersistedCases ?? []).filter((c: any) =>
+            caseIds.includes(String(c._id))
+          ) as typeof allPersistedCases)
+        : allPersistedCases;
+    if (caseIds && caseIds.length && (persistedCases?.length ?? 0) === 0) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "None of the requested caseIds belong to this suite"
+      );
+    }
     // No client substituted the suite default model onto these cases, so a
     // model-less prompt case would be silently dropped from execution. Reject
     // before cap-math so the error names the real cause, not the cap.
     assertBareRerunCasesRunnable(
-      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0],
+      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0]
     );
     assertSuiteRunWithinCap({
       ...request,
@@ -1263,7 +1315,7 @@ export async function prepareEvalRun(
       resolvedServerIds,
       {
         logPrefix: "evals",
-      },
+      }
     );
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
@@ -1302,6 +1354,7 @@ export async function prepareEvalRun(
     toolSnapshot,
     toolSnapshotDebug,
     iterationOverride,
+    caseIds,
     matchOptionsOverride,
     namedHostId,
     runGroupId,
@@ -1313,12 +1366,15 @@ export async function prepareEvalRun(
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
-  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig, namedHostId);
+  const suiteHostPolicy = extractHostExecutionPolicy(
+    suiteHostConfig,
+    namedHostId
+  );
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
-    persistedServerRefs,
+    persistedServerRefs
   );
   if (replayConfigsToStore.length > 0) {
     try {
@@ -1335,8 +1391,7 @@ export async function prepareEvalRun(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
-  const hasClientKeys =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
@@ -1417,7 +1472,7 @@ export async function prepareEvalRun(
 
 export async function runEvalsWithManager(
   clientManager: MCPClientManager,
-  request: RunEvalsWithManagerRequest,
+  request: RunEvalsWithManagerRequest
 ) {
   const prepared = await prepareEvalRun(clientManager, request);
   await prepared.execute();
@@ -1439,7 +1494,7 @@ export type RunEvalTestCaseWithManagerOptions = {
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
   request: RunTestCaseWithManagerRequest,
-  options?: RunEvalTestCaseWithManagerOptions,
+  options?: RunEvalTestCaseWithManagerOptions
 ) {
   const {
     testCaseId,
@@ -1455,6 +1510,7 @@ export async function runEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    namedHostId,
     hostConfigOverride,
   } = request;
 
@@ -1470,26 +1526,40 @@ export async function runEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
-    promptTurnsLength: testCase.promptTurns?.length,
+    modelStepCount: countModelSteps(
+      (testCase as { steps?: TestStep[] }).steps ?? []
+    ),
   });
 
   const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
     convexClient,
-    testCase.evalTestSuiteId,
+    testCase.evalTestSuiteId
   );
   const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
     convexClient,
-    testCase.evalTestSuiteId,
+    testCase.evalTestSuiteId
   );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
+    namedHostId
   );
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
-    hostConfigOverride as Record<string, unknown> | undefined,
+    hostConfigOverride as Record<string, unknown> | undefined
   );
-  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(
+    suiteHostConfig,
+    namedHostId
+  );
+  const suiteEnvironment = await loadSuiteEnvironment(
+    convexClient,
+    testCase.evalTestSuiteId
+  );
+  const runtimeEnvironment = buildRuntimeEnvironmentWithBindings({
+    resolvedServerIds,
+    suiteEnvironment,
+  });
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1502,9 +1572,9 @@ export async function runEvalTestCaseWithManager(
       testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
     expectedOutput:
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
-    promptTurns:
-      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
-      testCase.promptTurns,
+    steps:
+      (testCaseOverrides?.steps as TestStep[] | undefined) ??
+      (testCase as { steps?: TestStep[] }).steps,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -1512,7 +1582,7 @@ export async function runEvalTestCaseWithManager(
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
         | MatchOptionsDTO
         | undefined,
-      matchOptionsOverride,
+      matchOptionsOverride
     ),
     // Thread the predicate gate into the runtime case so the runner
     // evaluates it. See `resolveCaseSuccessPredicates` for the full
@@ -1533,7 +1603,9 @@ export async function runEvalTestCaseWithManager(
         | import("@/shared/eval-matching").Predicate[]
         | undefined,
     }),
-    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
+    hostConfigOverride: hostConfigOverride as
+      | Record<string, unknown>
+      | undefined,
     testCaseId: testCase._id,
   };
 
@@ -1561,7 +1633,7 @@ export async function runEvalTestCaseWithManager(
           chatboxId,
           accessVersion,
           serverIds: resolvedServerIds,
-        },
+        }
       );
     } catch (error) {
       logger.warn("[evals] Failed to resolve org model config for test case", {
@@ -1576,7 +1648,7 @@ export async function runEvalTestCaseWithManager(
     runId: null,
     config: {
       tests: [test],
-      environment: { servers: resolvedServerIds },
+      environment: runtimeEnvironment,
     },
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
@@ -1601,13 +1673,13 @@ export async function runEvalTestCaseWithManager(
   if (expectedIterationId) {
     latestIteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId: expectedIterationId },
+      { iterationId: expectedIterationId }
     );
   }
   if (!latestIteration) {
     const recentIterations = await convexClient.query(
       "testSuites:listTestIterations" as any,
-      { testCaseId },
+      { testCaseId }
     );
     latestIteration = recentIterations?.[0] || null;
   }
@@ -1638,7 +1710,7 @@ export async function runEvalTestCaseWithManager(
 export function buildManagerKeyToDisplayNameMap(
   clientManager: MCPClientManager,
   requestServerIds: string[],
-  requestServerNames: string[] | undefined,
+  requestServerNames: string[] | undefined
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (
@@ -1665,7 +1737,7 @@ export function buildManagerKeyToDisplayNameMap(
 
 export function remapSnapshotServerIdsForAttachment(
   snapshot: ServerToolSnapshot,
-  managerKeyToDisplayName: Map<string, string>,
+  managerKeyToDisplayName: Map<string, string>
 ): ServerToolSnapshot {
   if (managerKeyToDisplayName.size === 0) return snapshot;
   let mutated = false;
@@ -1680,26 +1752,27 @@ export function remapSnapshotServerIdsForAttachment(
 
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateTestsRequest,
+  request: GenerateTestsRequest
 ) {
   const resolvedServerIds = resolveServerIdsOrThrow(
     request.serverIds,
-    clientManager,
+    clientManager
   );
-  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
-    clientManager,
-    resolvedServerIds,
-    {
-      logPrefix: "evals.generate-tests",
-    },
-  );
+  const { toolSnapshot: rawSnapshot } =
+    await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      {
+        logPrefix: "evals.generate-tests",
+      }
+    );
   const toolSnapshot = remapSnapshotServerIdsForAttachment(
     rawSnapshot,
     buildManagerKeyToDisplayNameMap(
       clientManager,
       request.serverIds,
-      request.serverNames,
-    ),
+      request.serverNames
+    )
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -1707,7 +1780,7 @@ export async function generateEvalTestsWithManager(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "No tools found for selected servers",
+      "No tools found for selected servers"
     );
   }
 
@@ -1722,7 +1795,7 @@ export async function generateEvalTestsWithManager(
     request.convexAuthToken,
     request.serverAttachment,
     request.projectId,
-    request.generationOptions,
+    request.generationOptions
   );
 
   return {
@@ -1733,26 +1806,27 @@ export async function generateEvalTestsWithManager(
 
 export async function generateNegativeEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateNegativeTestsRequest,
+  request: GenerateNegativeTestsRequest
 ) {
   const resolvedServerIds = resolveServerIdsOrThrow(
     request.serverIds,
-    clientManager,
+    clientManager
   );
-  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
-    clientManager,
-    resolvedServerIds,
-    {
-      logPrefix: "evals.generate-negative-tests",
-    },
-  );
+  const { toolSnapshot: rawSnapshot } =
+    await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      {
+        logPrefix: "evals.generate-negative-tests",
+      }
+    );
   const toolSnapshot = remapSnapshotServerIdsForAttachment(
     rawSnapshot,
     buildManagerKeyToDisplayNameMap(
       clientManager,
       request.serverIds,
-      request.serverNames,
-    ),
+      request.serverNames
+    )
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -1760,7 +1834,7 @@ export async function generateNegativeEvalTestsWithManager(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "No tools found for selected servers",
+      "No tools found for selected servers"
     );
   }
 
@@ -1774,7 +1848,7 @@ export async function generateNegativeEvalTestsWithManager(
     convexHttpUrl,
     request.convexAuthToken,
     request.serverAttachment,
-    request.projectId,
+    request.projectId
   );
 
   return {
@@ -1790,7 +1864,7 @@ export async function streamEvalTestCaseWithManager(
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
-  },
+  }
 ): Promise<ReadableStream<Uint8Array>> {
   const {
     testCaseId,
@@ -1806,6 +1880,7 @@ export async function streamEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    namedHostId,
     hostConfigOverride,
   } = request;
 
@@ -1821,26 +1896,40 @@ export async function streamEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
-    promptTurnsLength: testCase.promptTurns?.length,
+    modelStepCount: countModelSteps(
+      (testCase as { steps?: TestStep[] }).steps ?? []
+    ),
   });
 
   const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
     convexClient,
-    testCase.evalTestSuiteId,
+    testCase.evalTestSuiteId
   );
   const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
     convexClient,
-    testCase.evalTestSuiteId,
+    testCase.evalTestSuiteId
   );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
+    namedHostId
   );
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
-    hostConfigOverride as Record<string, unknown> | undefined,
+    hostConfigOverride as Record<string, unknown> | undefined
   );
-  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(
+    suiteHostConfig,
+    namedHostId
+  );
+  const suiteEnvironment = await loadSuiteEnvironment(
+    convexClient,
+    testCase.evalTestSuiteId
+  );
+  const runtimeEnvironment = buildRuntimeEnvironmentWithBindings({
+    resolvedServerIds,
+    suiteEnvironment,
+  });
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1853,9 +1942,9 @@ export async function streamEvalTestCaseWithManager(
       testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
     expectedOutput:
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
-    promptTurns:
-      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
-      testCase.promptTurns,
+    steps:
+      (testCaseOverrides?.steps as TestStep[] | undefined) ??
+      (testCase as { steps?: TestStep[] }).steps,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -1863,7 +1952,7 @@ export async function streamEvalTestCaseWithManager(
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
         | MatchOptionsDTO
         | undefined,
-      matchOptionsOverride,
+      matchOptionsOverride
     ),
     // Thread the predicate gate into the runtime case so the runner evaluates
     // it. See `resolveCaseSuccessPredicates` for the full precedence rules.
@@ -1881,7 +1970,9 @@ export async function streamEvalTestCaseWithManager(
         | import("@/shared/eval-matching").Predicate[]
         | undefined,
     }),
-    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
+    hostConfigOverride: hostConfigOverride as
+      | Record<string, unknown>
+      | undefined,
     testCaseId: testCase._id,
   };
 
@@ -1911,7 +2002,7 @@ export async function streamEvalTestCaseWithManager(
           chatboxId,
           accessVersion,
           serverIds: resolvedServerIds,
-        },
+        }
       );
     } catch (error) {
       logger.warn(
@@ -1919,7 +2010,7 @@ export async function streamEvalTestCaseWithManager(
         {
           testCaseId,
           error: error instanceof Error ? error.message : String(error),
-        },
+        }
       );
     }
   }
@@ -1928,19 +2019,18 @@ export async function streamEvalTestCaseWithManager(
   // full tool set (including app-only) so the policy can both filter and
   // count drops honestly. Without this, app-only tools are pre-stripped by
   // getToolsForAiSdk and host visibility signals are blank.
-  const tools = (suiteHostPolicy
-    ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-        includeAppOnly: true,
-      })
-    : await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<
-    string,
-    any
-  >;
+  const tools = (
+    suiteHostPolicy
+      ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
+          includeAppOnly: true,
+        })
+      : await clientManager.getToolsForAiSdk(resolvedServerIds)
+  ) as Record<string, any>;
   const streamToolSignals = suiteHostPolicy
     ? applyVisibilityPolicyAndCountSignals(
         tools as Record<string, unknown>,
         clientManager,
-        suiteHostPolicy,
+        suiteHostPolicy
       )
     : undefined;
   const encoder = new TextEncoder();
@@ -1976,6 +2066,7 @@ export async function streamEvalTestCaseWithManager(
           // further; the threading still applies in the meantime.
           suiteHostConfig,
           toolSignals: streamToolSignals,
+          environment: runtimeEnvironment,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));
@@ -1985,21 +2076,57 @@ export async function streamEvalTestCaseWithManager(
           },
         });
 
-        // Retrieve the iteration
+        // Retrieve the finalized iteration to attach to the `complete` event.
+        // The iteration is pre-created as `running` and finalized to a terminal
+        // status (`completed`/`failed`/`cancelled`) by `finalizeEvalIteration`
+        // right before the stream loop returns. An immediate read can race that
+        // write and return either `null` (write not yet visible) or the still
+        // `running` row (mid-finalize). Both are toxic to the client: a `null`
+        // or non-terminal `iteration` on `complete` makes a fully-graded run
+        // look like a failure — the Preview row vanishes and the user sees
+        // "Compare run failed for all selected models" (telemetry: rare
+        // `result=unknown` / `pending` compare_model_completed events). Poll
+        // briefly for the terminal row before emitting.
         const expectedIterationId = outcomes[0]?.iterationId;
+        const isTerminalIteration = (iter: unknown): boolean => {
+          const status = (iter as { status?: unknown } | null)?.status;
+          return (
+            status === "completed" ||
+            status === "failed" ||
+            status === "cancelled"
+          );
+        };
         let latestIteration: unknown = null;
         if (expectedIterationId) {
-          latestIteration = await convexClient.query(
-            "testSuites:getTestIteration" as any,
-            { iterationId: expectedIterationId },
-          );
+          for (let attempt = 0; attempt < 6; attempt++) {
+            latestIteration = await convexClient.query(
+              "testSuites:getTestIteration" as any,
+              { iterationId: expectedIterationId }
+            );
+            if (isTerminalIteration(latestIteration)) break;
+            // Backoff ~150ms between reads; total budget ~0.75s before we fall
+            // back. Don't keep the last (possibly non-terminal) read on the
+            // final attempt — let the fallback try a fresh listing instead.
+            if (attempt < 5) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            } else {
+              latestIteration = null;
+            }
+          }
         }
-        if (!latestIteration) {
+        if (!isTerminalIteration(latestIteration)) {
           const recentIterations = await convexClient.query(
             "testSuites:listTestIterations" as any,
-            { testCaseId },
+            { testCaseId }
           );
-          latestIteration = recentIterations?.[0] || null;
+          // Prefer the row we know we created; only then fall back to "most
+          // recent for this case" (legacy behavior, kept as a last resort).
+          const byId = expectedIterationId
+            ? recentIterations?.find(
+                (iter: any) => iter?._id === expectedIterationId
+              )
+            : undefined;
+          latestIteration = byId ?? recentIterations?.[0] ?? latestIteration;
         }
 
         // Update lastMessageRun
@@ -2020,7 +2147,7 @@ export async function streamEvalTestCaseWithManager(
             type: "complete",
             iterationId: expectedIterationId,
             iteration: latestIteration,
-          }),
+          })
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2032,7 +2159,7 @@ export async function streamEvalTestCaseWithManager(
               error instanceof WebRouteError && error.details
                 ? JSON.stringify(error.details)
                 : undefined,
-          }),
+          })
         );
       } finally {
         try {

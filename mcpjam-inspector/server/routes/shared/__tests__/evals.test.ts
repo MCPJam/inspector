@@ -35,6 +35,8 @@ function buildSuiteRequest(overrides?: {
       model: "claude-3",
       provider: "anthropic",
       expectedToolCalls: [],
+      // One model (prompt) step → one LLM call per case (cap counts prompt steps).
+      steps: [{ id: `t${i}-s0`, kind: "prompt", prompt: "q" }],
     })),
   };
 }
@@ -53,21 +55,21 @@ function buildTestCaseRequest(runs?: number): unknown {
 describe("RunEvalsRequestSchema runs cap", () => {
   it("accepts runs up to 10", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 10 }),
+      buildSuiteRequest({ runs: 10 })
     );
     expect(result.success).toBe(true);
   });
 
   it("rejects runs above 10 at the Zod layer", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 11 }),
+      buildSuiteRequest({ runs: 11 })
     );
     expect(result.success).toBe(false);
   });
 
   it("rejects non-positive runs", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 0 }),
+      buildSuiteRequest({ runs: 0 })
     );
     expect(result.success).toBe(false);
   });
@@ -75,21 +77,36 @@ describe("RunEvalsRequestSchema runs cap", () => {
   it("accepts iterationOverride between 1 and 10", () => {
     const base = buildSuiteRequest() as Record<string, unknown>;
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 1 }).success,
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 1 }).success
     ).toBe(true);
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 10 }).success,
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 10 })
+        .success
     ).toBe(true);
   });
 
   it("rejects iterationOverride outside [1, 10]", () => {
     const base = buildSuiteRequest() as Record<string, unknown>;
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 0 }).success,
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 0 }).success
     ).toBe(false);
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 11 }).success,
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 11 })
+        .success
     ).toBe(false);
+  });
+
+  it("rejects suite tests without steps", () => {
+    const base = buildSuiteRequest() as {
+      tests: Array<Record<string, unknown>>;
+    };
+    const [test] = base.tests;
+    const { steps: _steps, ...withoutSteps } = test;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      tests: [withoutSteps],
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -101,6 +118,7 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
     model: "widget-probe",
     provider: "none",
     expectedToolCalls: [],
+    steps: [{ id: "s0", kind: "prompt", prompt: "q" }],
   };
   const probeConfig = {
     serverId: "srv-1",
@@ -115,7 +133,22 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
 
   it("accepts a widget_probe row carrying probeConfig", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      withTests([{ ...baseTest, caseType: "widget_probe", probeConfig }]),
+      withTests([
+        {
+          ...baseTest,
+          caseType: "widget_probe",
+          probeConfig,
+          steps: [
+            {
+              id: "s0",
+              kind: "toolCall",
+              serverName: "server-1",
+              toolName: "show_map",
+              arguments: {},
+            },
+          ],
+        },
+      ])
     );
     expect(result.success).toBe(true);
   });
@@ -126,8 +159,13 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
     // rejection the row would run as a cap-exempt LLM case.
     const result = RunEvalsRequestSchema.safeParse(
       withTests([
-        { ...baseTest, model: "claude-3", provider: "anthropic", caseType: "widget_probe" },
-      ]),
+        {
+          ...baseTest,
+          model: "claude-3",
+          provider: "anthropic",
+          caseType: "widget_probe",
+        },
+      ])
     );
     expect(result.success).toBe(false);
   });
@@ -135,8 +173,14 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
   it("rejects stray probeConfig on a prompt row", () => {
     const result = RunEvalsRequestSchema.safeParse(
       withTests([
-        { ...baseTest, model: "claude-3", provider: "anthropic", query: "q", probeConfig },
-      ]),
+        {
+          ...baseTest,
+          model: "claude-3",
+          provider: "anthropic",
+          query: "q",
+          probeConfig,
+        },
+      ])
     );
     expect(result.success).toBe(false);
   });
@@ -157,19 +201,27 @@ describe("RunTestCaseRequestSchema runs cap", () => {
     const result = RunTestCaseRequestSchema.safeParse(buildTestCaseRequest());
     expect(result.success).toBe(true);
   });
+
+  it("preserves namedHostId for single-case runs", () => {
+    const req = RunTestCaseRequestSchema.parse({
+      ...(buildTestCaseRequest() as Record<string, unknown>),
+      namedHostId: "host-mcpjam",
+    });
+    expect(req.namedHostId).toBe("host-mcpjam");
+  });
 });
 
 describe("assertSuiteRunWithinCap", () => {
   it("passes when total LLM calls is within the cap", () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 }),
+      buildSuiteRequest({ testCount: 10, runs: 10 })
     );
     expect(() => assertSuiteRunWithinCap(req)).not.toThrow();
   });
 
   it(`rejects when total exceeds ${MAX_TOTAL_LLM_CALLS}`, () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 }),
+      buildSuiteRequest({ testCount: 10, runs: 10 })
     );
     try {
       assertSuiteRunWithinCap(req, 4); // 10 × 10 × 4 = 400 > 300
@@ -184,7 +236,7 @@ describe("assertSuiteRunWithinCap", () => {
 
   it(`accepts exactly ${MAX_TOTAL_LLM_CALLS}`, () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 }),
+      buildSuiteRequest({ testCount: 10, runs: 10 })
     );
     expect(() => assertSuiteRunWithinCap(req, 3)).not.toThrow();
   });
@@ -209,20 +261,16 @@ describe("assertSuiteRunWithinCap", () => {
     }
   });
 
-  it("multiplies promptTurns when counting LLM calls", () => {
-    // 151 multi-turn cases × runs=1 × 3 turns each = 453 LLM calls — would
-    // bypass the cap if only `runs` was summed.
+  it("multiplies model (prompt) steps when counting LLM calls", () => {
+    // 151 multi-turn cases × runs=1 × 3 prompt steps each = 453 LLM calls —
+    // would bypass the cap if only `runs` was summed.
     const base = buildSuiteRequest({ testCount: 151, runs: 1 }) as {
       tests: Array<Record<string, unknown>>;
     } & Record<string, unknown>;
-    const makeTurn = (id: string) => ({
-      id,
-      prompt: "p",
-      expectedToolCalls: [],
-    });
+    const promptStep = (id: string) => ({ id, kind: "prompt", prompt: "p" });
     base.tests = base.tests.map((t) => ({
       ...t,
-      promptTurns: [makeTurn("a"), makeTurn("b"), makeTurn("c")],
+      steps: [promptStep("a"), promptStep("b"), promptStep("c")],
     }));
     const req = RunEvalsRequestSchema.parse(base);
     try {
@@ -245,17 +293,17 @@ describe("assertTestCaseRunWithinCap", () => {
     const req = RunTestCaseRequestSchema.parse(buildTestCaseRequest(10));
     // 10 iterations × 31 configs > 300
     expect(() => assertTestCaseRunWithinCap(req, 31)).toThrowError(
-      WebRouteError,
+      WebRouteError
     );
   });
 
-  it("counts persisted promptTurns when no override is sent", () => {
-    // runs=10 override, no promptTurns override, persisted case has 31
-    // turns → 310 LLM calls, must trip the cap. Without passing
-    // `resolved.promptTurnsLength` the guard would see 10 × 1 = 10.
+  it("counts persisted model steps when no override is sent", () => {
+    // runs=10 override, no steps override, persisted case has 31 prompt
+    // steps → 310 LLM calls, must trip the cap. Without passing
+    // `resolved.modelStepCount` the guard would see 10 × 1 = 10.
     const req = RunTestCaseRequestSchema.parse(buildTestCaseRequest(10));
     try {
-      assertTestCaseRunWithinCap(req, 1, { promptTurnsLength: 31 });
+      assertTestCaseRunWithinCap(req, 1, { modelStepCount: 31 });
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(WebRouteError);
@@ -263,21 +311,21 @@ describe("assertTestCaseRunWithinCap", () => {
     }
   });
 
-  it("override promptTurns wins over persisted count", () => {
+  it("override steps win over persisted count", () => {
     const base = buildTestCaseRequest(10) as Record<string, unknown>;
     const req = RunTestCaseRequestSchema.parse({
       ...base,
       testCaseOverrides: {
         ...(base.testCaseOverrides as Record<string, unknown>),
-        promptTurns: [
-          { id: "a", prompt: "p", expectedToolCalls: [] },
-          { id: "b", prompt: "p", expectedToolCalls: [] },
+        steps: [
+          { id: "a", kind: "prompt", prompt: "p" },
+          { id: "b", kind: "prompt", prompt: "p" },
         ],
       },
     });
-    // 10 × 2 = 20, well within cap — persisted 999 turns are ignored.
+    // 10 × 2 = 20, well within cap — persisted 999 steps are ignored.
     expect(() =>
-      assertTestCaseRunWithinCap(req, 1, { promptTurnsLength: 999 }),
+      assertTestCaseRunWithinCap(req, 1, { modelStepCount: 999 })
     ).not.toThrow();
   });
 });
@@ -304,32 +352,32 @@ describe("buildUpsertCaseKey (probe/prompt dedupe identity)", () => {
   });
 
   it("keeps the historical title+query key for prompt rows", () => {
-    expect(
-      buildUpsertCaseKey({ title: "Case A", query: "do the thing" }),
-    ).toBe("Case A-do the thing");
+    expect(buildUpsertCaseKey({ title: "Case A", query: "do the thing" })).toBe(
+      "Case A-do the thing"
+    );
   });
 
   it("merges the per-model fan-out rows of one prompt case", () => {
     expect(buildUpsertCaseKey({ title: "Case A", query: "q" })).toBe(
-      buildUpsertCaseKey({ title: "Case A", query: "q" }),
+      buildUpsertCaseKey({ title: "Case A", query: "q" })
     );
   });
 
   it("never collides a probe with a prompt row sharing title and empty query", () => {
     expect(buildUpsertCaseKey(probe())).not.toBe(
-      buildUpsertCaseKey({ title: "Render check", query: "" }),
+      buildUpsertCaseKey({ title: "Render check", query: "" })
     );
   });
 
   it("keeps same-titled probes of different tools distinct", () => {
     expect(buildUpsertCaseKey(probe({ toolName: "show_map" }))).not.toBe(
-      buildUpsertCaseKey(probe({ toolName: "show_weather" })),
+      buildUpsertCaseKey(probe({ toolName: "show_weather" }))
     );
   });
 
   it("keeps same-titled probes of different servers distinct", () => {
     expect(buildUpsertCaseKey(probe({ serverId: "srv-1" }))).not.toBe(
-      buildUpsertCaseKey(probe({ serverId: "srv-2" })),
+      buildUpsertCaseKey(probe({ serverId: "srv-2" }))
     );
   });
 
@@ -354,7 +402,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["p170sbx_convex_id"],
-      ["Excalidraw (App)"],
+      ["Excalidraw (App)"]
     );
     expect(map.get("p170sbx_convex_id")).toBe("Excalidraw (App)");
   });
@@ -363,10 +411,10 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const manager = makeManagerStub(["srv_1", "srv_2"]);
     expect(
       buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], undefined)
-        .size,
+        .size
     ).toBe(0);
     expect(
-      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], ["A"]).size,
+      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], ["A"]).size
     ).toBe(0);
   });
 
@@ -375,7 +423,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["EXCALIDRAW"],
-      ["Excalidraw (App)"],
+      ["Excalidraw (App)"]
     );
     expect(map.get("Excalidraw")).toBe("Excalidraw (App)");
   });
@@ -385,7 +433,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["srv_present", "srv_disconnected"],
-      ["Present", "Missing"],
+      ["Present", "Missing"]
     );
     expect(map.size).toBe(1);
     expect(map.get("srv_present")).toBe("Present");
@@ -408,7 +456,7 @@ describe("remapSnapshotServerIdsForAttachment", () => {
       new Map([
         ["manager-key-1", "Excalidraw (App)"],
         ["manager-key-2", "Notion"],
-      ]),
+      ])
     );
     expect(remapped.servers.map((s) => s.serverId)).toEqual([
       "Excalidraw (App)",
@@ -424,7 +472,7 @@ describe("remapSnapshotServerIdsForAttachment", () => {
   it("leaves unmapped servers untouched", () => {
     const remapped = remapSnapshotServerIdsForAttachment(
       snapshot,
-      new Map([["manager-key-1", "Excalidraw (App)"]]),
+      new Map([["manager-key-1", "Excalidraw (App)"]])
     );
     expect(remapped.servers.map((s) => s.serverId)).toEqual([
       "Excalidraw (App)",
@@ -450,8 +498,8 @@ describe("filterAndRemapReplayConfigs", () => {
           },
         ],
         ["srv_asana"],
-        ["asana"],
-      ),
+        ["asana"]
+      )
     ).toEqual([
       {
         serverId: "asana",
@@ -472,18 +520,18 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
           { model: "a", provider: "p1" },
           { model: "b", provider: "p2" },
         ],
-        promptTurns: [
-          { id: "t1", prompt: "one", expectedToolCalls: [] },
-          { id: "t2", prompt: "two", expectedToolCalls: [] },
+        steps: [
+          { id: "t1", kind: "prompt", prompt: "one" },
+          { id: "t2", kind: "prompt", prompt: "two" },
         ],
       },
     ]);
     expect(entries).toHaveLength(2);
     expect(entries[0].runs).toBe(3);
-    expect(entries[0].promptTurns).toHaveLength(2);
-    // 2 models x 3 runs x 2 turns = 12 LLM calls
+    expect(entries[0].steps).toHaveLength(2);
+    // 2 models x 3 runs x 2 prompt steps = 12 LLM calls
     expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never),
+      assertSuiteRunWithinCap({ tests: entries } as never)
     ).not.toThrow();
   });
 
@@ -493,30 +541,61 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     ]);
     expect(entries).toHaveLength(1);
     expect(entries[0].runs).toBe(2);
-  });
-
-  it("marks widget probes so the cap reducer excludes them", () => {
-    const entries = buildCapEntriesFromPersistedCases([
-      { title: "Probe", runs: 10, caseType: "widget_probe" },
+    expect(entries[0].steps).toMatchObject([
+      { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
     ]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].caseType).toBe("widget_probe");
-    expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never),
-    ).not.toThrow();
   });
 
-  it("a persisted suite over the cap is rejected (the scheduled-run gap)", () => {
-    // 31 cases x 1 model x 10 runs x 1 turn = 310 > 300
+  it("counts legacy persisted cases without steps as one prompt step", () => {
     const cases = Array.from({ length: 31 }, (_, i) => ({
-      title: `case-${i}`,
+      title: `legacy-${i}`,
       runs: 10,
       models: [{ model: "m", provider: "p" }],
     }));
     const entries = buildCapEntriesFromPersistedCases(cases);
+    expect(entries[0].steps).toMatchObject([
+      { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
+    ]);
+    expect(() => assertSuiteRunWithinCap({ tests: entries } as never)).toThrow(
+      WebRouteError
+    );
+  });
+
+  it("excludes model-free (toolCall-only) cases from the cap reducer", () => {
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "Probe",
+        runs: 10,
+        steps: [
+          {
+            id: "s0",
+            kind: "toolCall",
+            serverName: "srv",
+            toolName: "show_map",
+            arguments: {},
+          },
+        ],
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    // No prompt step → zero model calls, so a high `runs` doesn't trip the cap.
     expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never),
-    ).toThrow(WebRouteError);
+      assertSuiteRunWithinCap({ tests: entries } as never)
+    ).not.toThrow();
+  });
+
+  it("a persisted suite over the cap is rejected (the scheduled-run gap)", () => {
+    // 31 cases x 1 model x 10 runs x 1 prompt step = 310 > 300
+    const cases = Array.from({ length: 31 }, (_, i) => ({
+      title: `case-${i}`,
+      runs: 10,
+      models: [{ model: "m", provider: "p" }],
+      steps: [{ id: `case-${i}-s0`, kind: "prompt" as const, prompt: "q" }],
+    }));
+    const entries = buildCapEntriesFromPersistedCases(cases);
+    expect(() => assertSuiteRunWithinCap({ tests: entries } as never)).toThrow(
+      WebRouteError
+    );
   });
 });
 
@@ -525,7 +604,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
     expect(() =>
       assertBareRerunCasesRunnable([
         { title: "A", models: [{ model: "m", provider: "p" }] },
-      ]),
+      ])
     ).not.toThrow();
   });
 
@@ -533,15 +612,26 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
     expect(() =>
       assertBareRerunCasesRunnable([
         { title: "Legacy", model: "m", provider: "p" },
-      ]),
+      ])
     ).not.toThrow();
   });
 
-  it("accepts widget probes (no model expected)", () => {
+  it("accepts model-free (toolCall-only) cases (no model expected)", () => {
     expect(() =>
       assertBareRerunCasesRunnable([
-        { title: "Probe", caseType: "widget_probe" },
-      ]),
+        {
+          title: "Probe",
+          steps: [
+            {
+              id: "s0",
+              kind: "toolCall",
+              serverName: "srv",
+              toolName: "show_map",
+              arguments: {},
+            },
+          ],
+        },
+      ])
     ).not.toThrow();
   });
 
@@ -552,9 +642,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
 
   it("rejects a model-less prompt case (would be silently dropped)", () => {
     expect(() =>
-      assertBareRerunCasesRunnable([
-        { title: "Default-only", models: [] },
-      ]),
+      assertBareRerunCasesRunnable([{ title: "Default-only", models: [] }])
     ).toThrow(WebRouteError);
   });
 
@@ -580,8 +668,8 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
   });
 
   it("labels an untitled offending case rather than dropping it from the message", () => {
-    expect(() =>
-      assertBareRerunCasesRunnable([{ models: [] }]),
-    ).toThrow(/\(untitled\)/);
+    expect(() => assertBareRerunCasesRunnable([{ models: [] }])).toThrow(
+      /\(untitled\)/
+    );
   });
 });
