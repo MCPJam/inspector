@@ -249,16 +249,23 @@ export async function finalizeEvalIteration(
     return;
   }
 
-  // Check if iteration was cancelled before trying to update.
+  // Check if the iteration is already in a terminal stop state before trying
+  // to update. A timed-out iteration whose original LLM/browser work ignores
+  // the abort and completes late must NOT overwrite the `timed_out` row with a
+  // completed/failed result — both `cancelled` and `timed_out` are terminal.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (iteration?.status === "cancelled") {
+    if (
+      iteration?.status === "cancelled" ||
+      iteration?.status === "timed_out"
+    ) {
       logger.debug(
-        "[evals] Skipping update for cancelled iteration:",
+        "[evals] Skipping update for terminal iteration:",
         iterationId,
+        iteration.status,
       );
       return;
     }

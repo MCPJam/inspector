@@ -110,6 +110,22 @@ describe("finalizeEvalIteration", () => {
     expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
   });
 
+  test("skips update when the iteration already timed out (keeps it terminal)", async () => {
+    // A timed-out iteration whose original work ignores the abort and finishes
+    // late must NOT overwrite the `timed_out` row with completed/failed.
+    const { client, calls } = makeClient({ iterationStatus: "timed_out" });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
+  });
+
   test("W1 fallback includes systemPrompt when set (regression: systemPrompt-slot)", async () => {
     // Fanout fails before any turn lands → W1 fallback path. systemPrompt
     // must round-trip into `updateTestIteration` so the resolved system
