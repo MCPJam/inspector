@@ -2709,7 +2709,24 @@ export function useServerState({
           toast.error(
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
-            }`
+            }`,
+            // For XAA servers, offer a shortcut to the XAA Debugger so the dev
+            // can step through the handshake and pinpoint the failing claim
+            // (subject not provisioned, audience/issuer mismatch, etc.).
+            formData.useXaa
+              ? {
+                  action: {
+                    label: "Open XAA Debugger",
+                    onClick: () => {
+                      dispatch({
+                        type: "SELECT_SERVER",
+                        name: formData.name,
+                      });
+                      navigateApp(routePaths.xaaFlow);
+                    },
+                  },
+                }
+              : undefined
           );
         }
       } catch (error) {
