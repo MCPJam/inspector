@@ -53,7 +53,7 @@ import {
   flattenAssertedExpectedToolCalls,
   isPinnedOnly,
   isPinnedTurn,
-  resolveIterationDisplayExpectedToolCalls,
+  resolveDisplayExpectedToolCalls,
   resolvePromptTurns,
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
@@ -2655,10 +2655,10 @@ function RunColumn({
   // run-start so unsaved edits are reflected in showToolsTab / the pre-stream
   // Results preview before the persisted testCase is updated.
   const expectedToolCalls = record.iteration?.testCaseSnapshot
-    ? resolveIterationDisplayExpectedToolCalls(record.iteration.testCaseSnapshot, null)
+    ? resolveDisplayExpectedToolCalls(record.iteration.testCaseSnapshot, null)
     : record.previewExpectedToolCalls != null
       ? record.previewExpectedToolCalls
-      : resolveIterationDisplayExpectedToolCalls(null, testCase);
+      : resolveDisplayExpectedToolCalls(null, testCase);
   const actualToolCalls =
     record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
   const showToolsTab =
