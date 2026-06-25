@@ -105,6 +105,20 @@ function buildHandle(
   };
 }
 
+async function findParentMessage(
+  handle: RuntimeHandle,
+  predicate: (message: CapturedMessage) => boolean,
+  timeoutMs = 1_000,
+): Promise<CapturedMessage | undefined> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const message = handle.parentMessages.find(predicate);
+    if (message) return message;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return undefined;
+}
+
 const F1_CONFIG = {
   toolId: "tool-1",
   toolName: "search",
@@ -242,10 +256,8 @@ describe("compat runtime — F1: Apps SDK only", () => {
 
     const uploadPromise = h.window.openai.uploadFile(file);
 
-    // Wait one tick for FileReader.onload to fire
-    await new Promise((r) => setTimeout(r, 50));
-
-    const upload = h.parentMessages.find(
+    const upload = await findParentMessage(
+      h,
       (m) => (m.data as any)?.type === "openai:uploadFile",
     );
     expect(upload).toBeDefined();
