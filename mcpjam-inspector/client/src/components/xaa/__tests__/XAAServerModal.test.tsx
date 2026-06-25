@@ -13,20 +13,16 @@ function renderModal(
 ) {
   const onSave = vi.fn();
   const onOpenChange = vi.fn();
-  const onIdentityChange = vi.fn();
   render(
     <XAAServerModal
       open
       onOpenChange={onOpenChange}
       existingServerNames={[]}
       onSave={onSave}
-      simulatedUserId="user-12345"
-      simulatedEmail="demo.user@example.com"
-      onIdentityChange={onIdentityChange}
       {...props}
     />,
   );
-  return { onSave, onOpenChange, onIdentityChange };
+  return { onSave, onOpenChange };
 }
 
 describe("XAAServerModal", () => {
@@ -154,38 +150,41 @@ describe("XAAServerModal", () => {
     expect(formData.clientSecret).toBeUndefined();
   });
 
-  it("shows the global simulated identity prefilled from props", () => {
-    renderModal();
+  it("prefills the per-server simulated identity from the server config", () => {
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      useXaa: true,
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
 
-    expect(screen.getByLabelText("Subject (sub)")).toHaveValue("user-12345");
-    expect(screen.getByLabelText("Email")).toHaveValue(
-      "demo.user@example.com",
-    );
+    renderModal({ server });
+
+    expect(screen.getByLabelText("Subject (sub)")).toHaveValue("alice");
+    expect(screen.getByLabelText("Email")).toHaveValue("alice@example.com");
   });
 
-  it("reports identity edits through onIdentityChange, not the form save", async () => {
+  it("persists the per-server simulated identity in the saved form data", async () => {
     const user = userEvent.setup();
-    const { onIdentityChange, onSave } = renderModal();
+    const { onSave } = renderModal();
 
-    // Editing identity reports the change immediately (it's a global setting,
-    // not part of the server form).
-    await user.type(screen.getByLabelText("Subject (sub)"), "x");
-    expect(onIdentityChange).toHaveBeenLastCalledWith({ userId: "user-12345x" });
-
-    // Saving the server config carries no identity fields.
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.type(screen.getByLabelText("Subject (sub)"), "bob");
     await user.click(
       screen.getByRole("button", { name: "Save configuration" }),
     );
 
     const { formData } = onSave.mock.calls[0][0];
-    expect(formData).not.toHaveProperty("userId");
-    expect(formData).not.toHaveProperty("email");
+    expect(formData.xaaSubject).toBe("bob");
   });
 
   it("rejects a duplicate name when creating a new server", async () => {
@@ -216,9 +215,6 @@ describe("XAAServerModal", () => {
         onOpenChange={onOpenChange}
         existingServerNames={[]}
         onSave={onSave}
-        simulatedUserId="user-12345"
-        simulatedEmail="demo.user@example.com"
-        onIdentityChange={vi.fn()}
       />,
     );
 

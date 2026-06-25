@@ -209,8 +209,11 @@ export function useXaaTestTarget({
         // the browser; public clients simply have none.
         clientSecret: "",
         scope,
-        userId,
-        email,
+        // Per-server simulated identity is the source of truth (synced with the
+        // /servers Connect page); fall back to the global run-settings default
+        // when the server has no stored subject/email.
+        userId: server?.xaaSubject?.trim() ? server.xaaSubject : userId,
+        email: server?.xaaEmail?.trim() ? server.xaaEmail : email,
         negativeTestMode,
       },
       targetKey: `bar_server:${selectedServerName}`,

@@ -23,13 +23,12 @@ interface XAAServerModalProps {
   // May be async. The modal stays open (preserving the entered values) if this
   // rejects, so a downstream save failure never discards the form.
   onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
-  // Global simulated identity (sub/email). Owned by XAAFlowTab's run settings
-  // and edited here because it applies to every target, not just this server —
-  // editing it updates the live run immediately (it is not part of the form
-  // save). Single source of truth, so the running flow always sees the change.
-  simulatedUserId: string;
-  simulatedEmail: string;
-  onIdentityChange: (patch: { userId?: string; email?: string }) => void;
+  /**
+   * Signed-in user's email — the default simulated identity when the per-server
+   * subject/email fields are left blank. Same default as the /servers Connect
+   * page so the two surfaces stay in sync.
+   */
+  signedInEmail?: string;
 }
 
 export function XAAServerModal({
@@ -38,9 +37,7 @@ export function XAAServerModal({
   server,
   existingServerNames,
   onSave,
-  simulatedUserId,
-  simulatedEmail,
-  onIdentityChange,
+  signedInEmail,
 }: XAAServerModalProps) {
   const derived = useMemo(
     () => deriveOAuthProfileFromServer(server),
@@ -58,6 +55,11 @@ export function XAAServerModal({
   // a typed value replaces the saved secret, the Clear toggle removes it.
   const [clientSecret, setClientSecret] = useState("");
   const [clearClientSecret, setClearClientSecret] = useState(false);
+  // Per-server simulated identity — the single source of truth shared with the
+  // /servers Connect page (saved on the server, used by both the debugger run
+  // and the connect mint). Editing it here syncs to /servers and vice versa.
+  const [xaaSubject, setXaaSubject] = useState("");
+  const [xaaEmail, setXaaEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -72,6 +74,8 @@ export function XAAServerModal({
     setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
     setClientSecret("");
     setClearClientSecret(false);
+    setXaaSubject(server?.xaaSubject ?? "");
+    setXaaEmail(server?.xaaEmail ?? "");
     setError(null);
     setSaving(false);
   }, [open, server, derived]);
@@ -151,8 +155,10 @@ export function XAAServerModal({
       oauthScopes: scopesArray,
       // Always send the issuer (possibly empty) so clearing it persists.
       xaaAuthzIssuer: trimmedIssuer,
-      // Simulated identity is NOT persisted per-server here — it's a global run
-      // setting owned by XAAFlowTab (see props) and applied to every target.
+      // Per-server simulated identity, defaulting to the signed-in user when
+      // blank — identical to the Connect page so the two surfaces stay synced.
+      xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
+      xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
     };
 
     // Final gate: the exact validator the save path runs. Any rule added there
@@ -237,13 +243,11 @@ export function XAAServerModal({
               onScopesChange={setScopes}
               xaaAuthzIssuer={authzIssuer}
               onXaaAuthzIssuerChange={setAuthzIssuer}
-              xaaSubject={simulatedUserId}
-              onXaaSubjectChange={(value) =>
-                onIdentityChange({ userId: value })
-              }
-              xaaEmail={simulatedEmail}
-              onXaaEmailChange={(value) => onIdentityChange({ email: value })}
-              identityHelpText="The IdP mints a mock login for this user before the flow runs. Applies to every server you test — not just this one."
+              xaaSubject={xaaSubject}
+              onXaaSubjectChange={setXaaSubject}
+              xaaEmail={xaaEmail}
+              onXaaEmailChange={setXaaEmail}
+              signedInEmail={signedInEmail}
               defaultAdvancedOpen
             />
           </div>
