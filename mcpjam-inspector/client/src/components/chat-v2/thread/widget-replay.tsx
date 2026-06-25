@@ -66,6 +66,20 @@ export interface WidgetReplayProps {
    */
   resolveHostSupportsWidget?: (serverId: string | undefined) => boolean;
   minimalMode?: boolean;
+  /** Tier 2 recorder — forwarded to MCPAppsRenderer. Default off. */
+  recordMode?: boolean;
+  onRecorderStep?: (step: unknown) => void;
+  onRecorderReady?: () => void;
+  /** Replay controller publisher — forwarded to MCPAppsRenderer. */
+  onReplayControllerReady?: (
+    replay:
+      | ((step: unknown) => Promise<{
+          ok: boolean;
+          reason?: string;
+          deferred?: string;
+        }>)
+      | null
+  ) => void;
 }
 
 export function WidgetReplay({
@@ -98,6 +112,10 @@ export function WidgetReplay({
   onAppSupportedDisplayModesChange,
   resolveHostSupportsWidget = () => true,
   minimalMode = false,
+  recordMode,
+  onRecorderStep,
+  onRecorderReady,
+  onReplayControllerReady,
 }: WidgetReplayProps) {
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
@@ -170,47 +188,51 @@ export function WidgetReplay({
   return (
     <InspectorWidgetHostProvider>
       <MCPAppsRenderer
-      chatSessionId={chatSessionId}
-      serverId={serverId ?? "offline-view"}
-      serverName={serverId ?? "offline-view"}
-      toolCallId={toolCallId}
-      toolName={toolName}
-      toolState={toolState}
-      toolInput={toolInput ?? undefined}
-      toolOutput={resolvedToolOutput}
-      toolResponseMetadata={toolResponseMetadata ?? null}
-      toolErrorText={toolErrorText}
-      resourceUri={uiResourceUri ?? "mcp://offline/view"}
-      toolMetadata={effectiveToolMeta}
-      toolsMetadata={toolsMetadata}
-      onSendFollowUp={onSendFollowUp}
-      onCallTool={onCallTool}
-      onAppToolInvocationChange={onAppToolInvocationChange}
-      onWidgetStateChange={onWidgetStateChange}
-      onModelContextUpdate={onModelContextUpdate}
-      pipWidgetId={pipWidgetId}
-      fullscreenWidgetId={fullscreenWidgetId}
-      onRequestPip={onRequestPip}
-      onExitPip={onExitPip}
-      displayMode={displayMode}
-      onDisplayModeChange={onDisplayModeChange}
-      onRequestFullscreen={onRequestFullscreen}
-      onExitFullscreen={onExitFullscreen}
-      onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
-      onRequestTeardown={onRequestTeardown}
-      isOffline={renderOverride?.isOffline}
-      cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
-      liveFetchPreferred={renderOverride?.liveFetchPreferred}
-      widgetCsp={renderOverride?.widgetCsp}
-      widgetPermissions={renderOverride?.widgetPermissions}
-      widgetPermissive={renderOverride?.widgetPermissive}
-      prefersBorder={renderOverride?.prefersBorder}
-      injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
-      injectedOpenAiCompatCapabilities={
-        renderOverride?.injectedOpenAiCompatCapabilities
-      }
-      initialWidgetState={renderOverride?.initialWidgetState}
-      minimalMode={minimalMode}
+        chatSessionId={chatSessionId}
+        serverId={serverId ?? "offline-view"}
+        serverName={serverId ?? "offline-view"}
+        toolCallId={toolCallId}
+        toolName={toolName}
+        toolState={toolState}
+        toolInput={toolInput ?? undefined}
+        toolOutput={resolvedToolOutput}
+        toolResponseMetadata={toolResponseMetadata ?? null}
+        toolErrorText={toolErrorText}
+        resourceUri={uiResourceUri ?? "mcp://offline/view"}
+        toolMetadata={effectiveToolMeta}
+        toolsMetadata={toolsMetadata}
+        onSendFollowUp={onSendFollowUp}
+        onCallTool={onCallTool}
+        onAppToolInvocationChange={onAppToolInvocationChange}
+        onWidgetStateChange={onWidgetStateChange}
+        onModelContextUpdate={onModelContextUpdate}
+        pipWidgetId={pipWidgetId}
+        fullscreenWidgetId={fullscreenWidgetId}
+        onRequestPip={onRequestPip}
+        onExitPip={onExitPip}
+        displayMode={displayMode}
+        onDisplayModeChange={onDisplayModeChange}
+        onRequestFullscreen={onRequestFullscreen}
+        onExitFullscreen={onExitFullscreen}
+        onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
+        onRequestTeardown={onRequestTeardown}
+        isOffline={renderOverride?.isOffline}
+        cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+        liveFetchPreferred={renderOverride?.liveFetchPreferred}
+        widgetCsp={renderOverride?.widgetCsp}
+        widgetPermissions={renderOverride?.widgetPermissions}
+        widgetPermissive={renderOverride?.widgetPermissive}
+        prefersBorder={renderOverride?.prefersBorder}
+        injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
+        injectedOpenAiCompatCapabilities={
+          renderOverride?.injectedOpenAiCompatCapabilities
+        }
+        initialWidgetState={renderOverride?.initialWidgetState}
+        minimalMode={minimalMode}
+        recordMode={recordMode}
+        onRecorderStep={onRecorderStep}
+        onRecorderReady={onRecorderReady}
+        onReplayControllerReady={onReplayControllerReady}
       />
     </InspectorWidgetHostProvider>
   );

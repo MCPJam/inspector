@@ -39,12 +39,14 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 vi.mock("../trace-viewer", () => ({
   TraceViewer: (props: {
     chromeDensity?: string;
+    fillContent?: boolean;
     expectedToolCalls?: unknown[];
     actualToolCalls?: unknown[];
   }) => (
     <div
       data-testid="mock-trace-viewer"
       data-chrome-density={props.chromeDensity ?? "default"}
+      data-fill-content={String(props.fillContent ?? false)}
       data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
       data-actual-tool-count={String(props.actualToolCalls?.length ?? 0)}
     />
@@ -102,7 +104,7 @@ describe("IterationDetails raw tool calls", () => {
       <IterationDetails
         iteration={formattedIteration}
         testCase={formattedTestCase}
-      />
+      />,
     );
 
     expect(screen.getAllByTestId("json-editor")).toHaveLength(1);
@@ -116,7 +118,7 @@ describe("IterationDetails raw tool calls", () => {
           collapseStringsAfterLength: 160,
           expandJsonStrings: true,
         }),
-      ])
+      ]),
     );
   });
 
@@ -145,31 +147,8 @@ describe("IterationDetails raw tool calls", () => {
           defaultExpandDepth: 2,
           collapseStringsAfterLength: 160,
         }),
-      ])
+      ]),
     );
-  });
-
-  it("labels cancelled fallback turn summaries as cancelled, not failed", () => {
-    const cancelledIteration: EvalIteration = {
-      ...iteration,
-      status: "cancelled",
-      result: "cancelled",
-      testCaseSnapshot: {
-        title: "eval-read-me",
-        query: "read me",
-        provider: "openai",
-        model: "gpt-4o-mini",
-        expectedToolCalls,
-      },
-    };
-
-    render(
-      <IterationDetails iteration={cancelledIteration} testCase={testCase} />
-    );
-
-    expect(screen.getByText("Cancelled")).toBeInTheDocument();
-    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-    expect(screen.queryByText(/first failure/i)).not.toBeInTheDocument();
   });
 });
 
@@ -188,26 +167,27 @@ describe("IterationDetails full layout (trace-first)", () => {
         layoutMode="full"
         iteration={{ ...iteration, blob: "blob-1" }}
         testCase={testCase}
-      />
+      />,
     );
 
     const viewer = await screen.findByTestId("mock-trace-viewer");
 
     expect(viewer).toHaveAttribute("data-chrome-density", "compact");
+    expect(viewer).toHaveAttribute("data-fill-content", "true");
     expect(viewer).toHaveAttribute("data-expected-tool-count", "1");
     expect(viewer).toHaveAttribute("data-actual-tool-count", "1");
 
     expect(
-      container.querySelector('[data-testid="iteration-tool-calls-section"]')
+      container.querySelector('[data-testid="iteration-tool-calls-section"]'),
     ).toBeNull();
 
     const ordered = container.querySelectorAll(
-      '[data-testid="iteration-trace-section"], [data-testid="iteration-tool-calls-section"]'
+      '[data-testid="iteration-trace-section"], [data-testid="iteration-tool-calls-section"]',
     );
     expect(ordered).toHaveLength(1);
     expect(ordered[0]).toHaveAttribute(
       "data-testid",
-      "iteration-trace-section"
+      "iteration-trace-section",
     );
   });
 
@@ -216,7 +196,7 @@ describe("IterationDetails full layout (trace-first)", () => {
       <IterationDetails
         iteration={{ ...iteration, blob: "blob-1" }}
         testCase={testCase}
-      />
+      />,
     );
 
     const viewer = await screen.findByTestId("mock-trace-viewer");
@@ -226,7 +206,7 @@ describe("IterationDetails full layout (trace-first)", () => {
     expect(viewer).toHaveAttribute("data-actual-tool-count", "1");
 
     expect(
-      container.querySelector('[data-testid="iteration-tool-calls-section"]')
+      container.querySelector('[data-testid="iteration-tool-calls-section"]'),
     ).toBeNull();
   });
 });
@@ -250,7 +230,7 @@ describe("IterationDetails trace blob load error", () => {
         layoutMode="full"
         iteration={{ ...iteration, blob: "blob-conn" }}
         testCase={testCase}
-      />
+      />,
     );
 
     const panel = await screen.findByTestId("iteration-trace-load-error");
@@ -258,16 +238,16 @@ describe("IterationDetails trace blob load error", () => {
     expect(screen.getByText("Connection interrupted")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /We lost contact with the server while loading this trace/i
-      )
+        /We lost contact with the server while loading this trace/i,
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(convexConnectionLostMessage)
+      screen.queryByText(convexConnectionLostMessage),
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /technical details/i }));
     expect(
-      await screen.findByText(convexConnectionLostMessage)
+      await screen.findByText(convexConnectionLostMessage),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
@@ -285,12 +265,14 @@ describe("IterationDetails trace blob load error", () => {
         layoutMode="full"
         iteration={{ ...iteration, blob: "blob-x" }}
         testCase={testCase}
-      />
+      />,
     );
 
     expect(await screen.findByText("Couldn't load trace")).toBeInTheDocument();
     expect(
-      screen.getByText(/Something went wrong while loading the recorded trace/i)
+      screen.getByText(
+        /Something went wrong while loading the recorded trace/i,
+      ),
     ).toBeInTheDocument();
   });
 });

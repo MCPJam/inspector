@@ -268,6 +268,37 @@ describe("RunDetailView", () => {
     expect(screen.getByTestId("run-detail-resizable-handle")).toBeInTheDocument();
   });
 
+  it("uses flush split chrome when folded into the suite results surface", () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query.includes("min-width: 1024px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    const { container } = render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideKpiStrip
+        hideAccuracyHero
+      />,
+    );
+
+    const root = container.firstElementChild;
+    expect(root).toHaveClass("p-0");
+    expect(root).not.toHaveClass("p-4");
+  });
+
   it("does not surface per-iteration case insight captions in the run view (open a test from the list to inspect a case)", () => {
     render(
       <RunDetailView

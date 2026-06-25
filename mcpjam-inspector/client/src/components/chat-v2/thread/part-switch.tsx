@@ -42,14 +42,63 @@ import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabil
 import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
-import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import {
+  ToolRenderOverride,
+  widgetSlotShouldRender,
+} from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
+import {
+  computeWidgetRecordMode,
+  type RecorderReadyEvent,
+  type RecorderStepEvent,
+  type RecordingTarget,
+  type ReplayControllerEvent,
+} from "./recorder-types";
 
 import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
+
+function recorderDebug(message: string, details?: Record<string, unknown>) {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem("mcpjam:recorder-debug") === "1"
+    ) {
+      console.info(`[recorder] ${message}`, details ?? {});
+    }
+  } catch {
+    // best-effort debug logging only
+  }
+}
+
+/**
+ * Frozen recorded render shown in place of a live widget when a completed eval
+ * run is being replayed (see {@link ToolRenderOverride.frozenScreenshotUrl}).
+ * Faithful to what the run actually painted; no live re-mount that could drift.
+ */
+function FrozenWidgetScreenshot({
+  url,
+  toolName,
+}: {
+  url: string;
+  toolName: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
+      <img
+        src={url}
+        alt={`${toolName} recorded render`}
+        className="w-full rounded-md border border-border/60 bg-background"
+      />
+      <span className="text-[11px] text-muted-foreground">
+        Recorded render — this run's captured widget (not re-rendered live)
+      </span>
+    </div>
+  );
+}
 
 export function PartSwitch({
   part,
@@ -78,6 +127,12 @@ export function PartSwitch({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  recordCapable,
+  recordingTarget,
+  resolvePromptIndex,
+  onRecorderStep,
+  onRecorderReady,
+  onReplayControllerReady,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -111,6 +166,13 @@ export function PartSwitch({
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  // Tier 3 recorder (default off — see recorder-types.ts).
+  recordCapable?: boolean;
+  recordingTarget?: RecordingTarget | null;
+  resolvePromptIndex?: (toolCallId: string) => number | undefined;
+  onRecorderStep?: (event: RecorderStepEvent) => void;
+  onRecorderReady?: (event: RecorderReadyEvent) => void;
+  onReplayControllerReady?: (event: ReplayControllerEvent) => void;
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -341,7 +403,11 @@ export function PartSwitch({
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
-    if (shouldRenderWidget) {
+    // A frozen recorded screenshot (eval replay) renders INDEPENDENTLY of live
+    // widget eligibility: a completed run's widget can fail host-caps / server /
+    // `uiType` checks at view-time, but we still have its capture. The inner
+    // ternary below shows the screenshot in place of the live <WidgetReplay>.
+    if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
       return (
         <>
           <ToolPart
@@ -366,51 +432,135 @@ export function PartSwitch({
             minimalMode={minimalMode}
             {...approvalProps}
           />
-          <WidgetReplay
-            chatSessionId={chatSessionId}
-            toolName={toolInfo.toolName}
-            toolCallId={toolInfo.toolCallId}
-            toolState={toolInfo.toolState}
-            toolInput={toolInfo.input ?? null}
-            toolOutput={resolvedToolOutput}
-            rawOutput={toolInfo.rawOutput}
-            toolErrorText={toolInfo.errorText}
-            toolMetadata={effectiveToolMeta}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            renderOverride={renderOverride}
-            // PartSwitch owns the inspector host-capabilities context; inject
-            // the gate so WidgetReplay re-checks per-server support without
-            // importing `@/contexts` / `@/lib/host-capabilities` itself.
-            resolveHostSupportsWidget={(sid) =>
-              hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
-            }
-            onSendFollowUp={interactive ? onSendFollowUp : undefined}
-            onCallTool={
-              interactive
-                ? (toolName, params) =>
-                    callTool(serverId ?? "offline-view", toolName, params)
-                : undefined
-            }
-            onAppToolInvocationChange={onAppToolInvocationChange}
-            onWidgetStateChange={interactive ? onWidgetStateChange : undefined}
-            onModelContextUpdate={
-              interactive ? onModelContextUpdate : undefined
-            }
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={interactive ? onRequestPip : undefined}
-            onExitPip={interactive ? onExitPip : undefined}
-            onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
-            onExitFullscreen={interactive ? onExitFullscreen : undefined}
-            onRequestTeardown={interactive ? onRequestTeardown : undefined}
-            displayMode={interactive ? displayMode : undefined}
-            onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
-            onAppSupportedDisplayModesChange={
-              interactive ? setAppSupportedDisplayModes : undefined
-            }
-            minimalMode={minimalMode}
-          />
+          {renderOverride?.frozenScreenshotUrl ? (
+            <FrozenWidgetScreenshot
+              url={renderOverride.frozenScreenshotUrl}
+              toolName={toolInfo.toolName}
+            />
+          ) : (
+            <WidgetReplay
+              chatSessionId={chatSessionId}
+              toolName={toolInfo.toolName}
+              toolCallId={toolInfo.toolCallId}
+              {...(() => {
+                // Tier 3 recorder. DECOUPLED from arming: on a record-capable
+                // surface (the eval preview) EVERY widget loads the shim on first
+                // render, so arming never reloads a widget. Reloading on arm would
+                // re-run the widget's `ui/initialize` without closing the previous
+                // App instance → a second AppBridge → misrouted handshake and no
+                // `recorder:ready`. Arming is a host-side SAVE gate (handled in the
+                // editor's onRecorderStep), not a reload trigger.
+                const tcid = toolInfo.toolCallId;
+                const widgetPromptIndex = tcid
+                  ? resolvePromptIndex?.(tcid)
+                  : undefined;
+                const { recordMode, promptIndex: pi } = computeWidgetRecordMode(
+                  {
+                    recordCapable,
+                    recordingTarget,
+                    toolName: toolInfo.toolName,
+                    toolCallId: tcid,
+                    widgetPromptIndex,
+                  }
+                );
+                recorderDebug("part record decision", {
+                  toolName: toolInfo.toolName,
+                  toolCallId: tcid ?? null,
+                  hasToolCallId: !!tcid,
+                  recordCapable: !!recordCapable,
+                  recordMode,
+                  widgetPromptIndex: widgetPromptIndex ?? null,
+                  recordingTarget: recordingTarget ?? null,
+                });
+                if (!recordMode) return {};
+                const toolCallId = tcid as string;
+                return {
+                  recordMode: true,
+                  onRecorderStep: (step: unknown) => {
+                    recorderDebug("part recorder step", {
+                      toolName: toolInfo.toolName,
+                      toolCallId,
+                      promptIndex: pi,
+                    });
+                    onRecorderStep?.({
+                      promptIndex: pi,
+                      toolName: toolInfo.toolName,
+                      toolCallId,
+                      step,
+                    });
+                  },
+                  onRecorderReady: () => {
+                    recorderDebug("part recorder ready", {
+                      toolName: toolInfo.toolName,
+                      toolCallId,
+                      promptIndex: pi,
+                    });
+                    onRecorderReady?.({
+                      promptIndex: pi,
+                      toolName: toolInfo.toolName,
+                      toolCallId,
+                    });
+                  },
+                  onReplayControllerReady: (
+                    replay: ReplayControllerEvent["replay"]
+                  ) => {
+                    onReplayControllerReady?.({
+                      promptIndex: pi,
+                      toolName: toolInfo.toolName,
+                      toolCallId,
+                      replay,
+                    });
+                  },
+                };
+              })()}
+              toolState={toolInfo.toolState}
+              toolInput={toolInfo.input ?? null}
+              toolOutput={resolvedToolOutput}
+              rawOutput={toolInfo.rawOutput}
+              toolErrorText={toolInfo.errorText}
+              toolMetadata={effectiveToolMeta}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              renderOverride={renderOverride}
+              // PartSwitch owns the inspector host-capabilities context; inject
+              // the gate so WidgetReplay re-checks per-server support without
+              // importing `@/contexts` / `@/lib/host-capabilities` itself.
+              resolveHostSupportsWidget={(sid) =>
+                hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
+              }
+              onSendFollowUp={interactive ? onSendFollowUp : undefined}
+              onCallTool={
+                interactive
+                  ? (toolName, params) =>
+                      callTool(serverId ?? "offline-view", toolName, params)
+                  : undefined
+              }
+              onAppToolInvocationChange={onAppToolInvocationChange}
+              onWidgetStateChange={
+                interactive ? onWidgetStateChange : undefined
+              }
+              onModelContextUpdate={
+                interactive ? onModelContextUpdate : undefined
+              }
+              pipWidgetId={pipWidgetId}
+              fullscreenWidgetId={fullscreenWidgetId}
+              onRequestPip={interactive ? onRequestPip : undefined}
+              onExitPip={interactive ? onExitPip : undefined}
+              onRequestFullscreen={
+                interactive ? onRequestFullscreen : undefined
+              }
+              onExitFullscreen={interactive ? onExitFullscreen : undefined}
+              onRequestTeardown={interactive ? onRequestTeardown : undefined}
+              displayMode={interactive ? displayMode : undefined}
+              onDisplayModeChange={
+                interactive ? onDisplayModeChange : undefined
+              }
+              onAppSupportedDisplayModesChange={
+                interactive ? setAppSupportedDisplayModes : undefined
+              }
+              minimalMode={minimalMode}
+            />
+          )}
         </>
       );
     }

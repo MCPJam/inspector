@@ -199,7 +199,10 @@ type HostStyleVariables = NonNullable<
 // deterministic for a given `DEFAULT_HOST_STYLE`, so compute it once lazily and
 // cache it per definition — preserving the old module-constant semantics while
 // keeping the renderer free of `@/lib/client-styles`.
-const sepHostStyleVariableKeysCache = new WeakMap<object, ReadonlySet<string>>();
+const sepHostStyleVariableKeysCache = new WeakMap<
+  object,
+  ReadonlySet<string>
+>();
 function getSepHostStyleVariableKeys(
   defaultHostStyle: WidgetHostResolvers["DEFAULT_HOST_STYLE"]
 ): ReadonlySet<string> {
@@ -269,6 +272,32 @@ export interface MCPAppsRendererProps {
   ) => Promise<unknown>;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
+  /**
+   * Tier 2 recorder. When `recordMode` is on, the sandbox proxy injects a
+   * recorder shim into the guest; `onRecorderStep` fires for each captured
+   * click/type (the raw `{ kind, target, ... }` step), and `onRecorderReady`
+   * fires once when the shim installs (so the host can detect a strict-CSP
+   * guest that silently blocked it). Default off — only the eval authoring
+   * preview sets these.
+   */
+  recordMode?: boolean;
+  onRecorderStep?: (step: unknown) => void;
+  onRecorderReady?: () => void;
+  /**
+   * Replay (inverse of recording): published when the guest shim is record-capable
+   * so the host can drive the live widget. The host calls `replay(step)` with one
+   * scripted step; the renderer relays it to the guest and resolves with the
+   * step's result. Published as `null` on unmount so the host drops the handle.
+   */
+  onReplayControllerReady?: (
+    replay:
+      | ((step: unknown) => Promise<{
+          ok: boolean;
+          reason?: string;
+          deferred?: string;
+        }>)
+      | null
+  ) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
@@ -415,6 +444,19 @@ function mapLogToLifecycle(
       ? details.reason
       : undefined;
   return { kind, status, message, timestamp: Date.now() };
+}
+
+function recorderDebug(message: string, details?: Record<string, unknown>) {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem("mcpjam:recorder-debug") === "1"
+    ) {
+      console.info(`[recorder:renderer] ${message}`, details ?? {});
+    }
+  } catch {
+    // best-effort debug logging only
+  }
 }
 
 /**
@@ -580,8 +622,19 @@ export function MCPAppsRenderer(props: MCPAppsRendererProps) {
   const persistentHostEnabled = usePersistentWidgetSurfaceHost();
   const isCachedReplay =
     !!props.cachedWidgetHtmlUrl && !props.liveFetchPreferred;
-  const shouldUsePersistentSurface =
+  const wantPersistentSurface =
     persistentHostEnabled && !props.isOffline && !isCachedReplay;
+
+  // Latch the surface choice. This wrapper picks between the persistent and
+  // ephemeral surfaces, which are different component types. If an already-live
+  // eval widget later receives a cached snapshot URL, keep it on the persistent
+  // surface instead of routing it through a fresh cached replay surface.
+  const everPersistentRef = useRef(false);
+  if (wantPersistentSurface) everPersistentRef.current = true;
+  const shouldUsePersistentSurface =
+    everPersistentRef.current && !props.isOffline
+      ? true
+      : wantPersistentSurface;
 
   if (!shouldUsePersistentSurface) {
     return <MCPAppsRendererSurface {...props} />;
@@ -608,6 +661,10 @@ export function MCPAppsRendererSurface({
   onCallTool,
   onAppToolInvocationChange,
   onWidgetStateChange,
+  recordMode,
+  onRecorderStep,
+  onRecorderReady,
+  onReplayControllerReady,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -634,6 +691,74 @@ export function MCPAppsRendererSurface({
   persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
+
+  // Replay (host → guest): pending step requests keyed by a monotonic id. The
+  // guest posts `recorder:replay-result` back with the same id (handled in
+  // `handleSandboxMessage`), which resolves the matching promise. A timeout
+  // resolves a missing reply as a failed step so a stuck guest can't hang Run.
+  const replayIdRef = useRef(0);
+  const pendingReplaysRef = useRef<
+    Map<
+      number,
+      {
+        resolve: (r: {
+          ok: boolean;
+          reason?: string;
+          deferred?: string;
+        }) => void;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    >
+  >(new Map());
+  const REPLAY_STEP_TIMEOUT_MS = 8000;
+  const replayStep = useCallback(
+    (
+      step: unknown
+    ): Promise<{ ok: boolean; reason?: string; deferred?: string }> =>
+      new Promise((resolve) => {
+        const id = (replayIdRef.current += 1);
+        const timer = setTimeout(() => {
+          pendingReplaysRef.current.delete(id);
+          resolve({ ok: false, reason: "replay step timed out" });
+        }, REPLAY_STEP_TIMEOUT_MS);
+        pendingReplaysRef.current.set(id, { resolve, timer });
+        sandboxRef.current?.postMessage({
+          type: "recorder:replay-step",
+          id,
+          step,
+        });
+      }),
+    []
+  );
+  // Publish the replay controller to the host while record-capable; retract it
+  // (null) when recording turns off or the widget truly unmounts, failing any
+  // in-flight steps so the orchestrator doesn't wait on a torn-down guest.
+  //
+  // `onReplayControllerReady` is recreated by the host on every render (it's an
+  // inline tagging wrapper), so it CANNOT be an effect dep — that would re-run
+  // the cleanup on every benign re-render (e.g. the thread updating after a
+  // replayed click fires a tool call) and abort the replay mid-sequence
+  // ("widget unmounted"). Read it through a ref; depend only on the actual
+  // lifecycle inputs (`recordMode`, the stable `replayStep`).
+  const onReplayControllerReadyRef = useRef(onReplayControllerReady);
+  onReplayControllerReadyRef.current = onReplayControllerReady;
+  useEffect(() => {
+    const publish = onReplayControllerReadyRef.current;
+    if (!recordMode) {
+      publish?.(null);
+      return;
+    }
+    publish?.(replayStep);
+    return () => {
+      onReplayControllerReadyRef.current?.(null);
+      const pending = pendingReplaysRef.current;
+      for (const { resolve, timer } of pending.values()) {
+        clearTimeout(timer);
+        resolve({ ok: false, reason: "widget unmounted" });
+      }
+      pending.clear();
+    };
+  }, [recordMode, replayStep]);
   // Inspector adapter for the WidgetHost contract (environment + resolvers +
   // services + surface + debug). The renderer's ambient ENV reads and resolver
   // imports are routed through this boundary; all derivation below is unchanged.
@@ -743,8 +868,8 @@ export function MCPAppsRendererSurface({
     host.surface.kind === "chatbox" || minimalMode
       ? "permissive"
       : host.surface.kind === "playground"
-        ? host.surface.playgroundCspMode
-        : "widget-declared";
+      ? host.surface.playgroundCspMode
+      : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = environment.playgroundLocale;
@@ -1223,11 +1348,41 @@ export function MCPAppsRendererSurface({
   const [checkoutSession, setCheckoutSession] = useState<unknown>(null);
   const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
 
+  // True once this widget has rendered from a LIVE fetch. Used to keep a live
+  // surface mounted when a persisted cached-replay snapshot arrives AFTER it
+  // (the eval streaming→completed trace swap): wiping/reloading the live iframe
+  // into the byte-frozen cached template would lose in-flight widget state (e.g.
+  // a populated cart). A fresh cached-first replay (saved-view switch) never
+  // sets this, so it still resets and loads its snapshot normally.
+  const hasRenderedLiveRef = useRef(false);
+  const liveRenderIdentityKey = useMemo(
+    () =>
+      stableStringifyJson({
+        chatSessionId: chatSessionId ?? null,
+        serverId,
+        resourceUri,
+      }),
+    [chatSessionId, serverId, resourceUri]
+  );
+  const liveRenderIdentityRef = useRef<string | null>(null);
+  const hasRenderedLiveForCurrentIdentity = useCallback(
+    () =>
+      hasRenderedLiveRef.current &&
+      liveRenderIdentityRef.current === liveRenderIdentityKey,
+    [liveRenderIdentityKey]
+  );
+
   // Reset widget HTML when the actual replay source changes (e.g., different
   // saved view selected). A live-preferred cached URL is only a fallback; it
   // must not churn a persistent live surface when the next tool call has no
   // cached fallback.
   useEffect(() => {
+    // A live render is already on screen and a cached snapshot just became
+    // available for the same widget at run completion. Keep the live surface
+    // and its in-flight state instead of wiping it into the static snapshot.
+    if (isCachedReplay && hasRenderedLiveForCurrentIdentity()) return;
+    hasRenderedLiveRef.current = false;
+    liveRenderIdentityRef.current = null;
     setWidgetHtml(null);
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
@@ -1238,7 +1393,12 @@ export function MCPAppsRendererSurface({
     setWidgetPermissions(undefined);
     setWidgetPermissive(isCachedReplay ? true : false);
     setPrefersBorder(cachedReplayPrefersBorder ?? true);
-  }, [cachedReplayWidgetHtmlUrl, cachedReplayPrefersBorder, isCachedReplay]);
+  }, [
+    cachedReplayWidgetHtmlUrl,
+    cachedReplayPrefersBorder,
+    hasRenderedLiveForCurrentIdentity,
+    isCachedReplay,
+  ]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -1399,6 +1559,14 @@ export function MCPAppsRendererSurface({
       toolState === "output-available";
     if (!isActiveToolState) return;
     if (shouldWaitForCompatToolOutput) return;
+    // Already showing a live render and a persisted cached snapshot just became
+    // available for the same widget (eval streaming -> completed swap): keep the
+    // live iframe (and its in-flight state) instead of reloading the frozen,
+    // empty-state cached template. The captured snapshot still backs the
+    // Browser/replay tabs; only this live surface stays live.
+    if (widgetHtml && isCachedReplay && hasRenderedLiveForCurrentIdentity()) {
+      return;
+    }
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP
     // policy) OR if the compat-runtime flag changed (HTML needs to be
     // rebuilt with/without the `window.openai` shim). Both belong in
@@ -1458,6 +1626,9 @@ export function MCPAppsRendererSurface({
       // Reset readiness so the previous bridge's transport doesn't
       // get reused with the new HTML before its connect resolves.
       setBridgeTransportReady(false);
+      // Now showing cached HTML, not a live render.
+      hasRenderedLiveRef.current = false;
+      liveRenderIdentityRef.current = null;
       setWidgetHtml(html);
       setWidgetCsp(undefined);
       setWidgetPermissions(undefined);
@@ -1592,6 +1763,10 @@ export function MCPAppsRendererSurface({
       // Reset readiness so the previous bridge's transport doesn't get
       // reused with the new HTML before its connect resolves.
       setBridgeTransportReady(false);
+      // Mark that a live render exists so a later persisted cached snapshot
+      // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
+      hasRenderedLiveRef.current = true;
+      liveRenderIdentityRef.current = liveRenderIdentityKey;
       setWidgetHtml(html);
       setWidgetCsp(csp);
       setWidgetPermissions(permissions);
@@ -1737,6 +1912,8 @@ export function MCPAppsRendererSurface({
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
     initialInjectedOpenAiCompatCapabilities,
+    hasRenderedLiveForCurrentIdentity,
+    liveRenderIdentityKey,
     shouldWaitForCompatToolOutput,
     recordMountStore,
   ]);
@@ -1896,6 +2073,8 @@ export function MCPAppsRendererSurface({
   // pattern above).
   const appendLifecycleRef = useRef(appendLifecycleStore);
   appendLifecycleRef.current = appendLifecycleStore;
+  const setWidgetModelContextRef = useRef(setWidgetModelContext);
+  setWidgetModelContextRef.current = setWidgetModelContext;
 
   // Clear CSP violations when CSP mode OR compat flag changes (stale
   // data from previous load — both reload-key axes trigger a refetch
@@ -2041,7 +2220,8 @@ export function MCPAppsRendererSurface({
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
     : chatboxHostStyle;
-  const hostStyleDefinition = resolvers.getHostStyleOrDefault(effectiveHostStyle);
+  const hostStyleDefinition =
+    resolvers.getHostStyleOrDefault(effectiveHostStyle);
   // Single source of truth for what `hostCapabilities` this view will
   // advertise. The bridge-creation effect (`new AppBridge(...)`) spreads this
   // value into the handshake, and `registerBridgeHandlers` gates each
@@ -2098,6 +2278,10 @@ export function MCPAppsRendererSurface({
         hostCapabilitiesOverride,
       }),
     [effectiveHostStyle, activeMcpProfileKey, hostCapabilitiesOverrideKey]
+  );
+  const effectiveHostCapabilitiesKey = useMemo(
+    () => stableStringifyJson(effectiveHostCapabilities),
+    [effectiveHostCapabilities]
   );
   // SEP-1865 spec-bridge matrix resolved from the live profile +
   // host style. Gates notification emissions (`tool-input-partial`,
@@ -2654,6 +2838,10 @@ export function MCPAppsRendererSurface({
     allowFeaturesPolicy,
     cspDirectivesEffective,
   ]);
+  const effectiveSandboxKey = useMemo(
+    () => stableStringifyJson(effectiveSandbox),
+    [effectiveSandbox]
+  );
 
   // Publish the resolved sandbox payload into the widget-debug store so the
   // Sandbox debug panel can render it. `restrictTo` and `cspMode` come from
@@ -2691,6 +2879,10 @@ export function MCPAppsRendererSurface({
         version: __APP_VERSION__,
       }) as { name: string; version: string },
     [activeMcpProfileKey]
+  );
+  const resolvedBridgeHostInfoKey = useMemo(
+    () => stableStringifyJson(resolvedBridgeHostInfo),
+    [resolvedBridgeHostInfo]
   );
 
   useEffect(() => {
@@ -2842,7 +3034,7 @@ export function MCPAppsRendererSurface({
             }
             return (await onCallToolRef.current(
               name,
-              invocationInput,
+              invocationInput
             )) as CallToolResult;
           },
           onAppToolInvocation: (update) => {
@@ -2854,7 +3046,7 @@ export function MCPAppsRendererSurface({
               uri,
               {
                 forceHosted: webManagedServersRef.current,
-              },
+              }
             );
             return result.content;
           },
@@ -2862,15 +3054,16 @@ export function MCPAppsRendererSurface({
             return host.services.listResources(
               serverIdRef.current,
               (params as { cursor?: string } | undefined)?.cursor,
-              { forceHosted: webManagedServersRef.current },
+              { forceHosted: webManagedServersRef.current }
             );
           },
           onListResourceTemplates: async () => {
             // Routed through the WidgetHost boundary; the host service owns the
             // hosted / web-managed guard. Wrap the array to preserve the
             // bridge's `{ resourceTemplates }` response shape.
-            const resourceTemplates =
-              await host.services.listResourceTemplates(serverIdRef.current);
+            const resourceTemplates = await host.services.listResourceTemplates(
+              serverIdRef.current
+            );
             return { resourceTemplates };
           },
           onListPrompts: async () => {
@@ -2878,7 +3071,7 @@ export function MCPAppsRendererSurface({
               serverIdRef.current,
               {
                 forceHosted: webManagedServersRef.current,
-              },
+              }
             );
             return { prompts };
           },
@@ -2960,7 +3153,7 @@ export function MCPAppsRendererSurface({
               return { mode: "inline" };
             }
             const hostAvailableModes = resolvers.extractHostDisplayModes(
-              hostContextRef.current as Record<string, unknown> | undefined,
+              hostContextRef.current as Record<string, unknown> | undefined
             );
             // Use device type for mobile detection (defaults to mobile-like
             // behavior when not in playground).
@@ -2974,7 +3167,7 @@ export function MCPAppsRendererSurface({
                 : requestedMode;
             const actualMode = resolvers.clampDisplayModeToAvailableModes(
               mobileAdjustedMode,
-              hostAvailableModes,
+              hostAvailableModes
             );
 
             setDisplayModeRef.current(actualMode);
@@ -2986,15 +3179,18 @@ export function MCPAppsRendererSurface({
               ownsPipDisplayModeRef.current
             ) {
               onExitPipRef.current?.(
-                pipWidgetIdRef.current ?? displayWidgetIdRef.current,
+                pipWidgetIdRef.current ?? displayWidgetIdRef.current
               );
             }
 
             return { mode: actualMode };
           },
-          onUpdateModelContext: (ctxToolCallId, { content, structuredContent }) => {
+          onUpdateModelContext: (
+            ctxToolCallId,
+            { content, structuredContent }
+          ) => {
             // Store in debug store for UI display.
-            setWidgetModelContext(ctxToolCallId, {
+            setWidgetModelContextRef.current(ctxToolCallId, {
               content,
               structuredContent,
             });
@@ -3049,7 +3245,7 @@ export function MCPAppsRendererSurface({
                   const parsed = new URL(link.uri, window.location.href);
                   if (!["http:", "https:"].includes(parsed.protocol)) {
                     throw new Error(
-                      `Unsupported download URI protocol: ${parsed.protocol}`,
+                      `Unsupported download URI protocol: ${parsed.protocol}`
                     );
                   }
                   window.open(parsed.href, "_blank", "noopener,noreferrer");
@@ -3066,7 +3262,7 @@ export function MCPAppsRendererSurface({
           onRequestTeardown: (ctxToolCallId) => {
             onRequestTeardownRef.current?.(
               ctxToolCallId,
-              displayWidgetIdRef.current,
+              displayWidgetIdRef.current
             );
           },
         },
@@ -3074,11 +3270,10 @@ export function MCPAppsRendererSurface({
     },
     [
       setIsReady,
-      setWidgetModelContext,
       logWidgetDebug,
       refreshAppProvidedTools,
-      effectiveHostCapabilities,
-    ],
+      effectiveHostCapabilitiesKey,
+    ]
   );
 
   useEffect(() => {
@@ -3152,7 +3347,7 @@ export function MCPAppsRendererSurface({
             pendingRpcMethods.set(request.id, request.method);
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
-          logUiEvent({
+          logUiEventRef.current({
             widgetId: toolCallIdRef.current,
             serverId: serverIdRef.current,
             direction: "host-to-ui",
@@ -3186,7 +3381,7 @@ export function MCPAppsRendererSurface({
             }
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
-          logUiEvent({
+          logUiEventRef.current({
             widgetId: toolCallIdRef.current,
             serverId: serverIdRef.current,
             direction: "ui-to-host",
@@ -3248,32 +3443,28 @@ export function MCPAppsRendererSurface({
       }
       bridge.close().catch(() => {});
       // Clear model context on widget teardown
-      setWidgetModelContext(toolCallIdRef.current, null);
+      setWidgetModelContextRef.current(toolCallIdRef.current, null);
     };
   }, [
-    logUiEvent,
-    minimalMode,
-    serverId,
     widgetHtml,
     sandboxProxyReady,
     registerBridgeHandlers,
     refreshAppProvidedTools,
-    setWidgetModelContext,
-    cspMode,
     // Bridge must rebuild when the resolved sandbox policy changes — a host
     // toggling sandbox policy at runtime needs the new handshake. The memo
-    // identity captures `widgetCsp`/`widgetPermissions`/`widgetPermissive`
-    // and the sandbox slice of mcpProfile transitively.
-    effectiveSandbox,
+    // identity key captures `widgetCsp`/`widgetPermissions`/`widgetPermissive`
+    // and the sandbox slice of mcpProfile transitively without treating
+    // reference-only object churn as a reload signal.
+    effectiveSandboxKey,
     logWidgetDebug,
     // Bridge must rebuild when the advertised host capabilities change
     // (host style switch or override edit) so the new handshake reflects
     // the new contract.
-    effectiveHostCapabilities,
+    effectiveHostCapabilitiesKey,
     // Bridge must rebuild when the host identity advertised in
     // ui/initialize changes — switching to a template that overrides
     // hostInfo (e.g. ChatGPT) is observable to the View.
-    resolvedBridgeHostInfo,
+    resolvedBridgeHostInfoKey,
   ]);
 
   useEffect(() => {
@@ -3352,6 +3543,43 @@ export function MCPAppsRendererSurface({
       return;
     }
 
+    // Tier 2 recorder: forward captured steps + readiness to the host.
+    if (data.type === "recorder:step") {
+      recorderDebug("step from sandbox", {
+        toolName,
+        toolCallId,
+        recordMode: !!recordMode,
+      });
+      onRecorderStep?.(data.step);
+      return;
+    }
+    if (data.type === "recorder:ready") {
+      recorderDebug("ready from sandbox", {
+        toolName,
+        toolCallId,
+        recordMode: !!recordMode,
+      });
+      onRecorderReady?.();
+      return;
+    }
+    // Replay: resolve the pending step promise the guest is answering.
+    if (data.type === "recorder:replay-result") {
+      const pending =
+        typeof data.id === "number"
+          ? pendingReplaysRef.current.get(data.id)
+          : undefined;
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingReplaysRef.current.delete(data.id);
+        pending.resolve({
+          ok: !!data.ok,
+          reason: data.reason,
+          deferred: data.deferred,
+        });
+      }
+      return;
+    }
+
     // Defense-in-depth: if the live capability matrix has the file ops
     // disabled, drop incoming `openai:uploadFile` / `getFileDownloadUrl`
     // messages from the iframe. Other fire-and-forget `openai:*`
@@ -3396,7 +3624,7 @@ export function MCPAppsRendererSurface({
         {
           authFetch: host.services.authFetch,
           hostedMode: host.surface.hostedMode,
-        },
+        }
       );
       return;
     }
@@ -3411,7 +3639,7 @@ export function MCPAppsRendererSurface({
         (message) => {
           sandboxRef.current?.postMessage(message);
         },
-        { hostedMode: host.surface.hostedMode },
+        { hostedMode: host.surface.hostedMode }
       );
       return;
     }
@@ -3440,10 +3668,7 @@ export function MCPAppsRendererSurface({
 
     if (data.type === "openai:setOpenInAppUrl") {
       if (liveCaps !== null && liveCaps.setOpenInAppUrl === false) return;
-      const nextUrl = resolveOpenInAppHref(
-        data.href,
-        explicitOpenInAppBaseUrl
-      );
+      const nextUrl = resolveOpenInAppHref(data.href, explicitOpenInAppBaseUrl);
       if (nextUrl) {
         setOpenInAppUrlOverride(nextUrl);
       }
@@ -3668,6 +3893,7 @@ export function MCPAppsRendererSurface({
       allowFeatures={effectiveSandbox.allowFeatures}
       cspDirectives={effectiveSandbox.cspDirectives}
       colorScheme={resolvedTheme}
+      recordMode={recordMode}
       onProxyReady={() => {
         setSandboxProxyReady(true);
         logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {

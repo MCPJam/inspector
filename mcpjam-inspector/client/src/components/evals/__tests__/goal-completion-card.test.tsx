@@ -85,26 +85,129 @@ describe("GoalCompletionCard", () => {
     expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, false);
   });
 
-  it("renders per-case score, advisory verdict and reason once graded", () => {
+  it("surfaces only the cases where the judge DISAGREES with pass/fail", () => {
+    // ck-1: deterministic PASS, judge below threshold → disagreement.
+    // ck-2: deterministic FAIL, judge meets goal → disagreement.
+    // ck-3: deterministic PASS, judge meets goal → agrees (hidden from rail).
+    const iterations: EvalIteration[] = [
+      makeIteration({
+        _id: "i1",
+        resultSource: "reported",
+        result: "passed",
+        testCaseSnapshot: {
+          caseKey: "ck-1",
+          title: "Weather lookup",
+          query: "q",
+          provider: "openai",
+          model: "gpt",
+          expectedToolCalls: [],
+        },
+      }),
+      makeIteration({
+        _id: "i2",
+        resultSource: "reported",
+        result: "failed",
+        testCaseSnapshot: {
+          caseKey: "ck-2",
+          title: "Cart action",
+          query: "q",
+          provider: "openai",
+          model: "gpt",
+          expectedToolCalls: [],
+        },
+      }),
+      makeIteration({
+        _id: "i3",
+        resultSource: "reported",
+        result: "passed",
+        testCaseSnapshot: {
+          caseKey: "ck-3",
+          title: "Browse catalog",
+          query: "q",
+          provider: "openai",
+          model: "gpt",
+          expectedToolCalls: [],
+        },
+      }),
+    ];
     const goalCompletion: EvalSuiteRun["goalCompletion"] = {
-      summary: "One case met the goal, one fell short.",
+      summary: "Two cases diverged from the tool-call verdict.",
       generatedAt: 1,
       modelUsed: "openai/gpt-5.4-mini",
       threshold: 0.7,
       cases: [
         {
           caseKey: "ck-1",
-          score: 0.8,
-          passed: true,
-          reason: "Final answer returned the forecast.",
-          rubricHits: ["returned the forecast"],
-        },
-        {
-          caseKey: "ck-2",
           score: 0.3,
           passed: false,
           reason: "Final answer omitted the temperature.",
-          rubricHits: ["missing: temperature"],
+          rubricHits: [],
+        },
+        {
+          caseKey: "ck-2",
+          score: 0.9,
+          passed: true,
+          reason: "Cart was updated via add_to_cart despite no final text.",
+          rubricHits: [],
+        },
+        {
+          caseKey: "ck-3",
+          score: 0.95,
+          passed: true,
+          reason: "Listed catalog as expected.",
+          rubricHits: [],
+        },
+      ],
+    };
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        iterations={iterations}
+        goalCompletion={goalCompletion}
+        onRun={vi.fn()}
+      />,
+    );
+
+    // Run-level summary stays.
+    expect(
+      screen.getByText("Two cases diverged from the tool-call verdict."),
+    ).toBeInTheDocument();
+    // Only the two disagreements are listed.
+    expect(screen.getByText(/Disagrees with pass\/fail · 2/)).toBeInTheDocument();
+    expect(screen.getByText("Weather lookup")).toBeInTheDocument();
+    expect(screen.getByText("Cart action")).toBeInTheDocument();
+    expect(screen.getByText("30%")).toBeInTheDocument();
+    expect(screen.getByText("90%")).toBeInTheDocument();
+    expect(screen.getByText("meets goal")).toBeInTheDocument();
+    expect(screen.getByText("below threshold")).toBeInTheDocument();
+    expect(
+      screen.getByText("Final answer omitted the temperature."),
+    ).toBeInTheDocument();
+    // The AGREEING case is NOT dumped into the rail (it's inline on the table).
+    expect(screen.queryByText("Browse catalog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Listed catalog as expected.")).not.toBeInTheDocument();
+    // Advisory framing + re-run.
+    expect(
+      screen.getByText(/Advisory only — never changes/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Re-run judge/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an 'all agree' summary when no case disagrees", () => {
+    const goalCompletion: EvalSuiteRun["goalCompletion"] = {
+      summary: "Everything lined up.",
+      generatedAt: 1,
+      modelUsed: "openai/gpt-5.4-mini",
+      threshold: 0.7,
+      cases: [
+        {
+          caseKey: "ck-1",
+          score: 0.9,
+          passed: true,
+          reason: "Returned the forecast.",
+          rubricHits: [],
         },
       ],
     };
@@ -115,26 +218,8 @@ describe("GoalCompletionCard", () => {
         onRun={vi.fn()}
       />,
     );
-
-    // Joins caseKey -> human title from the iterations.
-    expect(screen.getByText("Weather lookup")).toBeInTheDocument();
-    // ck-2 has no matching iteration, so it falls back to the caseKey itself.
-    expect(screen.getByText("ck-2")).toBeInTheDocument();
-    expect(screen.getByText("80%")).toBeInTheDocument();
-    expect(screen.getByText("30%")).toBeInTheDocument();
-    expect(screen.getByText("meets goal")).toBeInTheDocument();
-    expect(screen.getByText("below threshold")).toBeInTheDocument();
-    expect(
-      screen.getByText("Final answer returned the forecast."),
-    ).toBeInTheDocument();
-    // Advisory framing is explicit.
-    expect(
-      screen.getByText(/Advisory only — the deterministic/i),
-    ).toBeInTheDocument();
-    // Re-run is offered once a result exists.
-    expect(
-      screen.getByRole("button", { name: /Re-run judge/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/agree with the deterministic pass\/fail/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Disagrees with pass\/fail/)).not.toBeInTheDocument();
   });
 
   it("disables running while a grade is pending", () => {

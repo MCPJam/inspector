@@ -28,7 +28,7 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isModelFree } from "@/shared/steps";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -120,10 +120,7 @@ export function TestCaseListSidebar({
     (serverName) => !connectedServerNames?.has(serverName),
   );
   const selectedCaseIsProbe = selectedTestCase
-    ? isPinnedOnly({
-        caseType: selectedTestCase.caseType,
-        promptTurns: selectedTestCase.promptTurns,
-      })
+    ? isModelFree(selectedTestCase.steps)
     : false;
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&

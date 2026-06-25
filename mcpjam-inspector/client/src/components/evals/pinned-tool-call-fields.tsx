@@ -47,6 +47,8 @@ export interface PinnedToolCallFieldsProps {
   suiteServers: string[];
   availableTools: Array<{ name: string; serverId?: string }>;
   projectServers?: RemoteServer[];
+  /** Render the fields locked (snapshot view): selects disabled, inputs read-only. */
+  readOnly?: boolean;
 }
 
 export function PinnedToolCallFields({
@@ -56,6 +58,7 @@ export function PinnedToolCallFields({
   suiteServers,
   availableTools,
   projectServers,
+  readOnly = false,
 }: PinnedToolCallFieldsProps) {
   const [serverName, setServerName] = useState(
     value?.serverName ?? suiteServers[0] ?? "",
@@ -85,14 +88,19 @@ export function PinnedToolCallFields({
   );
 
   const toolNames = useMemo(() => {
+    // A tool's `serverId` is the Convex `_id` in local mode but the server
+    // *name* in hosted mode (see listEvalTools). Accept either so the filter
+    // doesn't drop every tool when the id spaces differ.
+    const acceptable = new Set(
+      [resolvedServerId, serverName].filter(Boolean) as string[],
+    );
     const names = availableTools
       .filter(
-        (t) =>
-          !t.serverId || !resolvedServerId || t.serverId === resolvedServerId,
+        (t) => !t.serverId || acceptable.size === 0 || acceptable.has(t.serverId),
       )
       .map((t) => t.name);
     return Array.from(new Set(names));
-  }, [availableTools, resolvedServerId]);
+  }, [availableTools, resolvedServerId, serverName]);
 
   const parsedArgs = useMemo(() => {
     try {
@@ -135,6 +143,7 @@ export function PinnedToolCallFields({
           <Label className="text-[11px]">Server</Label>
           {suiteServers.length > 0 ? (
             <Select
+              disabled={readOnly}
               value={serverName || undefined}
               onValueChange={(nextServer) => {
                 // Switching servers invalidates a tool picked from the old
@@ -159,6 +168,7 @@ export function PinnedToolCallFields({
               value={serverName}
               onChange={(e) => setServerName(e.target.value)}
               placeholder="Server name"
+              readOnly={readOnly}
               className="h-8 text-xs"
             />
           )}
@@ -166,7 +176,11 @@ export function PinnedToolCallFields({
         <div className="space-y-1">
           <Label className="text-[11px]">Tool</Label>
           {toolNames.length > 0 ? (
-            <Select value={toolName || undefined} onValueChange={setToolName}>
+            <Select
+              disabled={readOnly}
+              value={toolName || undefined}
+              onValueChange={setToolName}
+            >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue placeholder="Pick a tool…" />
               </SelectTrigger>
@@ -183,6 +197,7 @@ export function PinnedToolCallFields({
               value={toolName}
               onChange={(e) => setToolName(e.target.value)}
               placeholder="e.g. show_map"
+              readOnly={readOnly}
               className="h-8 text-xs"
             />
           )}
@@ -197,6 +212,7 @@ export function PinnedToolCallFields({
           value={argsJson}
           onChange={(e) => setArgsJson(e.target.value)}
           spellCheck={false}
+          readOnly={readOnly}
           aria-label="Arguments (JSON)"
         />
         {"error" in parsedArgs ? (
@@ -227,6 +243,7 @@ export function PinnedToolCallFields({
             setRenderTimeoutMs(Math.floor(n));
           }}
           placeholder="Harness default"
+          readOnly={readOnly}
           className="h-8 w-36 text-xs"
         />
       </div>

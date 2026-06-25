@@ -1,15 +1,10 @@
-import {
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  CircleSlash,
-  Clock3,
-} from "lucide-react";
+import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { IterationDetails } from "./iteration-details";
 import type { EvalIteration, EvalCase } from "./types";
 import { formatDuration } from "./helpers";
 import { UI_CONFIG } from "./constants";
 import { computeIterationResult } from "./pass-criteria";
+import { stepsToPromptTurns } from "@/shared/steps";
 
 interface TestResultsPanelProps {
   iteration: EvalIteration | null;
@@ -32,23 +27,18 @@ export function TestResultsPanel({
   const isPassed = iterationResult === "passed";
   const isFailed = iterationResult === "failed";
   const isPending = iterationResult === "pending";
-  const isCancelled = iterationResult === "cancelled";
-  const isTimedOut = iterationResult === "timed_out";
-  const resultLabel =
-    iterationResult === "timed_out"
-      ? "Timed out"
-      : iterationResult
-      ? iterationResult.charAt(0).toUpperCase() + iterationResult.slice(1)
-      : null;
   const modelName = iteration?.testCaseSnapshot?.model || "Unknown";
   const startedAt = iteration?.startedAt ?? iteration?.createdAt;
   const completedAt = iteration?.updatedAt ?? iteration?.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
+  const snapshotSteps = iteration?.testCaseSnapshot?.steps;
   const turnCount =
     typeof iteration?.metadata?.turnCount === "number"
       ? iteration.metadata.turnCount
-      : iteration?.testCaseSnapshot?.promptTurns?.length ?? 1;
+      : Array.isArray(snapshotSteps)
+        ? stepsToPromptTurns(snapshotSteps).length || 1
+        : (iteration?.testCaseSnapshot?.promptTurns?.length ?? 1);
   const firstFailedTurnIndex =
     typeof iteration?.metadata?.firstFailedTurnIndex === "number"
       ? iteration.metadata.firstFailedTurnIndex
@@ -75,16 +65,7 @@ export function TestResultsPanel({
             {isPending && (
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             )}
-            {isCancelled && (
-              <CircleSlash className="h-5 w-5 text-muted-foreground" />
-            )}
-            {isTimedOut && <Clock3 className="h-5 w-5 text-warning" />}
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              {resultLabel && (
-                <span className="font-medium text-foreground">
-                  {resultLabel}
-                </span>
-              )}
               <span className="font-mono font-medium text-foreground">
                 {modelName}
               </span>

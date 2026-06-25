@@ -1,6 +1,7 @@
 /**
- * Monitoring-tab gating: visible only when the synthetic-monitors flag is
- * on AND the suite has monitoring signal (a schedule or a widget probe).
+ * Monitoring gating: the Monitoring rail item in the results split is visible
+ * only when the synthetic-monitors flag is on AND the suite has monitoring
+ * signal (a schedule or a widget probe case).
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -11,18 +12,21 @@ import type { EvalCase, EvalSuite } from "../types";
 const flagState = { enabled: false };
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => flagState.enabled,
+  usePostHog: () => ({ capture: vi.fn() }),
 }));
 
-// The dashboard composes several heavy children; this test only cares about
-// the tab strip, so stub them all to inert markers.
-vi.mock("../suite-runs-chart-grid", () => ({
-  SuiteRunsChartGrid: () => <div data-testid="chart-grid" />,
-}));
+// The dashboard composes several heavy children; this test only cares about the
+// Monitoring rail item, so stub the rest to inert markers.
 vi.mock("../suite-insights-collapsible", () => ({
   SuiteInsightsCollapsible: () => null,
 }));
 vi.mock("../suite-runs-list", () => ({
   SuiteRunsList: () => <div data-testid="runs-list" />,
+  computeRunEffectiveStats: () => ({
+    effectivePassed: 0,
+    effectiveTotal: 0,
+    passRate: null,
+  }),
 }));
 vi.mock("../test-cases-overview", () => ({
   TestCasesOverview: () => <div data-testid="cases-overview" />,
@@ -55,8 +59,17 @@ function makeProbeCase(): EvalCase {
     models: [],
     runs: 1,
     expectedToolCalls: [],
-    caseType: "widget_probe",
-    probeConfig: { serverName: "maps", toolName: "show_map", arguments: {} },
+    // A render check is now a model-free case: a `toolCall` step (no `prompt`
+    // step) makes `isModelFree(steps)` true.
+    steps: [
+      {
+        id: "call-1",
+        kind: "toolCall",
+        serverName: "maps",
+        toolName: "show_map",
+        arguments: {},
+      },
+    ],
   } as EvalCase;
 }
 
@@ -76,28 +89,28 @@ function renderDashboard(suite: EvalSuite, cases: EvalCase[]) {
   );
 }
 
-describe("SuiteDashboard monitoring tab gating", () => {
+describe("SuiteDashboard monitoring gating", () => {
   beforeEach(() => {
     flagState.enabled = false;
   });
 
-  it("hides the tab when the flag is off, even with monitoring signal", () => {
+  it("hides the Monitoring item when the flag is off, even with signal", () => {
     renderDashboard(
       makeSuite({
         schedule: { intervalMinutes: 15, enabled: true, state: "active" },
       }),
       [makeProbeCase()],
     );
-    expect(screen.queryByRole("tab", { name: /monitoring/i })).toBeNull();
+    expect(screen.queryByText("Monitoring")).toBeNull();
   });
 
-  it("hides the tab when the flag is on but the suite has no schedule or probes", () => {
+  it("hides the Monitoring item when the flag is on but there's no signal", () => {
     flagState.enabled = true;
     renderDashboard(makeSuite(), []);
-    expect(screen.queryByRole("tab", { name: /monitoring/i })).toBeNull();
+    expect(screen.queryByText("Monitoring")).toBeNull();
   });
 
-  it("shows the tab for a scheduled suite when the flag is on", () => {
+  it("shows the Monitoring item for a scheduled suite when the flag is on", () => {
     flagState.enabled = true;
     renderDashboard(
       makeSuite({
@@ -105,48 +118,24 @@ describe("SuiteDashboard monitoring tab gating", () => {
       }),
       [],
     );
-    expect(screen.getByRole("tab", { name: /monitoring/i })).toBeTruthy();
+    expect(screen.getByText("Monitoring")).toBeTruthy();
   });
 
-  it("shows the tab for a suite with a widget probe case (no schedule)", () => {
+  it("shows the Monitoring item for a widget probe case (no schedule)", () => {
     flagState.enabled = true;
     renderDashboard(makeSuite(), [makeProbeCase()]);
-    expect(screen.getByRole("tab", { name: /monitoring/i })).toBeTruthy();
+    expect(screen.getByText("Monitoring")).toBeTruthy();
   });
 
-  it("falls back to a visible tab when monitoring is selected and then hidden", async () => {
+  it("opens the monitoring pane when the rail item is clicked", () => {
     flagState.enabled = true;
-    const scheduledSuite = makeSuite({
-      schedule: { intervalMinutes: 15, enabled: true, state: "active" },
-    });
-    const view = renderDashboard(scheduledSuite, []);
-    fireEvent.click(screen.getByRole("tab", { name: /monitoring/i }));
-    expect(
-      screen
-        .getByRole("tab", { name: /monitoring/i })
-        .getAttribute("aria-selected"),
-    ).toBe("true");
-
-    // Flag turns off: the tab disappears AND the selection must resolve to
-    // a visible tab instead of leaving nothing highlighted.
-    flagState.enabled = false;
-    view.rerender(
-      <SuiteDashboard
-        suite={scheduledSuite}
-        cases={[]}
-        allIterations={[]}
-        runs={[]}
-        runsLoading={false}
-        runTrendData={[]}
-        modelStats={[]}
-        onTestCaseClick={() => {}}
-        onRunClick={() => {}}
-      />,
+    renderDashboard(
+      makeSuite({
+        schedule: { intervalMinutes: 15, enabled: true, state: "active" },
+      }),
+      [],
     );
-    expect(screen.queryByRole("tab", { name: /monitoring/i })).toBeNull();
-    expect(
-      screen.getByRole("tab", { name: /cases/i }).getAttribute("aria-selected"),
-    ).toBe("true");
-    expect(screen.getByTestId("cases-overview")).toBeTruthy();
+    fireEvent.click(screen.getByText("Monitoring"));
+    expect(screen.getByTestId("monitoring-tab")).toBeTruthy();
   });
 });

@@ -1,0 +1,21 @@
+/** Re-export shared predicate metadata for client components. */
+export {
+  PREDICATE_KIND_LABELS as KIND_LABELS,
+  PREDICATE_KIND_ORDER as KIND_ORDER,
+  SYNTHETIC_MONITOR_KINDS,
+  GLOBAL_POLICY_MENU_KINDS,
+  GLOBAL_GATE_CATALOG,
+  STEP_ASSERT_PREDICATE_KINDS,
+  INLINE_ASSERT_LABELS,
+  isGlobalPolicyKind,
+  isScenarioPredicateKind,
+  globalGateLabel,
+  globalGateDescription,
+  globalGateDetail,
+  labelForGlobalGate,
+  labelForInlineAssert,
+  blankPredicate,
+  filterKindsForMenu,
+  type PredicateKind as Kind,
+  type GlobalGateCatalogEntry,
+} from "@/shared/predicate-kinds";

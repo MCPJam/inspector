@@ -230,12 +230,7 @@ export function ArgLeafPicker({
   };
 
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-1.5 sm:flex-row sm:items-stretch",
-        className,
-      )}
-    >
+    <div className={cn("flex flex-col gap-2", className)}>
       <Select
         value={currentMode}
         onValueChange={(v) => setMode(v as Mode)}
@@ -243,7 +238,7 @@ export function ArgLeafPicker({
       >
         <SelectTrigger
           className={cn(
-            "h-9 w-full text-xs sm:w-32 shrink-0",
+            "h-8 w-full text-xs",
             valueIsPlaceholder &&
               "border-primary/40 bg-primary/5 text-primary",
           )}
@@ -271,11 +266,11 @@ export function ArgLeafPicker({
       </Select>
       <div className="min-w-0 flex-1">
         {isIgnore ? (
-          <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 bg-muted/10 px-2 text-[11px] italic text-muted-foreground">
+          <div className="flex h-8 items-center rounded-md border border-dashed border-border/60 bg-muted/10 px-2 text-[11px] italic text-muted-foreground">
             Arguments not compared in ignore mode
           </div>
         ) : valueIsPlaceholder ? (
-          <div className="flex h-9 items-center rounded-md border border-primary/30 bg-primary/5 px-2 text-xs italic text-primary">
+          <div className="flex h-8 items-center rounded-md border border-primary/30 bg-primary/5 px-2 text-xs italic text-primary">
             {PLACEHOLDER_LABELS[value as Placeholder]}
           </div>
         ) : (
@@ -315,7 +310,7 @@ function LiteralValueEditor({
   if (inferredType === "boolean") {
     const bool = value === true;
     return (
-      <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-2">
+      <div className="flex h-8 items-center gap-2 rounded-md border border-border/60 bg-background px-2">
         <Switch
           id={id}
           checked={bool}
@@ -334,7 +329,7 @@ function LiteralValueEditor({
       value={literalToString(value)}
       onChange={(e) => onChange(stringToLiteral(e.target.value))}
       placeholder={placeholder}
-      className="h-9 font-mono text-xs"
+      className="h-8 font-mono text-xs"
       disabled={disabled}
     />
   );
