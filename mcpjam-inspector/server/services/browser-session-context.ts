@@ -105,16 +105,21 @@ const MAX_FOLLOWUP_ARTIFACTS_PER_STEP = 10;
  * widget (one that spams long messages) from bloating the persisted trace. The
  * per-string cap reuses the harness's scripted-text limit.
  */
+/** Truncate one follow-up message to the scripted-text limit. Shared by the
+ *  artifact bound and the model-driving drain so a single oversized `ui/message`
+ *  can neither bloat the persisted trace nor the next LLM request. */
+function truncateFollowUpText(text: string): string {
+  return text.length > MAX_SCRIPTED_STEP_TEXT_CHARS
+    ? text.slice(0, MAX_SCRIPTED_STEP_TEXT_CHARS)
+    : text;
+}
+
 export function boundFollowUpsForArtifact(
   followUps: readonly string[],
 ): string[] {
   return followUps
     .slice(0, MAX_FOLLOWUP_ARTIFACTS_PER_STEP)
-    .map((t) =>
-      t.length > MAX_SCRIPTED_STEP_TEXT_CHARS
-        ? t.slice(0, MAX_SCRIPTED_STEP_TEXT_CHARS)
-        : t,
-    );
+    .map(truncateFollowUpText);
 }
 
 /** Map a scripted step to the closest Computer Use action verb so it shares the
@@ -782,14 +787,23 @@ export async function createBrowserSessionContext(
           computerUseSupported || !!checkEntry || keepWidgetsMountedForSteps,
       });
       // Stamp promptIndex at push-time — the harness type stays pure; the
-      // runner loop is the single source of truth for promptIndex.
+      // runner loop is the single source of truth for promptIndex. Split off
+      // render-time follow-ups so the trace observation stays a pure render
+      // record; they drive model turns via `capturedFollowUps` below.
+      const { followUps: renderFollowUps, ...renderObs } = obs;
       widgetRenderObservations.push({
-        ...obs,
+        ...renderObs,
         promptIndex: activePromptIndex,
         ...(activeAuthoredStepId
           ? { authoredStepId: activeAuthoredStepId }
           : {}),
       });
+      // Auto-send-on-render: a `ui/message` the widget emitted during its
+      // initial render is an intended model-continuation turn. The step
+      // executor drains these after the prompt/toolCall step.
+      if (renderFollowUps?.length) {
+        capturedFollowUps.push(...renderFollowUps);
+      }
       // Track the live widget for unified `interact`/`assert` targeting. Only a
       // successfully-rendered, kept-mounted widget is drivable; otherwise leave
       // `mountedWidget` so a later interact/assert fails closed.
@@ -897,7 +911,10 @@ export async function createBrowserSessionContext(
     prepareAdvertisedTools,
     scriptedCheckFailures,
     drainFollowUps(): string[] {
-      return capturedFollowUps.splice(0);
+      // Truncate each message before it drives a model turn. The driven COUNT
+      // is bounded downstream by MAX_WIDGET_FOLLOWUP_TURNS; this caps a single
+      // oversized `ui/message` from bloating the next LLM request.
+      return capturedFollowUps.splice(0).map(truncateFollowUpText);
     },
     setActivePromptIndex(promptIndex: number): void {
       activePromptIndex = promptIndex;
