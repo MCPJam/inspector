@@ -42,7 +42,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import {
   isPinnedOnly,
-  resolveIterationDisplayExpectedToolCalls,
+  resolveDisplayExpectedToolCalls,
   resolvePromptTurns,
 } from "@/shared/prompt-turns";
 
@@ -464,7 +464,7 @@ export function IterationDetails({
   const traceEndedAtMs = iteration.updatedAt;
 
   // Aggregate expected tools across turns for display (snapshot wins over draft case).
-  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+  const expectedToolCalls = resolveDisplayExpectedToolCalls(
     iteration.testCaseSnapshot,
     testCase
   );
