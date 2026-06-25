@@ -154,7 +154,7 @@ describe("client templates", () => {
     });
     expect(seed.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       availableDisplayModes: ["inline", "fullscreen"],
-      toolInputPartial: true,
+      toolInputPartial: false,
       toolInfo: true,
       openLinks: true,
       serverTools: true,

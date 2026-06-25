@@ -292,7 +292,7 @@ export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
  */
 export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
   availableDisplayModes: ["inline", "fullscreen"],
-  toolInputPartial: true,
+  toolInputPartial: false,
   toolCancelled: false,
   hostContextChanged: false,
   resourceTeardown: false,

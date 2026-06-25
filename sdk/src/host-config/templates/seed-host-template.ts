@@ -1190,7 +1190,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
-            toolInputPartial: true,
+            toolInputPartial: false,
             toolCancelled: false,
             hostContextChanged: false,
             resourceTeardown: false,

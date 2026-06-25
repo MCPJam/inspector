@@ -138,6 +138,7 @@ describe("seedHostTemplate", () => {
     expect(apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(apps?.mcpAppsOverrides).toMatchObject({
       availableDisplayModes: ["inline", "fullscreen"],
+      toolInputPartial: false,
       toolInfo: true,
       openLinks: true,
       serverTools: true,
