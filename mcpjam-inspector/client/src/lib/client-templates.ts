@@ -40,6 +40,7 @@ import perplexityLogo from "/perplexity_logo.svg";
 import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.png";
 
 declare const __APP_VERSION__: string;
 
@@ -54,6 +55,7 @@ const LOGO_BY_ID: Record<HostTemplateId, string> = {
   chatgpt: openaiLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
+  slack: slackLogo,
   cursor: cursorLogo,
   codex: codexLogo,
   copilot: copilotLogo,
