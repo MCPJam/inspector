@@ -1,4 +1,3 @@
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import {
   type HostConfigDtoV2,
   type HostConfigInputV2,
@@ -7,12 +6,9 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
-import type { ChatUiOverride, HostThemeMode } from "@/lib/client-styles";
+import type { ChatUiOverride } from "@/lib/client-styles";
 import { replaceLeadModelId } from "@/lib/selected-model-storage";
-import {
-  getCanonicalModelId,
-  isModelSupported,
-} from "@/shared/types";
+import { getCanonicalModelId, isModelSupported } from "@/shared/types";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
@@ -49,7 +45,7 @@ type HostConfigForPlayground = Pick<
  */
 export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
-  hostStyle: string,
+  hostStyle: string
 ): string | undefined {
   const trimmed = desiredModelId?.trim();
   if (trimmed) {
@@ -57,7 +53,7 @@ export function resolvePlaygroundModelId(
     if (isModelSupported(canonical)) return canonical;
   }
   const fallback = seedFromHostTemplate(
-    hostStyle as HostTemplateId,
+    hostStyle as HostTemplateId
   ).modelId?.trim();
   if (!fallback) return undefined;
   const canonicalFallback = getCanonicalModelId(fallback);
@@ -73,7 +69,7 @@ export function resolvePlaygroundModelId(
 export interface ApplyHostPlaygroundSetters {
   setHostStyle: (hostStyle: string) => void;
   setHostCapabilitiesOverride: (
-    next: Record<string, unknown> | undefined,
+    next: Record<string, unknown> | undefined
   ) => void;
   setChatUiOverride: (next: ChatUiOverride | undefined) => void;
 }
@@ -85,16 +81,13 @@ export interface ApplyHostPlaygroundSetters {
  * host's defaults; users can tweak in-session for testing; tweaks are NOT
  * persisted back to the host (saving lives in the Hosts editor page).
  *
- * Two callers today:
- *   1. The brand-pill `onClick` in `ClientContextHeader` —
- *      via {@link applyHostDefaultsToPlayground}, seeded from a static template.
- *   2. The named-host picker in `PlaygroundHeader` (the `HostPicker`
- *      dropdown) — via `PlaygroundPreviewedClientSync`, seeded from the
- *      project's persisted host config.
+ * The caller today is the named-host picker sync in
+ * `PlaygroundPreviewedClientSync`, seeded from the project's persisted host
+ * config.
  *
  * Writes to multiple stores synchronously:
- *   - `setHostStyle(config.hostStyle)` (drives the brand-pill highlight,
- *     the loading-indicator dispatch, and any chat-v2 family-keyed visuals)
+ *   - `setHostStyle(config.hostStyle)` (drives the loading-indicator
+ *     dispatch and any chat-v2 family-keyed visuals)
  *   - `useHostContextStore.applyHostTemplate` (locale, timezone, container,
  *      theme, deviceCapabilities — the whole hostContext blob)
  *   - `useUIPlaygroundStore.setCustomViewport` / `setDeviceType` (Device chip)
@@ -111,7 +104,7 @@ export interface ApplyHostPlaygroundSetters {
  */
 export function applyHostConfigToPlayground(
   config: HostConfigForPlayground,
-  setters: ApplyHostPlaygroundSetters,
+  setters: ApplyHostPlaygroundSetters
 ): void {
   // Order: identity (hostStyle) first so any subscriber sees the new
   // active host before the chip stores are repainted.
@@ -167,36 +160,6 @@ export function applyHostConfigToPlayground(
   // playground show the host's custom logo / palette / indicator without
   // a separate provider per surface.
   setters.setChatUiOverride(config.chatUiOverride);
-}
-
-/**
- * Snapshot a host *style*'s template defaults into the playground chip
- * state. Wired to the brand-pill `onClick` in `ClientContextHeader`.
- *
- * BYO custom hosts (registered client-side via `lib/host-styles` but with
- * no `host-templates.ts` entry) fall through to the MCPJam template
- * (essentially empty defaults: clears the capability override, resets the
- * device to desktop, drops to permissive CSP).
- */
-export function applyHostDefaultsToPlayground(
-  hostStyle: ChatboxHostStyle,
-  setters: ApplyHostPlaygroundSetters,
-  opts?: { theme?: HostThemeMode },
-): void {
-  // `seedFromHostTemplate` is typed as `HostTemplateId` but the runtime
-  // falls through to MCPJam on unknown ids. The cast keeps the call site
-  // tolerant of arbitrary BYO host-style ids.
-  //
-  // Thread the caller's theme so the brand-pill click in the chat header
-  // seeds the new host with MCPJam's current global theme instead of the
-  // template's hardcoded "dark" fallback. Without this, picking Copilot/
-  // ChatGPT/etc. from the pill row always flipped the chat surface to
-  // dark even when MCPJam itself was in light mode.
-  const cfg = seedFromHostTemplate(hostStyle as HostTemplateId, opts);
-  // Override the template's `hostStyle` with the user's actual pick — for
-  // BYO ids the template falls back to MCPJam, but the brand pill that
-  // was clicked is the right identity to advertise.
-  applyHostConfigToPlayground({ ...cfg, hostStyle }, setters);
 }
 
 // HostConfigDtoV2 happens to share the same field shape on the three

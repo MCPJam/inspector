@@ -22,6 +22,7 @@ import {
   Cpu,
   Globe,
   Hand,
+  Info,
   Maximize2,
   Moon,
   MousePointer2,
@@ -48,12 +49,6 @@ import {
   extractHostTimeZone,
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { listHostStyles } from "@/lib/client-styles";
-import {
-  getHostLogoSrc,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
-import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-client-defaults";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -69,7 +64,6 @@ import {
 import {
   CspPickerBody,
   DevicePickerBody,
-  HostStylePickerBody,
   LocalePickerBody,
   TimezonePickerBody,
 } from "@/components/shared/client-context-picker-bodies";
@@ -147,7 +141,6 @@ export function ClientContextHeader({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
-  const [hostStylePopoverOpen, setHostStylePopoverOpen] = useState(false);
   const [hostContextDialogOpen, setHostContextDialogOpen] = useState(false);
   const [hostCapsDialogOpen, setHostCapsDialogOpen] = useState(false);
 
@@ -187,15 +180,11 @@ export function ClientContextHeader({
 
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const hostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride
   );
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride
-  );
-  const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride
   );
 
   const usesMcpAppsCsp =
@@ -249,11 +238,6 @@ export function ClientContextHeader({
     return PRESET_DEVICE_CONFIGS[deviceType];
   }, [customViewport, deviceType]);
 
-  const registeredHostStyles = useMemo(() => listHostStyles(), []);
-  const activeHostStyle = useMemo((): (typeof registeredHostStyles)[number] => {
-    const match = registeredHostStyles.find((h) => h.id === hostStyle);
-    return match ?? registeredHostStyles[0];
-  }, [hostStyle, registeredHostStyles]);
   const DeviceIcon =
     deviceType === "custom" || !("icon" in deviceConfig)
       ? null
@@ -291,6 +275,25 @@ export function ClientContextHeader({
   return (
     <div className={cn("min-w-0 max-w-full", className)}>
       <div className="flex min-w-0 max-w-full items-center gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] @max-[860px]/playground-header:gap-2 [&::-webkit-scrollbar]:hidden">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="About these settings"
+              data-testid="host-toolbar-info"
+              className="flex shrink-0 cursor-help items-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            {...PLAYGROUND_HEADER_TOOLTIP}
+            className="max-w-none whitespace-nowrap"
+          >
+            These are temporary overrides applied to your current host.
+          </TooltipContent>
+        </Tooltip>
+
         <Popover
           open={devicePopoverOpen}
           onOpenChange={(next) => {
@@ -615,71 +618,6 @@ export function ClientContextHeader({
             </p>
           </TooltipContent>
         </Tooltip>
-
-        <Popover
-          open={hostStylePopoverOpen}
-          onOpenChange={(next) => {
-            if (next)
-              captureToolbar("host_toolbar_opened", {
-                control: "host_style",
-                current: hostStyle,
-              });
-            setHostStylePopoverOpen(next);
-          }}
-        >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  aria-label="Client styles"
-                  data-testid="host-style-picker-trigger"
-                  className="h-7 w-7 shrink-0 border bg-background shadow-xs"
-                >
-                  <img
-                    src={getHostLogoSrc(activeHostStyle.chatUi, themeMode)}
-                    alt=""
-                    aria-hidden="true"
-                    className="h-3.5 w-3.5 object-contain"
-                  />
-                </Button>
-              </PopoverTrigger>
-            </TooltipTrigger>
-            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <HeaderTooltipBody
-                label="Client styles"
-                leadHostHint={leadHostInMultiHost}
-              />
-              <p className="text-xs font-light text-muted-foreground">
-                {activeHostStyle.chatUi.label}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-          <PopoverContent className="w-56 p-2" align="start">
-            <HostStylePickerBody
-              hostStyle={hostStyle}
-              onPickHost={(id: ChatboxHostStyle) => {
-                if (id !== hostStyle) {
-                  captureToolbar("host_style_changed", {
-                    from: hostStyle,
-                    to: id,
-                  });
-                }
-                applyHostDefaultsToPlayground(
-                  id,
-                  {
-                    setHostStyle,
-                    setHostCapabilitiesOverride,
-                    setChatUiOverride,
-                  },
-                  { theme: themeMode }
-                );
-                setHostStylePopoverOpen(false);
-              }}
-            />
-          </PopoverContent>
-        </Popover>
 
         {showThemeToggle ? (
           <Tooltip>

@@ -3322,6 +3322,18 @@ export function PlaygroundMain({
               <MultiModelStartersEmptyLayout
                 isAuthLoading={isAuthLoading}
                 showStarterPrompts={showMultiModelStarterPrompts}
+                logoSlot={
+                  <img
+                    src={
+                      effectiveThreadTheme === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCPJam"
+                    draggable={false}
+                    className="h-10 w-auto mx-auto"
+                  />
+                }
                 authPrimarySlot={
                   isAuthLoading ? (
                     <div className="text-center space-y-4">

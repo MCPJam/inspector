@@ -17,12 +17,10 @@ interface PlaygroundPreviewedHostSyncProps {
  * persisted config via `useHost`, and snapshot its defaults into the
  * playground top-bar chip state whenever the resolved id changes.
  *
- * Mirrors `applyHostDefaultsToPlayground`'s behavior for the brand-pill
- * picker — both seams use the same underlying `applyHostConfigToPlayground`
- * helper. Differences:
- *   - Brand pill = synchronous template lookup, runs in user-action callback.
- *   - This component = async Convex query, runs in an effect when the
- *     resolved config first becomes available for a new id.
+ * Applies the same underlying `applyHostConfigToPlayground` helper used for
+ * playground host snapshots. This component resolves the persisted host config
+ * via Convex and runs in an effect when the resolved config first becomes
+ * available for a new id.
  *
  * Renders nothing.
  *
@@ -39,10 +37,10 @@ export function PlaygroundPreviewedClientSync({
   const { host } = useHost({ isAuthenticated, hostId: previewedHostId });
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const setHostCapabilitiesOverride = usePreferencesStore(
-    (state) => state.setHostCapabilitiesOverride,
+    (state) => state.setHostCapabilitiesOverride
   );
   const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride,
+    (state) => state.setChatUiOverride
   );
 
   // Track the last (id, configId) tuple we applied so the effect only
@@ -51,7 +49,7 @@ export function PlaygroundPreviewedClientSync({
   // to hostId so an edit to the host's underlying config (re-saving from
   // the Hosts editor while the playground is open) triggers a re-snapshot.
   const lastAppliedRef = useRef<{ hostId: string; configId: string } | null>(
-    null,
+    null
   );
 
   useEffect(() => {
@@ -65,11 +63,7 @@ export function PlaygroundPreviewedClientSync({
     if (!host) return;
     const configId = host.config.id;
     const last = lastAppliedRef.current;
-    if (
-      last &&
-      last.hostId === previewedHostId &&
-      last.configId === configId
-    ) {
+    if (last && last.hostId === previewedHostId && last.configId === configId) {
       return;
     }
     applyHostConfigToPlayground(host.config, {
