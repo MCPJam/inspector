@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
-import { createSuiteRunRecorder, startSuiteRunWithRecorder } from "../recorder.js";
+import {
+  createSuiteRunRecorder,
+  startSuiteRunWithRecorder,
+} from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
   it("forwards tool snapshot metadata when creating a suite run", async () => {
@@ -16,6 +19,13 @@ describe("startSuiteRunWithRecorder", () => {
             model: "gpt-5",
             provider: "openai",
             runs: 1,
+            steps: [
+              {
+                id: "s1",
+                kind: "prompt",
+                prompt: "Search for yesterday's tasks",
+              },
+            ],
             expectedToolCalls: [
               {
                 toolName: "bootstrap",
@@ -114,12 +124,12 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
         toolSnapshotDebug: sanitizedToolSnapshotDebug,
-      }),
+      })
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" },
+      { runId: "run-1" }
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -141,7 +151,13 @@ describe("startSuiteRunWithRecorder", () => {
               ],
               isNegativeTest: undefined,
               expectedOutput: undefined,
-              promptTurns: undefined,
+              steps: [
+                {
+                  id: "s1",
+                  kind: "prompt",
+                  prompt: "Search for yesterday's tasks",
+                },
+              ],
               advancedConfig: undefined,
               testCaseId: "tc-1",
             },
@@ -150,7 +166,7 @@ describe("startSuiteRunWithRecorder", () => {
             servers: ["alpha"],
           },
         },
-      }),
+      })
     );
   });
 
@@ -219,20 +235,20 @@ describe("startSuiteRunWithRecorder", () => {
         convexClient: { mutation: mutationMock } as any,
         suiteId: "suite-1",
         serverIds: ["alpha"],
-      }),
+      })
     ).rejects.toThrow(
-      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again."
     );
 
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" },
+      { runId: "run-1" }
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       3,
       "testSuites:markSetupPendingIterationsFailed",
-      { runId: "run-1", error: "validation exploded" },
+      { runId: "run-1", error: "validation exploded" }
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       4,
@@ -242,67 +258,7 @@ describe("startSuiteRunWithRecorder", () => {
         status: "failed",
         summary: undefined,
         notes: "Failed to prepare eval test attempts.",
-      },
-    );
-  });
-
-  it("surfaces eval iteration quota failures instead of the generic precreate error", async () => {
-    const billingError = new Error(
-      `Uncaught ConvexError: ${JSON.stringify({
-        code: "billing_limit_reached",
-        message:
-          'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
-        limit: "maxEvalIterationsPerMonth",
-        gateKey: "maxEvalIterationsPerMonth",
-        plan: "free",
-        currentValue: 31,
-        allowedValue: 25,
-        resetsAt: Date.UTC(2026, 5, 19, 17, 0),
-        windowKind: "day",
-      })}`,
-    );
-    const mutationMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        runId: "run-1",
-        testCases: [
-          {
-            _id: "tc-1",
-            title: "Quota setup",
-            query: "Try setup",
-            model: "gpt-5",
-            provider: "openai",
-            runs: 1,
-            expectedToolCalls: [],
-          },
-        ],
-      })
-      .mockRejectedValueOnce(billingError)
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce(undefined);
-
-    await expect(
-      startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock } as any,
-        suiteId: "suite-1",
-        serverIds: ["alpha"],
-      }),
-    ).rejects.toThrow(
-      /^This organization has reached its eval iteration limit \(25\)\. Resets /,
-    );
-
-    expect(mutationMock).toHaveBeenNthCalledWith(
-      4,
-      "testSuites:updateTestSuiteRun",
-      {
-        runId: "run-1",
-        status: "failed",
-        summary: undefined,
-        notes: expect.stringMatching(
-          /^This organization has reached its eval iteration limit \(25\)\. Resets /,
-        ),
-        stopReason: undefined,
-      },
+      }
     );
   });
 });

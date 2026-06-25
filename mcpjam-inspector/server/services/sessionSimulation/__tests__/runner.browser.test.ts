@@ -300,6 +300,8 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(createBrowserSessionContextMock.mock.calls[0]![0]).toMatchObject({
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
+      // Session simulation is the one surface that opts into Computer Use.
+      enableComputerUse: true,
     });
 
     // Per-turn hygiene runs BEFORE the engine; dispose runs at session end.

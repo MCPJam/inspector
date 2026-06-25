@@ -76,6 +76,15 @@ declare global {
       name: string;
       args: Record<string, unknown>;
     }) => Promise<{ result?: unknown; error?: string }>;
+    /**
+     * exposeBinding installed by Node: forwards a widget's `ui/message`
+     * follow-up text to the harness so the runner can drive it as a new model
+     * turn (the run-side analogue of chat's `onSendFollowUp -> sendMessage`).
+     */
+    __mcpjamHostFollowUp?: (payload: {
+      widgetId: string;
+      text: string;
+    }) => Promise<void>;
     __mcpjamHarness: {
       renderWidget: (
         opts: HostPageRenderOptions,
@@ -200,6 +209,14 @@ async function renderWidget(
         const out = await rpc({ widgetId: opts.widgetId, name, args });
         if (out.error) throw new Error(out.error);
         return out.result as never;
+      },
+      // `ui/message`: a widget asking the host to put a user message into the
+      // chat. We forward it to Node (mirroring `onCallTool`) so the runner can
+      // run it as a new turn, instead of silently dropping it.
+      onSendFollowUp: (text) => {
+        const forward = window.__mcpjamHostFollowUp;
+        if (!forward) return;
+        void forward({ widgetId: opts.widgetId, text }).catch(() => {});
       },
     },
   });

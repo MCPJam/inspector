@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { runPinnedTurn } from "../pinned-turn";
 import { evaluateMultiTurnResults } from "../types";
-import { legacyProbeToPinnedTurn } from "@/shared/prompt-turns";
+import { legacyProbeToPinnedTurn } from "@/shared/steps";
 import type { ProbeConfig } from "@/shared/probe-config";
 
 const probe: ProbeConfig = {

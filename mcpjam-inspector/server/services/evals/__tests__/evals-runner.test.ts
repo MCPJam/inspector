@@ -9,11 +9,11 @@ const createLlmModelMock = vi.hoisted(() =>
       _modelDefinition?: unknown,
       _apiKey?: unknown,
       _baseUrls?: unknown,
-      _customProviders?: unknown,
+      _customProviders?: unknown
     ) => ({
       id: "mock-model",
-    }),
-  ),
+    })
+  )
 );
 
 vi.mock("ai", async () => {
@@ -32,8 +32,9 @@ vi.mock("ai", async () => {
 });
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     finalizePassedForEval: ({ matchPassed }: { matchPassed: boolean }) =>
@@ -50,19 +51,17 @@ vi.mock("../../../utils/chat-helpers", async () => {
   // resulting `TypeError`, runs to a `runSucceeded:false` finish, and the
   // test never sees the fetch we expect. Keep the real exports and override
   // only `createLlmModel` so the local-AI-SDK paths can be inspected.
-  const actual =
-    await vi.importActual<typeof import("../../../utils/chat-helpers")>(
-      "../../../utils/chat-helpers",
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-helpers")
+  >("../../../utils/chat-helpers");
   return {
     ...actual,
     createLlmModel: (
       modelDefinition: unknown,
       apiKey: unknown,
       baseUrls?: unknown,
-      customProviders?: unknown,
-    ) =>
-      createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
+      customProviders?: unknown
+    ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
   };
 });
 
@@ -124,6 +123,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // Empty map is fine — no MCP-Apps result-scrubbing happens in these
     // tests; we just need the method to exist.
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
+    executeTool: vi.fn(),
   };
 
   beforeEach(() => {
@@ -140,6 +140,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
+    mcpClientManager.executeTool.mockResolvedValue({
+      content: [{ type: "text", text: "Pinned result" }],
+    });
     generateTextMock.mockResolvedValue({
       response: {
         modelId: "gpt-5-mini",
@@ -216,7 +219,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // lockEvalSession, updateTestIteration), so we search by ref
     // rather than indexing by position.
     const updateCall = convexClient.action.mock.calls.find(
-      (call) => call[0] === "testSuites:updateTestIteration",
+      (call) => call[0] === "testSuites:updateTestIteration"
     );
     return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
@@ -264,31 +267,31 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   it("surfaces a clear error when the selected server is not connected at runtime", async () => {
     mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
-      new Error('Unknown MCP server "srv-1".'),
+      new Error('Unknown MCP server "srv-1".')
     );
 
     await expect(
-      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any),
+      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" is not connected. Reconnect the server and try again.',
+      'Could not start eval because "Asana" is not connected. Reconnect the server and try again.'
     );
   });
 
   it("surfaces a clear error when the selected server fails tools/list", async () => {
     mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
-      new Error("tools/list exploded"),
+      new Error("tools/list exploded")
     );
 
     await expect(
-      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any),
+      runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.',
+      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
     );
   });
 
   it("marks suite runs failed when tool loading fails", async () => {
     mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
-      new Error("tools/list exploded"),
+      new Error("tools/list exploded")
     );
     const recorder = {
       runId: "run-1",
@@ -303,9 +306,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         ...buildQuickRunConfig(),
         runId: "run-1",
         recorder,
-      } as any),
+      } as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.',
+      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
     );
 
     expect(recorder.finalize).toHaveBeenCalledWith({
@@ -368,211 +371,202 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     };
   }
 
-  it(
-    "PR-2 review #5: lockEvalSession fires when fanout succeeded but updateTestIteration throws transient error",
-    async () => {
-      // Mock convexClient.action with ref-aware responses:
-      //   - appendEvalTurnTrace returns success (fanout persists)
-      //   - updateTestIteration throws a transient error (NOT a
-      //     "not found"/"cancelled" message — those bypass the lock)
-      //   - lockEvalSession records the call so we can assert it fired
-      const callsByRef: Record<string, number> = {};
-      const action = vi.fn(async (ref: string) => {
-        callsByRef[ref] = (callsByRef[ref] ?? 0) + 1;
-        if (ref === "testSuites:appendEvalTurnTrace") {
-          return { skipped: false, chatSessionId: "sess_x", locked: false };
-        }
-        if (ref === "testSuites:updateTestIteration") {
-          throw new Error("transient backend hiccup");
-        }
-        if (ref === "testSuites:lockEvalSession") {
-          return { skipped: false, locked: true, alreadyLocked: false };
-        }
+  it("PR-2 review #5: lockEvalSession fires when fanout succeeded but updateTestIteration throws transient error", async () => {
+    // Mock convexClient.action with ref-aware responses:
+    //   - appendEvalTurnTrace returns success (fanout persists)
+    //   - updateTestIteration throws a transient error (NOT a
+    //     "not found"/"cancelled" message — those bypass the lock)
+    //   - lockEvalSession records the call so we can assert it fired
+    const callsByRef: Record<string, number> = {};
+    const action = vi.fn(async (ref: string) => {
+      callsByRef[ref] = (callsByRef[ref] ?? 0) + 1;
+      if (ref === "testSuites:appendEvalTurnTrace") {
+        return { skipped: false, chatSessionId: "sess_x", locked: false };
+      }
+      if (ref === "testSuites:updateTestIteration") {
+        throw new Error("transient backend hiccup");
+      }
+      if (ref === "testSuites:lockEvalSession") {
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      return undefined;
+    });
+    convexClient.action = action;
+
+    await runQuickTestCase();
+
+    // Sanity: fanout did fire (so we know we're testing the new path)
+    // AND lockEvalSession was called despite the update throwing.
+    expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
+    expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
+    expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+  });
+
+  it("derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed", async () => {
+    // Regression test for the transcript-lifecycle vs verdict split.
+    // The lock-reason describes whether the eval CYCLE ran to completion
+    // (so the chatSessions transcript is consistent), NOT whether the
+    // verdict passed. A failed-verdict iteration that ran cleanly
+    // (status: "completed", result: "failed", passed: false) must still
+    // get lockReason: "eval_completed". eval_failed is reserved for
+    // cycle failures (provider errors, transport crashes, status:"failed").
+    //
+    // Force passed=false by configuring an expectedToolCall the mock
+    // assistant won't make. The runner's success path then calls
+    // finishIterationDirectly with status:"completed" + passed:false.
+    // Before the fix this site derived terminalReason from `passed` and
+    // would have called lockEvalSession with reason:"eval_failed".
+    const lockCalls: Array<{ iterationId: string; reason: string }> = [];
+    const action = vi.fn(async (ref: string, payload: any) => {
+      if (ref === "testSuites:appendEvalTurnTrace") {
+        return { skipped: false, chatSessionId: "sess_x", locked: false };
+      }
+      if (ref === "testSuites:updateTestIteration") {
         return undefined;
-      });
-      convexClient.action = action;
+      }
+      if (ref === "testSuites:lockEvalSession") {
+        lockCalls.push({
+          iterationId: payload?.iterationId,
+          reason: payload?.reason,
+        });
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      return undefined;
+    });
+    convexClient.action = action;
 
-      await runQuickTestCase();
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            // Expecting a tool the mock assistant never calls → matchPassed=false
+            // → finalizePassedForEval mock returns false → passed=false.
+            expectedToolCalls: [
+              { toolName: "never-called-tool", arguments: {} },
+            ],
+            promptTurns: [
+              {
+                id: "turn-1",
+                prompt: "Hello",
+                expectedToolCalls: [
+                  { toolName: "never-called-tool", arguments: {} },
+                ],
+              },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
 
-      // Sanity: fanout did fire (so we know we're testing the new path)
-      // AND lockEvalSession was called despite the update throwing.
-      expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
-      expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
-      expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
-    },
-  );
+    // Confirm we exercised the success path: updateTestIteration was
+    // called with result:"failed" + status:"completed", and the lock
+    // fired with reason:"eval_completed" (lifecycle-clean), not
+    // "eval_failed" (which is for cycle failures).
+    const updateCall = action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration"
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.[1]).toMatchObject({
+      result: "failed",
+      status: "completed",
+    });
+    expect(lockCalls).toHaveLength(1);
+    expect(lockCalls[0].reason).toBe("eval_completed");
+  });
 
-  it(
-    "derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed",
-    async () => {
-      // Regression test for the transcript-lifecycle vs verdict split.
-      // The lock-reason describes whether the eval CYCLE ran to completion
-      // (so the chatSessions transcript is consistent), NOT whether the
-      // verdict passed. A failed-verdict iteration that ran cleanly
-      // (status: "completed", result: "failed", passed: false) must still
-      // get lockReason: "eval_completed". eval_failed is reserved for
-      // cycle failures (provider errors, transport crashes, status:"failed").
-      //
-      // Force passed=false by configuring an expectedToolCall the mock
-      // assistant won't make. The runner's success path then calls
-      // finishIterationDirectly with status:"completed" + passed:false.
-      // Before the fix this site derived terminalReason from `passed` and
-      // would have called lockEvalSession with reason:"eval_failed".
-      const lockCalls: Array<{ iterationId: string; reason: string }> = [];
-      const action = vi.fn(async (ref: string, payload: any) => {
-        if (ref === "testSuites:appendEvalTurnTrace") {
-          return { skipped: false, chatSessionId: "sess_x", locked: false };
-        }
-        if (ref === "testSuites:updateTestIteration") {
-          return undefined;
-        }
-        if (ref === "testSuites:lockEvalSession") {
-          lockCalls.push({
-            iterationId: payload?.iterationId,
-            reason: payload?.reason,
-          });
-          return { skipped: false, locked: true, alreadyLocked: false };
-        }
+  it("derives lockReason from iteration STATUS + error: backend cycle error (status:completed + error set) → eval_failed", async () => {
+    // Codex review on #2446: the BACKEND-routed eval path's success
+    // tail passes `status: "completed"` to finishIteration[Directly]
+    // even when `iterationError` was captured during the run (see
+    // evals-runner.ts:2079-2082 and :3962-3965 / line 2088, 3971 —
+    // both hardcoded `status: "completed" as const`). A pure
+    // status-based derivation would lock those as eval_completed,
+    // even though the transcript represents a cycle failure.
+    // Presence of `error` is the cycle-failure signal.
+    //
+    // The local-generateText error path uses `status: "failed"` and
+    // is already correctly mapped — it's the backend path that has
+    // the status/error mismatch. Force the backend path by using a
+    // hosted MCPJam-routed model (no BYOK key needed) + making fetch
+    // reject mid-iteration.
+    fetchMock.mockRejectedValueOnce(new Error("backend down"));
+
+    const lockCalls: Array<{ iterationId: string; reason: string }> = [];
+    const action = vi.fn(async (ref: string, payload: any) => {
+      if (ref === "testSuites:appendEvalTurnTrace") {
+        return { skipped: false, chatSessionId: "sess_x", locked: false };
+      }
+      if (ref === "testSuites:updateTestIteration") {
         return undefined;
-      });
-      convexClient.action = action;
+      }
+      if (ref === "testSuites:lockEvalSession") {
+        lockCalls.push({
+          iterationId: payload?.iterationId,
+          reason: payload?.reason,
+        });
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      return undefined;
+    });
+    convexClient.action = action;
 
-      await runEvalSuiteWithAiSdk({
-        suiteId: "suite-1",
-        runId: null,
-        config: {
-          tests: [
-            {
-              title: "Case",
-              query: "Hello",
-              runs: 1,
-              model: "gpt-4-turbo",
-              provider: "openai",
-              // Expecting a tool the mock assistant never calls → matchPassed=false
-              // → finalizePassedForEval mock returns false → passed=false.
-              expectedToolCalls: [
-                { toolName: "never-called-tool", arguments: {} },
-              ],
-              promptTurns: [
-                {
-                  id: "turn-1",
-                  prompt: "Hello",
-                  expectedToolCalls: [
-                    { toolName: "never-called-tool", arguments: {} },
-                  ],
-                },
-              ],
-              testCaseId: "case-1",
-            },
-          ],
-          environment: { servers: ["srv-1"] },
-        },
-        modelApiKeys: { openai: "sk-test" },
-        convexClient: convexClient as any,
-        convexHttpUrl: "https://example.convex.site",
-        convexAuthToken: "token",
-        mcpClientManager: mcpClientManager as any,
-        testCaseId: "case-1",
-      });
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
 
-      // Confirm we exercised the success path: updateTestIteration was
-      // called with result:"failed" + status:"completed", and the lock
-      // fired with reason:"eval_completed" (lifecycle-clean), not
-      // "eval_failed" (which is for cycle failures).
-      const updateCall = action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
-      );
-      expect(updateCall).toBeDefined();
-      expect(updateCall?.[1]).toMatchObject({
-        result: "failed",
-        status: "completed",
-      });
-      expect(lockCalls).toHaveLength(1);
-      expect(lockCalls[0].reason).toBe("eval_completed");
-    },
-  );
-
-  it(
-    "derives lockReason from iteration STATUS + error: backend cycle error (status:completed + error set) → eval_failed",
-    async () => {
-      // Codex review on #2446: the BACKEND-routed eval path's success
-      // tail passes `status: "completed"` to finishIteration[Directly]
-      // even when `iterationError` was captured during the run (see
-      // evals-runner.ts:2079-2082 and :3962-3965 / line 2088, 3971 —
-      // both hardcoded `status: "completed" as const`). A pure
-      // status-based derivation would lock those as eval_completed,
-      // even though the transcript represents a cycle failure.
-      // Presence of `error` is the cycle-failure signal.
-      //
-      // The local-generateText error path uses `status: "failed"` and
-      // is already correctly mapped — it's the backend path that has
-      // the status/error mismatch. Force the backend path by using a
-      // hosted MCPJam-routed model (no BYOK key needed) + making fetch
-      // reject mid-iteration.
-      fetchMock.mockRejectedValueOnce(new Error("backend down"));
-
-      const lockCalls: Array<{ iterationId: string; reason: string }> = [];
-      const action = vi.fn(async (ref: string, payload: any) => {
-        if (ref === "testSuites:appendEvalTurnTrace") {
-          return { skipped: false, chatSessionId: "sess_x", locked: false };
-        }
-        if (ref === "testSuites:updateTestIteration") {
-          return undefined;
-        }
-        if (ref === "testSuites:lockEvalSession") {
-          lockCalls.push({
-            iterationId: payload?.iterationId,
-            reason: payload?.reason,
-          });
-          return { skipped: false, locked: true, alreadyLocked: false };
-        }
-        return undefined;
-      });
-      convexClient.action = action;
-
-      await runEvalSuiteWithAiSdk({
-        suiteId: "suite-1",
-        runId: null,
-        config: {
-          tests: [
-            {
-              title: "Case",
-              query: "Hello",
-              runs: 1,
-              model: "claude-haiku-4.5",
-              provider: "anthropic",
-              expectedToolCalls: [],
-              promptTurns: [
-                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-              ],
-              testCaseId: "case-1",
-            },
-          ],
-          environment: { servers: ["srv-1"] },
-        },
-        modelApiKeys: {},
-        convexClient: convexClient as any,
-        convexHttpUrl: "https://example.convex.site",
-        convexAuthToken: "token",
-        mcpClientManager: mcpClientManager as any,
-        testCaseId: "case-1",
-      });
-
-      // Confirm we exercised the cycle-failure path: the iteration was
-      // finalized with error:set, status:"completed", and the lock
-      // fired with reason:"eval_failed" — the codex finding.
-      const updateCall = action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
-      );
-      expect(updateCall).toBeDefined();
-      expect(updateCall?.[1]).toMatchObject({
-        status: "completed",
-      });
-      expect(updateCall?.[1]?.error).toBeTruthy();
-      expect(lockCalls).toHaveLength(1);
-      expect(lockCalls[0].reason).toBe("eval_failed");
-    },
-  );
+    // Confirm we exercised the cycle-failure path: the iteration was
+    // finalized with error:set, status:"completed", and the lock
+    // fired with reason:"eval_failed" — the codex finding.
+    const updateCall = action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration"
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.[1]).toMatchObject({
+      status: "completed",
+    });
+    expect(updateCall?.[1]?.error).toBeTruthy();
+    expect(lockCalls).toHaveLength(1);
+    expect(lockCalls[0].reason).toBe("eval_failed");
+  });
 
   it("persists compareRunId in quick-run iteration metadata when provided", async () => {
     const updatePayload = await runQuickTestCase("cmp_123");
@@ -636,7 +630,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-5-mini",
             provider: "openai",
             expectedToolCalls: [],
-            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
             testCaseId: "case-1",
           },
         ],
@@ -676,7 +672,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-5-mini",
             provider: "openai",
             expectedToolCalls: [],
-            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
             testCaseId: "case-1",
           },
         ],
@@ -698,7 +696,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       testCaseId: "case-1",
     });
 
-    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith(["server-1"]);
+    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith([
+      "server-1",
+    ]);
   });
 
   it("maps current fullStream chunks into eval stream events", async () => {
@@ -821,7 +821,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           type: "step_finish",
           usage: { inputTokens: 2, outputTokens: 3 },
         }),
-      ]),
+      ])
     );
   });
 
@@ -859,14 +859,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         convexAuthToken: "token",
         mcpClientManager: mcpClientManager as any,
         testCaseId: "case-1",
-      }),
+      })
     ).resolves.toBeDefined();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://example.convex.site/stream",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
     const compareRequest = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
@@ -880,7 +880,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   // Browser-rendered MCP App eval PR 14: the hosted (jam / org-BYOK) runners
   // attach the harness via the engine's extension points.
-  it("PR 14: threads Computer Use tools + browser hooks into runAssistantTurn for Claude jam models", async () => {
+  it("evals never get Computer Use tools (even for Claude jam models); render hook still attached", async () => {
     const assistantTurnModule = await import("../../../utils/assistant-turn");
     const runAssistantTurnSpy = vi
       .spyOn(assistantTurnModule, "runAssistantTurn")
@@ -930,24 +930,15 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
-      // Wire-format Computer Use tools merged into the engine tool map
-      // (trace-wrapped, so identity differs — names + executability matter).
-      expect(Object.keys(opts.tools)).toEqual(
-        expect.arrayContaining(["computer", "finish_widget"]),
-      );
-      expect(typeof opts.tools.computer.execute).toBe("function");
-      expect(typeof opts.tools.computer.toModelOutput).toBe("function");
-      // The advertised-tool gate + both browser hooks are attached.
-      expect(typeof opts.prepareAdvertisedTools).toBe("function");
-      expect(typeof opts.onToolCall).toBe("function");
+      // Computer Use is opt-in (session simulation only). Evals never opt in, so
+      // even a Claude jam driver gets NO computer tools and no advertised gate —
+      // identical to the non-Claude case below. Widget interaction in evals is
+      // expressed deterministically via Interact steps, not model-driven clicks.
+      expect(opts.tools).not.toHaveProperty("computer");
+      expect(opts.tools).not.toHaveProperty("finish_widget");
+      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
-      // No widget mounted yet → the gate hides the computer tools.
-      expect(
-        opts.prepareAdvertisedTools({
-          stepIndex: 0,
-          defaultToolNames: ["search", "computer", "finish_widget"],
-        }),
-      ).toEqual(["search"]);
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
@@ -1043,20 +1034,20 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         suiteId: "suite-1",
         runId: null,
         emit: (event) => emitted.push(event as Record<string, unknown>),
-      }),
+      })
     ).resolves.toBeDefined();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://example.convex.site/stream",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
     const streamRequest = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
     };
     expect(JSON.parse(streamRequest.body ?? "{}").model).toBe(
-      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4.5"
     );
     expect(createLlmModelMock).not.toHaveBeenCalled();
     expect(emitted).toEqual(
@@ -1065,7 +1056,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           type: "text_delta",
           content: "Done",
         }),
-      ]),
+      ])
     );
   });
 
@@ -1282,7 +1273,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       "https://example.convex.site/stream/org",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
     const request = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
@@ -1298,7 +1289,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
     expect(body).not.toHaveProperty("apiKey");
     expect(new Headers(request.headers).get("authorization")).toBe(
-      "Bearer token",
+      "Bearer token"
     );
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
@@ -1356,7 +1347,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           baseUrl: "https://models.example/v1",
           modelIds: ["llama-3"],
         },
-      ],
+      ]
     );
   });
 
@@ -1404,7 +1395,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
       "az-secret",
       { azure: "https://resource.openai.azure.com/openai" },
-      undefined,
+      undefined
     );
   });
 
@@ -1451,7 +1442,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
       "",
       { ollama: "http://ollama.internal:11434" },
-      undefined,
+      undefined
     );
   });
 
@@ -1459,15 +1450,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // Force prepareChatV2 to throw — simulates Anthropic name validation,
     // meta-tool name collision, or skill-tool prep failure. The runner must
     // catch this and persist a failed iteration row, NOT propagate the throw.
-    const orchestration = await import(
-      "../../../utils/chat-v2-orchestration"
-    );
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(
         new Error(
-          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
-        ),
+          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters)."
+        )
       );
 
     // The iteration row is created via `mutation` (default mock returns
@@ -1507,20 +1496,20 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           convexAuthToken: "token",
           mcpClientManager: mcpClientManager as any,
           testCaseId: "case-1",
-        }),
+        })
       ).resolves.toBeDefined();
 
       expect(prepareSpy).toHaveBeenCalled();
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
       expect(payload.status).toBe("failed");
       expect(payload.result).toBe("failed");
       expect(payload.error).toEqual(
-        expect.stringContaining("Invalid tool name"),
+        expect.stringContaining("Invalid tool name")
       );
       expect(payload.iterationId).toBe("iter-failed-setup");
 
@@ -1543,9 +1532,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // setup failure, the suite summary would credit it as a pass even though
     // the persisted iteration row is `failed`. The setup-failure path must
     // force `evaluation.passed = false` before returning.
-    const orchestration = await import(
-      "../../../utils/chat-v2-orchestration"
-    );
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(new Error("simulated prep failure"));
@@ -1585,7 +1572,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
@@ -1603,9 +1590,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // watching `streamTestCase` SSE then finished with no failure signal,
     // unlike the local-AI-SDK stream variant whose outer catch already
     // emits an `error` event. Setup failures must now emit one too.
-    const orchestration = await import(
-      "../../../utils/chat-v2-orchestration"
-    );
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(new Error("backend stream prep boom"));
@@ -1650,12 +1635,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             type: "error",
             message: expect.stringContaining("backend stream prep boom"),
           }),
-        ]),
+        ])
       );
 
       // And the failure must still be persisted (status:"failed").
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
@@ -1773,7 +1758,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
 
     const updateCall = convexClient.action.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestIteration",
+      (c) => c[0] === "testSuites:updateTestIteration"
     );
     expect(updateCall).toBeDefined();
     const payload = updateCall![1] as Record<string, unknown>;
@@ -1871,7 +1856,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           "testSuites:updateTestIteration",
           "testSuites:appendEvalTurnTrace",
           "testSuites:lockEvalSession",
-        ].includes(c[0] as string),
+        ].includes(c[0] as string)
       );
       expect(finalizeCall).toBeUndefined();
     } finally {
@@ -1969,7 +1954,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const updatePayload = updateCall![1] as Record<string, unknown>;
@@ -1996,7 +1981,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               (part: any) =>
                 part?.type === "text" &&
                 typeof part.text === "string" &&
-                part.text.includes("Critical prompt"),
+                part.text.includes("Critical prompt")
             );
           }
           return false;
@@ -2007,9 +1992,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const payload = call[1] as Record<string, unknown> | undefined;
         if (!payload) return false;
         if (containsCriticalPrompt(payload.messages)) return true;
-        const turn = payload.turn as
-          | { sessionMessages?: unknown }
-          | undefined;
+        const turn = payload.turn as { sessionMessages?: unknown } | undefined;
         if (turn && containsCriticalPrompt(turn.sessionMessages)) return true;
         return false;
       });
@@ -2121,7 +2104,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
@@ -2198,7 +2181,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
@@ -2308,13 +2291,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         return candidates.some((spans) => {
           if (!Array.isArray(spans)) return false;
           return spans.some(
-            (s: any) =>
-              s?.id === "engine-step-1" || s?.id === "engine-step-2",
+            (s: any) => s?.id === "engine-step-1" || s?.id === "engine-step-2"
           );
         });
       };
       const anyHasEngineSpans = convexClient.action.mock.calls.some((c) =>
-        spanInPayload(c[1]),
+        spanInPayload(c[1])
       );
       expect(anyHasEngineSpans).toBe(true);
     } finally {
@@ -2427,16 +2409,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               // Disable tool-error gating in advancedConfig — the
               // intended policy is "tool errors don't fail evals."
               advancedConfig: { failOnToolError: false },
-              expectedToolCalls: [
-                { toolName: "lookup", arguments: {} },
-              ],
+              expectedToolCalls: [{ toolName: "lookup", arguments: {} }],
               promptTurns: [
                 {
                   id: "turn-1",
                   prompt: "Hello",
-                  expectedToolCalls: [
-                    { toolName: "lookup", arguments: {} },
-                  ],
+                  expectedToolCalls: [{ toolName: "lookup", arguments: {} }],
                 },
               ],
               testCaseId: "case-tool-error-recovered",
@@ -2453,7 +2431,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
@@ -2492,12 +2470,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     await runQuickTestCase();
 
     const updateCall = convexClient.action.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestIteration",
+      (c) => c[0] === "testSuites:updateTestIteration"
     );
     expect(updateCall).toBeDefined();
     const payload = updateCall![1] as Record<string, unknown>;
     expect(payload.error).toEqual(
-      expect.stringContaining("Stream returned no content"),
+      expect.stringContaining("Stream returned no content")
     );
   });
 
@@ -2537,8 +2515,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         if (typeof m.content === "string") return m.content === "Hello";
         if (Array.isArray(m.content)) {
           return m.content.some(
-            (part: any) =>
-              part?.type === "text" && part.text === "Hello",
+            (part: any) => part?.type === "text" && part.text === "Hello"
           );
         }
         return false;
@@ -2548,9 +2525,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const payload = call[1] as Record<string, unknown> | undefined;
       if (!payload) return false;
       if (containsUserHello(payload.messages)) return true;
-      const turn = payload.turn as
-        | { sessionMessages?: unknown }
-        | undefined;
+      const turn = payload.turn as { sessionMessages?: unknown } | undefined;
       if (turn && containsUserHello(turn.sessionMessages)) return true;
       return false;
     });
@@ -2595,7 +2570,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
 
     const updateCalls = convexClient.action.mock.calls.filter(
-      (c) => c[0] === "testSuites:updateTestIteration",
+      (c) => c[0] === "testSuites:updateTestIteration"
     );
     expect(updateCalls.length).toBe(0);
   });
@@ -2666,8 +2641,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         if (Array.isArray(m.content)) {
           return m.content.some(
             (part: any) =>
-              part?.type === "text" &&
-              part.text === "Partial assistant content",
+              part?.type === "text" && part.text === "Partial assistant content"
           );
         }
         return false;
@@ -2677,9 +2651,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const payload = call[1] as Record<string, unknown> | undefined;
       if (!payload) return false;
       if (containsPartial(payload.messages)) return true;
-      const turn = payload.turn as
-        | { sessionMessages?: unknown }
-        | undefined;
+      const turn = payload.turn as { sessionMessages?: unknown } | undefined;
       if (turn && containsPartial(turn.sessionMessages)) return true;
       return false;
     });
@@ -2737,11 +2709,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       if (!Array.isArray(msgs)) return false;
       return msgs.some((m: any) => {
         if (m?.role !== "assistant") return false;
-        if (typeof m.content === "string") return m.content === "Step 1 content";
+        if (typeof m.content === "string")
+          return m.content === "Step 1 content";
         if (Array.isArray(m.content)) {
           return m.content.some(
             (part: any) =>
-              part?.type === "text" && part.text === "Step 1 content",
+              part?.type === "text" && part.text === "Step 1 content"
           );
         }
         return false;
@@ -2751,9 +2724,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const payload = call[1] as Record<string, unknown> | undefined;
       if (!payload) return false;
       if (containsStep1(payload.messages)) return true;
-      const turn = payload.turn as
-        | { sessionMessages?: unknown }
-        | undefined;
+      const turn = payload.turn as { sessionMessages?: unknown } | undefined;
       if (turn && containsStep1(turn.sessionMessages)) return true;
       return false;
     });
@@ -2811,7 +2782,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
     async function runWithSuiteHostConfig(
       suiteHostConfig: Record<string, unknown> | null,
-      caseAdvancedConfig?: Record<string, unknown>,
+      caseAdvancedConfig?: Record<string, unknown>
     ) {
       await runEvalSuiteWithAiSdk({
         suiteId: "suite-1",
@@ -2866,7 +2837,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     it("per-case advancedConfig.system overrides suiteHostConfig.systemPrompt", async () => {
       await runWithSuiteHostConfig(
         { systemPrompt: "Suite default" },
-        { system: "Per-case override" },
+        { system: "Per-case override" }
       );
 
       const streamTextCall = streamTextMock.mock.calls[0]?.[0];
@@ -2901,7 +2872,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     it("per-case advancedConfig.temperature overrides suiteHostConfig.temperature", async () => {
       await runWithSuiteHostConfig(
         { temperature: 0.42 },
-        { temperature: 0.99 },
+        { temperature: 0.99 }
       );
 
       const streamTextCall = streamTextMock.mock.calls[0]?.[0];
@@ -2958,7 +2929,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // system as a leading message — the new wire shape moved it to
       // the top-level field.
       const appendCalls = convexClient.action.mock.calls.filter(
-        (call) => call[0] === "testSuites:appendEvalTurnTrace",
+        (call) => call[0] === "testSuites:appendEvalTurnTrace"
       );
       for (const call of appendCalls) {
         const payload = call[1] as Record<string, unknown> | undefined;
@@ -3032,13 +3003,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           },
         });
 
-        const anyCallCarriesIt = convexClient.action.mock.calls.some(
-          (call) => {
-            if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
-            const payload = call[1] as Record<string, unknown> | undefined;
-            return payload?.systemPrompt === "Backend suite default";
-          },
-        );
+        const anyCallCarriesIt = convexClient.action.mock.calls.some((call) => {
+          if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
+          const payload = call[1] as Record<string, unknown> | undefined;
+          return payload?.systemPrompt === "Backend suite default";
+        });
         expect(anyCallCarriesIt).toBe(true);
       } finally {
         runAssistantTurnSpy.mockRestore();
@@ -3104,14 +3073,220 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // `appendEvalTurnTrace.systemPrompt` (persisted to
       // `chatSessions.systemPrompt`), not as a leading system entry
       // in the messages array.
-      const persistedCarriesIt = convexClient.action.mock.calls.some(
-        (call) => {
-          if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
-          const payload = call[1] as Record<string, unknown> | undefined;
-          return payload?.systemPrompt === "Stream-runner suite default";
-        },
-      );
+      const persistedCarriesIt = convexClient.action.mock.calls.some((call) => {
+        if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
+        const payload = call[1] as Record<string, unknown> | undefined;
+        return payload?.systemPrompt === "Stream-runner suite default";
+      });
       expect(persistedCarriesIt).toBe(true);
+    });
+  });
+
+  describe("PR2 — streaming quick-run routes by step kind", () => {
+    const streamBase = {
+      tools: {},
+      selectedServers: [] as string[],
+      mcpClientManager: mcpClientManager as any,
+      recorder: null,
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      suiteId: "suite-1",
+      runId: null,
+    };
+
+    it("streams an interact/assert-only case and emits step_status lifecycle", async () => {
+      // `stepsToPromptTurns` folds interact/assert into the model turn's widget
+      // checks, so this case streams on the unified engine (no suite fallback).
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [{ role: "assistant", content: "Done" }],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      }));
+
+      const emitted: Array<Record<string, unknown>> = [];
+      await expect(
+        streamTestCase({
+          ...streamBase,
+          test: {
+            title: "Show me a redbull",
+            query: "Show me a redbull",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            steps: [
+              { id: "s1", kind: "prompt", prompt: "Show me a redbull" },
+              {
+                id: "s2",
+                kind: "assert",
+                assertion: {
+                  kind: "textVisible",
+                  toolName: "search-products",
+                  text: "Red Bull",
+                },
+              },
+              {
+                id: "s3",
+                kind: "interact",
+                toolName: "search-products",
+                action: {
+                  kind: "click",
+                  target: { role: { role: "button", name: "Add to cart" } },
+                  clickType: "left",
+                },
+              },
+            ],
+            testCaseId: "case-mixed",
+          },
+          testCaseId: "case-mixed",
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+        } as any)
+      ).resolves.toBeDefined();
+
+      const statuses = emitted.filter((e) => e.type === "step_status");
+      expect(
+        statuses.some((e) => e.status === "running" && e.kind === "prompt")
+      ).toBe(true);
+      expect(
+        statuses.some((e) => e.status === "ok" && e.kind === "prompt")
+      ).toBe(true);
+    });
+
+    it("PR5: streams a hybrid prompt + toolCall (pinned) case", async () => {
+      // The pinned turn streams via the driver's onPinnedTurn sink — a
+      // step_status with kind:"toolCall" proves it (no longer rejected).
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [{ role: "assistant", content: "Done" }],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+        finishReason: Promise.resolve("stop"),
+      }));
+      const emitted: Array<Record<string, unknown>> = [];
+      await expect(
+        streamTestCase({
+          ...streamBase,
+          selectedServers: ["amazon"],
+          modelApiKeys: { openai: "sk-test" },
+          test: {
+            title: "Pinned",
+            query: "",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            steps: [
+              { id: "p1", kind: "prompt", prompt: "hi" },
+              {
+                id: "t1",
+                kind: "toolCall",
+                serverName: "amazon",
+                toolName: "search-products",
+                arguments: { query: "redbull" },
+              },
+            ],
+            testCaseId: "case-toolcall",
+          },
+          testCaseId: "case-toolcall",
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+        } as any)
+      ).resolves.toBeDefined();
+      const statuses = emitted.filter((e) => e.type === "step_status");
+      expect(statuses.some((e) => e.kind === "toolCall")).toBe(true);
+      expect(emitted.find((e) => e.type === "tool_call")).toMatchObject({
+        toolName: "search-products",
+        args: { query: "redbull" },
+      });
+      expect(emitted.find((e) => e.type === "tool_result")).toMatchObject({
+        result: { content: [{ type: "text", text: "Pinned result" }] },
+      });
+      expect(
+        emitted.find(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            e.snapshotKind === "turn_finish" &&
+            e.turnIndex === 1
+        )
+      ).toMatchObject({
+        actualToolCalls: [
+          {
+            toolName: "search-products",
+            arguments: { query: "redbull" },
+          },
+        ],
+      });
+    });
+
+    it("PR5: streams a model-free pinned-only case", async () => {
+      const emitted: Array<Record<string, unknown>> = [];
+      await expect(
+        streamTestCase({
+          ...streamBase,
+          selectedServers: ["amazon"],
+          test: {
+            title: "Model-free pinned",
+            query: "",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            steps: [
+              {
+                id: "t1",
+                kind: "toolCall",
+                serverName: "amazon",
+                toolName: "search-products",
+                arguments: { query: "redbull" },
+              },
+            ],
+            testCaseId: "case-modelfree",
+          },
+          testCaseId: "case-modelfree",
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+        } as any)
+      ).resolves.toBeDefined();
+      const statuses = emitted.filter((e) => e.type === "step_status");
+      expect(statuses.some((e) => e.kind === "toolCall")).toBe(true);
+      expect(emitted.find((e) => e.type === "tool_call")).toMatchObject({
+        toolName: "search-products",
+        args: { query: "redbull" },
+      });
+      expect(emitted.find((e) => e.type === "tool_result")).toMatchObject({
+        result: { content: [{ type: "text", text: "Pinned result" }] },
+      });
+      expect(
+        emitted.find(
+          (e) => e.type === "trace_snapshot" && e.snapshotKind === "turn_finish"
+        )
+      ).toMatchObject({
+        actualToolCalls: [
+          {
+            toolName: "search-products",
+            arguments: { query: "redbull" },
+          },
+        ],
+      });
     });
   });
 
@@ -3190,12 +3365,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       await runStreamCase({});
 
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
       expect(payload.error).toEqual(
-        expect.stringContaining("Stream returned no content"),
+        expect.stringContaining("Stream returned no content")
       );
     });
 
@@ -3231,8 +3406,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           if (typeof m.content === "string") return m.content === "Hello";
           if (Array.isArray(m.content)) {
             return m.content.some(
-              (part: any) =>
-                part?.type === "text" && part.text === "Hello",
+              (part: any) => part?.type === "text" && part.text === "Hello"
             );
           }
           return false;
@@ -3242,9 +3416,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const payload = call[1] as Record<string, unknown> | undefined;
         if (!payload) return false;
         if (containsUserHello(payload.messages)) return true;
-        const turn = payload.turn as
-          | { sessionMessages?: unknown }
-          | undefined;
+        const turn = payload.turn as { sessionMessages?: unknown } | undefined;
         if (turn && containsUserHello(turn.sessionMessages)) return true;
         return false;
       });
@@ -3312,9 +3484,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         headers: new Headers({ "Content-Type": "text/event-stream" }),
       });
 
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockResolvedValueOnce({
@@ -3380,13 +3550,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             return first.content.some(
               (part: any) =>
                 part?.type === "text" &&
-                part.text === "Backend stream SSE prefix",
+                part.text === "Backend stream SSE prefix"
             );
           }
           return false;
         };
         const traceSnapshots = emitted.filter(
-          (e) => e?.type === "trace_snapshot",
+          (e) => e?.type === "trace_snapshot"
         );
         const anySnapshotHasPrefix = traceSnapshots.some((snap) => {
           const trace = snap.trace as { messages?: unknown } | undefined;
@@ -3429,13 +3599,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const failureSnapshot = emitted.find(
         (e) =>
           e?.type === "trace_snapshot" &&
-          (e as { snapshotKind?: string }).snapshotKind === "failure",
+          (e as { snapshotKind?: string }).snapshotKind === "failure"
       );
       const errorEvent = emitted.find((e) => e?.type === "error");
       expect(failureSnapshot).toBeDefined();
       expect(errorEvent).toBeDefined();
       expect((errorEvent as { message: string }).message).toEqual(
-        expect.stringContaining("Stream returned no content"),
+        expect.stringContaining("Stream returned no content")
       );
     });
 
@@ -3483,9 +3653,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // span shape via the direct-chat-turn module's exported helpers.
       // Simpler approach: stub the trace capture so the runner sees the
       // recordedSpans we want.
-      const traceCaptureModule = await import(
-        "../eval-trace-capture"
-      );
+      const traceCaptureModule = await import("../eval-trace-capture");
       const realCreate = traceCaptureModule.createAiSdkEvalTraceContext;
       const spy = vi
         .spyOn(traceCaptureModule, "createAiSdkEvalTraceContext")
@@ -3523,7 +3691,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         });
 
         const updateCall = convexClient.action.mock.calls.find(
-          (c) => c[0] === "testSuites:updateTestIteration",
+          (c) => c[0] === "testSuites:updateTestIteration"
         );
         expect(updateCall).toBeDefined();
         const payload = updateCall![1] as Record<string, unknown>;
@@ -3573,7 +3741,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // Iteration was persisted as a soft failure (no-content branch
       // fired) AND `tokensUsed` reflects the real billed totalUsage.
       const updateCall = convexClient.action.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestIteration",
+        (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as {
@@ -3581,7 +3749,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         error?: string;
       };
       expect(payload.error).toEqual(
-        expect.stringContaining("Stream returned no content"),
+        expect.stringContaining("Stream returned no content")
       );
       expect(payload.tokensUsed).toBe(13);
     });
@@ -3663,7 +3831,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             type: "trace_snapshot",
           }),
           expect.objectContaining({ type: "turn_finish" }),
-        ]),
+        ])
       );
     });
   });
@@ -3685,9 +3853,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // them in-order during the turn; the runner emits the matching
       // SSE events. After the turn finishes, the runner emits
       // turn_finish + trace_snapshot.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -3764,7 +3930,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-vocab",
           suiteId: "suite-1",
           runId: null,
-          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
         } as any);
 
         // CodeRabbit PR 5b review (nit): use ordered-index assertions,
@@ -3775,22 +3942,22 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const firstIndex = (t: string) => types.indexOf(t);
         expect(firstIndex("turn_start")).toBeGreaterThanOrEqual(0);
         expect(firstIndex("text_delta")).toBeGreaterThan(
-          firstIndex("turn_start"),
+          firstIndex("turn_start")
         );
         expect(firstIndex("tool_call")).toBeGreaterThan(
-          firstIndex("text_delta"),
+          firstIndex("text_delta")
         );
         expect(firstIndex("tool_result")).toBeGreaterThan(
-          firstIndex("tool_call"),
+          firstIndex("tool_call")
         );
         expect(firstIndex("step_finish")).toBeGreaterThan(
-          firstIndex("tool_result"),
+          firstIndex("tool_result")
         );
         expect(firstIndex("trace_snapshot")).toBeGreaterThan(
-          firstIndex("step_finish"),
+          firstIndex("step_finish")
         );
         expect(firstIndex("turn_finish")).toBeGreaterThan(
-          firstIndex("trace_snapshot"),
+          firstIndex("trace_snapshot")
         );
         // Spot-check the data shapes carried on the events.
         expect(emitted).toEqual(
@@ -3809,7 +3976,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               toolCallId: "call-1",
               isError: false,
             }),
-          ]),
+          ])
         );
       } finally {
         runAssistantTurnSpy.mockRestore();
@@ -3823,9 +3990,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // `step_finish` SSE. Mid-turn step_finish SSEs from a multi-step
       // hosted eval turn would otherwise show inflated counts vs the
       // local-BYOK stream path / `consumeFullStreamAsEvalEvents`.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -3893,11 +4058,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-usage-delta",
           suiteId: "suite-1",
           runId: null,
-          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
         } as any);
 
         const stepFinishEvents = emitted.filter(
-          (e) => e.type === "step_finish",
+          (e) => e.type === "step_finish"
         ) as Array<{
           stepNumber: number;
           usage: { inputTokens: number; outputTokens: number };
@@ -3928,9 +4094,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // `activePartialResponseMessages` pattern: synthesize the
       // partial response from chunk-event accumulators and stitch into
       // mid-turn snapshots.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4008,7 +4172,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-snap-fidelity",
           suiteId: "suite-1",
           runId: null,
-          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
         } as any);
 
         // The mid-turn step_finish trace_snapshot must carry the
@@ -4017,7 +4182,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const stepFinishSnapshots = emitted.filter(
           (e) =>
             e.type === "trace_snapshot" &&
-            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish"
         );
         expect(stepFinishSnapshots.length).toBeGreaterThan(0);
         const snap = stepFinishSnapshots[0] as {
@@ -4043,7 +4208,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               toolCallId: "call-1",
               toolName: "search",
             }),
-          ]),
+          ])
         );
         const toolMsg = messages.find((m) => m.role === "tool");
         expect(toolMsg).toBeDefined();
@@ -4057,7 +4222,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               type: "tool-result",
               toolCallId: "call-1",
             }),
-          ]),
+          ])
         );
       } finally {
         runAssistantTurnSpy.mockRestore();
@@ -4073,9 +4238,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // accumulators are the ONLY source of in-flight content).
       // Lock the followup fix: a step-2 snapshot must carry BOTH
       // step-1 AND step-2 partial assistant + tool content.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4184,7 +4347,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const stepFinishSnapshots = emitted.filter(
           (e) =>
             e.type === "trace_snapshot" &&
-            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish"
         ) as Array<{
           stepIndex?: number;
           trace: { messages: Array<{ role: string; content: unknown }> };
@@ -4193,9 +4356,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         expect(stepFinishSnapshots).toHaveLength(2);
 
         // Step 2 snapshot must carry BOTH step 1 + step 2 partials.
-        const step2Snap = stepFinishSnapshots.find(
-          (s) => s.stepIndex === 1,
-        );
+        const step2Snap = stepFinishSnapshots.find((s) => s.stepIndex === 1);
         expect(step2Snap).toBeDefined();
         const step2Messages = step2Snap!.trace.messages;
 
@@ -4218,7 +4379,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         expect(combinedText).toContain("Step2 text");
         // Both tool calls must be present.
         const toolCallParts = assistantContent.filter(
-          (p) => p.type === "tool-call",
+          (p) => p.type === "tool-call"
         );
         expect(toolCallParts.map((p) => p.toolCallId).sort()).toEqual([
           "call-a",
@@ -4230,7 +4391,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const allToolResultCallIds = toolMessages.flatMap((m) =>
           (m.content as Array<{ type: string; toolCallId?: string }>)
             .filter((p) => p.type === "tool-result")
-            .map((p) => p.toolCallId),
+            .map((p) => p.toolCallId)
         );
         expect(allToolResultCallIds.sort()).toEqual(["call-a", "call-b"]);
       } finally {
@@ -4248,9 +4409,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // carries a defensive-copy snapshot at step settlement. Runner
       // stitches it into the snapshot's spans alongside capturedSpans +
       // traceCtx.recordedSpans.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4351,7 +4510,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         const stepFinishSnapshots = emitted.filter(
           (e) =>
             e.type === "trace_snapshot" &&
-            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish"
         ) as Array<{
           stepIndex?: number;
           trace: { spans?: Array<{ name?: string; category?: string }> };
@@ -4388,9 +4547,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // `onEngineError({code, message, details, httpStatus, rawText})`
       // fires at the same site; runner captures the event and prefers
       // its message over the generic fallback.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4476,16 +4633,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         // message — NOT any of the runner's generic fallbacks for the
         // three failure branches (`!turnTrace`, no-content, error-span).
         expect(errorEvents[0]!.message).toContain(
-          "Daily MCPJam model limit reached",
+          "Daily MCPJam model limit reached"
         );
         expect(errorEvents[0]!.message).not.toContain(
-          "Backend stream failed during iteration",
+          "Backend stream failed during iteration"
         );
         expect(errorEvents[0]!.message).not.toContain(
-          "Backend step returned no content",
+          "Backend step returned no content"
         );
         expect(errorEvents[0]!.message).not.toContain(
-          "Backend step failed mid-turn",
+          "Backend step failed mid-turn"
         );
         // The raw body is forwarded on `details` so the live UI can
         // show the full JSON when an operator wants to inspect it.
@@ -4501,9 +4658,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // non-tool error-status span. Without this fix the runner used
       // the span-name fallback ("Backend step failed mid-turn: <span
       // name>"), losing the engine's captured guardrail detail.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4587,11 +4742,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         }>;
         expect(errorEvents).toHaveLength(1);
         expect(errorEvents[0]!.message).toContain(
-          "Daily MCPJam model limit reached",
+          "Daily MCPJam model limit reached"
         );
         // Specifically NOT the span-name fallback.
         expect(errorEvents[0]!.message).not.toContain(
-          "Backend step failed mid-turn",
+          "Backend step failed mid-turn"
         );
         expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
       } finally {
@@ -4608,9 +4763,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // (no `turnTrace`, error span on turnTrace, etc). Emitting
       // step_finish for failed steps would surface a "step succeeded"
       // SSE event to live UI consumers when the step actually failed.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockImplementationOnce(async (opts: any) => {
@@ -4669,11 +4822,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-settle-gate",
           suiteId: "suite-1",
           runId: null,
-          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
         } as any);
 
         const stepFinishEvents = emitted.filter(
-          (e) => e.type === "step_finish",
+          (e) => e.type === "step_finish"
         );
         expect(stepFinishEvents).toHaveLength(0);
       } finally {
@@ -4689,9 +4843,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       // accidentally flip it to `streamSink: "ui"` or
       // `persistMode: "handler"`, which would double-persist or
       // wedge the SSE writer.
-      const assistantTurnModule = await import(
-        "../../../utils/assistant-turn"
-      );
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
         .mockResolvedValueOnce({
@@ -4775,7 +4927,7 @@ describe("createConcurrencyLimiter", () => {
       });
 
     const results = await Promise.all(
-      Array.from({ length: 12 }, (_, i) => task(i)),
+      Array.from({ length: 12 }, (_, i) => task(i))
     );
 
     expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
@@ -4784,9 +4936,9 @@ describe("createConcurrencyLimiter", () => {
 
   it("releases a slot when a thunk rejects (no leak)", async () => {
     const limit = createConcurrencyLimiter(1);
-    await expect(limit(async () => Promise.reject(new Error("boom")))).rejects.toThrow(
-      "boom",
-    );
+    await expect(
+      limit(async () => Promise.reject(new Error("boom")))
+    ).rejects.toThrow("boom");
     // The single slot must be reusable after the rejection.
     await expect(limit(async () => "ok")).resolves.toBe("ok");
   });
@@ -4802,8 +4954,8 @@ describe("createConcurrencyLimiter", () => {
           peak = Math.max(peak, active);
           await Promise.resolve();
           active--;
-        }),
-      ),
+        })
+      )
     );
     expect(peak).toBe(1);
   });

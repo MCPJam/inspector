@@ -312,6 +312,45 @@ function detectScreenshotMediaType(base64: string): "image/jpeg" | "image/png" {
 }
 
 /**
+ * Upload one iteration's Playwright replay `.webm` to Convex storage and return
+ * its storageId. Same path as {@link uploadScreenshotBlob} (generate URL → POST
+ * bytes → storageId); only the mime type differs. One video per iteration, so
+ * this runs at most once per finalize. Throws on transport failure — the caller
+ * (`finalize-iteration.ts`) wraps it best-effort so a missing replay never fails
+ * the iteration.
+ */
+export async function uploadVideoBlob(
+  convexClient: ConvexHttpClient,
+  bytes: Buffer,
+): Promise<string | undefined> {
+  const uploadUrl = await convexClient.mutation(
+    "chatSessions:generateSnapshotUploadUrl" as any,
+    {},
+  );
+
+  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
+    return undefined;
+  }
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": "video/webm" },
+    // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
+    // regardless of its backing-buffer type.
+    body: new Blob([new Uint8Array(bytes)], { type: "video/webm" }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload replay video (${response.status})`);
+  }
+
+  const body = (await response.json().catch(() => null)) as
+    | { storageId?: string }
+    | null;
+  return typeof body?.storageId === "string" ? body.storageId : undefined;
+}
+
+/**
  * Walk an AI SDK message transcript, find every tool result whose tool
  * metadata identifies an MCP App, fetch the widget HTML via
  * `MCPClientManager.readResource()`, upload it to Convex, and return one
