@@ -293,19 +293,37 @@ export async function mintXaaAccessToken(args: {
     httpsOnly: args.httpsOnly,
   });
 
-  if (proxyResult.status < 200 || proxyResult.status >= 300) {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      "The authorization server rejected the cross-app access grant.",
-      { status: proxyResult.status }
-    );
-  }
-
   const body =
     proxyResult.body && typeof proxyResult.body === "object"
       ? (proxyResult.body as Record<string, unknown>)
       : null;
+
+  if (proxyResult.status < 200 || proxyResult.status >= 300) {
+    // Surface the authorization server's actual rejection (RFC 6749 error /
+    // error_description, or a raw string body) so the failure is debuggable
+    // instead of a generic "rejected".
+    const oauthError =
+      body && typeof body.error === "string" ? body.error : undefined;
+    const oauthDesc =
+      body && typeof body.error_description === "string"
+        ? body.error_description
+        : undefined;
+    const rawDetail =
+      !oauthError && typeof proxyResult.body === "string"
+        ? proxyResult.body.slice(0, 400)
+        : undefined;
+    const detail =
+      [oauthError, oauthDesc].filter(Boolean).join(": ") || rawDetail;
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `XAA token exchange (jwt-bearer grant) was rejected by the authorization server at ${target.tokenEndpoint} (HTTP ${proxyResult.status})${
+        detail ? ` — ${detail}` : ""
+      }`,
+      { status: proxyResult.status, body: proxyResult.body }
+    );
+  }
+
   const accessToken =
     body && typeof body.access_token === "string"
       ? body.access_token
@@ -314,7 +332,7 @@ export async function mintXaaAccessToken(args: {
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      "The authorization server response did not include an access_token."
+      `The authorization server at ${target.tokenEndpoint} accepted the grant (HTTP ${proxyResult.status}) but returned no access_token.`
     );
   }
 

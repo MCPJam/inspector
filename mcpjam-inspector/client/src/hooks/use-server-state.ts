@@ -2706,7 +2706,11 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
-          toast.error(`Failed to connect to ${formData.name}`);
+          toast.error(
+            `Failed to connect to ${formData.name}${
+              result.error ? `: ${result.error}` : ""
+            }`
+          );
         }
       } catch (error) {
         const errorMessage =
