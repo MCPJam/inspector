@@ -190,12 +190,14 @@ export const RunEvalsRequestSchema = z.object({
         }
       })
       // Project legacy fields onto `steps` so the rest of the pipeline only
-      // ever deals with the steps-first contract. `query` is always present
-      // (required above), so the single-turn fallback guarantees ≥1 step.
-      .transform((test) => ({
-        ...test,
-        steps: wireTestToSteps(test),
-      }))
+      // ever deals with the steps-first contract. Steps-first callers pass
+      // through UNCHANGED (no normalization churn); only legacy bodies are
+      // converted. `query` is always present (required above), so the
+      // single-turn fallback guarantees ≥1 step.
+      .transform((test) => {
+        if (Array.isArray(test.steps) && test.steps.length > 0) return test;
+        return { ...test, steps: wireTestToSteps(test) };
+      })
   ),
   serverIds: z
     .array(z.string())

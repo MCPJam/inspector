@@ -96,7 +96,7 @@ describe("RunEvalsRequestSchema runs cap", () => {
     ).toBe(false);
   });
 
-  it("rejects suite tests without steps", () => {
+  it("accepts legacy suite tests without steps and derives them from query/expectedToolCalls", () => {
     const base = buildSuiteRequest() as {
       tests: Array<Record<string, unknown>>;
     };
@@ -104,9 +104,57 @@ describe("RunEvalsRequestSchema runs cap", () => {
     const { steps: _steps, ...withoutSteps } = test;
     const result = RunEvalsRequestSchema.safeParse({
       ...base,
-      tests: [withoutSteps],
+      tests: [{ ...withoutSteps, query: "do the thing" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    // The boundary transform projects the legacy `query` onto a steps-first
+    // contract so the rest of the pipeline only ever sees `steps`.
+    const derived = result.success ? result.data.tests[0].steps : [];
+    expect(derived).toEqual([
+      { id: "step-1-prompt", kind: "prompt", prompt: "do the thing" },
+    ]);
+  });
+
+  it("derives toolCalledWith asserts from legacy expectedToolCalls", () => {
+    const base = buildSuiteRequest() as {
+      tests: Array<Record<string, unknown>>;
+    };
+    const [test] = base.tests;
+    const { steps: _steps, ...withoutSteps } = test;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      tests: [
+        {
+          ...withoutSteps,
+          query: "weather",
+          expectedToolCalls: [{ toolName: "get_weather", arguments: { q: "x" } }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    const derived = result.success ? result.data.tests[0].steps : [];
+    expect(derived).toEqual([
+      { id: "step-1-prompt", kind: "prompt", prompt: "weather" },
+      {
+        id: "step-1-expect-0",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "get_weather",
+          args: { args: { q: "x" } },
+        },
+      },
+    ]);
+  });
+
+  it("preserves explicit steps unchanged (no normalization churn)", () => {
+    const base = buildSuiteRequest() as {
+      tests: Array<Record<string, unknown>>;
+    };
+    const result = RunEvalsRequestSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    const steps = result.success ? result.data.tests[0].steps : [];
+    expect(steps).toEqual([{ id: "t0-s0", kind: "prompt", prompt: "q" }]);
   });
 });
 

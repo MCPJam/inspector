@@ -780,6 +780,68 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps": {
+      "get": {
+        "operationId": "getEvalRunSteps",
+        "tags": ["Eval runs"],
+        "summary": "Get an iteration's step results",
+        "description": "One row per authored test step, in order, with `status` (`ok`/`fail`/`skipped`/`pending`), a `reason`, and any `evidence` (screenshots, replay-video offset, widget tool calls). The fastest way to see which step failed and why. Unlike `/trace`, a missing trace is not a `404` — step verdicts still return, just without evidence.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" },
+          { "$ref": "#/components/parameters/iterationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ordered step results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Resource envelope whose `data` is an array of step-result rows: `stepId`, `stepIndex`, `kind`, `status`, `reason`, and an optional `evidence` object.",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Cancel a run",
+        "description": "Request cancellation of an in-flight run; marks the run and its pending/running iterations `cancelled`. A no-op success when the run is already cancelled; returns `409` when the run already reached a terminal status (`completed`/`failed`/`timed_out`).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cancelled run.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalRun" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "The run already finished and cannot be cancelled."
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/runs": {
       "get": {
         "operationId": "listEvalSuiteRuns",
