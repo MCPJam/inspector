@@ -120,14 +120,16 @@ Send one prompt to up to 3 models simultaneously. Open the model picker, toggle 
 
 ## Multi-Host Compare
 
-Toggle **Multiple hosts** on in the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
+Client and model selection are unified into a single **run picker** in the chat input toolbar. The toolbar shows two pills side by side — a **client pill** (host logo + name) and a **model pill** (provider logo + name). Click either pill to open its dropdown.
+
+To compare across hosts, open the client pill and toggle **Multiple hosts** on. Select up to 3 hosts from the list; each selected host gets its own column. To compare across models instead, open the model pill and toggle **Multiple models** on.
 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
 This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
 
 <Note>
-  The **Multiple hosts** toggle and the host picker are hidden when the active
+  The **Multiple hosts** toggle and the client pill are hidden when the active
   session is shared with the project (project-visible), for the same reason as
   multi-model compare. Switch the session back to private to use multi-host
   compare.
