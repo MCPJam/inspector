@@ -195,6 +195,10 @@ export function sanitizeWidgetChecks(
  * (test-template-editor) and the manual slot editor (expected-conversation)
  * attribute recorded/edited steps the same way. The caller keys by `toolName`
  * (the recorder event's host-tagged tool) — never by editor selection.
+ *
+ * If the input already holds several groups for the same `toolName`, their steps
+ * are merged (none dropped) into the first occurrence's position, so authored
+ * group order and any replay that follows array order are preserved.
  */
 export function appendWidgetCheckStep(
   groups: ScriptedWidgetCheck[] | undefined,
@@ -202,7 +206,29 @@ export function appendWidgetCheckStep(
   step: ScriptedStep,
 ): ScriptedWidgetCheck[] {
   const current = groups ?? [];
-  const existing = current.find((g) => g.toolName === toolName)?.steps ?? [];
-  const rest = current.filter((g) => g.toolName !== toolName);
-  return [...rest, { toolName, steps: [...existing, step] }];
+  // Gather every step already attributed to this tool across duplicate groups
+  // so merging never loses steps.
+  const mergedSteps = current
+    .filter((g) => g.toolName === toolName)
+    .flatMap((g) => g.steps);
+  const target: ScriptedWidgetCheck = {
+    toolName,
+    steps: [...mergedSteps, step],
+  };
+
+  let placed = false;
+  const result: ScriptedWidgetCheck[] = [];
+  for (const g of current) {
+    if (g.toolName === toolName) {
+      // Keep the first match in place; drop later duplicates (already merged in).
+      if (!placed) {
+        result.push(target);
+        placed = true;
+      }
+    } else {
+      result.push(g);
+    }
+  }
+  if (!placed) result.push(target); // brand-new tool: append at the end.
+  return result;
 }
