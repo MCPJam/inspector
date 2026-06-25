@@ -468,7 +468,13 @@ function buildOAuthProfileFromFormData(
   formData: ServerFormData,
   existingProfile?: OAuthTestProfile
 ): OAuthTestProfile | undefined {
-  if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
+  // XAA reuses this profile as the carrier for its resource-AS client id /
+  // scopes / resource url, so it is built for XAA too (not just OAuth).
+  if (
+    formData.type !== "http" ||
+    !(formData.useOAuth || formData.useXaa) ||
+    !formData.url
+  ) {
     return undefined;
   }
 
@@ -1338,6 +1344,18 @@ export function useServerState({
           storedOAuthConfig.resourceUrl,
         ...(serverEntry.xaaAuthzIssuer !== undefined
           ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
+          : {}),
+        ...(serverEntry.useXaa !== undefined
+          ? { useXaa: serverEntry.useXaa }
+          : {}),
+        ...(serverEntry.authServerMode !== undefined
+          ? { authServerMode: serverEntry.authServerMode }
+          : {}),
+        ...(serverEntry.xaaSubject !== undefined
+          ? { xaaSubject: serverEntry.xaaSubject }
+          : {}),
+        ...(serverEntry.xaaEmail !== undefined
+          ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
       } as const;
 
@@ -2362,7 +2380,7 @@ export function useServerState({
         existingServerForSave?.oauthFlowProfile
       );
       const nextHasClientSecret =
-        formData.useOAuth && !formData.clearClientSecret
+        (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
@@ -2406,6 +2424,16 @@ export function useServerState({
             : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
+        useXaa: formData.useXaa ?? false,
+        authServerMode: formData.useXaa
+          ? formData.authServerMode ?? "mcpjam"
+          : existingServerForSave?.authServerMode,
+        xaaSubject: formData.useXaa
+          ? formData.xaaSubject
+          : existingServerForSave?.xaaSubject,
+        xaaEmail: formData.useXaa
+          ? formData.xaaEmail
+          : existingServerForSave?.xaaEmail,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2738,16 +2766,17 @@ export function useServerState({
 
       const existingServer = appState.servers[serverName];
       const mcpConfig = toMCPConfig(formData);
-      const nextOAuthProfile = formData.useOAuth
-        ? options?.oauthProfile ??
-          buildOAuthProfileFromFormData(
-            formData,
+      const nextOAuthProfile =
+        formData.useOAuth || formData.useXaa
+          ? options?.oauthProfile ??
+            buildOAuthProfileFromFormData(
+              formData,
+              existingServer?.oauthFlowProfile
+            ) ??
             existingServer?.oauthFlowProfile
-          ) ??
-          existingServer?.oauthFlowProfile
-        : undefined;
+          : undefined;
       const nextHasClientSecret =
-        formData.useOAuth && !formData.clearClientSecret
+        (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
@@ -2780,6 +2809,16 @@ export function useServerState({
             : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
+        useXaa: formData.useXaa ?? false,
+        authServerMode: formData.useXaa
+          ? formData.authServerMode ?? "mcpjam"
+          : existingServer?.authServerMode,
+        xaaSubject: formData.useXaa
+          ? formData.xaaSubject
+          : existingServer?.xaaSubject,
+        xaaEmail: formData.useXaa
+          ? formData.xaaEmail
+          : existingServer?.xaaEmail,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -4197,14 +4236,30 @@ export function useServerState({
           retryCount: originalServer?.retryCount ?? 0,
           enabled: originalServer?.enabled ?? false,
           oauthTokens: originalServer?.oauthTokens,
-          oauthFlowProfile: originalServer?.oauthFlowProfile,
+          oauthFlowProfile:
+            formData.useOAuth || formData.useXaa
+              ? buildOAuthProfileFromFormData(
+                  formData,
+                  originalServer?.oauthFlowProfile
+                ) ?? originalServer?.oauthFlowProfile
+              : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
+          useXaa: formData.useXaa ?? false,
+          authServerMode: formData.useXaa
+            ? formData.authServerMode ?? "mcpjam"
+            : originalServer?.authServerMode,
+          xaaSubject: formData.useXaa
+            ? formData.xaaSubject
+            : originalServer?.xaaSubject,
+          xaaEmail: formData.useXaa
+            ? formData.xaaEmail
+            : originalServer?.xaaEmail,
         } as ServerWithName;
 
-        if (!formData.useOAuth) {
+        if (!formData.useOAuth && !formData.useXaa) {
           clearOAuthData(nextServerName);
         }
         dispatch({
