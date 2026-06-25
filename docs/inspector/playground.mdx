@@ -159,20 +159,6 @@ The toolbar above the chat thread controls how the active host renders your widg
 
 Toggle light and dark mode to test both appearances.
 
-### Host Style
-
-Switch between Claude and ChatGPT host styles. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
-
-Each host style ships with a distinct `hostCapabilities` preset. Switching from one preset to another changes the capabilities advertised in the `ui/initialize` handshake, so widgets that gate on optional fields (such as `serverResources` or `logging`) will behave differently under each style.
-
-| Preset | `HostContext.toolInfo` | `availableDisplayModes` |
-|---|---|---|
-| Claude | Included | `["inline", "fullscreen", "pip"]` |
-| Copilot | Omitted (`undefined`) | `["inline", "fullscreen"]` |
-| ChatGPT | Included | `["inline", "fullscreen", "pip"]` |
-
-**Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
-
 ### Host Capabilities
 
 The **Host Capabilities** button in the toolbar (next to Host Context) lets you override the `hostCapabilities` blob advertised to MCP App widgets in the `ui/initialize` response.
