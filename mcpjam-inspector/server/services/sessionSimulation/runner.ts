@@ -550,6 +550,10 @@ async function runOneSession(args: {
     // below — the chatbox runtime config doesn't carry the flag.
     browser = await createBrowserSessionContext({
       model: String(modelDefinition.id),
+      // Session simulation is the ONE surface that opts into Computer Use: its
+      // agentic personas drive rendered widgets by screenshots. Evals stay
+      // deterministic and never enable it.
+      enableComputerUse: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
     });
@@ -701,7 +705,6 @@ async function runOneSession(args: {
         synthetic: true,
         personaId: persona.id,
         personaLabel: persona.name,
-        ...(persona.personaRefId ? { personaRefId: persona.personaRefId } : {}),
         synthesisRunId: runId,
         turnTrace,
         resumeConfig,
@@ -781,7 +784,6 @@ async function runOneSession(args: {
         synthetic: true,
         personaId: persona.id,
         personaLabel: persona.name,
-        ...(persona.personaRefId ? { personaRefId: persona.personaRefId } : {}),
         synthesisRunId: runId,
         resumeConfig,
       });

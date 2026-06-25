@@ -5,7 +5,7 @@ import {
   type ToolCall,
   type ArgumentMismatch,
 } from "@/shared/eval-matching";
-import { isPinnedTurn, type PromptTurn } from "@/shared/prompt-turns";
+import { isPinnedTurn, type PromptTurn } from "@/shared/steps";
 
 export type { ToolCall };
 

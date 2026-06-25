@@ -414,6 +414,44 @@ export function buildWidgetModelContextSystemPrompt(
   ].join("\n\n");
 }
 
+/**
+ * EVAL analogue of {@link buildWidgetModelContextSystemPrompt}: frame recorded
+ * widget→host tool CALLS (triggered by `Interact` steps) as current app state so
+ * a headless eval model reasons over a widget interaction on its next turn — the
+ * server-side analogue of Playground's browser-only `addToolOutput` +
+ * auto-continue, which can't run in the headless Node runner. Reuses the same
+ * content-block renderer. Per SEP-1865 the tool result's `content` is what's
+ * meant for model context (`structuredContent` is not), so we render `content`
+ * only. Callers pass model-visible calls only (app-only `visibility:["app"]`
+ * calls are UI-only and filtered upstream).
+ */
+export function buildWidgetInteractionContextSystemPrompt(
+  calls: ReadonlyArray<{ toolName: string; result?: unknown }>
+): string {
+  if (calls.length === 0) return "";
+
+  const sections = calls.map((call) => {
+    const result = call.result as
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
+    const content = result?.content ?? [];
+    const lines = [
+      `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
+    ];
+    if (content.length > 0) {
+      lines.push(...content.map((block) => renderWidgetContextContentBlock(block)));
+    } else {
+      lines.push("(no textual content)");
+    }
+    return lines.join("\n");
+  });
+
+  return [
+    "During this conversation the user performed interactions inside MCP App widgets. Each call below was triggered by a user action and executed against the server; treat the results as current app state for this turn, not as new user requests.",
+    ...sections,
+  ].join("\n\n");
+}
+
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];

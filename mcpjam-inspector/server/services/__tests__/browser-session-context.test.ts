@@ -35,7 +35,12 @@ const harnessInstances: Array<{
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
+  runScriptedStep: ReturnType<typeof vi.fn>;
 }> = [];
+
+// Shared across all (lazily-created) harness instances so a test can control a
+// scripted step's pass/fail BEFORE the render that creates the harness.
+const runScriptedStepImpl = vi.fn();
 
 vi.mock("../../utils/mcp-app-browser-harness", async () => {
   const actual = await vi.importActual<
@@ -49,6 +54,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dismissWidget: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
+        runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
       };
       harnessInstances.push(instance);
       return instance;
@@ -56,7 +62,10 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
   };
 });
 
-import { createBrowserSessionContext } from "../browser-session-context";
+import {
+  createBrowserSessionContext,
+  boundFollowUpsForArtifact,
+} from "../browser-session-context";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
 const NON_CLAUDE_MODEL = "gpt-5-mini";
@@ -73,12 +82,52 @@ beforeEach(() => {
   harnessInstances.length = 0;
   isRenderableMcpAppTool.mockReturnValue(false);
   modelSupportsComputerUse.mockResolvedValue(false);
+  // Default: every scripted step passes; failure tests override.
+  runScriptedStepImpl.mockResolvedValue({
+    ok: true,
+    widgetToolCalls: [],
+    elapsedMs: 1,
+  });
+});
+
+describe("boundFollowUpsForArtifact (R1 durable-artifact bounds)", () => {
+  it("passes short follow-ups through unchanged", () => {
+    expect(boundFollowUpsForArtifact(["Show my cart"])).toEqual([
+      "Show my cart",
+    ]);
+  });
+
+  it("caps the number of follow-ups per step at 10", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `msg ${i}`);
+    expect(boundFollowUpsForArtifact(many)).toHaveLength(10);
+  });
+
+  it("truncates an over-long follow-up string", () => {
+    const huge = "x".repeat(10_000);
+    const [bounded] = boundFollowUpsForArtifact([huge]);
+    expect(bounded.length).toBe(5_000);
+  });
 });
 
 describe("createBrowserSessionContext — Computer Use surface", () => {
+  // Computer Use is OPT-IN (default off, reserved for session simulation). These
+  // tests pass `enableComputerUse: true` to exercise the capability machinery.
+  it("stays off by default (no opt-in) even for a capable driver", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      mcpClientManager: stubManager(),
+    });
+
+    expect(ctx.computerUseSupported).toBe(false);
+    expect(ctx.computerUseVersion).toBeNull();
+    expect(ctx.computerWidgetTools).toEqual({});
+    expect(ctx.prepareAdvertisedTools).toBeUndefined();
+  });
+
   it("builds wire-format computer tools + gate for Claude drivers", async () => {
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
 
@@ -100,6 +149,7 @@ describe("createBrowserSessionContext — Computer Use surface", () => {
   it("builds no computer tools and no gate for capability-less drivers", async () => {
     const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
 
@@ -115,6 +165,7 @@ describe("createBrowserSessionContext — Computer Use surface", () => {
     modelSupportsComputerUse.mockResolvedValue(true);
     const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
 
@@ -133,6 +184,7 @@ describe("createBrowserSessionContext — Computer Use surface", () => {
   it("gate hides computer tools until a widget is mounted, then reveals", async () => {
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -180,6 +232,7 @@ describe("createBrowserSessionContext — render hook", () => {
 
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
       injectOpenAiCompat: true,
     });
@@ -324,6 +377,7 @@ describe("createBrowserSessionContext — interaction steps", () => {
   it("collects browserInteractionSteps from computer-tool actions with per-widget step ordinals", async () => {
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -359,6 +413,7 @@ describe("createBrowserSessionContext — interaction steps", () => {
   it("narrows unknown harness notes instead of dropping the step", async () => {
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -384,6 +439,7 @@ describe("createBrowserSessionContext — lifecycle", () => {
   it("dismissCarriedWidget dismisses only when a widget is mounted", async () => {
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -399,6 +455,7 @@ describe("createBrowserSessionContext — lifecycle", () => {
   it("dispose tears down the harness; no-op when never constructed", async () => {
     const claudeCtx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     await claudeCtx.dispose();
@@ -480,6 +537,7 @@ describe("createBrowserSessionContext — direct (local AI-SDK) render hook", ()
 
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
     });
     ctx.setActivePromptIndex(3);
@@ -549,6 +607,7 @@ describe("createBrowserSessionContext — drainNewArtifacts", () => {
 
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
     });
     const harness = harnessInstances[0]!;
@@ -589,5 +648,180 @@ describe("createBrowserSessionContext — drainNewArtifacts", () => {
     // End-of-run consumers still see everything.
     expect(ctx.widgetRenderObservations).toHaveLength(1);
     expect(ctx.browserInteractionSteps).toHaveLength(2);
+  });
+});
+
+describe("createBrowserSessionContext — widget interaction checks", () => {
+  function managerWithWidget() {
+    return {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ create_view: { "mcpjam/widget": true } }),
+    } as never;
+  }
+  function rendered(status = "rendered") {
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status,
+      elapsedMs: 5,
+      ts: 1,
+    });
+  }
+  const renderArgs = {
+    toolCallId: "tc-1",
+    toolName: "create_view",
+    serverId: "srv-1",
+    toolInput: {},
+    output: {},
+  };
+
+  it("runs a group when its widget renders and records scripted steps", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted).toHaveLength(1);
+    expect(scripted[0]!.assertion).toMatchObject({
+      type: "textVisible",
+      passed: true,
+    });
+    expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("records a failure when a scripted assertion fails", async () => {
+    rendered();
+    runScriptedStepImpl.mockResolvedValue({
+      ok: false,
+      reason: 'text not visible: "Hi"',
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+    expect(ctx.scriptedCheckFailures[0]).toMatchObject({
+      toolName: "create_view",
+    });
+  });
+
+  it("stamps ok=true on a successful pure action step (no assertion field)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [
+          {
+            kind: "click",
+            target: { role: { role: "button", name: "Add to cart" } },
+          },
+        ],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted).toHaveLength(1);
+    expect(scripted[0]!.ok).toBe(true);
+    expect(scripted[0]!.assertion).toBeUndefined();
+    expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("stamps ok=false on a failed action and still fails closed", async () => {
+    rendered();
+    runScriptedStepImpl.mockResolvedValue({
+      ok: false,
+      reason: 'locator not found: button "Add to cart"',
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [
+          {
+            kind: "click",
+            target: { role: { role: "button", name: "Add to cart" } },
+          },
+        ],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted[0]!.ok).toBe(false);
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+  });
+
+  it("fails closed when a group's widget never renders (flush)", async () => {
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    // A group for a tool that the turn never renders.
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "never_rendered",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "x" } }],
+      },
+    ]);
+    ctx.flushActiveWidgetChecks();
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+    expect(ctx.scriptedCheckFailures[0]!.toolName).toBe("never_rendered");
+  });
+
+  it("fails closed when a tool renders a second widget in one turn (v1 invariant)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    // First render runs the group; a second render of the same tool can't be
+    // targeted by toolName → fail closed (not a silent re-run).
+    await ctx.renderPinnedToolResult({ ...renderArgs, toolCallId: "tc-a" });
+    await ctx.renderPinnedToolResult({ ...renderArgs, toolCallId: "tc-b" });
+
+    expect(
+      ctx.scriptedCheckFailures.some((f) =>
+        /multiple widgets for tool/i.test(f.reason),
+      ),
+    ).toBe(true);
   });
 });
