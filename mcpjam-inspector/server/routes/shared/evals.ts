@@ -45,8 +45,10 @@ import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize
 import {
   countModelSteps,
   isModelFree,
+  normalizePromptTurns,
   normalizeSteps,
   probeConfigToToolCallStep,
+  promptTurnsToSteps,
   stepsSchema,
   type TestStep,
 } from "@/shared/steps";
@@ -65,6 +67,53 @@ const toolChoiceSchema = z.union([
     toolName: z.string().min(1),
   }),
 ]);
+
+/**
+ * Boundary compat: project a wire test's legacy fields onto the steps-first
+ * `TestStep[]` contract. Precedence mirrors `internalCaseToSteps` in
+ * routes/v1/evals.ts so every surface converges on the same shape:
+ *   1. explicit `steps` (or `widget_probe` + `probeConfig`) win;
+ *   2. multi-turn `promptTurns`        → `promptTurnsToSteps`;
+ *   3. single-turn `query`/`expectedToolCalls` → one `prompt` step + asserts.
+ * `query` is required on the wire, so this always returns ≥1 step.
+ */
+function wireTestToSteps(test: {
+  steps?: unknown;
+  caseType?: TestCaseType;
+  probeConfig?: ProbeConfig;
+  promptTurns?: unknown;
+  query?: string;
+  expectedToolCalls?: any[];
+}): TestStep[] {
+  const explicit = resolveAuthoringSteps(test);
+  if (explicit && explicit.length > 0) return explicit;
+
+  const turns = normalizePromptTurns(test.promptTurns);
+  if (turns.length > 0) return promptTurnsToSteps(turns);
+
+  const steps: TestStep[] = [
+    {
+      id: "step-1-prompt",
+      kind: "prompt",
+      prompt: typeof test.query === "string" ? test.query : "",
+    },
+  ];
+  const expected = Array.isArray(test.expectedToolCalls)
+    ? test.expectedToolCalls
+    : [];
+  expected.forEach((call: any, i: number) => {
+    steps.push({
+      id: `step-1-expect-${i}`,
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: String(call?.toolName ?? ""),
+        args: { args: call?.arguments ?? {} },
+      },
+    });
+  });
+  return steps;
+}
 
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
@@ -90,8 +139,15 @@ export const RunEvalsRequestSchema = z.object({
         expectedOutput: z.string().optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
-        // (feedback_zod_strips_unthreaded_fields).
-        steps: stepsSchema.min(1),
+        // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
+        // pre-migration callers (UI run path, MCP/hosted, scheduled worker)
+        // that still send `query`/`expectedToolCalls`/`promptTurns` are
+        // accepted; the `.transform` below projects those legacy fields onto
+        // `steps` so everything downstream sees the steps-first contract.
+        steps: stepsSchema.optional(),
+        // Legacy multi-turn shape. Accepted (not stripped) purely so the
+        // transform can convert it to `steps`; never persisted as-is.
+        promptTurns: z.array(z.any()).optional(),
         advancedConfig: z
           .object({
             system: z.string().optional(),
@@ -133,6 +189,13 @@ export const RunEvalsRequestSchema = z.object({
           });
         }
       })
+      // Project legacy fields onto `steps` so the rest of the pipeline only
+      // ever deals with the steps-first contract. `query` is always present
+      // (required above), so the single-turn fallback guarantees ≥1 step.
+      .transform((test) => ({
+        ...test,
+        steps: wireTestToSteps(test),
+      }))
   ),
   serverIds: z
     .array(z.string())
@@ -242,6 +305,11 @@ export const RunTestCaseRequestSchema = z.object({
       // Unified `TestStep[]` override for a single-case quick run. Declared so
       // Zod doesn't strip it off the wire.
       steps: stepsSchema.min(1).optional(),
+      // Legacy multi-turn override still sent by the test-template editor's
+      // quick-run path. Accepted (not stripped) so the transform below can
+      // convert it to `steps`; otherwise unsaved multi-turn/pinned edits are
+      // silently dropped and the run falls back to the persisted case.
+      promptTurns: z.array(z.any()).optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
@@ -262,6 +330,21 @@ export const RunTestCaseRequestSchema = z.object({
       // through every Zod boundary; the runner resolves it against the
       // suite's `defaultPredicates` per the case mode.
       predicates: casePredicatesSchema.optional(),
+    })
+    // Convert a legacy `promptTurns` override to `steps` when the caller
+    // didn't send `steps` directly, so the runner's `overrides.steps ??
+    // case.steps` precedence picks up unsaved multi-turn edits.
+    .transform((overrides) => {
+      if (
+        (!overrides.steps || overrides.steps.length === 0) &&
+        Array.isArray(overrides.promptTurns)
+      ) {
+        const turns = normalizePromptTurns(overrides.promptTurns);
+        if (turns.length > 0) {
+          return { ...overrides, steps: promptTurnsToSteps(turns) };
+        }
+      }
+      return overrides;
     })
     .optional(),
   /**
@@ -409,6 +492,8 @@ export function assertBareRerunCasesRunnable(
     model?: string;
     provider?: string;
     steps?: unknown;
+    caseType?: TestCaseType;
+    probeConfig?: ProbeConfig;
   }> | null
 ): void {
   const unrunnable = (cases ?? [])
@@ -416,7 +501,10 @@ export function assertBareRerunCasesRunnable(
       (c) =>
         // Model-free cases (every step is a `toolCall`/no `prompt`) need no
         // model and ARE runnable — don't flag them as unrunnable prompt cases.
-        !isModelFree(Array.isArray(c.steps) ? c.steps : []) &&
+        // Derive steps through `resolveAuthoringSteps` so PRE-MIGRATION
+        // `widget_probe` rows (no `steps`, only `caseType`/`probeConfig`) are
+        // recognized as model-free instead of mistaken for prompt cases.
+        !isModelFree(resolveAuthoringSteps(c) ?? []) &&
         !(c.models && c.models.length > 0) &&
         !(c.model && c.provider)
     )
@@ -975,9 +1063,15 @@ export async function authorEvalSuite(args: {
         const hasStepKey = (testCaseData.steps?.length ?? 0) > 0;
         const existingTestCase = existingTestCases?.find((tc: any) => {
           if (tc.title !== testCaseData.title) return false;
-          if (hasStepKey || Array.isArray(tc.steps)) {
+          // Match on `steps` only when BOTH sides carry them. A pre-migration
+          // row persisted with only `query` (no `steps`) must still match a
+          // steps-bearing wire payload by its legacy title+query identity —
+          // otherwise the upsert creates a duplicate instead of migrating the
+          // existing row forward.
+          const storedHasSteps = Array.isArray(tc.steps) && tc.steps.length > 0;
+          if (hasStepKey && storedHasSteps) {
             return (
-              JSON.stringify(normalizeForComparison(tc.steps || [])) ===
+              JSON.stringify(normalizeForComparison(tc.steps)) ===
               testCaseStepsKey
             );
           }
@@ -2093,7 +2187,8 @@ export async function streamEvalTestCaseWithManager(
           return (
             status === "completed" ||
             status === "failed" ||
-            status === "cancelled"
+            status === "cancelled" ||
+            status === "timed_out"
           );
         };
         let latestIteration: unknown = null;
@@ -2119,14 +2214,25 @@ export async function streamEvalTestCaseWithManager(
             "testSuites:listTestIterations" as any,
             { testCaseId }
           );
-          // Prefer the row we know we created; only then fall back to "most
-          // recent for this case" (legacy behavior, kept as a last resort).
+          // Prefer a TERMINAL row so we never emit a `running` iteration on
+          // `complete` (the client reads that as a failed run). Order: our own
+          // created row if terminal → most recent terminal row → then the
+          // non-terminal fallbacks only as a last resort.
           const byId = expectedIterationId
             ? recentIterations?.find(
                 (iter: any) => iter?._id === expectedIterationId
               )
             : undefined;
-          latestIteration = byId ?? recentIterations?.[0] ?? latestIteration;
+          const terminalById = isTerminalIteration(byId) ? byId : undefined;
+          const terminalRecent = recentIterations?.find((iter: any) =>
+            isTerminalIteration(iter)
+          );
+          latestIteration =
+            terminalById ??
+            terminalRecent ??
+            byId ??
+            recentIterations?.[0] ??
+            latestIteration;
         }
 
         // Update lastMessageRun
