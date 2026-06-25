@@ -37,7 +37,7 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         html={null}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         onMessage={() => {}}
-      />,
+      />
     );
     const tokens = getOuterIframeSandbox(container);
     expect(tokens).toEqual([
@@ -60,7 +60,7 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         sandboxAttrs={[]}
         onMessage={() => {}}
-      />,
+      />
     );
     const tokens = getOuterIframeSandbox(container);
     expect(tokens).toEqual(["allow-same-origin", "allow-scripts"]);
@@ -75,7 +75,7 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         sandboxAttrs={["allow-forms"]}
         onMessage={() => {}}
-      />,
+      />
     );
     const tokens = getOuterIframeSandbox(container);
     expect(tokens).toEqual([
@@ -92,7 +92,7 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         html={null}
         sandboxAttrs={["allow-scripts", "allow-forms", "allow-scripts"]}
         onMessage={() => {}}
-      />,
+      />
     );
     const tokens = getOuterIframeSandbox(container);
     expect(tokens).toEqual([
@@ -115,16 +115,12 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         html={null}
         sandboxAttrs={["allow-forms", "allow-popups"]}
         onMessage={() => {}}
-      />,
+      />
     );
     const firstIframe = container.querySelector("iframe");
     expect(firstIframe).not.toBeNull();
     rerender(
-      <SandboxedIframe
-        html={null}
-        sandboxAttrs={[]}
-        onMessage={() => {}}
-      />,
+      <SandboxedIframe html={null} sandboxAttrs={[]} onMessage={() => {}} />
     );
     const secondIframe = container.querySelector("iframe");
     expect(secondIframe).not.toBeNull();
@@ -146,7 +142,7 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
         html={null}
         sandboxAttrs={["allow-forms allow-popups-to-escape-sandbox"]}
         onMessage={() => {}}
-      />,
+      />
     );
     const tokens = getOuterIframeSandbox(container);
     // The whitespace-bearing entry is dropped entirely. Mandatory
@@ -174,7 +170,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
         html={null}
         allowFeatures={{ fullscreen: "*; camera *" }}
         onMessage={() => {}}
-      />,
+      />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).not.toContain("camera");
@@ -187,7 +183,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
         html={null}
         allowFeatures={{ fullscreen: "*, camera *" }}
         onMessage={() => {}}
-      />,
+      />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).not.toContain("camera");
@@ -200,7 +196,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
         html={null}
         allowFeatures={{ fullscreen: "*" }}
         onMessage={() => {}}
-      />,
+      />
     );
     expect(getOuterIframeAllow(container)).toContain("fullscreen *");
   });
@@ -216,7 +212,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
         html={null}
         allowFeatures={{ "camera *": "*" }}
         onMessage={() => {}}
-      />,
+      />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).not.toContain("camera");
@@ -230,7 +226,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
 
   it("preserves legacy local-network-access + midi defaults when allowFeatures is undefined", () => {
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={() => {}} />,
+      <SandboxedIframe html={null} onMessage={() => {}} />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).toContain("local-network-access *");
@@ -242,11 +238,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
     // local-network-access / midi shouldn't have them silently granted by
     // the inspector.
     const { container } = render(
-      <SandboxedIframe
-        html={null}
-        allowFeatures={{}}
-        onMessage={() => {}}
-      />,
+      <SandboxedIframe html={null} allowFeatures={{}} onMessage={() => {}} />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).not.toContain("local-network-access");
@@ -262,7 +254,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
         permissions={{ camera: {} }}
         allowFeatures={{}}
         onMessage={() => {}}
-      />,
+      />
     );
     const allow = getOuterIframeAllow(container);
     expect(allow).toContain("camera *");
@@ -271,10 +263,7 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
 });
 
 describe("SandboxedIframe — resource-ready delivery", () => {
-  function dispatchFromIframe(
-    iframe: HTMLIFrameElement,
-    data: unknown,
-  ): void {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
     const proxyOrigin = new URL(iframe.src).origin;
     const event = new MessageEvent("message", {
       data,
@@ -301,7 +290,7 @@ describe("SandboxedIframe — resource-ready delivery", () => {
       />
     );
     const { container, rerender } = render(
-      renderIframe({ connectDomains: ["https://api.example.com"] }),
+      renderIframe({ connectDomains: ["https://api.example.com"] })
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
@@ -347,10 +336,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   // `origin` matches the sandbox-proxy origin the component derived from
   // `window.location`.
 
-  function dispatchFromIframe(
-    iframe: HTMLIFrameElement,
-    data: unknown,
-  ): void {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
     // The component swaps localhost↔127.0.0.1 to satisfy SEP-1865's
     // different-origin requirement; derive the same origin here.
     const proxyOrigin = new URL(iframe.src).origin;
@@ -371,7 +357,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     // saved-view / replay / fork persistence.
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -390,7 +376,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   it("forwards openai:setOpenInAppUrl", () => {
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -409,7 +395,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   it("forwards openai:uploadFile", () => {
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -425,7 +411,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   it("forwards openai:getFileDownloadUrl", () => {
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -439,7 +425,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   it("forwards mcp-apps:csp-violation", () => {
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -449,6 +435,57 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards recorder readiness messages", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, { type: "recorder:ready" });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the window message listener stable when callbacks are recreated", () => {
+    const addListenerSpy = vi.spyOn(window, "addEventListener");
+    const removeListenerSpy = vi.spyOn(window, "removeEventListener");
+    const firstOnMessage = vi.fn();
+    const secondOnMessage = vi.fn();
+
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html={null}
+        onMessage={firstOnMessage}
+        onProxyReady={() => {}}
+      />
+    );
+    const initialMessageListenerAdds = addListenerSpy.mock.calls.filter(
+      ([type]) => type === "message"
+    ).length;
+
+    rerender(
+      <SandboxedIframe
+        html={null}
+        onMessage={secondOnMessage}
+        onProxyReady={() => {}}
+      />
+    );
+
+    expect(
+      addListenerSpy.mock.calls.filter(([type]) => type === "message").length
+    ).toBe(initialMessageListenerAdds);
+    expect(
+      removeListenerSpy.mock.calls.filter(([type]) => type === "message").length
+    ).toBe(0);
+
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, { type: "recorder:ready" });
+    expect(firstOnMessage).not.toHaveBeenCalled();
+    expect(secondOnMessage).toHaveBeenCalledTimes(1);
+
+    addListenerSpy.mockRestore();
+    removeListenerSpy.mockRestore();
+  });
+
   it("drops non-JSON-RPC messages that are not in the allow-list", () => {
     // Belt-and-suspenders: a future "let's add openai:foo" change must
     // pass through the allow-list, not bypass it. If this assertion ever
@@ -456,9 +493,10 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     // be updated deliberately.
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, { type: "recorder:proxy-status", x: 1 });
     dispatchFromIframe(iframe, { type: "openai:unknownSomething", x: 1 });
     dispatchFromIframe(iframe, { hello: "world" });
     expect(onMessage).not.toHaveBeenCalled();
@@ -467,7 +505,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   it("forwards generic JSON-RPC 2.0 messages", () => {
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
@@ -486,7 +524,7 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     // sandbox-proxy-ready / sandbox-resource-ready as widget messages.
     const onMessage = vi.fn();
     const { container } = render(
-      <SandboxedIframe html={null} onMessage={onMessage} />,
+      <SandboxedIframe html={null} onMessage={onMessage} />
     );
     const iframe = container.querySelector("iframe") as HTMLIFrameElement;
     dispatchFromIframe(iframe, {
