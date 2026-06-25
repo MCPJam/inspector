@@ -107,7 +107,7 @@ function buildHandle(configJson: Record<string, unknown>): RuntimeHandle {
 async function findParentMessage(
   handle: RuntimeHandle,
   predicate: (message: CapturedMessage) => boolean,
-  timeoutMs = 1_000
+  timeoutMs = 1_000,
 ): Promise<CapturedMessage | undefined> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -261,7 +261,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
 
     const upload = await findParentMessage(
       h,
-      (m) => (m.data as any)?.type === "openai:uploadFile"
+      (m) => (m.data as any)?.type === "openai:uploadFile",
     );
     expect(upload).toBeDefined();
     expect((upload!.data as any).mimeType).toBe("image/png");

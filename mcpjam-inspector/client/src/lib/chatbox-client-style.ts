@@ -74,7 +74,8 @@ export function getHostLogoSrc(
 
 /** Match a saved host's display name to a built-in style logo when config is unavailable. */
 export function resolveHostLogoByDisplayName(
-  displayName: string
+  displayName: string,
+  themeMode?: HostThemeMode | null
 ): string | null {
   const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
   if (!needle) return null;
@@ -86,7 +87,7 @@ export function resolveHostLogoByDisplayName(
       .toLowerCase()
       .replace(/\s+/g, "");
     if (needle === id || needle === label || needle === shortLabel) {
-      return getChatboxHostLogo(style.id);
+      return getChatboxHostLogo(style.id, undefined, themeMode);
     }
   }
   return null;

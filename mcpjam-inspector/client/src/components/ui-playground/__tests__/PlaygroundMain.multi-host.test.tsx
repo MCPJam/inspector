@@ -19,7 +19,7 @@
  * drive the test fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -353,14 +353,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
 //   - After Blocker 2 (project-id alignment), the `projectId` prop
 //     matches the project id used for `usePersistedHost` (the grid's
 //     storage scope).
-const mockPlaygroundHostPicker = vi.fn();
-vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
-  PlaygroundHostPicker: (props: any) => {
-    mockPlaygroundHostPicker(props);
-    return <div data-testid="playground-host-picker-stub" />;
-  },
-}));
-
 vi.mock("@/stores/traffic-log-store", () => ({
   useTrafficLogStore: (selector: any) => {
     const state = { clear: vi.fn() };
@@ -412,6 +404,7 @@ const multiHostFixture = {
 const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
+const mockCreateHost = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
@@ -447,12 +440,18 @@ vi.mock("@/hooks/useClients", () => ({
     isLoading: false,
   }),
   useHostMutations: () => ({
-    createHost: vi.fn(),
+    createHost: mockCreateHost,
     updateHost: vi.fn(),
     deleteHost: vi.fn(),
     duplicateHost: vi.fn(),
   }),
 }));
+
+function readPreviewedHostId(projectId = "default"): string | null {
+  const raw = localStorage.getItem("mcp-previewed-host-id");
+  if (!raw) return null;
+  return (JSON.parse(raw) as Record<string, string | null>)[projectId] ?? null;
+}
 
 function makeHost(
   id: string,
@@ -482,6 +481,7 @@ function makeHost(
 
 describe("PlaygroundMain — multi-host render path", () => {
   const defaultProps = {
+    activeProjectId: "default",
     serverName: "test-server",
     pendingExecution: null,
     onExecutionInjected: vi.fn(),
@@ -512,11 +512,15 @@ describe("PlaygroundMain — multi-host render path", () => {
       selectedModelIds: [],
     });
     mockMultiModelPlaygroundCard.mockClear();
-    mockPlaygroundHostPicker.mockClear();
     mockChatInput.mockClear();
     mockSetSelectedHostIds.mockClear();
     mockSetMultiHostEnabled.mockClear();
+    mockCreateHost.mockResolvedValue({
+      hostId: "seeded-mcpjam",
+      hostConfigId: "seeded-mcpjam-config",
+    });
     usePersistedHostProjectIds.length = 0;
+    localStorage.clear();
     // Reset fixture defaults — individual tests opt in to deviations.
     multiHostFixture.multiHostEnabled = true;
     multiHostFixture.selectedHostIds = [];
@@ -526,6 +530,87 @@ describe("PlaygroundMain — multi-host render path", () => {
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
+  });
+
+  it("selects MCPJam as the previewed client when no current client is selected", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [
+      { hostId: "h-zed", name: "Zed" },
+      { hostId: "h-mcpjam", name: "MCPJam" },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("selects the seeded MCPJam host for empty projects", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValueOnce({
+      hostId: "h-seeded-mcpjam",
+      hostConfigId: "h-seeded-mcpjam-config",
+    });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "default",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-seeded-mcpjam");
+    });
+  });
+
+  it("seeds a default MCPJam host for each empty project", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-first-mcpjam",
+        hostConfigId: "h-first-mcpjam-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-mcpjam",
+        hostConfigId: "h-second-mcpjam-config",
+      });
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "default",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId("default")).toBe("h-first-mcpjam");
+    });
+
+    rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "second",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId("second")).toBe("h-second-mcpjam");
+    });
+    expect(mockCreateHost).toHaveBeenCalledTimes(2);
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {
@@ -716,7 +801,7 @@ describe("PlaygroundMain — multi-host render path", () => {
 
   // --- Reviewer-flagged blockers ---
 
-  it("picker is a controlled component: receives the SAME selectedHostIds + setters as the grid uses (Blocker 1)", () => {
+  it("chat-input client chip is controlled: receives the SAME selectedHostIds + setters as the grid uses (Blocker 1)", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-mini",
@@ -735,38 +820,41 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    // Picker rendered at least once and got the same array (by ref)
-    // and the same setters that PlaygroundMain owns. This guards against
-    // a regression to the "picker calls its own usePersistedHost" anti-
-    // pattern — separate hook instances would yield separate array
-    // refs and separate setter identities.
-    expect(mockPlaygroundHostPicker).toHaveBeenCalled();
-    const lastProps =
-      mockPlaygroundHostPicker.mock.calls[
-        mockPlaygroundHostPicker.mock.calls.length - 1
-      ][0];
-    expect(lastProps.selectedHostIds).toBe(multiHostFixture.selectedHostIds);
-    expect(lastProps.multiHostEnabled).toBe(true);
-    expect(typeof lastProps.onSelectedHostIdsChange).toBe("function");
-    expect(typeof lastProps.onMultiHostEnabledChange).toBe("function");
-    expect(typeof lastProps.onPromoteLead).toBe("function");
+    // The standalone "Compare" picker moved into the chat-input client chip:
+    // host state is now wired through `ChatInput`'s `clientSelector` prop. It
+    // must get the same array (by ref) and the same setters PlaygroundMain
+    // owns — guarding against a regression to a separate `usePersistedHost`
+    // instance (separate array refs + setter identities that drift).
+    expect(mockChatInput).toHaveBeenCalled();
+    const clientSelector =
+      mockChatInput.mock.calls[mockChatInput.mock.calls.length - 1][0]
+        .clientSelector;
+    expect(clientSelector).toBeDefined();
+    expect(clientSelector.selectedHostIds).toBe(
+      multiHostFixture.selectedHostIds,
+    );
+    expect(clientSelector.multiHostEnabled).toBe(true);
+    expect(typeof clientSelector.onSelectedHostIdsChange).toBe("function");
+    expect(typeof clientSelector.onMultiHostEnabledChange).toBe("function");
+    expect(typeof clientSelector.onPromoteLead).toBe("function");
 
-    // Setter from the picker maps to the parent's hook setter (single
+    // Setter from the client chip maps to the parent's hook setter (single
     // source of truth — no separate hook instance to drift away).
-    lastProps.onSelectedHostIdsChange(["h-B", "h-A"]);
+    clientSelector.onSelectedHostIdsChange(["h-B", "h-A"]);
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-B", "h-A"]);
 
     // `usePersistedHost` was called with `multiHostProjectId` — the
-    // grid's storage scope. The picker doesn't call it at all anymore.
+    // grid's storage scope. There is no separate picker hook anymore.
     expect(usePersistedHostProjectIds.length).toBeGreaterThan(0);
   });
 
-  it("picker projectId matches multiHostProjectId in shared-project flows (Blocker 2)", () => {
+  it("client chip host state matches multiHostProjectId scope in shared-project flows (Blocker 2)", () => {
     // Mirror the shared-project shape: `appState.projects[active]`
     // has a `sharedProjectId` distinct from the local `activeProjectId`.
-    // Pre-fix, the picker received `activeProjectId` directly so its
-    // storage scope (`mcp-inspector-selected-hosts:{activeProjectId}`)
-    // diverged from the grid's (`...:{convexProjectId}`).
+    // The grid's `usePersistedHost` is scoped to `convexProjectId`; the
+    // chat-input run picker reads that SAME lifted state, so there's no
+    // second storage scope to diverge (`...:{activeProjectId}` vs
+    // `...:{convexProjectId}`).
     mockSharedAppState.projects = {
       "local-project": { sharedProjectId: "convex-shared-id" } as any,
     };
@@ -791,13 +879,14 @@ describe("PlaygroundMain — multi-host render path", () => {
     // Grid's `usePersistedHost` is scoped to `convexProjectId`.
     expect(usePersistedHostProjectIds.at(-1)).toBe("convex-shared-id");
 
-    // Picker received the SAME id — its `useHostList` /
-    // `usePreviewedHostId` reads must align with the grid's storage.
-    const lastProps =
-      mockPlaygroundHostPicker.mock.calls[
-        mockPlaygroundHostPicker.mock.calls.length - 1
-      ][0];
-    expect(lastProps.projectId).toBe("convex-shared-id");
+    // The client chip received the SAME lifted array — its reads align with
+    // the grid's storage scope (one source of truth, not two).
+    const clientSelector =
+      mockChatInput.mock.calls[mockChatInput.mock.calls.length - 1][0]
+        .clientSelector;
+    expect(clientSelector?.selectedHostIds).toBe(
+      multiHostFixture.selectedHostIds,
+    );
   });
 
   it("slot 0 unresolved (lead host missing) → single-pane fallback (Blocker 3)", () => {
