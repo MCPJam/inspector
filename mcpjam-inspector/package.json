@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.18.2",
+  "version": "2.19.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -130,7 +130,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.23.0",
+    "@mcpjam/sdk": "^1.24.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@openrouter/ai-sdk-provider": "^2.0.2",

@@ -1,59 +1,84 @@
-diff --git a/.changeset/bundled-runtime-paths.md b/.changeset/bundled-runtime-paths.md
+diff --git a/.changeset/release-rollup-2026-06-24.md b/.changeset/release-rollup-2026-06-24.md
 deleted file mode 100644
-index 96015eb11..000000000
---- a/.changeset/bundled-runtime-paths.md
+index 8c860c8bf..000000000
+--- a/.changeset/release-rollup-2026-06-24.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,13 +0,0 @@
 ----
--"@mcpjam/cli": patch
--"@mcpjam/inspector": patch
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
 ----
 -
--Resolve Inspector runtime paths through package self-references and add a regression check for bundled/published layouts.
-diff --git a/cli/package.json b/cli/package.json
-index 2ab021463..5ce5526f2 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "3.10.0",
-+  "version": "3.10.1",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
+-Release the latest Inspector and SDK updates:
+-
+-- Add Slack as a built-in host/client template with matching SDK host-template styling.
+-- Unify playground client and model selection into a single run picker.
+-- Improve OAuth/XAA debugger flows, including stale-token recovery, protected-resource discovery, scorecard subjects, and e2e smoke coverage.
+-- Add invoice-history and seat-delta billing UI improvements.
+-- Persist error toasts until dismissed and keep saved bearer tokens visible in hosted server forms.
+-- Tighten Mistral host CSP handling.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index ea5b5bf16..57c6ded85 100644
+index e747ae550..078ab00e0 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.18.1",
-+  "version": "2.18.2",
+-  "version": "2.18.2",
++  "version": "2.19.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
+@@ -130,7 +130,7 @@
+     "@hookform/resolvers": "^3.10.0",
+     "@lezer/highlight": "^1.2.3",
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^1.23.0",
++    "@mcpjam/sdk": "^1.24.0",
+     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+     "@modelcontextprotocol/ext-apps": "^1.7.2",
+     "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index fef43cdbb..1ce004d70 100644
+index 1ce004d70..36b0c233d 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -58,7 +58,7 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "3.10.0",
-+      "version": "3.10.1",
-       "dependencies": {
-         "@mcpjam/sdk": "^1.22.0",
-         "@modelcontextprotocol/server": "^2.0.0-alpha.2",
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.18.1",
-+      "version": "2.18.2",
+-      "version": "2.18.2",
++      "version": "2.19.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
+@@ -359,7 +359,7 @@
+         "@hookform/resolvers": "^3.10.0",
+         "@lezer/highlight": "^1.2.3",
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^1.23.0",
++        "@mcpjam/sdk": "^1.24.0",
+         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+         "@modelcontextprotocol/ext-apps": "^1.7.2",
+         "@openrouter/ai-sdk-provider": "^2.0.2",
+@@ -36879,7 +36879,7 @@
+     },
+     "sdk": {
+       "name": "@mcpjam/sdk",
+-      "version": "1.23.0",
++      "version": "1.24.0",
+       "license": "MIT",
+       "dependencies": {
+         "@ai-sdk/amazon-bedrock": "^3.0.101",
+diff --git a/sdk/package.json b/sdk/package.json
+index 54b93c5e4..945290c3f 100644
+--- a/sdk/package.json
++++ b/sdk/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/sdk",
+-  "version": "1.23.0",
++  "version": "1.24.0",
+   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
+   "type": "module",
+   "main": "dist/index.js",

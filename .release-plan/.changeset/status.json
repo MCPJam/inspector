@@ -3,36 +3,43 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "patch"
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         },
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Resolve Inspector runtime paths through package self-references and add a regression check for bundled/published layouts.",
-      "id": "bundled-runtime-paths"
+      "summary": "Release the latest Inspector and SDK updates:\n\n- Add Slack as a built-in host/client template with matching SDK host-template styling.\n- Unify playground client and model selection into a single run picker.\n- Improve OAuth/XAA debugger flows, including stale-token recovery, protected-resource discovery, scorecard subjects, and e2e smoke coverage.\n- Add invoice-history and seat-delta billing UI improvements.\n- Persist error toasts until dismissed and keep saved bearer tokens visible in hosted server forms.\n- Tighten Mistral host CSP handling.",
+      "id": "release-rollup-2026-06-24"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "3.10.0",
+      "name": "@mcpjam/inspector",
+      "type": "minor",
+      "oldVersion": "2.18.2",
       "changesets": [
-        "bundled-runtime-paths"
+        "release-rollup-2026-06-24"
       ],
-      "newVersion": "3.10.1"
+      "newVersion": "2.19.0"
     },
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.18.1",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.23.0",
       "changesets": [
-        "bundled-runtime-paths"
+        "release-rollup-2026-06-24"
       ],
-      "newVersion": "2.18.2"
+      "newVersion": "1.24.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }
