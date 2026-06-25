@@ -793,12 +793,42 @@
         ],
         "responses": {
           "200": {
-            "description": "The ordered step results.",
+            "description": "The ordered step results as a page envelope.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "description": "Resource envelope whose `data` is an array of step-result rows: `stepId`, `stepIndex`, `kind`, `status`, `reason`, and an optional `evidence` object.",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "description": "Authored steps in order with their verdict.",
+                      "items": {
+                        "type": "object",
+                        "required": ["stepId", "stepIndex", "kind", "status"],
+                        "properties": {
+                          "stepId": { "type": "string" },
+                          "stepIndex": { "type": "integer" },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["prompt", "toolCall", "interact", "assert"]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["ok", "fail", "skipped", "pending"]
+                          },
+                          "reason": { "type": ["string", "null"] },
+                          "evidence": {
+                            "type": "object",
+                            "description": "Optional, omitted when the step produced none.",
+                            "additionalProperties": true
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    },
+                    "nextCursor": { "type": "string" }
+                  },
                   "additionalProperties": true
                 }
               }

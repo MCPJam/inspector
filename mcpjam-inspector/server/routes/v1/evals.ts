@@ -2203,6 +2203,16 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       "title is required."
     );
   }
+  // `steps` is optional on the shared case shape so PATCH can be a partial
+  // update, but a CREATE must carry the steps-first contract — otherwise the
+  // case is persisted with no executable steps.
+  if (!Array.isArray(body.steps) || body.steps.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "steps is required and must be a non-empty array when creating a case."
+    );
+  }
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;

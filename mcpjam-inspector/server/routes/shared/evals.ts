@@ -116,6 +116,19 @@ function wireTestToSteps(test: {
   return steps;
 }
 
+/**
+ * Quick-run compat: a PERSISTED case that predates the `steps` field but still
+ * carries legacy `promptTurns` converts to steps so a single-case quick/compare
+ * run executes every turn — without this it falls back to the top-level
+ * `query`/`expectedToolCalls` and silently drops later turns/assertions.
+ */
+function legacyCaseStepsFallback(testCase: {
+  promptTurns?: unknown;
+}): TestStep[] | undefined {
+  const turns = normalizePromptTurns(testCase.promptTurns);
+  return turns.length > 0 ? promptTurnsToSteps(turns) : undefined;
+}
+
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
@@ -1673,7 +1686,8 @@ export async function runEvalTestCaseWithManager(
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps,
+      (testCase as { steps?: TestStep[] }).steps ??
+      legacyCaseStepsFallback(testCase as { promptTurns?: unknown }),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -2045,7 +2059,8 @@ export async function streamEvalTestCaseWithManager(
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps,
+      (testCase as { steps?: TestStep[] }).steps ??
+      legacyCaseStepsFallback(testCase as { promptTurns?: unknown }),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(

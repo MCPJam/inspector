@@ -242,10 +242,11 @@ export function assembleStepResults(
     const interaction = evidenceFor(step.id, interactions);
     const render = evidenceFor(step.id, renders);
     const persisted = records.get(step.id);
-    // The authored step is the source of truth for `kind` — never let an
-    // open-shaped persisted row override it (`status` is already whitelisted).
+    // The authored step is the source of truth for `kind` AND `stepIndex` —
+    // never let an open-shaped persisted row override the ordered position or
+    // kind we just computed (`status` is already whitelisted via safeStatus).
     const verdict: EvalStepResultRecord = persisted
-      ? { ...persisted, kind: step.kind }
+      ? { ...persisted, kind: step.kind, stepIndex }
       : {
           stepId: step.id,
           stepIndex,
