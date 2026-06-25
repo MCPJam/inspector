@@ -350,6 +350,36 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `eval` commands
+
+Manage eval suites and cases on the MCPJam platform. All `eval` commands require a signed-in MCPJam account or an `sk_` API key.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+
+### `eval cases generate`
+
+Generate AI-drafted test cases for an eval suite from its attached servers' tool catalog.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite to generate cases for |
+| `--project <id-or-name>` | No | Project containing the suite |
+| `--simple <n>` | No | How many easy, single-tool cases to generate |
+| `--multi-tool <n>` | No | How many medium, 2+ tool cases to generate |
+| `--multi-turn <n>` | No | How many multi-turn follow-up cases to generate |
+| `--complex <n>` | No | How many hard / cross-server cases to generate |
+| `--negative <n>` | No | How many negative (no-tool) cases to generate |
+| `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
+
+When no bucket flags are provided, the generator uses the default mix (2 simple, 2 multi-tool, 1 multi-turn, 1 complex, 2 negative). Providing at least one bucket flag overrides the default mix; omitted buckets default to 0. Each bucket accepts 0–10; the total across all buckets must not exceed 20.
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
