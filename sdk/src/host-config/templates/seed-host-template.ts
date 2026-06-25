@@ -991,14 +991,6 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           sandbox: {
             csp: {
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
             },
             permissions: {
               mode: "custom",
