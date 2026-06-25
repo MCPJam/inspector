@@ -41,6 +41,21 @@ describe("appendWidgetCheckStep (Tier 3 recorder attribution)", () => {
     ]);
   });
 
+  it("merges duplicate groups for the same tool without dropping steps", () => {
+    const start: ScriptedWidgetCheck[] = [
+      { toolName: "create_view", steps: [click("a")] },
+      { toolName: "show_map", steps: [click("zoom")] },
+      { toolName: "create_view", steps: [click("b")] },
+    ];
+    const next = appendWidgetCheckStep(start, "create_view", click("c"));
+    // All create_view steps survive, merged into the first occurrence's slot,
+    // and show_map keeps its authored position.
+    expect(next).toEqual([
+      { toolName: "create_view", steps: [click("a"), click("b"), click("c")] },
+      { toolName: "show_map", steps: [click("zoom")] },
+    ]);
+  });
+
   it("does not mutate the input array or groups", () => {
     const start: ScriptedWidgetCheck[] = [
       { toolName: "create_view", steps: [click("a")] },
