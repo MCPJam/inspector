@@ -82,10 +82,10 @@ import {
   deriveLegacyPromptFields,
   isPinnedOnly,
   isPinnedTurn,
-  needsModel,
   resolvePromptTurns,
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
+  turnsNeedModel,
   type PinnedToolCall,
   type PromptTurn,
 } from "@/shared/prompt-turns";
@@ -801,7 +801,7 @@ async function findIterationIdForTimeout(args: {
 
   const resolvedTest = resolveEvalTestCase(args.test);
   const shouldMatchByTestCaseOnly =
-    !needsModel({
+    !turnsNeedModel({
       caseType: args.test.caseType,
       promptTurns: resolvedTest.promptTurns,
     }) && Boolean(args.test.testCaseId);
@@ -1304,7 +1304,7 @@ const runIterationWithAiSdk = async ({
   // display-only model sentinels that must never reach the runtime resolver,
   // which throws on a missing API key). Hybrid cases keep full model setup;
   // their pinned turns run via runPinnedTurn inside the loop.
-  const caseNeedsModel = needsModel({
+  const caseNeedsModel = turnsNeedModel({
     caseType: test.caseType,
     promptTurns,
   });
@@ -2699,7 +2699,7 @@ const runTestCase = async (params: {
   // model/BYOK setup and executes each pinned turn via runPinnedTurn. Never
   // routes to a hosted backend (there is no model to bill / drive).
   if (
-    !needsModel({
+    !turnsNeedModel({
       caseType: normalizedTest.caseType,
       promptTurns: normalizedTest.promptTurns,
     })
@@ -3436,7 +3436,7 @@ const streamIterationWithAiSdk = async ({
   // display-only model sentinels that must never reach the runtime resolver,
   // which throws on a missing API key). Hybrid cases keep full model setup;
   // their pinned turns run via runPinnedTurn inside the loop.
-  const caseNeedsModel = needsModel({
+  const caseNeedsModel = turnsNeedModel({
     caseType: test.caseType,
     promptTurns,
   });
