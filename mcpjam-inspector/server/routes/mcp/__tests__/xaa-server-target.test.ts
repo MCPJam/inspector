@@ -172,6 +172,85 @@ describe("server-target /proxy/token", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
+  it("resolves the issuer from RFC 9728 protected-resource metadata when none is stored", async () => {
+    // The resource URL is NOT the AS issuer: PRM points at a separate issuer,
+    // and the token endpoint is only discoverable from that issuer's metadata.
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://stored-server.example.com/mcp",
+      xaaAuthzIssuer: null,
+    }));
+    const app = buildApp(resolver);
+
+    const getUrls: string[] = [];
+    let tokenUrl = "";
+    const fetchMock = vi.fn(async (url: any, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const href = String(url);
+      if (method === "GET") {
+        getUrls.push(href);
+        // PRM document: names the protecting authorization server.
+        if (href.includes("oauth-protected-resource")) {
+          return new Response(
+            JSON.stringify({
+              resource: "https://stored-server.example.com/mcp",
+              authorization_servers: ["https://issuer.example.com"],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        // AS metadata: only served at the discovered issuer's well-known.
+        if (href.startsWith("https://issuer.example.com/")) {
+          return new Response(
+            JSON.stringify({
+              issuer: "https://issuer.example.com",
+              token_endpoint: DISCOVERED_TOKEN_ENDPOINT,
+              grant_types_supported: [
+                "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        return new Response(JSON.stringify({ error: "not_found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      tokenUrl = href;
+      return new Response(
+        JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    // Probed the resource's PRM well-known (path-inserted, RFC 9728 §3.1)...
+    expect(getUrls).toContain(
+      "https://stored-server.example.com/.well-known/oauth-protected-resource/mcp"
+    );
+    // ...then the discovered issuer's AS metadata, and posted there.
+    expect(getUrls.some((u) => u.startsWith("https://issuer.example.com/"))).toBe(
+      true
+    );
+    expect(tokenUrl).toBe(DISCOVERED_TOKEN_ENDPOINT);
+  });
+
   it("prefers the stored xaaAuthzIssuer over the server URL for discovery", async () => {
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",

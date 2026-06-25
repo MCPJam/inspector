@@ -25,6 +25,7 @@ interface InitialFormValues {
   clientSecret: string;
   hasStoredClientSecret: boolean;
   clearClientSecret: boolean;
+  hasStoredBearerToken: boolean;
   hasStoredEnv: boolean;
   hasStoredHeaders: boolean;
   envVars: Array<{ key: string; value: string }>;
@@ -95,6 +96,15 @@ function getAuthorizationHeaderValue(
   return undefined;
 }
 
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasEnv" | "hasHeaders" | "hasBearerToken"
+): boolean {
+  return (
+    !!config && typeof config === "object" && (config as any)[flag] === true
+  );
+}
+
 function toComparableHeaders(
   headers: Array<{ key: string; value: string }>
 ): Array<{ key: string; value: string }> {
@@ -123,6 +133,10 @@ export function useServerForm(
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
+  // True when the server has a saved bearer token whose value was stripped
+  // from the config (hosted/redacted load). The field stays blank but the form
+  // knows auth is "bearer" and must not wipe the hidden token on save.
+  const [hasStoredBearerToken, setHasStoredBearerToken] = useState(false);
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
 
@@ -182,6 +196,7 @@ export function useServerForm(
 
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
+      let hasServerOAuth = false;
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
@@ -199,11 +214,11 @@ export function useServerForm(
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        hasOAuth =
+        hasServerOAuth =
           server.useOAuth === true ||
           hasOAuthTokens ||
-          hasStoredOAuthConfig ||
           server.oauthFlowProfile != null;
+        hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`
@@ -285,16 +300,27 @@ export function useServerForm(
             config.requestInit?.headers as Record<string, unknown> | undefined
           )
         : undefined;
+      const normalizedAuthorizationHeader = authorizationHeader?.trim();
       const hasBearer =
-        typeof authorizationHeader === "string" &&
-        authorizationHeader.startsWith("Bearer ");
+        typeof normalizedAuthorizationHeader === "string" &&
+        normalizedAuthorizationHeader.toLowerCase().startsWith("bearer ");
       const bearerTokenValue = hasBearer
-        ? authorizationHeader.replace("Bearer ", "")
+        ? normalizedAuthorizationHeader.slice("bearer ".length)
         : "";
-      const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
+      // Redacted configs strip the Authorization header but set hasBearerToken.
+      // Treat that as a bearer server whose token is stored-but-hidden, the
+      // same way hasClientSecret / hasHeaders flag other stripped secrets.
+      const hasStoredBearerTokenValue =
+        isHttpServer &&
+        !hasBearer &&
+        (server.hasBearerToken === true ||
+          getRedactedConfigFlag(config, "hasBearerToken"));
+      const resolvedAuthType: "oauth" | "bearer" | "none" = hasServerOAuth
         ? "oauth"
-        : hasBearer
+        : hasBearer || hasStoredBearerTokenValue
         ? "bearer"
+        : hasOAuth
+        ? "oauth"
         : "none";
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
@@ -316,6 +342,7 @@ export function useServerForm(
       setOauthRegistrationMode(registrationModeValue);
       setHasStoredClientSecret(hasStoredClientSecretValue);
       setClearClientSecret(false);
+      setHasStoredBearerToken(hasStoredBearerTokenValue);
       setRequestTimeout(timeoutValue);
       setClientCapabilitiesOverrideEnabled(
         clientCapabilitiesOverrideValue != null
@@ -359,7 +386,9 @@ export function useServerForm(
       }
       setEnvVars(envArray);
       const hasStoredEnvValue =
-        !isHttpServer && server.hasEnv === true && envArray.length === 0;
+        !isHttpServer &&
+        (server.hasEnv === true || getRedactedConfigFlag(config, "hasEnv")) &&
+        envArray.length === 0;
       setHasStoredEnv(hasStoredEnvValue);
       setEnvRevealed(envArray.length > 0);
       setEnvDirty(false);
@@ -377,7 +406,11 @@ export function useServerForm(
       }
       setCustomHeaders(headersArray);
       const hasStoredHeadersValue =
-        isHttpServer && server.hasHeaders === true && headersArray.length === 0;
+        isHttpServer &&
+        (server.hasHeaders === true ||
+          getRedactedConfigFlag(config, "hasHeaders") ||
+          hasStoredBearerTokenValue) &&
+        headersArray.length === 0;
       setHasStoredHeaders(hasStoredHeadersValue);
       setHeadersRevealed(headersArray.length > 0);
       setHeadersDirty(false);
@@ -404,6 +437,7 @@ export function useServerForm(
         clientSecret: clientSecretValue,
         hasStoredClientSecret: hasStoredClientSecretValue,
         clearClientSecret: false,
+        hasStoredBearerToken: hasStoredBearerTokenValue,
         hasStoredEnv: hasStoredEnvValue,
         hasStoredHeaders: hasStoredHeadersValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
@@ -547,13 +581,35 @@ export function useServerForm(
   const revealStoredHeaders = (
     headers: Record<string, string> | null | undefined
   ) => {
-    const nextCustomHeaders = Object.entries(headers ?? {})
+    const entries = Object.entries(headers ?? {});
+    // Only a bearer-auth server pulls its Authorization header into the bearer
+    // field. OAuth/none servers keep Authorization as a normal custom header
+    // (e.g. Basic auth, or an OAuth access token surfaced as a header), so we
+    // don't silently switch their auth type or strip the row.
+    const authorizationValue = entries.find(([key]) =>
+      isAuthorizationHeader(key)
+    )?.[1];
+    const revealedBearerToken =
+      authType === "bearer" &&
+      typeof authorizationValue === "string" &&
+      authorizationValue.startsWith("Bearer ")
+        ? authorizationValue.replace("Bearer ", "")
+        : undefined;
+    const nextCustomHeaders = entries
+      .filter(
+        ([key]) =>
+          !(revealedBearerToken !== undefined && isAuthorizationHeader(key))
+      )
       .map(([key, value]) => createHeaderEntry(key, String(value)));
     setCustomHeaders(nextCustomHeaders);
     setHasStoredHeaders(false);
     setHeadersRevealed(true);
     setHeadersDirty(false);
     setShowConfiguration(true);
+    if (revealedBearerToken !== undefined) {
+      setBearerToken(revealedBearerToken);
+      setHasStoredBearerToken(false);
+    }
     if (initialValues.current) {
       initialValues.current = {
         ...initialValues.current,
@@ -562,6 +618,12 @@ export function useServerForm(
           key,
           value,
         })),
+        ...(revealedBearerToken !== undefined
+          ? {
+              bearerToken: revealedBearerToken,
+              hasStoredBearerToken: false,
+            }
+          : {}),
       };
     }
   };
@@ -741,6 +803,7 @@ export function useServerForm(
     setHasStoredClientSecret(false);
     setClearClientSecret(false);
     setBearerToken("");
+    setHasStoredBearerToken(false);
     setAuthType("none");
     setUseCustomClientId(false);
     setClientIdError(null);
@@ -782,6 +845,7 @@ export function useServerForm(
       clientSecret !== iv.clientSecret ||
       hasStoredClientSecret !== iv.hasStoredClientSecret ||
       clearClientSecret !== iv.clearClientSecret ||
+      hasStoredBearerToken !== iv.hasStoredBearerToken ||
       hasStoredEnv !== iv.hasStoredEnv ||
       hasStoredHeaders !== iv.hasStoredHeaders ||
       requestTimeout !== iv.requestTimeout ||
@@ -845,6 +909,7 @@ export function useServerForm(
     setHasStoredClientSecret,
     clearClientSecret,
     setClearClientSecret,
+    hasStoredBearerToken,
     bearerToken,
     setBearerToken: (value: string) => {
       setAuthDirty(true);

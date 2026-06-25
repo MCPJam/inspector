@@ -31,6 +31,12 @@ interface AuthenticationSectionProps {
   showAuthSettings: boolean;
   bearerToken: string;
   onBearerTokenChange: (value: string) => void;
+  /** True when a saved bearer token exists but its value is hidden. */
+  hasStoredBearerToken?: boolean;
+  /** Hosted-mode reveal for the saved bearer token. */
+  onRevealBearerToken?: () => void;
+  isRevealingBearerToken?: boolean;
+  bearerRevealError?: string | null;
   oauthScopesInput: string;
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
@@ -82,6 +88,10 @@ export function AuthenticationSection({
   showAuthSettings,
   bearerToken,
   onBearerTokenChange,
+  hasStoredBearerToken = false,
+  onRevealBearerToken,
+  isRevealingBearerToken = false,
+  bearerRevealError = null,
   oauthScopesInput,
   onOauthScopesChange,
   oauthProtocolMode,
@@ -131,6 +141,13 @@ export function AuthenticationSection({
     revealedClientSecretContextKey === revealContextKey
       ? revealedClientSecret
       : null;
+
+  const canRevealBearerToken =
+    hasStoredBearerToken &&
+    !bearerToken &&
+    !!projectId &&
+    !!hostedServerId &&
+    !!onRevealBearerToken;
 
   // Drop any revealed value if the saved-secret context disappears (e.g.
   // user pasted a replacement, toggled Clear, or switched servers).
@@ -283,15 +300,37 @@ export function AuthenticationSection({
         {/* Bearer Token Settings */}
         {showAuthSettings && authType === "bearer" && (
           <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
-            <label className="block text-sm font-medium text-foreground pt-3">
-              Bearer Token
-            </label>
+            <div className="flex items-center justify-between gap-3 pt-3">
+              <label className="block text-sm font-medium text-foreground">
+                Bearer Token
+              </label>
+              {canRevealBearerToken && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => onRevealBearerToken?.()}
+                  disabled={isRevealingBearerToken}
+                >
+                  {isRevealingBearerToken ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    "Reveal"
+                  )}
+                </Button>
+              )}
+            </div>
             <div className="relative">
               <Input
                 type={isBearerTokenVisible ? "text" : "password"}
                 value={bearerToken}
                 onChange={(e) => onBearerTokenChange(e.target.value)}
-                placeholder="Enter your bearer token"
+                placeholder={
+                  hasStoredBearerToken && !bearerToken
+                    ? "Saved — enter a new value to replace"
+                    : "Enter your bearer token"
+                }
                 className="h-10 pr-10"
               />
               <button
@@ -312,6 +351,15 @@ export function AuthenticationSection({
                 )}
               </button>
             </div>
+            {hasStoredBearerToken && !bearerToken && (
+              <p className="text-xs text-muted-foreground">
+                A saved token is hidden. Leave blank to keep it, or enter a new
+                value to replace it.
+              </p>
+            )}
+            {bearerRevealError && (
+              <p className="text-xs text-red-500">{bearerRevealError}</p>
+            )}
           </div>
         )}
 

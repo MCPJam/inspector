@@ -71,16 +71,37 @@ interface AuthTabProps {
   serverName?: string;
 }
 
+function hasBearerAuthorizationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") {
+    return false;
+  }
+
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.trim().toLowerCase().startsWith("bearer ")
+  );
+}
+
+function hasRedactedBearerFlag(config: unknown): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as { hasBearerToken?: unknown }).hasBearerToken === true
+  );
+}
+
 export const AuthTab = ({
   serverConfig,
   serverEntry,
   serverName,
 }: AuthTabProps) => {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
-    DEFAULT_AUTH_SETTINGS,
+    DEFAULT_AUTH_SETTINGS
   );
   const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
-    EMPTY_OAUTH_FLOW_STATE,
+    EMPTY_OAUTH_FLOW_STATE
   );
   const [showGuidedFlow, setShowGuidedFlow] = useState(false);
 
@@ -92,7 +113,7 @@ export const AuthTab = ({
     (updates: Partial<OAuthFlowState>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
-    [],
+    []
   );
 
   const resetOAuthFlow = useCallback(() => {
@@ -104,7 +125,7 @@ export const AuthTab = ({
     if (authSettings.serverUrl) {
       try {
         const provider = new DebugMCPOAuthClientProvider(
-          authSettings.serverUrl,
+          authSettings.serverUrl
         );
         provider.clear();
       } catch (e) {
@@ -182,8 +203,8 @@ export const AuthTab = ({
             message: authSettings.tokens
               ? "Tokens refreshed successfully!"
               : result.serverConfig
-                ? "OAuth authentication completed!"
-                : "OAuth flow initiated. You will be redirected to authorize access.",
+              ? "OAuth authentication completed!"
+              : "OAuth flow initiated. You will be redirected to authorize access.",
           },
         });
 
@@ -208,7 +229,9 @@ export const AuthTab = ({
         error: error instanceof Error ? error.message : String(error),
         statusMessage: {
           type: "error",
-          message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         },
       });
     }
@@ -283,7 +306,9 @@ export const AuthTab = ({
         error: error instanceof Error ? error.message : String(error),
         statusMessage: {
           type: "error",
-          message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         },
       });
     }
@@ -363,12 +388,35 @@ export const AuthTab = ({
   const isHttpServer = serverConfig && "url" in serverConfig;
   const supportsOAuth = isHttpServer;
 
-  // Check if OAuth is currently configured/in-use
-  const hasOAuthConfigured =
+  const hasBearerConfigured =
+    Boolean(isHttpServer) &&
+    (serverEntry?.hasBearerToken === true ||
+      hasRedactedBearerFlag(serverConfig) ||
+      hasRedactedBearerFlag(serverEntry?.config) ||
+      hasBearerAuthorizationHeader(
+        (serverConfig as any)?.requestInit?.headers
+      ) ||
+      hasBearerAuthorizationHeader(
+        (serverEntry?.config as any)?.requestInit?.headers
+      ));
+  // Check if OAuth is currently configured/in-use. Stored OAuth tokens can be
+  // stale, so don't let them mask explicit bearer metadata.
+  const storedOAuthTokens = serverName ? getStoredTokens(serverName) : null;
+  const hasOAuthConfigured = Boolean(
     serverName &&
-    (serverEntry?.oauthTokens ||
-      getStoredTokens(serverName) ||
-      serverEntry?.connectionStatus === "oauth-flow");
+      serverEntry?.useOAuth !== false &&
+      (serverEntry?.useOAuth === true ||
+        serverEntry?.oauthTokens ||
+        (!hasBearerConfigured && storedOAuthTokens) ||
+        serverEntry?.connectionStatus === "oauth-flow")
+  );
+  const authenticationLabel = !isHttpServer
+    ? "Process-based"
+    : hasOAuthConfigured
+    ? "OAuth"
+    : hasBearerConfigured
+    ? "Bearer Token"
+    : "No Authentication";
 
   const contributionBanner = (
     <div className="rounded-md border border-dashed border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary space-y-1">
@@ -434,6 +482,7 @@ export const AuthTab = ({
                   <div>
                     Type: {isHttpServer ? "HTTP Server" : "STDIO Server"}
                   </div>
+                  <div>Authentication: {authenticationLabel}</div>
                 </div>
               </div>
 
@@ -453,7 +502,9 @@ export const AuthTab = ({
                       <p className="text-sm text-muted-foreground max-w-md mx-auto">
                         {!isHttpServer
                           ? "STDIO servers don't support OAuth authentication."
-                          : `The HTTP server "${serverEntry?.name || "Unknown"}" is connected without OAuth authentication.`}
+                          : `The HTTP server "${
+                              serverEntry?.name || "Unknown"
+                            }" is connected without OAuth authentication.`}
                       </p>
                       {isHttpServer && (
                         <p className="text-xs text-muted-foreground max-w-md mx-auto mt-2">
@@ -503,163 +554,191 @@ export const AuthTab = ({
                   <div>URL: {(serverConfig as any).url.toString()}</div>
                 )}
                 <div>Type: HTTP Server</div>
+                <div>Authentication: {authenticationLabel}</div>
               </div>
             </div>
 
-            {/* OAuth Authentication */}
-            <div className="rounded-md border p-6 space-y-6">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5" />
-                <h3 className="text-lg font-medium">OAuth Authentication</h3>
-              </div>
-              <p className="text-sm text-muted-foreground mb-2">
-                {hasOAuthConfigured
-                  ? "Manage OAuth authentication for this server."
-                  : "This server supports OAuth authentication. Use Quick OAuth to authenticate and get tokens."}
-              </p>
-
-              {authSettings.statusMessage && (
-                <StatusMessageComponent message={authSettings.statusMessage} />
-              )}
-
-              {authSettings.error && !authSettings.statusMessage && (
-                <div className="p-3 rounded-md border border-red-200 bg-red-50 text-red-700 mb-4">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <p className="text-sm">{authSettings.error}</p>
-                  </div>
+            {hasBearerConfigured && !hasOAuthConfigured ? (
+              <div className="rounded-md border p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  <h3 className="text-lg font-medium">
+                    Bearer Token Authentication
+                  </h3>
                 </div>
-              )}
+                <p className="text-sm text-muted-foreground">
+                  This HTTP server is configured with a saved bearer token.
+                  Manage or rotate the token from the server configuration.
+                </p>
+              </div>
+            ) : (
+              /* OAuth Authentication */
+              <div className="rounded-md border p-6 space-y-6">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5" />
+                  <h3 className="text-lg font-medium">OAuth Authentication</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-2">
+                  {hasOAuthConfigured
+                    ? "Manage OAuth authentication for this server."
+                    : "This server supports OAuth authentication. Use Quick OAuth to authenticate and get tokens."}
+                </p>
 
-              <div className="space-y-4">
-                {authSettings.tokens && (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Current Tokens:</p>
-                    <div className="bg-muted p-3 rounded-md space-y-2">
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          Access Token:
-                        </p>
-                        <div className="text-xs font-mono overflow-x-auto">
-                          {authSettings.tokens.access_token.substring(0, 40)}...
-                        </div>
-                      </div>
-                      {authSettings.tokens.refresh_token && (
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground">
-                            Refresh Token:
-                          </p>
-                          <div className="text-xs font-mono overflow-x-auto">
-                            {authSettings.tokens.refresh_token.substring(0, 40)}
-                            ...
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex gap-4 text-xs text-muted-foreground">
-                        <span>Type: {authSettings.tokens.token_type}</span>
-                        {authSettings.tokens.expires_in && (
-                          <span>
-                            Expires in: {authSettings.tokens.expires_in}s
-                          </span>
-                        )}
-                        {authSettings.tokens.scope && (
-                          <span>Scope: {authSettings.tokens.scope}</span>
-                        )}
-                      </div>
+                {authSettings.statusMessage && (
+                  <StatusMessageComponent
+                    message={authSettings.statusMessage}
+                  />
+                )}
+
+                {authSettings.error && !authSettings.statusMessage && (
+                  <div className="p-3 rounded-md border border-red-200 bg-red-50 text-red-700 mb-4">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <p className="text-sm">{authSettings.error}</p>
                     </div>
                   </div>
                 )}
 
-                <div className="flex gap-4">
-                  <Button
-                    onClick={
-                      authSettings.tokens ? handleQuickRefresh : handleNewOAuth
-                    }
-                    disabled={authSettings.isAuthenticating || !serverConfig}
-                    className="flex items-center gap-2"
-                    variant={authSettings.tokens ? "outline" : "default"}
-                  >
-                    {authSettings.isAuthenticating ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                        {authSettings.tokens
-                          ? "Refreshing..."
-                          : "Authenticating..."}
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-4 w-4" />
-                        {authSettings.tokens ? "Quick Refresh" : "Quick OAuth"}
-                      </>
-                    )}
-                  </Button>
-
+                <div className="space-y-4">
                   {authSettings.tokens && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Current Tokens:</p>
+                      <div className="bg-muted p-3 rounded-md space-y-2">
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Access Token:
+                          </p>
+                          <div className="text-xs font-mono overflow-x-auto">
+                            {authSettings.tokens.access_token.substring(0, 40)}
+                            ...
+                          </div>
+                        </div>
+                        {authSettings.tokens.refresh_token && (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground">
+                              Refresh Token:
+                            </p>
+                            <div className="text-xs font-mono overflow-x-auto">
+                              {authSettings.tokens.refresh_token.substring(
+                                0,
+                                40
+                              )}
+                              ...
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span>Type: {authSettings.tokens.token_type}</span>
+                          {authSettings.tokens.expires_in && (
+                            <span>
+                              Expires in: {authSettings.tokens.expires_in}s
+                            </span>
+                          )}
+                          {authSettings.tokens.scope && (
+                            <span>Scope: {authSettings.tokens.scope}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-4">
                     <Button
-                      onClick={handleNewOAuth}
+                      onClick={
+                        authSettings.tokens
+                          ? handleQuickRefresh
+                          : handleNewOAuth
+                      }
                       disabled={authSettings.isAuthenticating || !serverConfig}
                       className="flex items-center gap-2"
-                      variant="default"
+                      variant={authSettings.tokens ? "outline" : "default"}
                     >
                       {authSettings.isAuthenticating ? (
                         <>
                           <RefreshCw className="h-4 w-4 animate-spin" />
-                          Authenticating...
+                          {authSettings.tokens
+                            ? "Refreshing..."
+                            : "Authenticating..."}
                         </>
                       ) : (
                         <>
                           <RefreshCw className="h-4 w-4" />
-                          Quick OAuth
+                          {authSettings.tokens
+                            ? "Quick Refresh"
+                            : "Quick OAuth"}
                         </>
                       )}
                     </Button>
-                  )}
 
-                  <Button
-                    variant="outline"
-                    onClick={handleClearTokens}
-                    disabled={!serverConfig || !authSettings.tokens}
-                  >
-                    Clear Tokens
-                  </Button>
+                    {authSettings.tokens && (
+                      <Button
+                        onClick={handleNewOAuth}
+                        disabled={
+                          authSettings.isAuthenticating || !serverConfig
+                        }
+                        className="flex items-center gap-2"
+                        variant="default"
+                      >
+                        {authSettings.isAuthenticating ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Authenticating...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-4 w-4" />
+                            Quick OAuth
+                          </>
+                        )}
+                      </Button>
+                    )}
 
-                  <Button
-                    variant="secondary"
-                    onClick={startGuidedFlow}
-                    disabled={authSettings.isAuthenticating || !serverConfig}
-                  >
-                    Guided OAuth Flow
-                  </Button>
-                </div>
+                    <Button
+                      variant="outline"
+                      onClick={handleClearTokens}
+                      disabled={!serverConfig || !authSettings.tokens}
+                    >
+                      Clear Tokens
+                    </Button>
 
-                <p className="text-xs text-muted-foreground">
-                  {!serverConfig
-                    ? "Select a server to manage its OAuth authentication."
-                    : authSettings.tokens
+                    <Button
+                      variant="secondary"
+                      onClick={startGuidedFlow}
+                      disabled={authSettings.isAuthenticating || !serverConfig}
+                    >
+                      Guided OAuth Flow
+                    </Button>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    {!serverConfig
+                      ? "Select a server to manage its OAuth authentication."
+                      : authSettings.tokens
                       ? "Use Quick Refresh to renew existing tokens, or Quick OAuth to start a fresh authentication flow."
                       : "Use Quick OAuth to authenticate with the server and get tokens."}
-                </p>
-              </div>
-
-              {/* OAuth Flow Progress */}
-              {showGuidedFlow && authSettings.serverUrl && (
-                <OAuthFlowProgressSimple
-                  serverUrl={authSettings.serverUrl}
-                  flowState={oauthFlowState}
-                  updateFlowState={updateOAuthFlowState}
-                  proceedToNextStep={proceedToNextStep}
-                />
-              )}
-
-              {/* Exit Guided Flow Button */}
-              {showGuidedFlow && (
-                <div className="mt-4">
-                  <Button variant="outline" onClick={exitGuidedFlow}>
-                    Exit Guided Flow
-                  </Button>
+                  </p>
                 </div>
-              )}
-            </div>
+
+                {/* OAuth Flow Progress */}
+                {showGuidedFlow && authSettings.serverUrl && (
+                  <OAuthFlowProgressSimple
+                    serverUrl={authSettings.serverUrl}
+                    flowState={oauthFlowState}
+                    updateFlowState={updateOAuthFlowState}
+                    proceedToNextStep={proceedToNextStep}
+                  />
+                )}
+
+                {/* Exit Guided Flow Button */}
+                {showGuidedFlow && (
+                  <div className="mt-4">
+                    <Button variant="outline" onClick={exitGuidedFlow}>
+                      Exit Guided Flow
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

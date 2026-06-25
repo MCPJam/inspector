@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deserializeServersFromConvex,
   serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
@@ -86,6 +87,86 @@ describe("project-serialization OAuth scopes coercion", () => {
 });
 
 describe("serversHaveChanged redacted secrets", () => {
+  it("marks visible bearer authorization headers as bearer-token metadata", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        hasHeaders: true,
+        url: "https://example.test/mcp",
+        headers: { authorization: "bearer revealed" },
+      },
+    ]);
+
+    expect(servers.s1.hasHeaders).toBe(true);
+    expect(servers.s1.hasBearerToken).toBe(true);
+  });
+
+  it("infers remote bearer metadata from lowercase authorization headers", () => {
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        hasHeaders: true,
+        hasBearerToken: true,
+        config: {
+          url: "https://example.test/mcp",
+          requestInit: {
+            headers: { authorization: "bearer revealed" },
+          },
+        } as any,
+      },
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: false,
+          hasHeaders: true,
+          url: "https://example.test/mcp",
+          headers: { authorization: "bearer revealed" },
+        },
+      ])
+    ).toBe(false);
+  });
+
+  it("treats bearer-token metadata changes as server changes", () => {
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        hasHeaders: true,
+        hasBearerToken: true,
+        config: {
+          url: "https://example.test/mcp",
+        } as any,
+      },
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: false,
+          hasHeaders: true,
+          url: "https://example.test/mcp",
+        },
+      ])
+    ).toBe(true);
+  });
+
   it("does not treat revealed local headers as changed when remote headers are redacted", () => {
     const local: Record<string, ServerWithName> = {
       s1: {

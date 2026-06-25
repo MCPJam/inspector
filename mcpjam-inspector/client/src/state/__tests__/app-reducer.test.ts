@@ -27,7 +27,7 @@ function createInitialState(overrides: Partial<AppState> = {}): AppState {
 // Helper to create a server entry
 function createServer(
   name: string,
-  overrides: Partial<ServerWithName> = {},
+  overrides: Partial<ServerWithName> = {}
 ): ServerWithName {
   return {
     name,
@@ -523,9 +523,7 @@ describe("appReducer", () => {
       });
 
       expect(result.servers["to-remove"]).toBeUndefined();
-      expect(
-        result.projects["project-1"].servers["to-remove"],
-      ).toBeUndefined();
+      expect(result.projects["project-1"].servers["to-remove"]).toBeUndefined();
     });
 
     it("clears selection if removed server was selected", () => {
@@ -639,6 +637,32 @@ describe("appReducer", () => {
       expect(result.servers["server-2"].connectionStatus).toBe("failed");
     });
 
+    it("lifts redacted config flags from agent status sync", () => {
+      const server = createServer("server-1");
+      const state = createInitialState({
+        servers: { "server-1": server },
+      });
+
+      const result = appReducer(state, {
+        type: "SYNC_AGENT_STATUS",
+        servers: [
+          {
+            id: "server-1",
+            status: "connected",
+            config: {
+              url: "https://example.com/mcp",
+              hasHeaders: true,
+              hasBearerToken: true,
+            } as any,
+          },
+        ],
+      });
+
+      expect(result.servers["server-1"].connectionStatus).toBe("connected");
+      expect(result.servers["server-1"].hasHeaders).toBe(true);
+      expect(result.servers["server-1"].hasBearerToken).toBe(true);
+    });
+
     it("preserves connecting status (in-flight operations)", () => {
       const connecting = createServer("connecting", {
         connectionStatus: "connecting",
@@ -746,7 +770,7 @@ describe("appReducer", () => {
 
         expect(result.projects["project-1"].name).toBe("Updated Name");
         expect(result.projects["project-1"].description).toBe(
-          "New description",
+          "New description"
         );
       });
 
@@ -817,7 +841,7 @@ describe("appReducer", () => {
         expect(result.selectedMultipleServers).toEqual([]);
         expect(result.servers["target-server"]).toBeDefined();
         expect(result.servers["target-server"].connectionStatus).toBe(
-          "disconnected",
+          "disconnected"
         );
       });
 
@@ -885,7 +909,7 @@ describe("appReducer", () => {
         });
 
         const newProjects = Object.values(result.projects).filter(
-          (w) => w.name === "Source Copy",
+          (w) => w.name === "Source Copy"
         );
         expect(newProjects).toHaveLength(1);
         const copy = newProjects[0];

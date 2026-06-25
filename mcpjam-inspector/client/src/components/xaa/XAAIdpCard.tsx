@@ -186,8 +186,8 @@ export function XAAIdpCard() {
           <span>
             These are local URLs. Your authorization server can only fetch them
             if it can reach this machine — a cloud-hosted Okta or Auth0 tenant
-            cannot reach <code className="font-mono">localhost</code>. Expose the
-            inspector with a public tunnel (e.g. ngrok) first.
+            cannot reach <code className="font-mono">localhost</code>. Expose
+            MCPJam with a public tunnel (e.g. ngrok) first.
           </span>
         </div>
       )}

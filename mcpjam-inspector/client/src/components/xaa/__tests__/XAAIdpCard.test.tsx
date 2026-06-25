@@ -129,7 +129,7 @@ describe("XAAIdpCard (non-hosted mode)", () => {
     render(<LocalIdpCard />);
 
     expect(
-      screen.getByText(/Expose the\s+inspector with a public tunnel/i)
+      screen.getByText(/Expose\s+MCPJam with a public tunnel/i)
     ).toBeInTheDocument();
   });
 });

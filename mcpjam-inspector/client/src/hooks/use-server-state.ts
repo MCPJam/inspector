@@ -117,6 +117,52 @@ function extractRequestHeaders(
   ) as Record<string, string>;
 }
 
+function hasBearerAuthorizationHeader(
+  headers?: Record<string, string>
+): boolean {
+  if (!headers) {
+    return false;
+  }
+
+  return Object.entries(headers).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      value.trim().toLowerCase().startsWith("bearer ")
+  );
+}
+
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasBearerToken"
+): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as Record<string, unknown>)[flag] === true
+  );
+}
+
+function getServerBearerTokenState(
+  server: ServerWithName | undefined
+): boolean | undefined {
+  if (!server) {
+    return undefined;
+  }
+
+  const config = server.config as {
+    requestInit?: RequestInit;
+    hasBearerToken?: true;
+  };
+  if (
+    getRedactedConfigFlag(config, "hasBearerToken") ||
+    hasBearerAuthorizationHeader(extractRequestHeaders(config.requestInit))
+  ) {
+    return true;
+  }
+
+  return server.hasBearerToken;
+}
+
 function omitAuthorizationHeader(
   headers?: Record<string, string>
 ): Record<string, string> | undefined {
@@ -751,6 +797,8 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
+      const runtimeHasBearerToken = getServerBearerTokenState(runtimeState);
+      const projectHasBearerToken = getServerBearerTokenState(server);
       // Env now lives on the Convex server doc and is returned by the
       // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
@@ -762,6 +810,11 @@ export function useServerState({
         lastConnectionTime:
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
+        hasClientSecret:
+          runtimeState?.hasClientSecret ?? server.hasClientSecret,
+        hasEnv: runtimeState?.hasEnv ?? server.hasEnv,
+        hasHeaders: runtimeState?.hasHeaders ?? server.hasHeaders,
+        hasBearerToken: runtimeHasBearerToken ?? projectHasBearerToken,
       };
     }
 
@@ -1253,6 +1306,10 @@ export function useServerState({
           ? secretOptions.headers
           : undefined
         : headers;
+      const hasBearerTokenForPayload =
+        headersForPayload !== undefined
+          ? hasBearerAuthorizationHeader(headersForPayload)
+          : getServerBearerTokenState(serverEntry);
       const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
@@ -1265,6 +1322,9 @@ export function useServerState({
         url,
         ...(headersForPayload !== undefined
           ? { headers: headersForPayload }
+          : {}),
+        ...(hasBearerTokenForPayload !== undefined
+          ? { hasBearerToken: hasBearerTokenForPayload }
           : {}),
         timeout: config?.timeout,
         clientCapabilities: config?.clientCapabilities,
@@ -2340,6 +2400,10 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServerForSave?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
       };
@@ -2710,6 +2774,10 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServer?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
       } as ServerWithName;

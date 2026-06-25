@@ -40,21 +40,17 @@ type RuntimeHandle = {
   /** Send a postMessage *from* parent *to* the widget window (host → widget) */
   sendFromParent: (data: unknown) => void;
   /** Drive the init handshake to completion by replying to the ui/initialize request */
-  completeInitHandshake: (
-    hostContext?: Record<string, unknown>,
-  ) => void;
+  completeInitHandshake: (hostContext?: Record<string, unknown>) => void;
 };
 
-function buildHandle(
-  configJson: Record<string, unknown>,
-): RuntimeHandle {
+function buildHandle(configJson: Record<string, unknown>): RuntimeHandle {
   const dom = new JSDOM(
     `<!DOCTYPE html><html><head>
       <script id="openai-compat-config" type="application/json">${JSON.stringify(
-        configJson,
+        configJson
       )}</script>
     </head><body></body></html>`,
-    { runScripts: "outside-only", pretendToBeVisual: true },
+    { runScripts: "outside-only", pretendToBeVisual: true }
   );
   const win = dom.window as any;
   const parentMessages: CapturedMessage[] = [];
@@ -67,7 +63,10 @@ function buildHandle(
       parentMessages.push({ data, targetOrigin });
     },
   };
-  Object.defineProperty(win, "parent", { value: mockParent, configurable: true });
+  Object.defineProperty(win, "parent", {
+    value: mockParent,
+    configurable: true,
+  });
 
   win.addEventListener("openai:set_globals", (event: CustomEvent) => {
     setGlobalsEvents.push(event.detail);
@@ -91,7 +90,7 @@ function buildHandle(
     completeInitHandshake(hostContext: Record<string, unknown> = {}) {
       const initRequest = parentMessages.find(
         (m): m is CapturedMessage & { data: { method: string; id: number } } =>
-          (m.data as any)?.method === "ui/initialize",
+          (m.data as any)?.method === "ui/initialize"
       );
       if (!initRequest) throw new Error("ui/initialize was not sent");
       const id = (initRequest.data as any).id;
@@ -160,7 +159,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
 
   it("sends ui/initialize handshake on load", () => {
     const init = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "ui/initialize",
+      (m) => (m.data as any)?.method === "ui/initialize"
     );
     expect(init).toBeDefined();
     expect((init!.data as any).jsonrpc).toBe("2.0");
@@ -172,7 +171,9 @@ describe("compat runtime — F1: Apps SDK only", () => {
     expect(h.setGlobalsEvents).toHaveLength(0);
     h.completeInitHandshake();
     expect(h.setGlobalsEvents).toHaveLength(1);
-    const detail = h.setGlobalsEvents[0] as { globals: Record<string, unknown> };
+    const detail = h.setGlobalsEvents[0] as {
+      globals: Record<string, unknown>;
+    };
     expect(detail.globals.toolInput).toEqual({ q: "hello" });
     expect(detail.globals.theme).toBe("dark");
     expect(detail.globals.displayMode).toBe("inline");
@@ -182,7 +183,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     h.completeInitHandshake();
     h.window.openai.callTool("search", { q: "hi" });
     const call = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "tools/call",
+      (m) => (m.data as any)?.method === "tools/call"
     );
     expect(call).toBeDefined();
     expect((call!.data as any).params.name).toBe("search");
@@ -200,19 +201,21 @@ describe("compat runtime — F1: Apps SDK only", () => {
     const before = h.setGlobalsEvents.length;
     h.window.openai.setWidgetState({ counter: 5 });
     const set = h.parentMessages.find(
-      (m) => (m.data as any)?.type === "openai:setWidgetState",
+      (m) => (m.data as any)?.type === "openai:setWidgetState"
     );
     expect(set).toBeDefined();
     expect((set!.data as any).state).toEqual({ counter: 5 });
     expect((set!.data as any).toolId).toBe(F1_CONFIG.toolId);
     // Model context update should NOT be auto-sent.
     const modelCtx = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "ui/update-model-context",
+      (m) => (m.data as any)?.method === "ui/update-model-context"
     );
     expect(modelCtx).toBeUndefined();
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
-    const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
+    const last = h.setGlobalsEvents[after - 1] as {
+      globals: Record<string, unknown>;
+    };
     expect(last.globals.widgetState).toEqual({ counter: 5 });
   });
 
@@ -222,10 +225,10 @@ describe("compat runtime — F1: Apps SDK only", () => {
       href: " https://app.example.com/trails/42 ",
     });
     const set = h.parentMessages.find(
-      (m) => (m.data as any)?.type === "openai:setOpenInAppUrl",
+      (m) => (m.data as any)?.type === "openai:setOpenInAppUrl"
     );
     expect(set).toBeDefined();
-    expect((set!.data as any)).toEqual({
+    expect(set!.data as any).toEqual({
       type: "openai:setOpenInAppUrl",
       toolId: F1_CONFIG.toolId,
       href: "https://app.example.com/trails/42",
@@ -235,7 +238,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
   it("window.openai.setOpenInAppUrl rejects missing href and respects feature detection", () => {
     h.completeInitHandshake();
     expect(() => h.window.openai.setOpenInAppUrl({})).toThrow(
-      /href is required for setOpenInAppUrl/,
+      /href is required for setOpenInAppUrl/
     );
 
     const disabled = buildHandle({
@@ -279,7 +282,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     h.completeInitHandshake();
     h.window.openai.requestCheckout({ price: 100, currency: "usd" });
     const req = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "openai/requestCheckout",
+      (m) => (m.data as any)?.method === "openai/requestCheckout"
     );
     expect(req).toBeDefined();
     expect((req!.data as any).params.price).toBe(100);
@@ -290,7 +293,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     h.completeInitHandshake();
     h.window.openai.requestModal({ title: "Hi", template: "ui://m" });
     const req = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "openai/requestModal",
+      (m) => (m.data as any)?.method === "openai/requestModal"
     );
     expect(req).toBeDefined();
     expect((req!.data as any).params.title).toBe("Hi");
@@ -300,7 +303,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     h.completeInitHandshake();
     h.window.openai.requestClose();
     const req = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "openai/requestClose",
+      (m) => (m.data as any)?.method === "openai/requestClose"
     );
     expect(req).toBeDefined();
   });
@@ -309,7 +312,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     h.completeInitHandshake();
     h.window.openai.requestDisplayMode({ mode: "fullscreen" });
     const req = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "ui/request-display-mode",
+      (m) => (m.data as any)?.method === "ui/request-display-mode"
     );
     expect(req).toBeDefined();
     expect((req!.data as any).params.mode).toBe("fullscreen");
@@ -337,7 +340,9 @@ describe("compat runtime — F1: Apps SDK only", () => {
     });
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
-    const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
+    const last = h.setGlobalsEvents[after - 1] as {
+      globals: Record<string, unknown>;
+    };
     expect(last.globals.toolResponseMetadata).toEqual({
       timestamp: "2026-01-01T00:00:00Z",
       source: "weather-api",
@@ -362,7 +367,9 @@ describe("compat runtime — F2: MCP Apps only", () => {
     expect(h.window.openai.toolInput).toEqual({ location: "NYC" });
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
-    const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
+    const last = h.setGlobalsEvents[after - 1] as {
+      globals: Record<string, unknown>;
+    };
     expect(last.globals.toolInput).toEqual({ location: "NYC" });
   });
 
@@ -372,7 +379,10 @@ describe("compat runtime — F2: MCP Apps only", () => {
     h.sendFromParent({
       jsonrpc: "2.0",
       method: "ui/notifications/tool-result",
-      params: { content: [{ type: "text", text: "Sunny" }], structuredContent: { t: 75 } },
+      params: {
+        content: [{ type: "text", text: "Sunny" }],
+        structuredContent: { t: 75 },
+      },
     });
     expect((h.window.openai.toolOutput as any).structuredContent.t).toBe(75);
     const after = h.setGlobalsEvents.length;
@@ -391,7 +401,9 @@ describe("compat runtime — F2: MCP Apps only", () => {
     expect(h.window.openai.displayMode).toBe("fullscreen");
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
-    const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
+    const last = h.setGlobalsEvents[after - 1] as {
+      globals: Record<string, unknown>;
+    };
     expect(last.globals.theme).toBe("dark");
     expect(last.globals.displayMode).toBe("fullscreen");
   });
@@ -431,11 +443,11 @@ describe("compat runtime — F3: dual metadata", () => {
     // state for replay / saved views. ui/update-model-context is an
     // opt-in spec API and should NOT be auto-fired.
     const setState = h.parentMessages.find(
-      (m) => (m.data as any)?.type === "openai:setWidgetState",
+      (m) => (m.data as any)?.type === "openai:setWidgetState"
     );
     expect(setState).toBeDefined();
     const modelCtx = h.parentMessages.find(
-      (m) => (m.data as any)?.method === "ui/update-model-context",
+      (m) => (m.data as any)?.method === "ui/update-model-context"
     );
     expect(modelCtx).toBeUndefined();
   });

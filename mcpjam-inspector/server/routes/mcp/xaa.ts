@@ -28,7 +28,9 @@ import {
 } from "../../utils/oauth-proxy.js";
 import {
   buildDiscoveryCandidates,
+  buildResourceMetadataCandidates,
   evaluateDiscovery,
+  extractAuthorizationServer,
 } from "../../services/xaa-discovery.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -325,13 +327,67 @@ interface ResolvedServerTarget {
   clientSecret?: string;
 }
 
-// Discover the token endpoint for a server target's issuer, reusing the same
-// well-known sweep as /discover-as. The issuer is the stored xaaAuthzIssuer
-// (or the server URL); the client never supplies it.
+// RFC 9728: ask the resource (the MCP server URL) which authorization server
+// protects it, by reading authorization_servers[0] from its protected-resource
+// metadata. The resource URL is NOT itself an AS issuer, so this is the only
+// spec-defined way to learn the issuer when one isn't configured. Returns
+// undefined (rather than throwing) when no PRM/issuer is found, so the caller
+// can fall back to probing the resource URL directly.
+async function discoverIssuerFromResourceMetadata(
+  resource: string,
+  httpsOnly: boolean
+): Promise<string | undefined> {
+  let candidates: string[];
+  try {
+    candidates = buildResourceMetadataCandidates(resource);
+  } catch {
+    return undefined;
+  }
+
+  for (const candidate of candidates) {
+    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    if ("metadata" in result) {
+      const issuer = extractAuthorizationServer(result.metadata);
+      if (issuer) {
+        return issuer;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+// Discover the token endpoint for a server target, reusing the same well-known
+// sweep as /discover-as. The issuer is resolved server-side (the client never
+// supplies it), in priority order:
+//   1. the stored xaaAuthzIssuer, if configured;
+//   2. otherwise the authorization server named in the resource's RFC 9728
+//      protected-resource metadata;
+//   3. otherwise the resource URL itself (legacy behavior — covers servers that
+//      self-host RFC 8414 metadata at the resource origin and serve no PRM).
 async function discoverServerTargetTokenEndpoint(
-  issuer: string,
+  args: {
+    resource?: string;
+    explicitIssuer?: string;
+  },
   httpsOnly: boolean
 ): Promise<string> {
+  let issuer = args.explicitIssuer;
+  if (!issuer && args.resource) {
+    issuer = await discoverIssuerFromResourceMetadata(args.resource, httpsOnly);
+  }
+  // Legacy fallback: treat the resource URL as the issuer when neither a stored
+  // issuer nor a PRM-advertised one is available.
+  issuer = issuer || args.resource;
+
+  if (!issuer) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "The server has no URL or issuer to discover an authorization server from"
+    );
+  }
+
   let candidates: string[];
   try {
     candidates = buildDiscoveryCandidates(issuer);
@@ -396,8 +452,7 @@ async function resolveServerTarget(
     bearerToken: args.bearerToken,
   });
 
-  const issuer = resolved.xaaAuthzIssuer || resolved.serverUrl;
-  if (!issuer) {
+  if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -406,7 +461,10 @@ async function resolveServerTarget(
   }
 
   const tokenEndpoint = await discoverServerTargetTokenEndpoint(
-    issuer,
+    {
+      resource: resolved.serverUrl ?? undefined,
+      explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
+    },
     options.httpsOnlyProxy
   );
 

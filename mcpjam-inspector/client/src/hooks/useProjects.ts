@@ -47,6 +47,7 @@ export interface RemoteServer {
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  hasBearerToken?: boolean;
   oauthResourceUrl?: string;
   xaaAuthzIssuer?: string;
   createdAt: number;
