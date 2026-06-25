@@ -30,7 +30,7 @@ function renderModal(
 }
 
 describe("XAAServerModal", () => {
-  it("emits ServerFormData with xaaAuthzIssuer and the OAuth credentials on save", async () => {
+  it("emits ServerFormData with the XAA discriminator + resource-AS credentials on save", async () => {
     const user = userEvent.setup();
     const { onSave, onOpenChange } = renderModal();
 
@@ -40,7 +40,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
-    await user.type(screen.getByLabelText("Client Secret"), "super-secret");
+    await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
     await user.type(screen.getByLabelText("Scopes"), "read:tools read:resources");
     await user.type(
       screen.getByLabelText("Authorization Server Issuer"),
@@ -55,7 +55,10 @@ describe("XAAServerModal", () => {
       name: "staging-mcp",
       type: "http",
       url: "https://staging.mcp.example.com",
-      useOAuth: true,
+      // Same discriminator the /servers Connect page writes — not plain OAuth.
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
       clientId: "staging-client",
       clientSecret: "super-secret",
       oauthScopes: ["read:tools", "read:resources"],
@@ -84,7 +87,7 @@ describe("XAAServerModal", () => {
     expect(formData.oauthScopes).toEqual([]);
   });
 
-  it("prefills fields and masks the saved secret when editing", () => {
+  it("prefills fields and shows a Clear control for a saved secret when editing", () => {
     const server = {
       name: "prod-mcp",
       config: { url: "https://prod.mcp.example.com/mcp" },
@@ -114,10 +117,11 @@ describe("XAAServerModal", () => {
     expect(screen.getByLabelText("Authorization Server Issuer")).toHaveValue(
       "https://auth.prod.example.com",
     );
-    // A saved secret is masked behind Replace / Clear controls, not a field.
-    expect(screen.getByText(/saved/i)).toBeInTheDocument();
+    // A saved secret shows the replace-style input plus a Clear control
+    // (shared with the /servers Connect page), not masked placeholder text.
+    expect(screen.getByLabelText(/Client Secret/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Replace" }),
+      screen.getByRole("button", { name: "Clear" }),
     ).toBeInTheDocument();
   });
 
@@ -224,7 +228,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
-    await user.type(screen.getByLabelText("Client Secret"), "super-secret");
+    await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
     await user.type(
       screen.getByLabelText("Scopes"),
       "read:tools read:resources",
@@ -247,7 +251,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     expect(screen.getByLabelText(/Client ID/)).toHaveValue("staging-client");
-    expect(screen.getByLabelText("Client Secret")).toHaveValue("super-secret");
+    expect(screen.getByLabelText(/Client Secret/)).toHaveValue("super-secret");
     expect(screen.getByLabelText("Scopes")).toHaveValue(
       "read:tools read:resources",
     );
