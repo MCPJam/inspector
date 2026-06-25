@@ -609,6 +609,25 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     );
   });
 
+  it("derives steps from legacy promptTurns so multi-turn cases aren't under-counted", () => {
+    // A pre-migration case with N model turns must count N LLM calls, not 1 —
+    // otherwise a multi-turn legacy suite slips past MAX_TOTAL_LLM_CALLS.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "legacy multi-turn",
+        runs: 1,
+        models: [{ model: "m", provider: "p" }],
+        promptTurns: [
+          { id: "turn-1", prompt: "one" },
+          { id: "turn-2", prompt: "two" },
+        ],
+      },
+    ]);
+    const promptSteps = entries[0].steps.filter((s) => s.kind === "prompt");
+    expect(promptSteps).toHaveLength(2);
+    expect(entries[0].steps).not.toMatchObject([{ id: "legacy-cap-prompt" }]);
+  });
+
   it("excludes model-free (toolCall-only) cases from the cap reducer", () => {
     const entries = buildCapEntriesFromPersistedCases([
       {

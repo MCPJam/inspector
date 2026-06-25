@@ -447,6 +447,7 @@ export function buildCapEntriesFromPersistedCases(
     runs?: number;
     models?: Array<{ model: string; provider: string }>;
     steps?: unknown;
+    promptTurns?: unknown;
   }>
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
@@ -454,7 +455,13 @@ export function buildCapEntriesFromPersistedCases(
     const steps = (
       Array.isArray(testCase.steps) && testCase.steps.length > 0
         ? testCase.steps
-        : [{ id: "legacy-cap-prompt", kind: "prompt", prompt: "" }]
+        : // Pre-migration cases carry legacy `promptTurns` instead of `steps`.
+          // Derive the real steps so a multi-turn case counts every model turn
+          // toward MAX_TOTAL_LLM_CALLS — a single empty `prompt` placeholder
+          // would under-count and let it slip past the cap.
+          (legacyCaseStepsFallback(testCase) ?? [
+            { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
+          ])
     ) as RunEvalsRequest["tests"][number]["steps"];
     // Model-free cases (no `prompt` step) need one cap entry; model cases fan
     // out per model. The cap reducer counts `prompt` steps, so a model-free
