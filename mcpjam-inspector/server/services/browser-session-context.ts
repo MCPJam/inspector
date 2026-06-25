@@ -428,6 +428,11 @@ export async function createBrowserSessionContext(
   // turn (the run-side analogue of chat's `onSendFollowUp -> sendMessage`).
   const capturedFollowUps: string[] = [];
   const stepIndexByToolCallId = new Map<string, number>();
+  // Per-widget accumulator of widget→host tool calls, so a `widgetToolCalled`
+  // assert in a LATER unified step sees calls an earlier `interact` step
+  // triggered. `runWidgetCheckGroup` keeps this as a group-local `accumulated`;
+  // the unified executor replays steps independently, so it persists here.
+  const priorWidgetCallsByToolCallId = new Map<string, WidgetToolCall[]>();
   const inputByToolCallId = new Map<string, Record<string, unknown>>();
   let activePromptIndex = 0;
   // Authored `TestStep.id` of the step currently executing (unified step
@@ -655,7 +660,19 @@ export async function createBrowserSessionContext(
     if (!harness) {
       return { ok: false, reason: "no rendered widget" };
     }
-    const res = await harness.runScriptedStep({ toolCallId, step });
+    const priorWidgetToolCalls =
+      priorWidgetCallsByToolCallId.get(toolCallId) ?? [];
+    const res = await harness.runScriptedStep({
+      toolCallId,
+      step,
+      priorWidgetToolCalls,
+    });
+    if (res.widgetToolCalls.length) {
+      priorWidgetCallsByToolCallId.set(toolCallId, [
+        ...priorWidgetToolCalls,
+        ...res.widgetToolCalls,
+      ]);
+    }
     if (res.followUps.length) capturedFollowUps.push(...res.followUps);
     const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
     stepIndexByToolCallId.set(toolCallId, stepIndex);

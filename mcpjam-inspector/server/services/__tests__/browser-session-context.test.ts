@@ -86,6 +86,7 @@ beforeEach(() => {
   runScriptedStepImpl.mockResolvedValue({
     ok: true,
     widgetToolCalls: [],
+    followUps: [],
     elapsedMs: 1,
   });
 });
@@ -701,6 +702,46 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
       passed: true,
     });
     expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("forwards prior widget tool calls across separate unified steps (widgetToolCalled sees an earlier interact's call)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    // Keep the widget mounted across render so the unified replay path is
+    // eligible (otherwise the widget is dismissed after render).
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+    harnessInstances[0]!.getMountedWidgetId.mockReturnValue("tc-1");
+
+    const checkoutCall = {
+      name: "checkout",
+      args: { cartId: "c1" },
+      ok: true,
+      elapsedMs: 1,
+    };
+    // Step 1 (interact: a click) triggers a widget→host call...
+    runScriptedStepImpl.mockResolvedValueOnce({
+      ok: true,
+      widgetToolCalls: [checkoutCall],
+      followUps: [],
+      elapsedMs: 1,
+    });
+    await ctx.replayInteractStep("create_view", {
+      kind: "click",
+      target: { role: { role: "button", name: "Checkout" } },
+    });
+    // Step 2 (a SEPARATE assert) must see the call the click triggered.
+    await ctx.evaluateWidgetAssertion("create_view", {
+      kind: "widgetToolCalled",
+      toolName: "create_view",
+      calledToolName: "checkout",
+    });
+
+    // The assert's runScriptedStep call must receive the accumulated calls.
+    const assertCallArg = runScriptedStepImpl.mock.calls.at(-1)?.[0];
+    expect(assertCallArg.priorWidgetToolCalls).toEqual([checkoutCall]);
   });
 
   it("records a failure when a scripted assertion fails", async () => {
