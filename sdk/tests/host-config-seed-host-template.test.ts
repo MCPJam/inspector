@@ -13,6 +13,7 @@ const ALL_IDS: HostTemplateId[] = [
   "chatgpt",
   "mistral",
   "goose",
+  "slack",
   "cursor",
   "codex",
   "copilot",
@@ -26,9 +27,7 @@ const ALL_IDS: HostTemplateId[] = [
 
 describe("seedHostTemplate", () => {
   it("exposes one HOST_TEMPLATES entry per id", () => {
-    expect(HOST_TEMPLATES.map((t) => t.id).sort()).toEqual(
-      [...ALL_IDS].sort(),
-    );
+    expect(HOST_TEMPLATES.map((t) => t.id).sort()).toEqual([...ALL_IDS].sort());
   });
 
   it("seeds a usable config for every template id and theme", () => {
@@ -74,10 +73,10 @@ describe("seedHostTemplate", () => {
     const variables = (config.hostContext as any).styles.variables;
 
     expect(variables["--color-text-primary"]).toBe(
-      "light-dark(#3f434b, #ffffff)",
+      "light-dark(#3f434b, #ffffff)"
     );
     expect(variables["--color-background-primary"]).toBe(
-      "light-dark(#ffffff, #22252a)",
+      "light-dark(#ffffff, #22252a)"
     );
   });
 
@@ -99,6 +98,54 @@ describe("seedHostTemplate", () => {
       resourcePrefersBorder: false,
       downloadFile: false,
       requestTeardown: false,
+    });
+  });
+
+  it("keeps Slack HostContext and capabilities faithful to the raw probe", () => {
+    const config = seedHostTemplate("slack", { theme: "dark" });
+    const apps = config.mcpProfile?.apps as any;
+
+    expect(config.clientCapabilities).toEqual({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app"],
+        },
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toEqual({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+    });
+    expect((config.hostContext as any).theme).toBe("dark");
+    expect((config.hostContext as any).containerDimensions).toEqual({
+      maxWidth: 598,
+    });
+    expect((config.hostContext as any).styles.variables["--font-sans"]).toBe(
+      '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif'
+    );
+    expect(
+      (config.hostContext as any).styles.variables["--color-background-primary"]
+    ).toBe("#1a1d21");
+    expect(
+      (config.hostContext as any).styles.variables["--color-text-primary"]
+    ).toBe("#f8f8f8");
+    expect(apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Slack",
+      version: "1.0.0",
+    });
+    expect(apps?.compatRuntime).toEqual({ openaiApps: false });
+    expect(apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      toolInfo: true,
+      openLinks: true,
+      serverTools: true,
+      serverResources: true,
+      logging: true,
+      updateModelContext: false,
+      message: false,
+      sandboxPermissions: false,
     });
   });
 

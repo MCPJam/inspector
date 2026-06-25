@@ -11,6 +11,7 @@ import {
   N8N_HOST_STYLE,
   NOTION_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
+  SLACK_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
   getHostCapabilitiesForStyle,
@@ -27,6 +28,7 @@ describe("host-styles registry", () => {
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
     expect(findHostStyle("goose")).toBe(GOOSE_HOST_STYLE);
+    expect(findHostStyle("slack")).toBe(SLACK_HOST_STYLE);
     expect(findHostStyle("copilot")).toBe(COPILOT_HOST_STYLE);
     expect(findHostStyle("codex")).toBe(CODEX_HOST_STYLE);
     expect(findHostStyle("claude-code")).toBe(CLAUDE_CODE_HOST_STYLE);
@@ -53,6 +55,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("claude")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
     expect(isKnownHostStyleId("goose")).toBe(true);
+    expect(isKnownHostStyleId("slack")).toBe(true);
     expect(isKnownHostStyleId("copilot")).toBe(true);
     expect(isKnownHostStyleId("codex")).toBe(true);
     expect(isKnownHostStyleId("claude-code")).toBe(true);
@@ -70,6 +73,7 @@ describe("host-styles registry", () => {
     expect(ids).toContain("claude");
     expect(ids).toContain("chatgpt");
     expect(ids).toContain("goose");
+    expect(ids).toContain("slack");
     expect(ids).toContain("copilot");
     expect(ids).toContain("codex");
     expect(ids).toContain("claude-code");
@@ -81,6 +85,8 @@ describe("host-styles registry", () => {
     expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
     expect(ids.indexOf("mistral")).toBeLessThan(ids.indexOf("goose"));
+    expect(ids.indexOf("goose")).toBeLessThan(ids.indexOf("slack"));
+    expect(ids.indexOf("slack")).toBeLessThan(ids.indexOf("cursor"));
     // Copilot ships after Cursor (registration order in BUILT_IN_HOST_STYLES).
     expect(ids.indexOf("chatgpt")).toBeLessThan(ids.indexOf("copilot"));
     expect(ids.indexOf("copilot")).toBeLessThan(ids.indexOf("codex"));
@@ -147,13 +153,13 @@ describe("host-styles registry", () => {
     // Critical: we don't want unknown ids to silently impersonate Claude's
     // capability blob. The honest fallback is "no claims."
     expect(getHostCapabilitiesForStyle("does-not-exist")).toBe(
-      SPEC_DEFAULT_HOST_CAPABILITIES,
+      SPEC_DEFAULT_HOST_CAPABILITIES
     );
     expect(getHostCapabilitiesForStyle(null)).toBe(
-      SPEC_DEFAULT_HOST_CAPABILITIES,
+      SPEC_DEFAULT_HOST_CAPABILITIES
     );
     expect(getHostCapabilitiesForStyle(undefined)).toBe(
-      SPEC_DEFAULT_HOST_CAPABILITIES,
+      SPEC_DEFAULT_HOST_CAPABILITIES
     );
   });
 
@@ -162,7 +168,7 @@ describe("host-styles registry", () => {
     // host-style switching is cosmetic only and provides no signal to
     // widget authors testing cross-client.
     expect(getHostCapabilitiesForStyle("claude")).not.toEqual(
-      getHostCapabilitiesForStyle("chatgpt"),
+      getHostCapabilitiesForStyle("chatgpt")
     );
   });
 
@@ -177,6 +183,15 @@ describe("host-styles registry", () => {
     });
   });
 
+  it("keeps Slack to its probed MCP Apps advertised surface", () => {
+    expect(getHostCapabilitiesForStyle("slack")).toEqual({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+    });
+  });
+
   it("resolves Goose shell tokens to concrete colors for the active theme", () => {
     const lightVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("light");
     const darkVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("dark");
@@ -186,8 +201,8 @@ describe("host-styles registry", () => {
     expect(darkVars["--color-background-primary"]).toBe("#22252a");
     expect(
       Object.values(darkVars).some(
-        (value) => typeof value === "string" && value.includes("light-dark("),
-      ),
+        (value) => typeof value === "string" && value.includes("light-dark(")
+      )
     ).toBe(false);
   });
 
@@ -196,7 +211,7 @@ describe("host-styles registry", () => {
     const { CLAUDE_HOST_STYLE, registerHostStyle } = await import("..");
 
     expect(() => registerHostStyle(CLAUDE_HOST_STYLE)).toThrow(
-      /already registered/,
+      /already registered/
     );
   });
 });

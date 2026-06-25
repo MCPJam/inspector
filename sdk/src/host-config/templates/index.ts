@@ -40,3 +40,8 @@ export {
   GOOSE_PLATFORM,
   getGooseStyleVariables,
 } from "./goose-style.js";
+export {
+  SLACK_FONT_CSS,
+  SLACK_PLATFORM,
+  getSlackStyleVariables,
+} from "./slack-style.js";

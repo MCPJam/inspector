@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type {
@@ -46,7 +47,7 @@ interface HostFocusPanelProps {
   onHostDisplayNameChange: (value: string) => void;
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   onClose: () => void;
@@ -74,6 +75,7 @@ export function HostFocusPanel({
   // identity-row indicator follows the new tag so the input still lights
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
+  const logoSrc = getChatboxHostLogo(draft.hostStyle, draft.chatUiOverride);
 
   // Tools is GA; Computer is flag-gated (or shown when already attached).
   const visibleTabs = useVisibleHostFocusTabs(draft);
@@ -88,11 +90,12 @@ export function HostFocusPanel({
         hostDisplayName={hostDisplayName}
         onHostDisplayNameChange={onHostDisplayNameChange}
         hasNameIssue={behaviorIssues.has("hostDisplayName")}
+        logoSrc={logoSrc}
       />
       <header
         className={cn(
           hostFocusShellHeaderRowClass,
-          "items-stretch gap-2 py-1 sm:items-center",
+          "items-stretch gap-2 py-1 sm:items-center"
         )}
       >
         <HostFocusTabBar

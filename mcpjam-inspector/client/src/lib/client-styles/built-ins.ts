@@ -14,6 +14,7 @@ import perplexityLogo from "/perplexity_logo.svg";
 import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -52,6 +53,12 @@ import {
   GOOSE_PLATFORM,
   getGooseStyleVariables,
 } from "@/config/goose-client-context";
+import {
+  SLACK_CHAT_BACKGROUND,
+  SLACK_FONT_CSS,
+  SLACK_PLATFORM,
+  getSlackStyleVariables,
+} from "@/config/slack-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
@@ -277,6 +284,34 @@ export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
   widgetDisplayModeRequests: "accept",
 };
 
+/**
+ * Slack MCP client surface captured on 2026-06-24. Slack renders MCP Apps and
+ * exposes HostContext/tool notifications, but the probed `ui/initialize`
+ * hostCapabilities advertised only openLinks, serverTools, serverResources,
+ * and logging. No `window.openai` surface was present in the iframe.
+ */
+export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen"],
+  toolInputPartial: true,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+  downloadFile: false,
+  requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
+};
+
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
 // when behavior matters, and refine as the inspector's enforcement layer
@@ -452,6 +487,32 @@ export const GOOSE_HOST_STYLE: HostStyleDefinition = {
     family: "chatgpt",
     resolveChatBackground: (theme) => GOOSE_CHAT_BACKGROUND[theme],
     loadingIndicator: GooseIconIndicator,
+  },
+};
+
+/**
+ * Slack host style. Captured from the Slack MCP client: base MCP advertises
+ * `io.modelcontextprotocol/ui`, the iframe completes `ui/initialize`, and
+ * the host provides Slack-Lato style variables. It does not expose
+ * `window.openai`, so Apps SDK widgets need an MCP Apps bridge or fallback.
+ */
+export const SLACK_HOST_STYLE: HostStyleDefinition = {
+  id: "slack",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: SLACK_PLATFORM,
+    fontCss: SLACK_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_SLACK_SURFACE,
+    resolveStyleVariables: getSlackStyleVariables,
+  },
+  chatUi: {
+    label: "Slack",
+    shortLabel: "Slack-style host",
+    pickerDescription: "Slack MCP client",
+    logoSrc: slackLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => SLACK_CHAT_BACKGROUND[theme],
+    loadingIndicator: CodexShineIndicator,
   },
 };
 
@@ -847,6 +908,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CHATGPT_HOST_STYLE,
   MISTRAL_HOST_STYLE,
   GOOSE_HOST_STYLE,
+  SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,

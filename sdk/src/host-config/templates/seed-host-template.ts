@@ -32,6 +32,7 @@ import {
   GOOSE_HOST_STYLE_VARIABLES,
   GOOSE_PLATFORM,
 } from "./goose-style.js";
+import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -239,6 +240,7 @@ export const HOST_TEMPLATE_IDS = [
   "chatgpt",
   "mistral",
   "goose",
+  "slack",
   "cursor",
   "codex",
   "copilot",
@@ -435,14 +437,20 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          clientInfo: { name: "mcpjam-inspector", version: (opts?.appVersion ?? DEFAULT_SEED_APP_VERSION) },
+          clientInfo: {
+            name: "mcpjam-inspector",
+            version: opts?.appVersion ?? DEFAULT_SEED_APP_VERSION,
+          },
         },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Views that branch on hostInfo.name === "MCPJam"
           // (e.g. dev-tool-aware widgets) need this to identify the host.
           uiInitialize: {
-            hostInfo: { name: "MCPJam", version: (opts?.appVersion ?? DEFAULT_SEED_APP_VERSION) },
+            hostInfo: {
+              name: "MCPJam",
+              version: opts?.appVersion ?? DEFAULT_SEED_APP_VERSION,
+            },
           },
           // Vendor compat-runtime shims the inspector injects into widget
           // HTML before sandboxing. MCPJam intentionally exposes
@@ -1117,9 +1125,120 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     },
   },
   {
+    id: "slack",
+    label: "Slack",
+    description:
+      "Slack MCP client. MCP Apps rendering, no OpenAI compatibility shim.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "slack",
+        // Slack's MCP client is model-provider agnostic toward the server.
+        // Use MCPJam's smallest hosted model so simulated chats run before a
+        // user wires their own Slack-shaped model stack.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+
+      // Captured from Slack on 2026-06-24: the base MCP initialize path
+      // advertises only the MCP UI extension. Preserve that exact surface.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
+
+      // Captured from Slack's `ui/initialize` response. No
+      // updateModelContext/message/downloadFile claims were present.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+      };
+
+      // Per-resource environment context Slack exposes to MCP apps.
+      // `toolInfo` is omitted here because it is per-invocation and filled by
+      // the renderer when the matrix enables it.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { maxWidth: 598 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        platform: "web",
+        deviceCapabilities: { touch: false, hover: true },
+        styles: {
+          variables: getSlackStyleVariables(theme),
+          css: { fonts: SLACK_FONT_CSS },
+        },
+      };
+
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: { name: "Slack MCP Client", version: "1.0.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "Slack", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              // Slack proxies the View with the resource-declared CSP payload
+              // in the sandbox URL. Do not add a host-side restrictTo
+              // allowlist: that would intersect with the View declaration and
+              // can only make widgets fail under MCPJam-as-Slack.
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              // The captured iframe had no `allow` attribute, so do not grant
+              // resource-declared permissions until Slack is observed doing so.
+              allow: {},
+            },
+            // Captured iframe sandbox:
+            // `allow-scripts allow-same-origin allow-forms`. The first two
+            // are the renderer baseline; `allow-forms` is Slack's addition.
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
     id: "cursor",
     label: "Cursor",
-    description: "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
+    description:
+      "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
@@ -1563,8 +1682,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "n8n",
     label: "n8n",
-    description:
-      "n8n MCP Client Tool. Tools-only client, no widget rendering.",
+    description: "n8n MCP Client Tool. Tools-only client, no widget rendering.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "n8n",
@@ -1694,10 +1812,9 @@ export const DEFAULT_HOST_TEMPLATE_ID: HostTemplateId = "mcpjam";
 
 export function seedFromHostTemplate(
   id: HostTemplateId,
-  opts?: SeedHostTemplateOptions,
+  opts?: SeedHostTemplateOptions
 ): SeededHostConfigInput {
-  const template =
-    HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
+  const template = HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
   return template.seed(opts);
 }
 
