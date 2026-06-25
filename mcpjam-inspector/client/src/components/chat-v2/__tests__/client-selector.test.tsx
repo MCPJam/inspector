@@ -88,7 +88,7 @@ describe("ClientSelector", () => {
     mockResolveHostLogoByDisplayName.mockReturnValue(null);
   });
 
-  it("keeps Add host reachable by constraining the client list height", async () => {
+  it("keeps Add host reachable by constraining the host list height", async () => {
     const user = userEvent.setup();
     const { container } = renderClientSelector();
 
@@ -119,7 +119,7 @@ describe("ClientSelector", () => {
     expect(screen.getByTestId("client-add-host")).toBeInTheDocument();
   });
 
-  it("only shows the Global badge when comparing multiple clients", async () => {
+  it("only shows the Global badge when comparing multiple hosts", async () => {
     const user = userEvent.setup();
     const { rerender } = renderClientSelector();
 

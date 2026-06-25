@@ -949,19 +949,20 @@ export function PlaygroundMain({
   // Seed backstop: the global host bar (which normally auto-creates the
   // default "MCPJam" host for empty projects) is hidden on the playground,
   // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
-  // + a ref so it fires at most once and never duplicates.
-  const playgroundSeededHostRef = useRef(false);
+  // + a per-project ref so it fires at most once per empty project and never
+  // blocks a different empty project from getting its own default host.
+  const playgroundSeededProjectIdsRef = useRef(new Set<string>());
   useEffect(() => {
     if (
       !isConvexAuthenticated ||
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
-      playgroundSeededHostRef.current
+      playgroundSeededProjectIdsRef.current.has(multiHostProjectId)
     ) {
       return;
     }
-    playgroundSeededHostRef.current = true;
+    playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
     createPlaygroundHost({
       projectId: multiHostProjectId,
       name: "MCPJam",
@@ -971,7 +972,7 @@ export function PlaygroundMain({
         setPreviewedHostId(hostId);
       })
       .catch(() => {
-        playgroundSeededHostRef.current = false;
+        playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
       });
   }, [
     isConvexAuthenticated,

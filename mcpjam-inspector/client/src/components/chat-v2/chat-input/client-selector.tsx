@@ -59,7 +59,7 @@ const QUICK_ADD_VISIBLE = 6;
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
  * selector's prop shape so the two chips behave the same way: click a row to
- * switch the single lead, or flip "Multiple clients" to stack a compare
+ * switch the single lead, or flip "Multiple hosts" to stack a compare
  * lineup. Host compare and model compare stay mutually exclusive — that's
  * enforced by the parent's `onMultiHostEnabledChange` /
  * `onMultiModelEnabledChange`, not here.
@@ -73,7 +73,7 @@ export interface ClientSelectorData {
   /** Persisted compare lineup (from `usePersistedHost`). */
   selectedHostIds: string[];
   multiHostEnabled: boolean;
-  /** Switch the single lead client (not comparing). */
+  /** Switch the single lead host (not comparing). */
   onHostChange: (hostId: string) => void;
   onSelectedHostIdsChange: (ids: string[]) => void;
   onMultiHostEnabledChange: (enabled: boolean) => void;
@@ -95,7 +95,7 @@ interface ClientSelectorProps extends ClientSelectorData {
 }
 
 function compactHostLabel(name: string): string {
-  return name || "Client";
+  return name || "Host";
 }
 
 export function ClientSelector({
@@ -199,7 +199,7 @@ export function ClientSelector({
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
   const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
-  const leadHostName = leadHost?.name ?? "Select client";
+  const leadHostName = leadHost?.name ?? "Select host";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
     : null;
@@ -346,7 +346,7 @@ export function ClientSelector({
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {isComparing ? "Clients" : "Client"}
+            {isComparing ? "Hosts" : "Host"}
           </TooltipContent>
         </Tooltip>
 
@@ -360,7 +360,7 @@ export function ClientSelector({
         >
           <Command shouldFilter={true}>
             <CommandInput
-              placeholder="Search clients"
+              placeholder="Search hosts"
               value={search}
               onValueChange={setSearch}
             />
@@ -369,12 +369,12 @@ export function ClientSelector({
               <>
                 <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
                   <span className="text-xs text-muted-foreground">
-                    Multiple clients
+                    Multiple hosts
                   </span>
                   <Switch
                     checked={multiHostEnabled}
                     onCheckedChange={handleToggleMultiHost}
-                    aria-label="Compare multiple clients"
+                    aria-label="Compare multiple hosts"
                     disabled={disabled || isLoading}
                   />
                 </div>
@@ -382,7 +382,7 @@ export function ClientSelector({
                 {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
                   <div
                     className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-                    title="First chip is the lead client. Click a chip to promote it."
+                    title="First chip is the lead host. Click a chip to promote it."
                   >
                     {effectiveSelectedHostIds.map((hostId, index) => {
                       const host = hostsById.get(hostId);
@@ -451,7 +451,7 @@ export function ClientSelector({
                 overflowY: "auto",
               }}
             >
-              <CommandEmpty>No matching clients.</CommandEmpty>
+              <CommandEmpty>No matching hosts.</CommandEmpty>
               {hosts.map((host) => {
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
@@ -525,7 +525,7 @@ export function ClientSelector({
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="right">
-                      You can compare up to {maxSelectedHosts} clients at once
+                      You can compare up to {maxSelectedHosts} hosts at once
                     </TooltipContent>
                   </Tooltip>
                 ) : (
@@ -569,8 +569,8 @@ export function ClientSelector({
                 {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (
                   <button
                     type="button"
-                    aria-label="More clients"
-                    title="More clients"
+                    aria-label="More hosts"
+                    title="More hosts"
                     data-testid="client-quick-add-more"
                     onClick={() => openCreateWithTemplate(undefined)}
                     className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

@@ -570,6 +570,49 @@ describe("PlaygroundMain — multi-host render path", () => {
     });
   });
 
+  it("seeds a default MCPJam host for each empty project", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-first-mcpjam",
+        hostConfigId: "h-first-mcpjam-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-mcpjam",
+        hostConfigId: "h-second-mcpjam-config",
+      });
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "default",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId("default")).toBe("h-first-mcpjam");
+    });
+
+    rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "second",
+          name: "MCPJam",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(readPreviewedHostId("second")).toBe("h-second-mcpjam");
+    });
+    expect(mockCreateHost).toHaveBeenCalledTimes(2);
+  });
+
   it("renders one card per resolved host in a multi-host grid", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
