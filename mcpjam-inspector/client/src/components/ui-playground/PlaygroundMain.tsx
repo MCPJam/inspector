@@ -108,7 +108,6 @@ import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -2549,39 +2548,6 @@ export function PlaygroundMain({
     ],
   );
 
-  // Phase 4 lightweight mutual exclusion (see comment on
-  // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
-  // via `onMultiHostEnabledChange`. After the "lift state ownership"
-  // fix the picker no longer calls `usePersistedHost` itself — both
-  // the toggle value and its setter come from THIS component's single
-  // hook instance, so any flip propagates without storage events.
-  const handleMultiHostEnabledChange = useCallback(
-    (enabled: boolean) => {
-      setMultiHostEnabled(enabled);
-      if (enabled && multiModelEnabled) {
-        setMultiModelEnabled(false);
-      }
-    },
-    [setMultiHostEnabled, multiModelEnabled, setMultiModelEnabled]
-  );
-
-  // Lead-host promotion: the picker delegates the "make this host the
-  // lead" gesture to the parent so the canonical write
-  // (`replaceLeadHostId(projectId, hostId)`) targets the SAME project
-  // id as `usePersistedHost` above. If the picker called
-  // `replaceLeadHostId` itself with a different project id (e.g.
-  // `activeProjectId` while the grid was scoped to `convexProjectId`),
-  // the storage scope would split and the grid wouldn't see the
-  // promotion. See `selected-host-storage.ts` for the canonical-write
-  // contract.
-  const handlePromoteLead = useCallback(
-    (hostId: string) => {
-      if (!multiHostProjectId) return;
-      replaceLeadHostId(multiHostProjectId, hostId);
-    },
-    [multiHostProjectId],
-  );
-
   const handleRequireToolApprovalChange = useCallback(
     (enabled: boolean) => {
       setRequireToolApproval(enabled);
@@ -2845,23 +2811,6 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
-    // Client chip in the chat input toolbar (sibling to the model chip).
-    // Replaces the standalone "Compare" button that used to live in the
-    // playground header. Shared sessions can't switch hosts, so leave it off.
-    clientSelector: isSharedSession
-      ? undefined
-      : {
-          hosts: hostList,
-          projectId: multiHostProjectId,
-          currentHostId: previewedHostId ?? null,
-          selectedHostIds,
-          multiHostEnabled,
-          onHostChange: (hostId: string) => setPreviewedHostId(hostId),
-          onSelectedHostIdsChange: setSelectedHostIds,
-          onMultiHostEnabledChange: handleMultiHostEnabledChange,
-          onPromoteLead: handlePromoteLead,
-          enableMultiHost: canEnableMultiHost,
-        },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
