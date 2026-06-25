@@ -285,7 +285,7 @@ export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
 };
 
 /**
- * Slack MCP client surface captured on 2026-06-24. Slack renders MCP Apps and
+ * Slackbot MCP host surface captured on 2026-06-24. Slackbot renders MCP Apps and
  * exposes HostContext/tool notifications, but the probed `ui/initialize`
  * hostCapabilities advertised only openLinks, serverTools, serverResources,
  * and logging. No `window.openai` surface was present in the iframe.
@@ -491,7 +491,7 @@ export const GOOSE_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
- * Slack host style. Captured from the Slack MCP client: base MCP advertises
+ * Slackbot host style. Captured from the Slackbot MCP host: base MCP advertises
  * `io.modelcontextprotocol/ui`, the iframe completes `ui/initialize`, and
  * the host provides Slack-Lato style variables. It does not expose
  * `window.openai`, so Apps SDK widgets need an MCP Apps bridge or fallback.
@@ -506,9 +506,9 @@ export const SLACK_HOST_STYLE: HostStyleDefinition = {
     resolveStyleVariables: getSlackStyleVariables,
   },
   chatUi: {
-    label: "Slack",
-    shortLabel: "Slack-style host",
-    pickerDescription: "Slack MCP client",
+    label: "Slackbot",
+    shortLabel: "Slackbot-style host",
+    pickerDescription: "Slackbot MCP host",
     logoSrc: slackLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => SLACK_CHAT_BACKGROUND[theme],
