@@ -15,7 +15,7 @@
 
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
-import type { PinnedToolCall } from "@/shared/prompt-turns";
+import type { PinnedToolCall } from "@/shared/steps";
 import type { BrowserSessionContext } from "../browser-session-context";
 
 /** Stable error token for "the pinned turn's server isn't connected to this run". */
@@ -47,7 +47,8 @@ export interface RunPinnedTurnParams {
   resolvedServerKey: string | undefined;
   mcpClientManager: MCPClientManager;
   /** Shared render path — records an explicit `no_ui_resource` observation for
-   *  a tool that declares no UI resource (so a render check fails closed). */
+   *  a tool that declares no UI resource (so a render check fails closed). It
+   *  also replays any active widget-check group matching the pinned tool. */
   browser: Pick<BrowserSessionContext, "renderPinnedToolResult">;
   /** Turn index, used to build a unique synthetic toolCallId. */
   promptIndex: number;
@@ -57,6 +58,12 @@ export interface PinnedTurnResult {
   /** The pinned call, recorded only when an MCP call actually happened
    *  (success or error). `null` for a not-connected server — no phantom call. */
   toolCall: ToolCall | null;
+  /** Synthetic id shared by the live SSE tool events and widget render. */
+  toolCallId?: string;
+  /** Raw MCP result for live streaming; synthetic error text when the call threw. */
+  toolResult?: unknown;
+  /** True when `toolResult` represents a failed tool execution. */
+  toolResultIsError?: boolean;
   /** Tool failure (content-error / protocol-error), threaded to the transcript
    *  so `noToolErrors` gates correctly even though there is no trace. */
   toolError?: ToolErrorRecord;
@@ -73,7 +80,7 @@ export interface PinnedTurnResult {
  * closed without an observation — the verdict we want).
  */
 export async function runPinnedTurn(
-  params: RunPinnedTurnParams,
+  params: RunPinnedTurnParams
 ): Promise<PinnedTurnResult> {
   const { pinned, resolvedServerKey, mcpClientManager, browser, promptIndex } =
     params;
@@ -106,11 +113,12 @@ export async function runPinnedTurn(
   let rawResult: unknown;
   let toolCallOk = false;
   let toolError: ToolErrorRecord | undefined;
+  const toolCallId = `pinned-${promptIndex}-${Date.now()}`;
   try {
     rawResult = await mcpClientManager.executeTool(
       resolvedServerKey,
       pinned.toolName,
-      args,
+      args
     );
     const isError =
       !!rawResult &&
@@ -135,7 +143,7 @@ export async function runPinnedTurn(
 
   if (toolCallOk) {
     await browser.renderPinnedToolResult({
-      toolCallId: `pinned-${promptIndex}-${Date.now()}`,
+      toolCallId,
       toolName: pinned.toolName,
       serverId: resolvedServerKey,
       toolInput: args,
@@ -149,10 +157,22 @@ export async function runPinnedTurn(
       : null;
   const summary = toolCallOk
     ? `Pinned tool call ${pinned.toolName} executed`
-    : `Pinned tool call ${pinned.toolName} failed: ${toolError?.message ?? "unknown error"}`;
+    : `Pinned tool call ${pinned.toolName} failed: ${
+        toolError?.message ?? "unknown error"
+      }`;
 
   return {
     toolCall,
+    toolCallId,
+    toolResult:
+      rawResult ??
+      (toolError
+        ? {
+            error: toolError.message ?? "Pinned tool call failed",
+            kind: toolError.kind,
+          }
+        : undefined),
+    ...(toolError ? { toolResultIsError: true } : {}),
     ...(toolError ? { toolError } : {}),
     summary,
   };

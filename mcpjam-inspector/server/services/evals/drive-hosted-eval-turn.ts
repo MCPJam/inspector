@@ -32,8 +32,11 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
+import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
-import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
+import { runAssistantTurn } from "../../utils/assistant-turn.js";
+import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
+import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
   MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
@@ -47,11 +50,6 @@ import {
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
 import type { UsageTotals } from "./types";
-import {
-  extractFinalAssistantMessage,
-  extractToolErrors,
-  type ToolErrorRecord,
-} from "@/shared/eval-matching";
 
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 
@@ -91,6 +89,10 @@ export interface HostedEvalTurnSinks {
  *  turn's accumulators (the stream runner's snapshot/step-delta math). */
 export interface HostedEvalTurnSinkContext {
   promptIndex: number;
+  /** This turn's user prompt. Distinct from the authored turn for widget
+   *  follow-up turns (a `ui/message` the widget sent), so SSE `turn_start`
+   *  labels the actual message rather than the authored prompt. */
+  prompt: string;
   /** Iteration-cumulative usage snapshot taken at turn start. */
   baselineUsage: {
     inputTokens: number;
@@ -107,6 +109,11 @@ export interface HostedEvalTurnSinkContext {
 export interface DriveHostedEvalTurnParams {
   promptIndex: number;
   prompt: string;
+  /** This turn's scripted widget interaction checks. Armed on the harness
+   *  before the turn runs so a group replays when its widget mounts; a group
+   *  whose widget never renders flushes to `browser.scriptedCheckFailures`.
+   *  The runner's post-loop verdict gate reads those failures. */
+  widgetChecks?: ScriptedWidgetCheck[];
   browser: BrowserSessionContext;
   prepared: PrepareChatV2Result;
   modelDefinition: ModelDefinition;
@@ -146,17 +153,18 @@ export interface DriveHostedEvalTurnParams {
     capturedSpans: EvalTraceSpan[];
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
-    // Per-turn signals for per-turn checks (PromptTurn.checks), indexed by
-    // promptIndex parallel to toolsCalledByPrompt. Populated on turn success;
-    // a turn that fails before capture leaves its slot unset (fail-closed).
-    assistantMessageByPrompt: (string | undefined)[];
-    toolErrorsByPrompt: ToolErrorRecord[][];
   };
   buildSinks?: (ctx: HostedEvalTurnSinkContext) => HostedEvalTurnSinks;
 }
 
 const truncateError = (message: string): string =>
   message.length > 500 ? message.substring(0, 497) + "..." : message;
+
+/** Cap on widget `ui/message` follow-up turns driven **per authored step** (the
+ *  step-executor resets this budget for each step's `drainAndDriveFollowUps`
+ *  loop). Bounds a widget that re-sends a message on every render from looping
+ *  forever. Consumed by the executor (R3); this module only exports the value. */
+export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams
@@ -174,6 +182,11 @@ export async function driveHostedEvalTurn(
   // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
   // this turn.
   browser.setActivePromptIndex(promptIndex);
+  // Arm this turn's per-widget interaction checks. The harness replays a group
+  // when its widget mounts (from a model tool call's result); a group whose
+  // widget never renders flushes to `scriptedCheckFailures`. The runner's
+  // post-loop verdict gate reads those failures.
+  browser.setActiveWidgetChecks(params.widgetChecks ?? []);
 
   // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
   // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
@@ -191,6 +204,7 @@ export async function driveHostedEvalTurn(
   // failed turn still persists the user side of the transcript (Cursor
   // review round-2 — the transcript stays honest about WHICH turn errored).
   acc.messageHistory.push({ role: "user", content: params.prompt });
+  const messageCountBeforeTurn = acc.messageHistory.length;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -199,11 +213,18 @@ export async function driveHostedEvalTurn(
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
   };
 
-  // Per-turn tool-call accumulator, pushed up front (the stream runner's
-  // `onToolCall` populates it live; the canonical post-turn reconcile below
-  // replaces the contents either way).
-  const promptToolsCalled: ToolCall[] = [];
-  acc.toolsCalledByPrompt.push(promptToolsCalled);
+  // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
+  // rather than `push()` so a widget `ui/message` follow-up turn — which
+  // reuses its parent authored turn's `promptIndex` (it is NOT a new authored
+  // prompt) — folds INTO the parent's bucket instead of orphaning its calls at
+  // a fresh slot the grader (`evaluateMultiTurnResults`, which maps only over
+  // authored `promptTurns`) never reads. `promptToolsBaseline` marks where the
+  // parent's already-committed calls end so the post-turn reconcile below
+  // replaces only THIS turn's live entries (the stream runner's `onToolCall`
+  // populates the array live) without wiping the parent's.
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
+    []);
+  const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
   // mapper can always call `sinks.onTurnFailure?.()` safely.
@@ -273,6 +294,7 @@ export async function driveHostedEvalTurn(
     sinks =
       params.buildSinks?.({
         promptIndex,
+        prompt: params.prompt,
         baselineUsage,
         traceCtx,
         promptToolsCalled,
@@ -299,17 +321,9 @@ export async function driveHostedEvalTurn(
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
 
-  let turnResult: Awaited<ReturnType<typeof runUnifiedAssistantTurn>>;
+  let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
-    turnResult = await runUnifiedAssistantTurn({
-      // Hosted runtime: routing (endpoint, extra body fields, harness) is an
-      // explicit part of the discriminator, not hidden behind a string.
-      runtime: {
-        kind: "hosted",
-        endpointPath: params.endpointPath,
-        extraBodyFields: mergedExtraBodyFields,
-        ...(params.harness ? { harness: params.harness } : {}),
-      },
+    turnResult = await runAssistantTurn({
       messages: inputMessages,
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
@@ -317,7 +331,15 @@ export async function driveHostedEvalTurn(
       // payload, so override here so backend wallet/quota lookup keys match
       // what live chat sends.
       modelDefinition: { ...params.modelDefinition, id: params.modelId },
-      systemPrompt: prepared.enhancedSystemPrompt,
+      // PR2 (flagged): append recorded model-visible widget interactions to the
+      // system prompt so the model reasons over them (system prompt only — no
+      // transcript/matcher/persistence impact; mirrors the local path).
+      systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
+        ? withWidgetContextSystemPrompt(
+            prepared.enhancedSystemPrompt,
+            browser.browserInteractionSteps
+          )
+        : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
         ? { temperature: prepared.resolvedTemperature }
         : {}),
@@ -337,18 +359,20 @@ export async function driveHostedEvalTurn(
       // requireToolApproval host (it can't do interactive approval yet) while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
-      // `harness` moved to `runtime` above; `requireToolApproval` + `projectId`
-      // stay top-level engine options (still harness-gated so emulated evals
-      // remain byte-identical — runHarnessTurn needs projectId for the host's
-      // computer; authHeader rides authContext.token).
       ...(params.harness
         ? {
+            harness: params.harness,
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
               : {}),
+            // runHarnessTurn needs projectId to resolve the host's computer
+            // (authHeader already rides authContext.token). Harness-gated so
+            // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
           }
         : {}),
+      endpointPath: params.endpointPath,
+      extraBodyFields: mergedExtraBodyFields,
       ...(abortSignal ? { abortSignal } : {}),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
@@ -422,25 +446,17 @@ export async function driveHostedEvalTurn(
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
   }
 
-  // Per-turn tool calls — rebuild from THIS turn's new messages only (the
-  // facade computes the slice once as `newMessages`, so prior turns' calls
-  // aren't double-counted). Replaces whatever the live `onToolCall` sink
-  // accumulated so the grader sees the canonical shape.
-  const newMessages = turnResult.newMessages;
+  // Per-turn tool calls — rebuild from the new messages only (the engine
+  // returns the FULL transcript; slice from `messageCountBeforeTurn` so
+  // prior turns' calls aren't double-counted). Replaces whatever the live
+  // `onToolCall` sink accumulated so the grader sees the canonical shape.
+  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
   const canonicalPromptToolsCalled = params.extractToolCalls(newMessages);
-  promptToolsCalled.length = 0;
+  // Truncate to the baseline (NOT 0) so a follow-up turn sharing the parent's
+  // `promptIndex` drops only its own live entries and keeps the parent's
+  // committed calls; for a fresh authored turn the baseline is 0 (unchanged).
+  promptToolsCalled.length = promptToolsBaseline;
   promptToolsCalled.push(...canonicalPromptToolsCalled);
-
-  // Per-turn signals for per-turn checks — same capture the local runners do,
-  // so the shared verdict helper evaluates PromptTurn.checks on hosted evals
-  // too. This turn's assistant text + tool errors, scoped to this turn's new
-  // messages and spans (wrap tool spans + the engine's turnTrace spans).
-  acc.assistantMessageByPrompt[promptIndex] =
-    extractFinalAssistantMessage(newMessages);
-  acc.toolErrorsByPrompt[promptIndex] = extractToolErrors({
-    spans: [...traceCtx.recordedSpans, ...(turnResult.turnTrace?.spans ?? [])],
-    messages: newMessages as Array<{ role: string; content: unknown }>,
-  });
 
   // Roll the engine's transcript forward as the next turn's starting point.
   acc.messageHistory.length = 0;
@@ -520,5 +536,9 @@ export async function driveHostedEvalTurn(
   }
 
   sinks.onTurnSuccess?.();
+
+  // Widget `ui/message` follow-ups are drained + re-driven by the step-executor
+  // after EACH authored step (R3 consolidation — `drainAndDriveFollowUps`), so
+  // local and hosted share one loop policy. This helper drives exactly one turn.
   return { kind: "completed" };
 }

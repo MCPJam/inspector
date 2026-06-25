@@ -23,7 +23,21 @@
  */
 
 import { existsSync } from "fs";
-import type { Browser, BrowserContext, Page } from "playwright";
+import { mkdtemp, readFile, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import type {
+  Browser,
+  BrowserContext,
+  FrameLocator,
+  Locator,
+  Page,
+} from "playwright";
+import type {
+  ElementLocator,
+  ScriptedStep,
+  StepAssertion,
+} from "@/shared/scripted-steps";
 import {
   buildSandboxProxyWidgetCsp,
   sanitizeProxyDomain,
@@ -63,6 +77,10 @@ export interface WidgetRenderObservation {
   screenshotBase64?: string;
   consoleErrors?: string[];
   blockedRequests?: string[];
+  /** `ui/message` follow-ups a widget emitted DURING render (auto-send-on-
+   *  render). The runner drains these as model-continuation turns. Distinct
+   *  from render-time tool calls, which are not action results and are dropped. */
+  followUps?: string[];
   elapsedMs: number;
   ts: number;
 }
@@ -92,6 +110,20 @@ export interface WidgetToolCall {
   ok: boolean;
   error?: string;
   elapsedMs: number;
+  /**
+   * Raw MCP `CallToolResult` the server returned (success path only). Carried so
+   * the eval trace can render the widget call's output and so a model-visible
+   * call can be normalized into the model's context. Sanitized at the trace
+   * boundary; never sent to the model without the `_meta`/`structuredContent`
+   * scrub (see `scrubMetaAndStructuredContentFromToolResult`).
+   */
+  result?: unknown;
+  /**
+   * SEP-1865 `_meta.ui.visibility` for the called tool, resolved at dispatch.
+   * `undefined` ⇒ the spec default `["model", "app"]` (model-visible). An
+   * explicit `["app"]` marks a UI-only call that must NOT enter model context.
+   */
+  visibility?: Array<"model" | "app">;
 }
 
 export interface BrowserActionResult {
@@ -106,6 +138,31 @@ export interface BrowserActionResult {
    * or `"screenshot_budget_exceeded"` (per-iteration screenshot cap hit — widget
    * left mounted).
    */
+  note?: string;
+}
+
+/** Playwright frame selector for the single mounted widget iframe (host-page.ts
+ *  mounts it under `#mcpjam-widget-root`). */
+const WIDGET_IFRAME_SELECTOR = "#mcpjam-widget-root iframe";
+/** Per-step Playwright action/assertion timeout. Bounds a failing locator so a
+ *  bad selector fails the step instead of hanging the whole run. */
+const SCRIPTED_STEP_TIMEOUT_MS = 4_000;
+
+/** Result of one scripted interaction step (PR: Widget interaction checks). */
+export interface ScriptedStepResult {
+  step: ScriptedStep;
+  /** Action steps: executed without error. Assert steps: assertion held. */
+  ok: boolean;
+  /** Failure detail for a failed assertion or an action that errored. */
+  reason?: string;
+  /** base64 screenshot after the step settled. */
+  screenshotBase64?: string;
+  /** Widget→host tool calls drained DURING this step (caller accumulates). */
+  widgetToolCalls: WidgetToolCall[];
+  /** `ui/message` follow-up text the widget emitted DURING this step, in order. */
+  followUps: string[];
+  elapsedMs: number;
+  /** `"no_rendered_widget"` when no widget is mounted. */
   note?: string;
 }
 
@@ -192,6 +249,17 @@ export interface McpAppBrowserHarnessOptions {
     name: string,
     args: Record<string, unknown>
   ) => Promise<unknown>;
+  /**
+   * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
+   * the runner can route model-visible calls into model context and keep
+   * app-only calls (refresh buttons, form submits) out of it. Returning
+   * `undefined` (or omitting the option) means "unknown" — the runner treats
+   * that as the spec default `["model", "app"]`.
+   */
+  resolveToolVisibility?: (
+    serverId: string,
+    name: string
+  ) => Array<"model" | "app"> | undefined;
   /** Host capabilities advertised in ui/initialize. Sensible default below. */
   hostCapabilities?: Record<string, unknown>;
   hostInfo?: { name: string; version: string };
@@ -467,7 +535,33 @@ export class McpAppBrowserHarness {
   private toolCallBuffer: WidgetToolCall[] = [];
   /** In-flight app->host RPC count, so an action waits for slow tool calls. */
   private pendingRpcCount = 0;
+  /**
+   * `ui/message` follow-up text emitted by widgets, drained per action (like
+   * {@link toolCallBuffer}). The runner replays each as a new user turn.
+   */
+  private followUpBuffer: string[] = [];
   private screenshotCount = 0;
+  /**
+   * Temp dir Playwright writes this iteration's `.webm` replay into. Created in
+   * `ensureLaunched`; deleted in `dispose`. `null` until the harness launches
+   * (prompt-only iterations never record).
+   */
+  private videoDir: string | null = null;
+  /**
+   * Wall-clock (`Date.now()`) the replay recording started — stamped right after
+   * the recording context is created in `ensureLaunched`. The seam that lets the
+   * replay UI map an artifact's `ts` to a video position
+   * (`videoOffsetMs = step.ts - recordingStartedAt`). `null` until launch.
+   */
+  private recordingStartedAt: number | null = null;
+  /**
+   * Memoized terminal-artifact collection. `collectVideo()` runs at most once
+   * effectively: after the first call `videoCollected` is set and the cached
+   * `videoBytes` (bytes or `null`) is returned, so repeat calls and a later
+   * `dispose()` are safe no-ops. This is the idempotency the runner relies on.
+   */
+  private videoCollected = false;
+  private videoBytes: Buffer | null = null;
   /** SSRF guard's private-network tier (see {@link isBlockedEgressHost}). */
   private readonly blockPrivateNetworks: boolean;
 
@@ -480,6 +574,12 @@ export class McpAppBrowserHarness {
 
   hasRenderedWidget(): boolean {
     return this.mounted.size > 0;
+  }
+
+  /** Wall-clock the replay recording started, or `null` before launch. The
+   *  replay origin for per-artifact `videoOffsetMs` math. */
+  getRecordingStartedAt(): number | null {
+    return this.recordingStartedAt;
   }
 
   /**
@@ -556,13 +656,31 @@ export class McpAppBrowserHarness {
       throw err;
     }
 
+    // Record a `.webm` of the iteration for replay. Best-effort: if the temp
+    // dir can't be made we simply skip recording (collectVideo → null) rather
+    // than failing the whole render path.
+    try {
+      this.videoDir = await mkdtemp(join(tmpdir(), "mcpjam-eval-video-"));
+    } catch {
+      this.videoDir = null;
+    }
+
     // Fresh, locked-down context per iteration.
     this.context = await this.browser.newContext({
       viewport: this.viewport,
       deviceScaleFactor: 1,
       acceptDownloads: false,
       permissions: [],
+      // Replay video. `size` MUST match the viewport so the recording's pixel
+      // space lines up with the captured screenshots / click coordinates.
+      ...(this.videoDir
+        ? { recordVideo: { dir: this.videoDir, size: this.viewport } }
+        : {}),
     });
+    // Recording begins when the context is created — stamp the origin so the
+    // replay UI can map each artifact's `ts` to a video offset. Only meaningful
+    // when a video dir was set; harmless otherwise.
+    this.recordingStartedAt = Date.now();
 
     // COARSE default-deny egress backstop: loopback + configured origins
     // (static for the harness lifetime) + the mounted widget's declared CSP
@@ -649,6 +767,10 @@ export class McpAppBrowserHarness {
         // for slow tool calls instead of returning before they land (and
         // detaching the call from the action that triggered it).
         this.pendingRpcCount += 1;
+        const visibility = this.opts.resolveToolVisibility?.(
+          serverId,
+          payload.name
+        );
         try {
           const result = await this.opts.callTool(
             serverId,
@@ -660,6 +782,8 @@ export class McpAppBrowserHarness {
             args: payload.args,
             ok: true,
             elapsedMs: Date.now() - startedAt,
+            result,
+            ...(visibility ? { visibility } : {}),
           });
           return { result };
         } catch (err) {
@@ -670,11 +794,26 @@ export class McpAppBrowserHarness {
             ok: false,
             error,
             elapsedMs: Date.now() - startedAt,
+            ...(visibility ? { visibility } : {}),
           });
           return { error };
         } finally {
           this.pendingRpcCount -= 1;
         }
+      }
+    );
+
+    // app->host `ui/message` follow-ups funneled from the in-page bridge.
+    // Buffered like tool calls and drained per action; the runner turns each
+    // into a new model turn (the run-side analogue of chat's sendMessage).
+    await this.page.exposeBinding(
+      "__mcpjamHostFollowUp",
+      async (_source, payload: { widgetId: string; text: string }) => {
+        // Fail closed: ignore messages from a widget that isn't mounted.
+        if (!this.mounted.has(payload.widgetId)) return;
+        const text =
+          typeof payload.text === "string" ? payload.text.trim() : "";
+        if (text) this.followUpBuffer.push(text);
       }
     );
 
@@ -810,8 +949,12 @@ export class McpAppBrowserHarness {
       };
     }
 
-    // app->host calls during render are not part of an action result.
+    // Tool calls a widget makes during render are not part of an action
+    // result, so drop them. But `ui/message` follow-ups emitted during render
+    // (auto-send-on-render widgets) ARE intended model-continuation turns —
+    // carry them out on the observation so the runner can drain them.
     this.toolCallBuffer = [];
+    const renderFollowUps = this.followUpBuffer.splice(0);
 
     if (!pageResult.mounted) {
       await this.unmount(input.toolCallId);
@@ -891,6 +1034,7 @@ export class McpAppBrowserHarness {
       blockedRequests: this.blockedRequests.length
         ? [...this.blockedRequests]
         : undefined,
+      ...(renderFollowUps.length ? { followUps: renderFollowUps } : {}),
       elapsedMs: Date.now() - started,
     };
   }
@@ -1007,6 +1151,7 @@ export class McpAppBrowserHarness {
     }
     widget.actionCount += 1;
     this.toolCallBuffer = [];
+    this.followUpBuffer = [];
 
     await this.applyAction(input.action);
     await this.settle();
@@ -1028,6 +1173,214 @@ export class McpAppBrowserHarness {
       widgetToolCalls,
       elapsedMs: Date.now() - started,
     };
+  }
+
+  /* ---- scripted interaction steps (Widget interaction checks) ---- */
+
+  /**
+   * The mounted widget's iframe content as a Playwright FrameLocator. Scripted
+   * selectors resolve INSIDE this frame, not the host page. The widget is the
+   * single iframe under `#mcpjam-widget-root` (host-page.ts) and carries
+   * `allow-same-origin`, so its same-origin srcdoc content is reachable.
+   */
+  private widgetFrame(): FrameLocator {
+    return this.page!.frameLocator(WIDGET_IFRAME_SELECTOR);
+  }
+
+  /** Build a Locator from a semantic locator bundle. Reference points are tried
+   *  in priority order testId → role → text → css; `nth` disambiguates matches. */
+  private resolveScriptedLocator(target: ElementLocator): Locator {
+    const frame = this.widgetFrame();
+    let loc: Locator;
+    if (target.testId) {
+      loc = frame.getByTestId(target.testId);
+    } else if (target.role) {
+      loc = frame.getByRole(
+        target.role.role as Parameters<FrameLocator["getByRole"]>[0],
+        {
+          ...(target.role.name !== undefined ? { name: target.role.name } : {}),
+          ...(target.role.exact !== undefined
+            ? { exact: target.role.exact }
+            : {}),
+        }
+      );
+    } else if (target.text) {
+      loc = frame.getByText(target.text);
+    } else if (target.css) {
+      loc = frame.locator(target.css);
+    } else {
+      // Schema/validators reject empty locators; defensive guard.
+      throw new Error(
+        "locator must specify at least one of role/text/css/testId"
+      );
+    }
+    return target.nth !== undefined ? loc.nth(target.nth) : loc;
+  }
+
+  /**
+   * Replay one scripted step against the mounted widget. Action steps
+   * (click/type/key/scroll/wait) drive the widget; an `assert` step checks it
+   * and sets `ok=false` with a `reason` on failure. The caller accumulates
+   * `widgetToolCalls` across the run and passes them as `priorWidgetToolCalls`
+   * so a `widgetToolCalled` assertion can see a call an earlier step triggered.
+   */
+  async runScriptedStep(input: {
+    toolCallId: string;
+    step: ScriptedStep;
+    priorWidgetToolCalls?: WidgetToolCall[];
+  }): Promise<ScriptedStepResult> {
+    const started = Date.now();
+    const { step } = input;
+    const widget = this.mounted.get(input.toolCallId);
+    if (!widget || !this.page) {
+      return {
+        step,
+        ok: false,
+        reason: "no rendered widget",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: 0,
+        note: "no_rendered_widget",
+      };
+    }
+    widget.actionCount += 1;
+    this.toolCallBuffer = [];
+    this.followUpBuffer = [];
+
+    let ok = true;
+    let reason: string | undefined;
+    const timeout = SCRIPTED_STEP_TIMEOUT_MS;
+    try {
+      switch (step.kind) {
+        case "click": {
+          const loc = this.resolveScriptedLocator(step.target);
+          if (step.clickType === "double") await loc.dblclick({ timeout });
+          else if (step.clickType === "right")
+            await loc.click({ button: "right", timeout });
+          else await loc.click({ timeout });
+          break;
+        }
+        case "type": {
+          const loc = this.resolveScriptedLocator(step.target);
+          await loc.fill(step.text, { timeout });
+          break;
+        }
+        case "key":
+          await this.page.keyboard.press(step.key);
+          break;
+        case "scroll": {
+          const amount = (step.amount ?? 3) * 100;
+          await this.page.mouse.wheel(
+            0,
+            step.direction === "up" ? -amount : amount
+          );
+          break;
+        }
+        case "wait":
+          await this.page.waitForTimeout(step.ms);
+          break;
+        case "assert": {
+          const verdict = await this.evaluateAssertion(
+            step.assertion,
+            input.priorWidgetToolCalls ?? [],
+            timeout
+          );
+          ok = verdict.ok;
+          reason = verdict.reason;
+          break;
+        }
+      }
+    } catch (err) {
+      ok = false;
+      reason = err instanceof Error ? err.message : String(err);
+    }
+
+    await this.settle();
+    const stepCalls = await this.drainAfterAction();
+    // `ui/message` follow-ups land via a fire-and-forget binding; settle() +
+    // drainAfterAction give them time to arrive, then we splice this step's.
+    const followUps = this.followUpBuffer.splice(0);
+    let screenshotBase64: string | undefined;
+    try {
+      screenshotBase64 = await this.captureScreenshot();
+    } catch {
+      /* leave undefined */
+    }
+
+    return {
+      step,
+      ok,
+      ...(reason ? { reason } : {}),
+      screenshotBase64,
+      widgetToolCalls: stepCalls,
+      followUps,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  private async evaluateAssertion(
+    assertion: StepAssertion,
+    priorWidgetToolCalls: WidgetToolCall[],
+    timeout: number
+  ): Promise<{ ok: boolean; reason?: string }> {
+    switch (assertion.type) {
+      case "textVisible": {
+        const loc = this.widgetFrame().getByText(assertion.text).first();
+        const ok = await loc
+          .waitFor({ state: "visible", timeout })
+          .then(() => true)
+          .catch(() => false);
+        return ok
+          ? { ok: true }
+          : { ok: false, reason: `text not visible: "${assertion.text}"` };
+      }
+      case "elementVisible": {
+        const loc = this.resolveScriptedLocator(assertion.target).first();
+        const ok = await loc
+          .waitFor({ state: "visible", timeout })
+          .then(() => true)
+          .catch(() => false);
+        return ok ? { ok: true } : { ok: false, reason: "element not visible" };
+      }
+      case "elementHidden": {
+        const loc = this.resolveScriptedLocator(assertion.target).first();
+        const ok = await loc
+          .waitFor({ state: "hidden", timeout })
+          .then(() => true)
+          .catch(() => false);
+        return ok
+          ? { ok: true }
+          : { ok: false, reason: "element is visible (expected hidden)" };
+      }
+      case "inputValue": {
+        const loc = this.resolveScriptedLocator(assertion.target).first();
+        try {
+          const actual = await loc.inputValue({ timeout });
+          return actual === assertion.equals
+            ? { ok: true }
+            : {
+                ok: false,
+                reason: `input value "${actual}" ≠ "${assertion.equals}"`,
+              };
+        } catch (err) {
+          return {
+            ok: false,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      case "widgetToolCalled": {
+        const called = priorWidgetToolCalls.some(
+          (c) => c.name === assertion.toolName
+        );
+        return called
+          ? { ok: true }
+          : {
+              ok: false,
+              reason: `widget did not call tool "${assertion.toolName}"`,
+            };
+      }
+    }
   }
 
   private async applyAction(action: BrowserActionSpec): Promise<void> {
@@ -1170,6 +1523,50 @@ export class McpAppBrowserHarness {
     }
   }
 
+  /**
+   * Terminal-artifact hook: finalize and read the iteration's replay `.webm`.
+   *
+   * Playwright only flushes the video to disk when the context closes, so this
+   * closes the context (which `dispose()` then treats as a no-op), reads the
+   * file, and returns the bytes. Idempotent + fail-soft by contract — returns
+   * `null` (never throws) when: the harness never launched, recording was off,
+   * the context is already closed, or the file can't be read; and the result is
+   * memoized so a second call (or a later `dispose()`) is a safe no-op.
+   */
+  async collectVideo(): Promise<Buffer | null> {
+    if (this.videoCollected) return this.videoBytes;
+    this.videoCollected = true;
+
+    const video = this.page?.video?.() ?? null;
+    if (!video) {
+      this.videoBytes = null;
+      return null;
+    }
+    let videoPath: string | null = null;
+    try {
+      videoPath = await video.path();
+    } catch {
+      videoPath = null;
+    }
+    // Closing the context is what flushes the .webm. Safe if already closed.
+    try {
+      await this.context?.close();
+    } catch {
+      /* ignore */
+    }
+    this.context = null;
+    if (!videoPath) {
+      this.videoBytes = null;
+      return null;
+    }
+    try {
+      this.videoBytes = await readFile(videoPath);
+    } catch {
+      this.videoBytes = null;
+    }
+    return this.videoBytes;
+  }
+
   async dispose(): Promise<void> {
     try {
       await this.context?.close();
@@ -1180,6 +1577,16 @@ export class McpAppBrowserHarness {
       await this.browser?.close();
     } catch {
       /* ignore */
+    }
+    // Always-runs cleanup of the recording temp dir (collectVideo already read
+    // the bytes into memory; the file on disk is no longer needed).
+    if (this.videoDir) {
+      try {
+        await rm(this.videoDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+      this.videoDir = null;
     }
     this.context = null;
     this.browser = null;

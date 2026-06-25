@@ -1,4 +1,4 @@
-import { normalizePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
+import { normalizePromptTurns, type PromptTurn } from "@/shared/steps";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 
 /**
