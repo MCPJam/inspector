@@ -676,7 +676,7 @@ export function ChatInput({
         >
           {isFileDragActive && (
             <div
-              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border-2 border-dashed border-primary/60 bg-background/85 px-4 text-center text-sm font-medium text-foreground shadow-inner backdrop-blur-sm"
+              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-background/85 px-4 text-center text-sm font-medium text-foreground shadow-inner backdrop-blur-sm"
               role="status"
               aria-live="polite"
             >
