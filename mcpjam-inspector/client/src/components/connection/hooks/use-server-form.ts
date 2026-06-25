@@ -120,6 +120,11 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
+    /**
+     * Signed-in user's email, used as the default XAA simulated identity
+     * (subject + email) when the Advanced override fields are left blank.
+     */
+    signedInEmail?: string;
   }
 ) {
   const [name, setName] = useState("");
@@ -823,8 +828,16 @@ export function useServerForm(
         ? submittedClearClientSecret
         : undefined,
       xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
-      xaaSubject: useXaa ? xaaSubject.trim() || undefined : undefined,
-      xaaEmail: useXaa ? xaaEmail.trim() || undefined : undefined,
+      // Default the simulated identity to the signed-in user when blank, so the
+      // mint asserts a real subject instead of a placeholder test user. The
+      // resource server still decides what subject it accepts — this is just a
+      // sane, overridable default.
+      xaaSubject: useXaa
+        ? xaaSubject.trim() || options?.signedInEmail || undefined
+        : undefined,
+      xaaEmail: useXaa
+        ? xaaEmail.trim() || options?.signedInEmail || undefined
+        : undefined,
       requestTimeout: reqTimeout,
     };
   };

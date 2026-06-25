@@ -112,6 +112,44 @@ describe("useServerForm", () => {
     });
   });
 
+  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      xaaSubject: "john@mcpjam.com",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
+  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("john");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "john",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
   it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {
     const server = {
       name: "Saved XAA server",

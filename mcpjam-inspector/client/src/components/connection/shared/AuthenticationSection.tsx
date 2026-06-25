@@ -69,6 +69,8 @@ interface AuthenticationSectionProps {
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
   onXaaEmailChange?: (value: string) => void;
+  /** Signed-in user's email — shown as the default for the simulated identity. */
+  signedInEmail?: string;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -127,6 +129,7 @@ export function AuthenticationSection({
   onXaaSubjectChange,
   xaaEmail = "",
   onXaaEmailChange,
+  signedInEmail,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [showAdvancedXaa, setShowAdvancedXaa] = useState(false);
@@ -852,8 +855,9 @@ export function AuthenticationSection({
                 <div className="rounded-md border border-border bg-background/40 p-3 space-y-2">
                   <p className="text-xs text-muted-foreground">
                     Simulated identity — the test IdP mints a mock login for this
-                    user before the flow runs. Leave blank to use a test
-                    identity.
+                    user. Leave blank to use your signed-in identity; the
+                    resource server decides which subject it accepts, so override
+                    it if your server expects a specific value.
                   </p>
                   <div className="space-y-1">
                     <label className="block text-xs font-medium text-foreground">
@@ -862,7 +866,11 @@ export function AuthenticationSection({
                     <Input
                       value={xaaSubject}
                       onChange={(e) => onXaaSubjectChange?.(e.target.value)}
-                      placeholder="user-12345"
+                      placeholder={
+                        signedInEmail
+                          ? `Defaults to ${signedInEmail}`
+                          : "Defaults to your signed-in identity"
+                      }
                       spellCheck={false}
                       autoComplete="off"
                       className="h-9"
@@ -875,7 +883,11 @@ export function AuthenticationSection({
                     <Input
                       value={xaaEmail}
                       onChange={(e) => onXaaEmailChange?.(e.target.value)}
-                      placeholder="demo.user@example.com"
+                      placeholder={
+                        signedInEmail
+                          ? `Defaults to ${signedInEmail}`
+                          : "Defaults to your signed-in identity"
+                      }
                       spellCheck={false}
                       autoComplete="off"
                       className="h-9"
