@@ -302,7 +302,9 @@ describe("evals-api hosted mode", () => {
 
     expect(caught).toBeInstanceOf(Error);
     const message = getBillingErrorMessage(caught, "Failed to start eval run");
-    expect(message).toContain("Eval iteration limit reached");
+    // Matches the canonical billing-entitlements message:
+    // "This organization has reached its eval iteration limit (25). Resets …"
+    expect(message).toContain("eval iteration limit");
     expect(message).not.toContain("Failed to start eval run");
     // Billing limits must NOT trigger the rate-limit dialog.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
