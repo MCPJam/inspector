@@ -637,10 +637,12 @@ export async function resolveLocalServerForConnect(
       subject: sc.xaaSubject || "user-12345",
       email: sc.xaaEmail || "demo.user@example.com",
     };
-    if (!resolvedOauthAccessToken) {
-      const minted = await mintXaaAccessToken(mintArgs);
-      resolvedOauthAccessToken = minted.accessToken;
-    }
+    // Always mint for XAA, overriding any access token the authorize batch
+    // returned. A server converted from OAuth still has a stored OAuth token,
+    // and reusing it here would inject the wrong credential — the XAA-protected
+    // server rejects it. The XAA token must come from the mint, full stop.
+    const minted = await mintXaaAccessToken(mintArgs);
+    resolvedOauthAccessToken = minted.accessToken;
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
     let reMinted = false;
