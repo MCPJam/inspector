@@ -83,27 +83,33 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-/** Evidence keyed for lookup: by authoredStepId (primary) + promptIndex:toolCallId (fallback). */
+const STEP_STATUSES: ReadonlySet<EvalStepResultStatus> = new Set([
+  "ok",
+  "fail",
+  "skipped",
+  "pending",
+]);
+/** Narrow an open-shaped persisted status to a known enum value, else undefined. */
+function safeStatus(v: unknown): EvalStepResultStatus | undefined {
+  const s = str(v);
+  return s && STEP_STATUSES.has(s as EvalStepResultStatus)
+    ? (s as EvalStepResultStatus)
+    : undefined;
+}
+
+/** Evidence keyed for lookup by authoredStepId. */
 type EvidenceIndex = {
   byStepId: Map<string, Record<string, unknown>>;
-  byPromptTool: Map<string, Record<string, unknown>>;
 };
 
 function indexRows(rows: ReadonlyArray<Record<string, unknown>>): EvidenceIndex {
   const byStepId = new Map<string, Record<string, unknown>>();
-  const byPromptTool = new Map<string, Record<string, unknown>>();
   for (const row of rows) {
     const stepId = str(row.authoredStepId);
     // First write wins so the earliest matching artifact represents the step.
     if (stepId && !byStepId.has(stepId)) byStepId.set(stepId, row);
-    const pi = num(row.promptIndex);
-    const tc = str(row.toolCallId);
-    if (pi !== undefined && tc) {
-      const key = `${pi}:${tc}`;
-      if (!byPromptTool.has(key)) byPromptTool.set(key, row);
-    }
   }
-  return { byStepId, byPromptTool };
+  return { byStepId };
 }
 
 function evidenceFor(
@@ -215,8 +221,10 @@ export function assembleStepResults(
     records.set(stepId, {
       stepId,
       stepIndex: num(r.stepIndex) ?? 0,
-      kind: (str(r.kind) ?? "prompt") as TestStep["kind"],
-      status: (str(r.status) ?? "pending") as EvalStepResultStatus,
+      // `kind` is overwritten with the authored step's kind at assembly time;
+      // store a safe placeholder rather than casting an open-shaped value.
+      kind: (str(r.kind) as TestStep["kind"] | undefined) ?? "prompt",
+      status: safeStatus(r.status) ?? "pending",
       ...(str(r.reason) ? { reason: str(r.reason) } : {}),
     });
   }
@@ -234,13 +242,16 @@ export function assembleStepResults(
     const interaction = evidenceFor(step.id, interactions);
     const render = evidenceFor(step.id, renders);
     const persisted = records.get(step.id);
-    const verdict =
-      persisted ?? {
-        stepId: step.id,
-        stepIndex,
-        kind: step.kind,
-        ...fallbackStatus(step, skippedIds, interaction),
-      };
+    // The authored step is the source of truth for `kind` — never let an
+    // open-shaped persisted row override it (`status` is already whitelisted).
+    const verdict: EvalStepResultRecord = persisted
+      ? { ...persisted, kind: step.kind }
+      : {
+          stepId: step.id,
+          stepIndex,
+          kind: step.kind,
+          ...fallbackStatus(step, skippedIds, interaction),
+        };
     const evidence = toEvidence(interaction, render, videoUrl);
     return { ...verdict, ...(evidence ? { evidence } : {}) };
   });
