@@ -40,6 +40,28 @@ Each case has four moving parts:
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
 
+## Render checks
+
+A render check verifies that a tool call produces a correctly rendered widget — without involving a model. Instead of sending a prompt to an LLM, the runner calls the tool directly, renders the result in the browser harness, and evaluates the outcome against your checks (for example, **Widget rendered**).
+
+### Turning a turn into a render check
+
+Each turn in the prompt flow has a **Prompt | Render check** toggle. Switch a turn to **Render check** to:
+
+1. Pick the server and tool to call.
+2. Supply the tool arguments directly (no model inference).
+3. Add a **Widget rendered** check (or any other applicable check) to assert the outcome.
+
+A case can mix turn types: one turn can be a render check (to seed state or verify a widget) while subsequent turns are normal model-driven prompts. The runner executes pinned turns model-free and model turns with the LLM, in order.
+
+### Running render checks
+
+Render-check cases (where every turn is a render check) run as part of a **suite run** — the per-case quick-run button is disabled for them. Cases that mix prompt and render-check turns run normally via the suite.
+
+<Note>
+  The **Prompt | Render check** toggle is available when the synthetic monitors feature is enabled for your account. Existing render checks are always editable regardless of this flag.
+</Note>
+
 ## Checks — the deterministic gate
 
 Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
