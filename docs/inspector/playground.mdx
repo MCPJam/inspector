@@ -292,7 +292,13 @@ Click the **+** button on the left of the chat input to manage servers, attach f
 A list of every server in your project, sorted by status. Each row shows the server name and transport type (`HTTP` or `stdio`, npx/desktop only). Connect, disconnect, or toggle a server on or off for the current conversation. **+ Add server** opens the add-server modal without leaving the Playground.
 
 **Attach files**
-Upload images, PDFs, text, JSON, CSV, XLSX, and other supported files into the conversation.
+Add files to the conversation in any of these ways:
+
+- **File picker** — Click the **+** button and choose **Attach files** to browse and select files.
+- **Paste** — Copy an image to your clipboard and paste it directly into the chat input (`Ctrl+V` / `Cmd+V`). Pasted images without a filename are saved automatically as `pasted-image-1.png`, `pasted-image-2.png`, and so on.
+- **Drag and drop** — Drag one or more files from your desktop and drop them onto the chat input. A "Drop image or file to attach" overlay appears while you're dragging to confirm the drop target.
+
+Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other common formats. Invalid file types show an error message below the input.
 
 **System Prompt & Temperature**
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
