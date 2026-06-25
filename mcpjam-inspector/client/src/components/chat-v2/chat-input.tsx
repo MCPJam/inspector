@@ -36,6 +36,10 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ClientSelector,
+  type ClientSelectorData,
+} from "@/components/chat-v2/chat-input/client-selector";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -98,6 +102,8 @@ interface ChatInputProps {
   onSelectedModelsChange?: (models: ModelDefinition[]) => void;
   onMultiModelEnabledChange?: (enabled: boolean) => void;
   enableMultiModel?: boolean;
+  /** Playground-only: renders a client chip beside the model chip. */
+  clientSelector?: ClientSelectorData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -185,6 +191,7 @@ export function ChatInput({
   onSelectedModelsChange,
   onMultiModelEnabledChange,
   enableMultiModel = false,
+  clientSelector,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -834,6 +841,15 @@ export function ChatInput({
                   </PopoverContent>
                 </Popover>
               )}
+              {!minimalMode && clientSelector ? (
+                <ClientSelector
+                  {...clientSelector}
+                  isLoading={isLoading}
+                  onOpenChange={onModelSelectorOpenChange}
+                  themeMode={resolvedThemeMode}
+                  modalThemeMode={globalThemeMode}
+                />
+              ) : null}
               {!minimalMode && (
                 <ModelSelector
                   currentModel={currentModel}

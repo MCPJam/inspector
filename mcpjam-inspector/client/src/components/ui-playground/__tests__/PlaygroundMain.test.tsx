@@ -293,6 +293,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading,
     placeholder,
     pulseSubmit,
+    clientSelector,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -302,10 +303,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
+    clientSelector?: unknown;
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -504,14 +507,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
-// Stub the playground host picker — its data hooks (Convex auth, host list,
-// previewed-host storage) are out of scope for these PlaygroundMain tests.
-vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
-  PlaygroundHostPicker: () => (
-    <div data-testid="playground-host-picker-stub" />
-  ),
-}));
-
 // Mock traffic log store
 vi.mock("@/stores/traffic-log-store", () => ({
   useTrafficLogStore: (selector: any) => {
@@ -680,7 +675,7 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
     });
 
-    it("hides the multi-host compare picker after the active session is shared", async () => {
+    it("drops the chat-input client chip after the active session is shared", async () => {
       const privateSessionLocal = {
         _id: "history-share-gate-1",
         chatSessionId: "chat-session-share-gate-1",
@@ -722,10 +717,11 @@ describe("PlaygroundMain", () => {
         );
       });
 
-      // Private sessions show the host picker by default.
-      expect(
-        screen.getByTestId("playground-host-picker-stub"),
-      ).toBeInTheDocument();
+      // Private sessions get the chat-input client chip wired up.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-client-selector",
+        "true",
+      );
 
       await act(async () => {
         const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
@@ -748,9 +744,11 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(capturedChatSessionOptions.directVisibility).toBe("project");
       });
-      expect(
-        screen.queryByTestId("playground-host-picker-stub"),
-      ).toBeNull();
+      // Shared sessions can't switch hosts — `clientSelector` is left undefined.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-client-selector",
+        "false",
+      );
     });
 
     it("keeps active playground thread visibility in sync after sharing", async () => {
@@ -1302,6 +1300,9 @@ describe("PlaygroundMain", () => {
         />,
       );
 
+      const compareShell = screen.getByTestId("playground-compare-shell");
+      expect(compareShell).toHaveAttribute("data-thread-theme", "light");
+      expect(compareShell).not.toHaveClass("dark");
       expect(
         screen.getByText("Try one of these to get started"),
       ).toBeInTheDocument();
