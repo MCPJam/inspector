@@ -111,7 +111,7 @@ describe("client templates", () => {
     });
   });
 
-  it("seeds Slack from the captured MCP Apps surface", () => {
+  it("seeds Slackbot from the captured MCP Apps surface", () => {
     const seed = seedFromHostTemplate("slack");
 
     expect(HOST_TEMPLATES.some((template) => template.id === "slack")).toBe(
@@ -143,10 +143,10 @@ describe("client templates", () => {
     ).toBe("#1a1d21");
     expect(seed.mcpProfile?.initialize).toEqual({
       supportedProtocolVersions: ["2025-06-18"],
-      clientInfo: { name: "Slack MCP Client", version: "1.0.0" },
+      clientInfo: { name: "Slackbot MCP Client", version: "1.0.0" },
     });
     expect(seed.mcpProfile?.apps?.uiInitialize?.hostInfo).toEqual({
-      name: "Slack",
+      name: "Slackbot",
       version: "1.0.0",
     });
     expect(seed.mcpProfile?.apps?.compatRuntime).toEqual({

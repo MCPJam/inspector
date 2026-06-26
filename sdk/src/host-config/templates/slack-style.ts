@@ -1,8 +1,8 @@
 /**
- * Slack MCP Apps host style variables — Node-safe copy.
+ * Slackbot MCP Apps host style variables — Node-safe copy.
  *
- * Captured from Slack's `ui/initialize.hostContext.styles` on 2026-06-24.
- * Light and dark maps are both real Slack captures from the same probe app.
+ * Captured from Slackbot's `ui/initialize.hostContext.styles` on 2026-06-24.
+ * Light and dark maps are both real Slackbot captures from the same probe app.
  */
 
 const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
