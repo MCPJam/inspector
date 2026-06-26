@@ -191,6 +191,7 @@ export function CrossHostMatrix({
     : HOST_COLUMN_WIDTH_PX.snapshot;
   const tableMinWidthPx =
     CASE_COLUMN_WIDTH_PX + hostColumns.length * hostMinColumnWidthPx;
+  const showHostColumnHeaders = hostColumns.length > 1;
 
   return (
     <div
@@ -239,12 +240,15 @@ export function CrossHostMatrix({
                 className={cn(
                   "border-b border-r border-border/60 text-center align-bottom",
                   evalSurfaceHeaderClass,
+                  !showHostColumnHeaders && "px-0 py-2",
                 )}
               >
-                <HostColumnHeader
-                  col={col}
-                  verdict={hostVerdicts?.get(col.hostId)}
-                />
+                {showHostColumnHeaders ? (
+                  <HostColumnHeader
+                    col={col}
+                    verdict={hostVerdicts?.get(col.hostId)}
+                  />
+                ) : null}
               </th>
             ))}
           </tr>

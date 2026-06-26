@@ -135,8 +135,11 @@ describe("AiTriageCard", () => {
       />,
     );
 
-    const section = screen.getByRole("heading", { name: "AI insights" }).closest("section");
+    const section = screen
+      .getByRole("heading", { name: "Suggested fixes" })
+      .closest("section");
     expect(section).not.toHaveClass("rounded-lg");
     expect(section).not.toHaveClass("border");
+    expect(screen.queryByText(/^Accuracy$/)).not.toBeInTheDocument();
   });
 });
