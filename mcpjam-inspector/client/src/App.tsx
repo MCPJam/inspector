@@ -883,10 +883,18 @@ export function ConformanceRoute() {
 }
 
 export function CompatibilityRoute() {
-  const { selectedServerEntry, activeProjectId } = useAppRouteContext();
+  const { appState, selectedServerEntry, activeProjectId, setSelectedServer } =
+    useAppRouteContext();
+  const connectedServers = Object.values<ServerWithName>(
+    appState.servers,
+  ).filter((s) => s.connectionStatus === "connected");
+  // The page resolves the detail against `servers` (ignoring a stale/
+  // disconnected global selection), so it's safe to pass the raw selection.
   return (
     <HostCompatPage
-      server={selectedServerEntry ?? null}
+      servers={connectedServers}
+      selectedServer={selectedServerEntry ?? null}
+      onSelectServer={setSelectedServer}
       projectId={activeProjectId}
     />
   );

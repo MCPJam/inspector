@@ -2,39 +2,56 @@ import { Boxes } from "lucide-react";
 import type { ServerWithName } from "@/state/app-types";
 import { useServerToolsData } from "@/lib/host-compat/use-host-compat";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
+import { HostCompatMatrix } from "@/components/compat/HostCompatMatrix";
 import { EmptyState } from "@/components/ui/empty-state";
 
 /**
- * Standalone Compatibility destination — the full-page "does my server work on
- * these hosts?" report for the currently-selected server. Reuses the same
- * engine + `HostCompatContent` as the server-detail modal tab; the only extra
- * job here is fetching the tools list (the modal already holds one).
+ * Standalone Compatibility destination — "does my server work on these hosts?".
+ *
+ * With multiple connected servers it leads with a servers × hosts matrix
+ * (click a row to drill in); the selected server's full report (conformance
+ * gate + per-host apps/server findings) renders below. With a single server it
+ * is just that report. Reuses the same engine + `HostCompatContent` as the
+ * server-detail modal tab.
  *
  * The "Test in host" CTA is intentionally absent on this page: it needs the
- * project-server-ref id the modal resolves, so we pass no `serverId` and
- * `HostCompatContent` hides the CTA (`canCreateHosts` is false). The matrix +
- * conformance gate are the value here; creating a host stays in the modal.
+ * project-server-ref id the modal resolves, so `HostCompatContent` (passed no
+ * `serverId`) hides it.
  */
 export function HostCompatPage({
-  server,
+  servers,
+  selectedServer,
+  onSelectServer,
   projectId,
 }: {
-  server: ServerWithName | null;
+  /** Connected servers eligible for evaluation. */
+  servers: ServerWithName[];
+  /** The server whose full report shows below the matrix. */
+  selectedServer: ServerWithName | null;
+  onSelectServer: (name: string) => void;
   projectId?: string | null;
 }) {
-  // Hook runs unconditionally; it no-ops for a null/disconnected server.
-  const toolsData = useServerToolsData(server);
+  // Resolve the detail against the CONNECTED list (the matrix only lists
+  // connected servers): a stale/disconnected global selection that isn't in
+  // `servers` is ignored, falling back to the first connected server. The
+  // matrix highlight reads `detailServer.name`, so the two always agree. Hook
+  // runs unconditionally; it no-ops for a null/empty server.
+  const detailServer =
+    servers.find((s) => s.name === selectedServer?.name) ?? servers[0] ?? null;
+  const toolsData = useServerToolsData(detailServer);
 
-  if (!server) {
+  if (servers.length === 0) {
     return (
       <EmptyState
         icon={Boxes}
-        title="No server selected"
-        description="Select a connected server above to check whether it works on each host."
+        title="No connected server"
+        description="Connect a server above to check whether it works on each host."
         className="h-full"
       />
     );
   }
+
+  const showMatrix = servers.length > 1;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-5">
@@ -43,17 +60,39 @@ export function HostCompatPage({
           Compatibility
         </h1>
         <p className="text-xs text-muted-foreground">
-          Whether <span className="font-medium">{server.name}</span> works on
-          each host — spec conformance first, then per-host apps &amp; server
-          gaps.
+          Whether your servers work on each host — spec conformance first, then
+          per-host apps &amp; server gaps.
         </p>
       </div>
-      <HostCompatContent
-        server={server}
-        toolsData={toolsData}
-        projectId={projectId}
-        source="compat_page"
-      />
+
+      {showMatrix && (
+        <div className="mb-5">
+          <HostCompatMatrix
+            servers={servers}
+            selectedServerName={detailServer?.name}
+            onSelectServer={onSelectServer}
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Select a server to see its full report.
+          </p>
+        </div>
+      )}
+
+      {detailServer && (
+        <section>
+          {showMatrix && (
+            <h2 className="mb-1.5 text-sm font-medium text-foreground">
+              {detailServer.name}
+            </h2>
+          )}
+          <HostCompatContent
+            server={detailServer}
+            toolsData={toolsData}
+            projectId={projectId}
+            source="compat_page"
+          />
+        </section>
+      )}
     </div>
   );
 }

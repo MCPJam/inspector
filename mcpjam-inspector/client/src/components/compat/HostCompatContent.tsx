@@ -22,11 +22,11 @@ import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
 import { ConformanceGate } from "@/components/compat/ConformanceGate";
+import { VERDICT_META } from "@/components/compat/verdict-meta";
 import type {
   CompatFinding,
   CompatLane,
   CompatProvenance,
-  CompatVerdict,
   HostCompatReport,
 } from "@/lib/host-compat/types";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -50,34 +50,6 @@ const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
 
 const isHostTemplateId = (id: string): id is HostTemplateId =>
   COMPAT_TEMPLATE_LABEL.has(id);
-
-/** Lightweight verdict styling: a colored dot + colored label, no pill —
- * keeps each host row to a single quiet line. */
-const VERDICT_META: Record<
-  CompatVerdict,
-  { label: string; dot: string; text: string }
-> = {
-  works: {
-    label: "Works",
-    dot: "bg-emerald-500",
-    text: "text-emerald-600 dark:text-emerald-400",
-  },
-  degraded: {
-    label: "Degraded",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-  },
-  blocked: {
-    label: "Blocked",
-    dot: "bg-red-500",
-    text: "text-red-600 dark:text-red-400",
-  },
-  unknown: {
-    label: "Unknown",
-    dot: "bg-muted-foreground/40",
-    text: "text-muted-foreground",
-  },
-};
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   observed: "Observed from a live run",
