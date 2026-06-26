@@ -54,12 +54,14 @@ function MatrixRow({
   selected,
   onSelect,
   onReports,
+  onRemove,
 }: {
   server: ServerWithName;
   hosts: HostColumn[];
   selected: boolean;
   onSelect: (name: string) => void;
   onReports: (name: string, reports: HostCompatReport[]) => void;
+  onRemove: (name: string) => void;
 }) {
   const { reports } = useHostCompatReports(server);
 
@@ -74,6 +76,14 @@ function MatrixRow({
   useEffect(() => {
     onReports(server.name, reports);
   }, [server.name, reports, onReports]);
+
+  // Drop this server's rolled-up entry when the row leaves (disconnect /
+  // rename). Without this, a disconnected server's stale verdicts linger in
+  // `byServer` and resurface in the column footer for one render after it
+  // reconnects (before the remounted row's effect re-runs). Keyed on
+  // server.name only, so it fires on unmount/rename — not on every `reports`
+  // change.
+  useEffect(() => () => onRemove(server.name), [server.name, onRemove]);
 
   return (
     <tr
@@ -160,6 +170,14 @@ export function HostCompatMatrix({
     },
     [],
   );
+  const handleRemove = useCallback((name: string) => {
+    setByServer((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  }, []);
 
   const perServerReports = servers.map((s) => byServer[s.name]);
 
@@ -198,6 +216,7 @@ export function HostCompatMatrix({
               selected={s.name === selectedServerName}
               onSelect={onSelectServer}
               onReports={handleReports}
+              onRemove={handleRemove}
             />
           ))}
         </tbody>

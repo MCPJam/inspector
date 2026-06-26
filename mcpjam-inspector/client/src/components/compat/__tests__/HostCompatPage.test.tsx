@@ -32,10 +32,6 @@ describe("HostCompatPage", () => {
   });
 
   it("anchors the detail to the first connected server when none is selected", () => {
-    // P2 regression: a disconnected global selection must not drive the detail
-    // pane to a server the matrix (connected-only) doesn't list. With no
-    // connected selection, the page falls back to the first connected server,
-    // and the matrix highlight matches it.
     render(
       <HostCompatPage
         servers={[server("a"), server("b")]}
@@ -44,6 +40,23 @@ describe("HostCompatPage", () => {
       />,
     );
     expect(screen.getByTestId("detail")).toHaveTextContent("a");
+    expect(screen.getByTestId("matrix-highlight")).toHaveTextContent("a");
+  });
+
+  it("ignores a stale/disconnected selection not in the connected list", () => {
+    // P2 regression (the real path): the global selection points at a server
+    // that just disconnected and is no longer in `servers`. The detail must NOT
+    // render that server — it falls back to the first connected one, and the
+    // matrix highlight (connected-only) agrees.
+    render(
+      <HostCompatPage
+        servers={[server("a"), server("b")]}
+        selectedServer={server("ghost")}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("detail")).toHaveTextContent("a");
+    expect(screen.getByTestId("detail")).not.toHaveTextContent("ghost");
     expect(screen.getByTestId("matrix-highlight")).toHaveTextContent("a");
   });
 

@@ -31,11 +31,13 @@ export function HostCompatPage({
   onSelectServer: (name: string) => void;
   projectId?: string | null;
 }) {
-  // Anchor the detail to a CONNECTED server (the matrix only lists connected
-  // ones), falling back to the first so the report is never blank — and so the
-  // matrix highlight (`detailServer.name`) always matches a real row. Hook runs
-  // unconditionally; it no-ops for a null/empty server.
-  const detailServer = selectedServer ?? servers[0] ?? null;
+  // Resolve the detail against the CONNECTED list (the matrix only lists
+  // connected servers): a stale/disconnected global selection that isn't in
+  // `servers` is ignored, falling back to the first connected server. The
+  // matrix highlight reads `detailServer.name`, so the two always agree. Hook
+  // runs unconditionally; it no-ops for a null/empty server.
+  const detailServer =
+    servers.find((s) => s.name === selectedServer?.name) ?? servers[0] ?? null;
   const toolsData = useServerToolsData(detailServer);
 
   if (servers.length === 0) {
