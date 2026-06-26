@@ -34,6 +34,7 @@ export function isSupportField(field: HostConfigFieldDef): boolean {
     k.kind === "boolean" ||
     k.kind === "tri-state" ||
     k.kind === "capability" ||
+    k.kind === "mode-set" ||
     (k.kind === "enum" && !!k.support)
   );
 }
@@ -57,7 +58,11 @@ export function getSupportLevel(
     case "capability": {
       if (value === undefined || value === null) return "neutral";
       if (typeof value === "object") {
-        // Advertised, but list-changed notifications opted out → partial.
+        // Only genuine downgrades drop the level. `listChanged: false` is a
+        // downgrade (→ partial); the other caveats from `getCapabilityCaveats`
+        // (sampling-with-tools, non-empty experimental) are "yes, and" info
+        // notes on a fully-advertised capability, so they stay `supported` —
+        // the footnote and the level are intentionally independent.
         if ((value as Record<string, unknown>).listChanged === false) {
           return "partial";
         }
@@ -72,6 +77,17 @@ export function getSupportLevel(
       if (!map) return null;
       if (typeof value !== "string") return "neutral";
       return map[value] ?? "neutral";
+    }
+    case "mode-set": {
+      // Aggregate a set of modes into one level: all candidates present →
+      // supported, only the minimum (≤1) → neutral, some-but-not-all →
+      // partial. The matrix cell still renders the per-mode chips; this is the
+      // single-level summary used by coverage / filters / the list view.
+      const present = Array.isArray(value) ? value.length : 0;
+      const total = field.kind.modes.length;
+      if (present >= total) return "supported";
+      if (present <= 1) return "neutral";
+      return "partial";
     }
     default:
       return null;

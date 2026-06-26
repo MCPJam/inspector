@@ -564,9 +564,10 @@ function FieldCell({
 }
 
 /**
- * Decodes the chip colors. Only the levels the matrix actually uses appear —
- * red `unsupported` is omitted until a field maps to it (a never-shown legend
- * entry reads as imprecise).
+ * Decodes the chip colors. Labels are kind-agnostic because the same colors are
+ * shared by booleans (Yes/No), tri-state (On/Off/Auto), and capabilities
+ * (Advertised/Not advertised) — `neutral` covers all the "off / absent" states.
+ * Red `unsupported` is omitted until a field maps to it.
  */
 function SupportLegend() {
   return (
@@ -575,8 +576,8 @@ function SupportLegend() {
         Support
       </span>
       <SupportChip level="supported" label="Supported" />
-      <SupportChip level="partial" label="Auto" />
-      <SupportChip level="neutral" label="Not advertised" />
+      <SupportChip level="partial" label="Partial" />
+      <SupportChip level="neutral" label="Off / absent" />
     </div>
   );
 }

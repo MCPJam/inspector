@@ -9,6 +9,7 @@ import {
   fieldMatchesQuery,
   getCapabilityCaveats,
   getSupportLevel,
+  isSupportField,
   rowCoverage,
   rowPassesSupportFilter,
 } from "../support-level";
@@ -160,6 +161,34 @@ describe("getSupportLevel — enum with support map", () => {
     expect(
       getSupportLevel(hostConfigField("mcpProtocolVersion"), makeConfig()),
     ).toBeNull();
+  });
+});
+
+describe("getSupportLevel — mode-set", () => {
+  const modeSetField = {
+    id: "m",
+    section: "apps",
+    subsection: "m",
+    label: "m",
+    path: "m",
+    kind: { kind: "mode-set", modes: ["inline", "fullscreen", "pip"] },
+    read: (cfg) => (cfg as { _m?: string[] })._m,
+  } as unknown as HostConfigFieldDef;
+
+  it("is support-shaped (joins coverage/filters/list view)", () => {
+    expect(isSupportField(modeSetField)).toBe(true);
+  });
+
+  it("aggregates the mode set into a single level", () => {
+    expect(
+      getSupportLevel(modeSetField, { _m: ["inline", "fullscreen", "pip"] } as never),
+    ).toBe("supported");
+    expect(getSupportLevel(modeSetField, { _m: ["inline", "fullscreen"] } as never)).toBe(
+      "partial",
+    );
+    expect(getSupportLevel(modeSetField, { _m: ["inline"] } as never)).toBe(
+      "neutral",
+    );
   });
 });
 

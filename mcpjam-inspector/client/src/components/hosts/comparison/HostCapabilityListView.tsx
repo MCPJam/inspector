@@ -24,11 +24,16 @@ interface HostCapabilityListViewProps {
   themeMode?: HostThemeMode;
 }
 
-/** caniuse "Supported" / "No support" walls, one block per host column. */
+/**
+ * caniuse "Supported" / "No support" walls, one block per host column. Titles
+ * are kind-agnostic: `neutral` spans boolean No, tri-state Off, and
+ * not-advertised capabilities, so it reads "Off / absent" rather than implying
+ * a capability was never advertised.
+ */
 const GROUPS: ReadonlyArray<{ level: SupportLevel; title: string }> = [
   { level: "supported", title: "Supported" },
-  { level: "partial", title: "Partial / Auto" },
-  { level: "neutral", title: "Not advertised" },
+  { level: "partial", title: "Partial" },
+  { level: "neutral", title: "Off / absent" },
 ];
 
 export function HostCapabilityListView({

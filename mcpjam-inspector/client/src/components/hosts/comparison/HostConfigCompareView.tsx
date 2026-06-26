@@ -16,9 +16,13 @@ import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import { HostCapabilityListView } from "./HostCapabilityListView";
 import {
   computeVisibleFieldIds,
+  isSupportField,
   type SupportFilterMode,
 } from "./support-level";
-import { HOST_CONFIG_FIELDS } from "@/lib/host-config-field-schema";
+import {
+  HOST_CONFIG_FIELDS,
+  hostConfigField,
+} from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 
@@ -204,16 +208,29 @@ export function HostConfigCompareView({
   }, []);
 
   // "N / M fields" count for the search header — same predicate the matrix and
-  // list view use, so the number always matches what's rendered.
-  const matchCount = useMemo(
+  // list view use, so the number always matches what's rendered. In list mode
+  // only support-shaped rows render, so the count narrows to that subset too.
+  const matchCount = useMemo(() => {
+    const ids = computeVisibleFieldIds({
+      configs: orderedSubjects.map((s) => s.config),
+      divergingOnly,
+      supportFilter,
+      searchQuery: fieldSearchQuery,
+    });
+    if (viewMode !== "list") return ids.size;
+    let n = 0;
+    for (const id of ids) {
+      if (isSupportField(hostConfigField(id))) n += 1;
+    }
+    return n;
+  }, [orderedSubjects, divergingOnly, supportFilter, fieldSearchQuery, viewMode]);
+
+  const totalFieldCount = useMemo(
     () =>
-      computeVisibleFieldIds({
-        configs: orderedSubjects.map((s) => s.config),
-        divergingOnly,
-        supportFilter,
-        searchQuery: fieldSearchQuery,
-      }).size,
-    [orderedSubjects, divergingOnly, supportFilter, fieldSearchQuery],
+      viewMode === "list"
+        ? HOST_CONFIG_FIELDS.filter(isSupportField).length
+        : HOST_CONFIG_FIELDS.length,
+    [viewMode],
   );
 
   if (!projectId) {
@@ -260,7 +277,7 @@ export function HostConfigCompareView({
               query={fieldSearchQuery}
               onQueryChange={setFieldSearchQuery}
               matchCount={matchCount}
-              totalCount={HOST_CONFIG_FIELDS.length}
+              totalCount={totalFieldCount}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
             />
@@ -387,7 +404,7 @@ function CompareSearchBar({
         className="min-w-[240px] flex-1"
       />
       <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-        {query.trim() ? `${matchCount} / ${totalCount}` : totalCount} fields
+        {matchCount} / {totalCount} fields
       </span>
       <div
         role="group"
