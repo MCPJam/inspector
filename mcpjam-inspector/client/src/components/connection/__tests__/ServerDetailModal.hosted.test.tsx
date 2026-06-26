@@ -5,6 +5,10 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockFetchHostedOAuthTokens = vi.hoisted(() => vi.fn());
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));

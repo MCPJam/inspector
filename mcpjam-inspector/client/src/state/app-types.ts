@@ -71,6 +71,17 @@ export interface ServerWithName {
    * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
    */
   xaaAuthzIssuer?: string;
+  /**
+   * Cross-App Access (XAA) connect flag. When true the server authenticates via
+   * the XAA token-exchange flow (server mints the token) rather than standard
+   * OAuth. Mutually exclusive with `useOAuth`.
+   */
+  useXaa?: boolean;
+  /** Which IdP mints the XAA assertion. v1 only "mcpjam". */
+  authServerMode?: "mcpjam" | "own";
+  /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
+  xaaSubject?: string;
+  xaaEmail?: string;
 }
 
 export interface Project {

@@ -9,6 +9,10 @@ const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
 const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,

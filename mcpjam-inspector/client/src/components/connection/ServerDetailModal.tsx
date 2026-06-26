@@ -34,6 +34,7 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
@@ -405,7 +406,11 @@ export function ServerDetailModal({
   const isOpenAIAppServer = isOpenAIApp(toolsData);
   const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
 
-  const formState = useServerForm(server, { projectClientConfig });
+  const { user: signedInUser } = useAuth();
+  const formState = useServerForm(server, {
+    projectClientConfig,
+    signedInEmail: signedInUser?.email,
+  });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&

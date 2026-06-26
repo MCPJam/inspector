@@ -17,6 +17,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn().mockReturnValue("web"),
 }));
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("../xaa/XAAIdpCard", () => ({
   XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
 }));

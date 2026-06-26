@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import posthog from "posthog-js";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -140,6 +141,7 @@ export function XAAFlowTab({
 
   // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
+  const { user: signedInUser } = useAuth();
   const target = useXaaTestTarget({
     server: selectedServer,
     selectedServerName,
@@ -685,9 +687,7 @@ export function XAAFlowTab({
         onOpenChange={setIsServerModalOpen}
         server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
-        simulatedUserId={runSettings.userId}
-        simulatedEmail={runSettings.email}
-        onIdentityChange={runSettings.setIdentity}
+        signedInEmail={signedInUser?.email}
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
           // values) if the save rejects. Selection only follows a save that

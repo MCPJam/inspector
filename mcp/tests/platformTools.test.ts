@@ -96,6 +96,7 @@ const PLAIN_TOOLS = [
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
   // Eval suite/case editing: agent-oriented payloads, no widget view.
@@ -110,6 +111,8 @@ const PLAIN_TOOLS = [
   "delete_eval_case",
   "generate_eval_cases",
   "get_eval_iteration_trace",
+  "get_eval_run_steps",
+  "cancel_eval_run",
   "list_chat_sessions",
 ];
 
@@ -174,6 +177,7 @@ describe("platform tool registration", () => {
       "read_server_resource",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
       "get_eval_suite",
@@ -189,6 +193,8 @@ describe("platform tool registration", () => {
       "get_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
+      "get_eval_run_steps",
+      "cancel_eval_run",
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
@@ -228,6 +234,7 @@ describe("platform tool registration", () => {
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
       "update_eval_suite",
@@ -236,9 +243,11 @@ describe("platform tool registration", () => {
       "update_eval_case",
       "generate_eval_cases",
     ]);
-    const DESTRUCTIVE_DELETES = new Set([
+    const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
       "delete_eval_case",
+      // Cancelling a run terminates in-flight work, so it announces destructive.
+      "cancel_eval_run",
     ]);
 
     for (const registration of registrations) {
@@ -248,8 +257,8 @@ describe("platform tool registration", () => {
           destructiveHint: false,
           idempotentHint: false,
         });
-      } else if (DESTRUCTIVE_DELETES.has(registration.name)) {
-        // Known-destructive deletes announce it explicitly.
+      } else if (DESTRUCTIVE_OPS.has(registration.name)) {
+        // Known-destructive ops (deletes + cancel) announce it explicitly.
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: true,

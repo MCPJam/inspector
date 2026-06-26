@@ -14,13 +14,16 @@ import {
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
   getEvalCaseOperation,
+  cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
@@ -32,6 +35,7 @@ import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
   extractRenderedScreenshots,
+  extractIterationVideoUrl,
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import { operationalError, usageError, writeResult } from "../lib/output.js";
@@ -304,10 +308,14 @@ function buildCaseInput(
 /** A screenshot entry as emitted in JSON output (and after an optional save). */
 type ScreenshotItem = RenderedScreenshot & { savedTo?: string };
 
-/** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
-async function fetchScreenshotBytes(
+/**
+ * Fetch raw artifact bytes (screenshot PNG or replay `.webm`) for a resolved
+ * URL, bounded by the request timeout. `kind` only shapes the error wording.
+ */
+async function fetchArtifactBytes(
   url: string,
-  timeoutMs: number
+  timeoutMs: number,
+  kind = "screenshot"
 ): Promise<Uint8Array> {
   const controller = new AbortController();
   const handle = setTimeout(() => controller.abort(), timeoutMs);
@@ -316,7 +324,7 @@ async function fetchScreenshotBytes(
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
       throw operationalError(
-        `Failed to download screenshot (HTTP ${response.status}).`,
+        `Failed to download ${kind} (HTTP ${response.status}).`,
         { url }
       );
     }
@@ -324,7 +332,7 @@ async function fetchScreenshotBytes(
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw operationalError(
-        `Timed out downloading screenshot after ${timeoutMs}ms.`,
+        `Timed out downloading ${kind} after ${timeoutMs}ms.`,
         { url }
       );
     }
@@ -332,6 +340,14 @@ async function fetchScreenshotBytes(
   } finally {
     clearTimeout(handle);
   }
+}
+
+/** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
+function fetchScreenshotBytes(
+  url: string,
+  timeoutMs: number
+): Promise<Uint8Array> {
+  return fetchArtifactBytes(url, timeoutMs, "screenshot");
 }
 
 /**
@@ -494,6 +510,28 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  addPlatformOptions(
+    evals
+      .command("cancel")
+      .description(
+        "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+  ).action(
+    async (
+      options: PlatformOptions & { project: string; run: string },
+      command
+    ) => {
+      await executeOp(
+        cancelEvalRunOperation,
+        { project: options.project, runId: options.run },
+        options,
+        command
+      );
+    }
+  );
+
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
 
   // ── Eval run iterations + traces ───────────────────────────────────
@@ -556,6 +594,43 @@ export function registerEvalCommands(program: Command): void {
     ) => {
       await executeOp(
         getEvalIterationTraceOperation,
+        {
+          project: options.project,
+          runId: options.run,
+          iterationId: options.iteration,
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("steps")
+      .description(
+        "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why."
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+      },
+      command
+    ) => {
+      await executeOp(
+        getEvalRunStepsOperation,
         {
           project: options.project,
           runId: options.run,
@@ -699,6 +774,88 @@ export function registerEvalCommands(program: Command): void {
           process.stdout.write(`${caption}  ${shot.screenshotUrl}\n`);
         }
       }
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("video")
+      .description(
+        "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option("--out <path>", "Download the .webm to this file instead of printing the URL")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+        out?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getEvalIterationTraceOperation.execute(
+            {
+              project: options.project,
+              runId: options.run,
+              iterationId: options.iteration,
+            },
+            { client, signal }
+          )
+      );
+
+      const videoUrl = extractIterationVideoUrl(result);
+      const base = {
+        project: result.project,
+        runId: result.runId,
+        iterationId: result.iterationId,
+      };
+      const isJson = globalOptions.format === "json";
+
+      if (!videoUrl) {
+        if (isJson) {
+          writeResult({ ...base, videoUrl: null });
+          return;
+        }
+        process.stdout.write("No replay video for this iteration.\n");
+        return;
+      }
+
+      if (options.out !== undefined) {
+        const bytes = await fetchArtifactBytes(
+          videoUrl,
+          globalOptions.timeout,
+          "video"
+        );
+        mkdirSync(dirname(options.out), { recursive: true });
+        writeFileSync(options.out, bytes);
+        if (isJson) {
+          writeResult({ ...base, videoUrl, savedTo: options.out });
+          return;
+        }
+        process.stdout.write(`Saved replay video → ${options.out}\n`);
+        return;
+      }
+
+      if (isJson) {
+        writeResult({ ...base, videoUrl });
+        return;
+      }
+      process.stdout.write(`${videoUrl}\n`);
     }
   );
 
@@ -859,6 +1016,43 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalCaseOperation,
         { project: options.project, suite: options.suite, case: options.case },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    cases
+      .command("run")
+      .description(
+        "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--case <id-or-title>", "Eval case title or ID")
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .option(
+        "--server <id-or-name...>",
+        "Override the suite's saved servers for this run"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        case: string;
+        server?: string[];
+      },
+      command
+    ) => {
+      await executeOp(
+        runEvalCaseOperation,
+        {
+          project: options.project,
+          suite: options.suite,
+          case: options.case,
+          ...(options.server?.length ? { servers: options.server } : {}),
+        },
         options,
         command
       );

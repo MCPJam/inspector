@@ -16,10 +16,12 @@ import {
   deleteEvalSuiteOperation,
   diagnoseServerOperation,
   generateEvalCasesOperation,
+  cancelEvalRunOperation,
   getChatboxOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -36,6 +38,7 @@ import {
   listServerToolsOperation,
   PlatformApiClient,
   readServerResourceOperation,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
@@ -67,6 +70,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   readServerResourceOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
@@ -82,6 +86,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
+  getEvalRunStepsOperation,
+  cancelEvalRunOperation,
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
@@ -96,6 +102,9 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
+  // Cancelling a run terminates in-flight work — state-changing, so clients
+  // should be able to confirm before it fires.
+  cancelEvalRunOperation.name,
 ]);
 
 /**
