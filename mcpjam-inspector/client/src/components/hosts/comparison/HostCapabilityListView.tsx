@@ -11,6 +11,7 @@ import { SupportChip } from "./support-chip";
 import {
   computeVisibleFieldIds,
   getSupportLevel,
+  isSupportField,
   type SupportFilterMode,
   type SupportLevel,
 } from "./support-level";
@@ -49,13 +50,13 @@ export function HostCapabilityListView({
     [configs, divergingOnly, supportFilter, searchQuery],
   );
 
-  // Support-shaped, currently-visible fields in registry order.
+  // Support-shaped, currently-visible fields in registry order. Support-shape
+  // is kind-based (`isSupportField`), so this needs no host config — avoids
+  // reading `configs[0]` while subjects are still hydrating (subjects can be
+  // empty here even when hosts are selected).
   const fields = useMemo(
-    () =>
-      HOST_CONFIG_FIELDS.filter(
-        (f) => visibleFieldIds.has(f.id) && getSupportLevel(f, configs[0]) !== null,
-      ),
-    [visibleFieldIds, configs],
+    () => HOST_CONFIG_FIELDS.filter((f) => visibleFieldIds.has(f.id) && isSupportField(f)),
+    [visibleFieldIds],
   );
 
   if (subjects.length === 0) {

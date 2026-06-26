@@ -45,6 +45,13 @@ describe("HostCapabilityListView", () => {
     expect(screen.getAllByText("openLinks").length).toBeGreaterThanOrEqual(1);
   });
 
+  it("renders the empty-hosts state without crashing while subjects hydrate", () => {
+    // Regression: the `fields` memo must not read `configs[0]` when subjects
+    // is empty (selected-but-still-loading) — that would crash the render.
+    render(<HostCapabilityListView subjects={[]} />);
+    expect(screen.getByText(/No hosts to compare/i)).toBeInTheDocument();
+  });
+
   it("shows an empty state when the search matches nothing", () => {
     render(
       <HostCapabilityListView
