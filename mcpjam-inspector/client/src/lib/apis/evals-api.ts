@@ -264,6 +264,31 @@ function mergeHostedServerBatch<
   };
 }
 
+/**
+ * Billing/entitlement caps (HTTP 402): the server forwards the original
+ * ConvexError payload on `details` (code "billing_limit_reached" /
+ * "billing_feature_not_included"). Rethrow it as a ConvexError so the shared
+ * billing helpers (`extractBillingErrorPayload` / `getBillingErrorMessage`)
+ * render the upgrade message + reset time instead of a generic failure. Shared
+ * by the buffered (`postEvalRequest`) and streamed (`streamEvalTestCase`) eval
+ * paths so single-case compare runs surface the same billing UX. No-op unless
+ * the payload is a billing cap.
+ */
+function rethrowIfBillingError(errorBody: unknown): void {
+  const billingPayload = (
+    errorBody as { details?: { code?: unknown } } | null | undefined
+  )?.details;
+  if (
+    billingPayload &&
+    typeof billingPayload === "object" &&
+    ((billingPayload as { code?: unknown }).code === "billing_limit_reached" ||
+      (billingPayload as { code?: unknown }).code ===
+        "billing_feature_not_included")
+  ) {
+    throw new ConvexError(billingPayload as Value);
+  }
+}
+
 async function postEvalRequest<TResponse>(
   path: string,
   payload: JsonRecord,
@@ -297,25 +322,7 @@ async function postEvalRequest<TResponse>(
         ? errorBody.error
         : `Request failed (${response.status})`;
 
-    // Billing/entitlement caps (HTTP 402): the server forwards the original
-    // ConvexError payload on `details` (code "billing_limit_reached" /
-    // "billing_feature_not_included"). Rebuild a ConvexError so the shared
-    // billing helpers (`extractBillingErrorPayload` / `getBillingErrorMessage`)
-    // recognize it and render the proper upgrade message + reset time, rather
-    // than echoing the generic top-level message.
-    const billingPayload = (
-      errorBody as { details?: { code?: unknown } } | null | undefined
-    )?.details;
-    if (
-      billingPayload &&
-      typeof billingPayload === "object" &&
-      ((billingPayload as { code?: unknown }).code ===
-        "billing_limit_reached" ||
-        (billingPayload as { code?: unknown }).code ===
-          "billing_feature_not_included")
-    ) {
-      throw new ConvexError(billingPayload as Value);
-    }
+    rethrowIfBillingError(errorBody);
 
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
@@ -521,6 +528,10 @@ export async function streamEvalTestCase(
         errorBody = errorText;
       }
     }
+    // Billing caps (402) take precedence over the rate-limit dialog: rebuild
+    // the ConvexError so streamed single-case runs get the same eval-iteration
+    // upgrade UX the buffered path renders, instead of a generic failure.
+    rethrowIfBillingError(errorBody);
     const limitKindRaw =
       errorBody && typeof errorBody === "object"
         ? (errorBody as { limitKind?: unknown }).limitKind
