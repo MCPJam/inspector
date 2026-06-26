@@ -36,6 +36,7 @@ export const routePaths = {
   skills: "/skills",
   learning: "/learning",
   conformance: "/conformance",
+  compatibility: "/compatibility",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",

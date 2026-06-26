@@ -24,6 +24,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "support",
   "settings",
   "conformance",
+  "compatibility",
   "oauth-flow",
   "xaa-flow",
   "learning",

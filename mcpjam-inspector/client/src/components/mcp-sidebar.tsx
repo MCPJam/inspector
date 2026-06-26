@@ -8,6 +8,7 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
+  Boxes,
   Workflow,
   Layers,
   ListTodo,
@@ -247,6 +248,13 @@ const navigationSections: NavSection[] = [
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
+      },
+      {
+        title: "Compatibility",
+        url: "/compatibility",
+        icon: Boxes,
+        // MCPJam-internal flag (same convention as `mcpjam-conformance`).
+        featureFlag: "mcpjam-compatibility",
       },
       // {
       //   title: "Tracing",
@@ -563,6 +571,7 @@ export function MCPSidebar({
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -631,6 +640,7 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
+      "mcpjam-compatibility": compatibilityEnabled === true,
       // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
@@ -642,6 +652,7 @@ export function MCPSidebar({
       sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
+      compatibilityEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
