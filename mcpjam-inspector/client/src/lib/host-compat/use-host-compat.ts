@@ -62,8 +62,9 @@ export function useHostCompatReports(
 
   const widgetUsage = useWidgetUsage(server.name, toolsData);
 
+  const protocolVersion = server.initializationInfo?.protocolVersion;
   return useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage],
+    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
+    [toolsData, widgetUsage, protocolVersion],
   );
 }

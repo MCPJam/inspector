@@ -18,16 +18,49 @@ export type CompatVerdict = "works" | "degraded" | "blocked" | "unknown";
 export type CompatFindingSeverity = "blocker" | "degraded" | "info";
 
 /**
- * Where a host-profile fact comes from. Surfaced in the UI so a verdict
- * never reads as more authoritative than its weakest source.
+ * Which axis a finding belongs to. `apps` = widget/rendering (does the host
+ * render this widget + expose the host APIs it calls). `server` = capability
+ * negotiation (protocol version today; elicitation/sampling/roots once
+ * observed live). They fail for different reasons and aggregate independently.
  */
-export type CompatProvenance = "vendor-doc" | "probe" | "assumed";
+export type CompatLane = "apps" | "server";
+
+/**
+ * Where a host-profile fact comes from. Surfaced in the UI so a verdict
+ * never reads as more authoritative than its weakest source. `observed` is
+ * the strongest — earned by a Tier-2 live run (Phase 3); the rest are static.
+ */
+export type CompatProvenance = "observed" | "vendor-doc" | "probe" | "assumed";
+
+/**
+ * Connection-derived facts about the *server under test* (not the host).
+ * Threaded into the engine separately from tool metadata because they come
+ * from the live `initialize` handshake, not the tools list.
+ */
+export type ConnectionFacts = {
+  /** Protocol version the server negotiated at connect (`initialize`). */
+  protocolVersion?: string;
+};
 
 export type CompatFinding = {
+  lane: CompatLane;
   severity: CompatFindingSeverity;
   title: string;
   detail: string;
   remediation?: string;
+  /**
+   * Source of THIS finding's host fact — so a Tier-2 `observed` fact reads as
+   * stronger than an `assumed` preset without implying every host fact was
+   * observed. In Phase 1 all findings inherit the host profile's provenance.
+   */
+  provenance: CompatProvenance;
+};
+
+/** Per-lane rollup so the UI can show apps vs server verdicts independently. */
+export type CompatLaneVerdict = {
+  verdict: CompatVerdict;
+  /** Weakest provenance among this lane's findings (host baseline if none). */
+  provenance: CompatProvenance;
 };
 
 export type HostCompatReport = {
@@ -35,17 +68,25 @@ export type HostCompatReport = {
   hostLabel: string;
   logoSrc: string;
   logoSrcByTheme?: { light: string; dark: string };
+  /** Worst-wins aggregate across lanes. */
   verdict: CompatVerdict;
+  /** Host's baseline provenance (dominant source for its facts). */
   provenance: CompatProvenance;
+  /** Per-lane verdicts (`apps`, `server`). */
+  lanes: Record<CompatLane, CompatLaneVerdict>;
   findings: CompatFinding[];
 };
 
 /**
- * What the server demands of a host, derived from the tools list at connect
- * time. Today this is entirely widget-shaped — that's where hosts actually
- * differ. Transport/auth/protocol live elsewhere (deliberately dropped from
- * the report: a local dev server is *expected* not to reach cloud hosts, so
- * flagging it is noise).
+ * What the server demands of a host. Two lanes:
+ *  - **apps** (widget-shaped): derived from the tools list + L1 widget scan —
+ *    where hosts most visibly differ.
+ *  - **server** (capability negotiation): `connectionFacts` from the live
+ *    `initialize`. Today just the protocol version — a host *advertising a
+ *    different protocol version* is a real capability gap, distinct from a
+ *    local server merely not reaching a cloud host (the reason transport/auth
+ *    stay out). Richer server-lane facts (elicitation/sampling/roots) are
+ *    observed live in Phase 3, not derivable statically.
  */
 export type ServerRequirements = {
   /** Tools that declare a UI, grouped by the bridge they render through. */
@@ -71,6 +112,12 @@ export type ServerRequirements = {
    * scanned, nothing notable used.
    */
   widgetUsage?: WidgetUsage;
+  /**
+   * Server-lane connection facts (protocol version). Separate from widget data
+   * because it comes from `initialize`, not the tools list. Absent when the
+   * caller has no live connection — the protocol check is then skipped.
+   */
+  connectionFacts?: ConnectionFacts;
   /** Human-readable dimensions we could not derive yet. */
   unknownDimensions: string[];
 };
@@ -86,6 +133,13 @@ export type HostCompatProfile = {
   rendersMcpApps: boolean;
   /** Renders OpenAI Apps widgets (`openai/outputTemplate` via the shim). */
   rendersOpenAiApps: boolean;
+  /**
+   * MCP base-protocol versions this host advertises, sourced from its
+   * host-template seed (`mcpProfile.initialize.supportedProtocolVersions`).
+   * Undefined when the template doesn't pin versions — the server-lane
+   * protocol check is then skipped.
+   */
+  supportedProtocolVersions?: string[];
   /**
    * The host's SEP-1865 MCP Apps capability matrix (from the registry).
    * Present only when the host renders widgets at all — a CLI host (Codex)

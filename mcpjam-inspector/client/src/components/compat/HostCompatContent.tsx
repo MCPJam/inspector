@@ -23,6 +23,7 @@ import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
 import type {
   CompatFinding,
+  CompatLane,
   CompatProvenance,
   CompatVerdict,
   HostCompatReport,
@@ -78,6 +79,7 @@ const VERDICT_META: Record<
 };
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
+  observed: "Observed from a live run",
   "vendor-doc": "Verified from vendor docs",
   probe: "Probe-captured from a real host",
   assumed: "Best-effort preset — unverified",
@@ -90,6 +92,14 @@ const FINDING_ICON: Record<
   blocker: { Icon: AlertCircle, className: "text-red-500" },
   degraded: { Icon: AlertTriangle, className: "text-amber-500" },
   info: { Icon: Info, className: "text-muted-foreground" },
+};
+
+/** Findings split into two axes — see `CompatLane`. Apps first (where hosts
+ * most visibly differ), then Server (capability negotiation). */
+const LANE_ORDER = ["apps", "server"] as const;
+const LANE_LABEL: Record<CompatLane, string> = {
+  apps: "Apps",
+  server: "Server",
 };
 
 /**
@@ -116,9 +126,10 @@ export function HostCompatContent({
   onClose?: () => void;
 }) {
   const widgetUsage = useWidgetUsage(server.name, toolsData);
+  const protocolVersion = server.initializationInfo?.protocolVersion;
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage]
+    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
+    [toolsData, widgetUsage, protocolVersion]
   );
 
   const posthog = usePostHog();
@@ -301,33 +312,62 @@ export function HostCompatContent({
               </div>
 
               {hasFindings && isOpen && (
-                <ul className="mt-2 space-y-1.5 pl-6">
-                  {report.findings.map((finding, index) => {
-                    const icon = FINDING_ICON[finding.severity];
+                <div className="mt-2 space-y-2.5 pl-6">
+                  {LANE_ORDER.map((lane) => {
+                    const laneFindings = report.findings.filter(
+                      (f) => f.lane === lane
+                    );
+                    if (laneFindings.length === 0) return null;
+                    const laneDot = VERDICT_META[report.lanes[lane].verdict].dot;
                     return (
-                      <li key={index} className="flex gap-2 text-xs">
-                        <icon.Icon
-                          className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-foreground">
-                            {finding.title}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {" — "}
-                            {finding.detail}
-                          </span>
-                          {finding.remediation && (
-                            <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
-                              <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                              <span>{finding.remediation}</span>
-                            </div>
-                          )}
+                      <div key={lane}>
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <span
+                            className={`h-1 w-1 rounded-full ${laneDot}`}
+                          />
+                          {LANE_LABEL[lane]}
                         </div>
-                      </li>
+                        <ul className="space-y-1.5">
+                          {laneFindings.map((finding, index) => {
+                            const icon = FINDING_ICON[finding.severity];
+                            // Phase 1: a finding's provenance equals the host
+                            // baseline, so this badge stays hidden. It surfaces
+                            // when a Tier-2 live run stamps `observed`.
+                            const showProvenance =
+                              finding.provenance !== report.provenance;
+                            return (
+                              <li key={index} className="flex gap-2 text-xs">
+                                <icon.Icon
+                                  className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
+                                />
+                                <div className="min-w-0">
+                                  <span className="font-medium text-foreground">
+                                    {finding.title}
+                                  </span>
+                                  {showProvenance && (
+                                    <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      {finding.provenance}
+                                    </span>
+                                  )}
+                                  <span className="text-muted-foreground">
+                                    {" — "}
+                                    {finding.detail}
+                                  </span>
+                                  {finding.remediation && (
+                                    <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
+                                      <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                                      <span>{finding.remediation}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
                     );
                   })}
-                </ul>
+                </div>
               )}
             </div>
           );

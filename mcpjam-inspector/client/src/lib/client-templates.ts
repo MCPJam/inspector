@@ -124,3 +124,35 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = SDK_HOST_TEMPLATES.map(
       seedFromHostTemplate(template.id, opts),
   })
 );
+
+/**
+ * Strict host-template lookup — throws on an unknown id instead of silently
+ * substituting a default. The SDK's `seedFromHostTemplate` falls back to
+ * `HOST_TEMPLATES[0]` for unknown ids, which would mis-attribute a host (e.g.
+ * a typo'd live-run target running MCPJam chrome). Both the static
+ * protocol-version read and Phase-3 live runs route through this so a named
+ * miss fails fast.
+ */
+export function resolveHostTemplateOrThrow(id: HostTemplateId): HostTemplate {
+  const template = HOST_TEMPLATES.find((t) => t.id === id);
+  if (!template) {
+    throw new Error(
+      `Unknown host template id: "${id}". Known: ${HOST_TEMPLATES.map(
+        (t) => t.id,
+      ).join(", ")}.`,
+    );
+  }
+  return template;
+}
+
+/**
+ * The MCP base-protocol versions a host advertises, from its seeded
+ * `mcpProfile.initialize.supportedProtocolVersions`. Undefined when the
+ * template doesn't pin versions. Throws on an unknown id (fail-fast).
+ */
+export function getHostTemplateSupportedProtocolVersions(
+  id: HostTemplateId,
+): string[] | undefined {
+  const seeded = resolveHostTemplateOrThrow(id).seed();
+  return seeded.mcpProfile?.initialize?.supportedProtocolVersions;
+}
