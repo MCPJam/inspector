@@ -95,6 +95,7 @@ export function adaptTraceToUiMessages(params: {
   // result are merged into one), so no key collisions; a `seen` guard is kept
   // for safety.
   const seenIds = new Set<string>();
+  const idRemap = new Map<string, string>();
   const stabilizedMessages = (result.messages ?? []).map((message, index) => {
     const parts = (message.parts ?? []) as Array<{ toolCallId?: unknown }>;
     const firstToolCallId = parts.find(
@@ -109,11 +110,40 @@ export function adaptTraceToUiMessages(params: {
       : (message.id ?? `trace-msg-${index}`);
     if (seenIds.has(nextId)) nextId = `${nextId}-${index}`;
     seenIds.add(nextId);
+    if (message.id && nextId !== message.id) idRemap.set(message.id, nextId);
     return nextId === message.id ? message : { ...message, id: nextId };
   });
+
+  // Re-keying tool messages above also requires remapping the package's
+  // source-index → uiMessageId lookups (still keyed by the ORIGINAL ids).
+  // Without this, "Reveal in Chat" from a tool/step row resolves a focus id
+  // that no longer matches any rendered message (chat never opens) and tool
+  // rows lose their `data-source-range`.
+  const remapId = (id: string) => idRemap.get(id) ?? id;
+  const uiMessageSourceRanges = Object.fromEntries(
+    Object.entries(result.uiMessageSourceRanges).map(([id, range]) => [
+      remapId(id),
+      range,
+    ]),
+  ) as AdaptedTraceResult["uiMessageSourceRanges"];
+  const sourceMessageIndexToUiMessageIds = Object.fromEntries(
+    Object.entries(result.sourceMessageIndexToUiMessageIds).map(([k, ids]) => [
+      k,
+      (ids as string[]).map(remapId),
+    ]),
+  ) as AdaptedTraceResult["sourceMessageIndexToUiMessageIds"];
+  const sourceMessageIndexToFocusUiMessageId = Object.fromEntries(
+    Object.entries(result.sourceMessageIndexToFocusUiMessageId).map(
+      ([k, id]) => [k, remapId(id as string)],
+    ),
+  ) as AdaptedTraceResult["sourceMessageIndexToFocusUiMessageId"];
+
   return {
     ...result,
     messages: stabilizedMessages,
+    uiMessageSourceRanges,
+    sourceMessageIndexToUiMessageIds,
+    sourceMessageIndexToFocusUiMessageId,
     toolRenderOverrides:
       result.toolRenderOverrides as AdaptedTraceResult["toolRenderOverrides"],
   };
