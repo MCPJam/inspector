@@ -630,8 +630,14 @@ export async function resolveLocalServerForConnect(
       // The ID-JAG `iss` must match the live IdP issuer whose JWKS the resource
       // AS fetches. In hosted mode only the `/api/web/xaa` router is mounted
       // (`/api/mcp/*` returns 410), so the issuer base follows the deployment
-      // mode — same split the debugger uses.
-      issuer: getIssuerForRequest(c, HOSTED_MODE ? "/api/web" : "/api/mcp", false),
+      // mode. Trust `x-forwarded-proto` in hosted mode so the TLS-terminating
+      // edge yields an `https://` issuer (c.req.url is http:// internally) —
+      // same split the `/api/web` (trust) vs `/api/mcp` (no-trust) routers use.
+      issuer: getIssuerForRequest(
+        c,
+        HOSTED_MODE ? "/api/web" : "/api/mcp",
+        HOSTED_MODE,
+      ),
       serverId,
       projectId,
       bearerToken,
