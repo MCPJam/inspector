@@ -9,21 +9,33 @@
  */
 
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
+import {
+  fieldDiverges,
+  HOST_CONFIG_FIELDS,
+  type HostConfigFieldDef,
+  type SupportLevel,
+} from "@/lib/host-config-field-schema";
 
 /**
- * caniuse-grade support level for one (field, host) pair.
+ * caniuse-grade support level for one (field, host) pair. The type lives in the
+ * field schema (so it can declare enum→level maps); re-exported here for the
+ * comparison components that have always imported it from this module.
  * - `supported`  — capability advertised / boolean `Yes` / tri-state `On`
  * - `partial`    — tri-state `Auto` (host decides), or advertised-with-caveat
  * - `neutral`    — known-off / not advertised (a fact, not a failure)
  * - `unsupported`— reserved for an explicit "not supported"; no field maps here yet
  */
-export type SupportLevel = "supported" | "partial" | "neutral" | "unsupported";
+export type { SupportLevel } from "@/lib/host-config-field-schema";
 
 /** Kind-based: support-shaped fields get chips/coverage; everything else stays plain. */
 export function isSupportField(field: HostConfigFieldDef): boolean {
-  const k = field.kind.kind;
-  return k === "boolean" || k === "tri-state" || k === "capability";
+  const k = field.kind;
+  return (
+    k.kind === "boolean" ||
+    k.kind === "tri-state" ||
+    k.kind === "capability" ||
+    (k.kind === "enum" && !!k.support)
+  );
 }
 
 /**
@@ -52,6 +64,14 @@ export function getSupportLevel(
         return "supported";
       }
       return "neutral";
+    }
+    case "enum": {
+      // Only enums that declare a support map are support-shaped; the rest
+      // (protocol version, CSP mode, …) render as plain text.
+      const map = field.kind.support;
+      if (!map) return null;
+      if (typeof value !== "string") return "neutral";
+      return map[value] ?? "neutral";
     }
     default:
       return null;
@@ -105,6 +125,41 @@ export function rowPassesSupportFilter(
     case "supported":
       return levels.every((l) => l === "supported");
   }
+}
+
+/** Free-text match against a field's label / description / subsection. */
+export function fieldMatchesQuery(
+  field: HostConfigFieldDef,
+  loweredQuery: string,
+): boolean {
+  if (!loweredQuery) return true;
+  return (
+    field.label.toLowerCase().includes(loweredQuery) ||
+    (field.description?.toLowerCase().includes(loweredQuery) ?? false) ||
+    field.subsection.toLowerCase().includes(loweredQuery)
+  );
+}
+
+/**
+ * The set of field ids visible after applying the diverging toggle, the support
+ * filter, and the search query. Shared by the matrix (which rows to render) and
+ * the container (the "N / M fields" count) so they never disagree.
+ */
+export function computeVisibleFieldIds(args: {
+  configs: ReadonlyArray<HostConfigDtoV2>;
+  divergingOnly: boolean;
+  supportFilter: SupportFilterMode;
+  searchQuery: string;
+}): Set<string> {
+  const q = args.searchQuery.trim().toLowerCase();
+  const set = new Set<string>();
+  for (const field of HOST_CONFIG_FIELDS) {
+    if (args.divergingOnly && !fieldDiverges(field, args.configs)) continue;
+    if (!rowPassesSupportFilter(field, args.configs, args.supportFilter)) continue;
+    if (!fieldMatchesQuery(field, q)) continue;
+    set.add(field.id);
+  }
+  return set;
 }
 
 /**

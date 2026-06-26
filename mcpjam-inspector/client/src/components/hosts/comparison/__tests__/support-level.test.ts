@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { hostConfigField } from "@/lib/host-config-field-schema";
 import {
+  hostConfigField,
+  type HostConfigFieldDef,
+} from "@/lib/host-config-field-schema";
+import {
+  computeVisibleFieldIds,
+  fieldMatchesQuery,
   getCapabilityCaveats,
   getSupportLevel,
   rowCoverage,
@@ -126,6 +131,77 @@ describe("rowPassesSupportFilter", () => {
     expect(
       rowPassesSupportFilter(hostConfigField("modelId"), oneMissing, "missing"),
     ).toBe(false);
+  });
+});
+
+describe("getSupportLevel — enum with support map", () => {
+  const enumField = {
+    id: "x",
+    section: "apps",
+    subsection: "x",
+    label: "x",
+    path: "x",
+    kind: {
+      kind: "enum",
+      support: { all: "supported", "fullscreen-only": "partial", none: "neutral" },
+    },
+    read: (cfg) => (cfg as { _v?: string })._v,
+  } as unknown as HostConfigFieldDef;
+
+  it("maps enum values via the support table", () => {
+    expect(getSupportLevel(enumField, { _v: "all" } as never)).toBe("supported");
+    expect(getSupportLevel(enumField, { _v: "fullscreen-only" } as never)).toBe(
+      "partial",
+    );
+    expect(getSupportLevel(enumField, { _v: "none" } as never)).toBe("neutral");
+  });
+
+  it("returns null for an enum without a support map (plain text)", () => {
+    expect(
+      getSupportLevel(hostConfigField("mcpProtocolVersion"), makeConfig()),
+    ).toBeNull();
+  });
+});
+
+describe("exploded effective capability rows", () => {
+  it("resolves effective MCP Apps dimensions to booleans (chip-shaped)", () => {
+    const level = getSupportLevel(
+      hostConfigField("appsCap.openLinks"),
+      makeConfig({ hostStyle: "claude" }),
+    );
+    expect(level === "supported" || level === "neutral").toBe(true);
+  });
+
+  it("registers a sandbox permission row per permission", () => {
+    expect(hostConfigField("sandboxPerm.camera").label).toBe("camera");
+    expect(getSupportLevel(hostConfigField("sandboxPerm.camera"), makeConfig())).toBe(
+      "neutral",
+    );
+  });
+});
+
+describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
+  it("matches a field by label substring", () => {
+    expect(fieldMatchesQuery(hostConfigField("temperature"), "temp")).toBe(true);
+    expect(fieldMatchesQuery(hostConfigField("temperature"), "zzz")).toBe(false);
+  });
+
+  it("narrows visible ids by search query", () => {
+    const all = computeVisibleFieldIds({
+      configs: [makeConfig()],
+      divergingOnly: false,
+      supportFilter: "all",
+      searchQuery: "",
+    });
+    const narrowed = computeVisibleFieldIds({
+      configs: [makeConfig()],
+      divergingOnly: false,
+      supportFilter: "all",
+      searchQuery: "temperature",
+    });
+    expect(narrowed.has("temperature")).toBe(true);
+    expect(narrowed.has("modelId")).toBe(false);
+    expect(narrowed.size).toBeLessThan(all.size);
   });
 });
 

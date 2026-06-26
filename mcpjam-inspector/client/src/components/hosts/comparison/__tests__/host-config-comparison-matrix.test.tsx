@@ -190,6 +190,43 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.queryByTestId("coverage-modelId")).not.toBeInTheDocument();
   });
 
+  it("explodes the apps capability surface into per-dimension rows", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A", { hostStyle: "claude" })]}
+      />,
+    );
+    // Effective MCP Apps + OpenAI shim dimensions render as their own rows…
+    expect(screen.getByText("openLinks")).toBeInTheDocument();
+    expect(screen.getByText("serverTools")).toBeInTheDocument();
+    expect(screen.getByText("callTool")).toBeInTheDocument();
+    expect(screen.getByText("camera")).toBeInTheDocument();
+    // …and the old opaque override rows are gone.
+    expect(screen.queryByText("Spec-bridge overrides")).not.toBeInTheDocument();
+    expect(screen.queryByText("Permissions allow-list")).not.toBeInTheDocument();
+  });
+
+  it("filters rows live by search query", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A")]}
+        searchQuery="temperature"
+      />,
+    );
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state when nothing matches the search", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A")]}
+        searchQuery="zzz-no-such-field"
+      />,
+    );
+    expect(screen.getByText(/No fields match/i)).toBeInTheDocument();
+  });
+
   it("filters to rows missing support when supportFilter=missing", () => {
     render(
       <HostConfigComparisonMatrix

@@ -23,10 +23,10 @@ import {
 } from "@/lib/host-config-field-schema";
 import { SupportChip } from "./support-chip";
 import {
+  computeVisibleFieldIds,
   getCapabilityCaveats,
   getSupportLevel,
   rowCoverage,
-  rowPassesSupportFilter,
   type SupportFilterMode,
   type SupportLevel,
 } from "./support-level";
@@ -37,6 +37,8 @@ interface HostConfigComparisonMatrixProps {
   divergingOnly?: boolean;
   /** caniuse-style row filter by aggregate support level. Default `"all"`. */
   supportFilter?: SupportFilterMode;
+  /** Free-text query; matches field label / description / subsection. */
+  searchQuery?: string;
   /**
    * When true, render each field's description inline beneath its label.
    * When false (default), the description moves into a hover `i` affordance
@@ -60,6 +62,7 @@ export function HostConfigComparisonMatrix({
   subjects,
   divergingOnly = false,
   supportFilter = "all",
+  searchQuery = "",
   showDescriptions = false,
   onRemoveHost,
   themeMode = "light",
@@ -75,22 +78,32 @@ export function HostConfigComparisonMatrix({
     return set;
   }, [configs]);
 
-  // Rows surviving BOTH the diverging toggle and the support filter. Computed
-  // once here so the section/subsection passes stay in lockstep.
-  const visibleFieldIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const field of HOST_CONFIG_FIELDS) {
-      if (divergingOnly && !divergingIds.has(field.id)) continue;
-      if (!rowPassesSupportFilter(field, configs, supportFilter)) continue;
-      set.add(field.id);
-    }
-    return set;
-  }, [divergingOnly, divergingIds, configs, supportFilter]);
+  // Rows surviving the diverging toggle, support filter, and search query.
+  // Computed once here so the section/subsection passes stay in lockstep, and
+  // shared with the container's result count via `computeVisibleFieldIds`.
+  const visibleFieldIds = useMemo(
+    () =>
+      computeVisibleFieldIds({
+        configs,
+        divergingOnly,
+        supportFilter,
+        searchQuery,
+      }),
+    [configs, divergingOnly, supportFilter, searchQuery],
+  );
 
   if (subjects.length === 0) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center text-sm text-muted-foreground">
         No hosts to compare. Create at least one host in this project.
+      </div>
+    );
+  }
+
+  if (visibleFieldIds.size === 0) {
+    return (
+      <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
+        No fields match the current search and filters.
       </div>
     );
   }
@@ -447,8 +460,28 @@ function FieldCell({
       );
     }
 
-    case "enum":
+    case "enum": {
+      if (kind.support) {
+        const level = getSupportLevel(field, subject.config) ?? "neutral";
+        return <SupportChip level={level} label={String(value)} />;
+      }
       return <span className="text-[13px] text-foreground">{String(value)}</span>;
+    }
+
+    case "mode-set": {
+      const present = new Set(Array.isArray(value) ? (value as string[]) : []);
+      return (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          {kind.modes.map((mode) => (
+            <SupportChip
+              key={mode}
+              level={present.has(mode) ? "supported" : "neutral"}
+              label={mode}
+            />
+          ))}
+        </span>
+      );
+    }
 
     case "string": {
       const s = String(value);
@@ -493,23 +526,38 @@ function FieldCell({
       if (typeof value !== "object" || value === null) {
         return <span className="text-[12px] text-muted-foreground/60">—</span>;
       }
-      const keys = Object.keys(value as Record<string, unknown>);
-      const noun = kind.itemNoun ?? "key";
-      if (keys.length === 0) {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) {
         return (
           <span className="font-mono text-[11px] text-muted-foreground">
             {"{} empty"}
           </span>
         );
       }
+      // Nothing hidden: render entries inline. Only genuinely large blobs
+      // collapse behind the expand popover.
+      const json = JSON.stringify(value);
+      if (entries.length > 8 || json.length > 220) {
+        const noun = kind.itemNoun ?? "key";
+        return (
+          <ExpandablePreview
+            label={`${entries.length} ${noun}${entries.length === 1 ? "" : "s"} ›`}
+          >
+            <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
+              {JSON.stringify(value, null, 2)}
+            </pre>
+          </ExpandablePreview>
+        );
+      }
       return (
-        <ExpandablePreview
-          label={`${keys.length} ${noun}${keys.length === 1 ? "" : "s"} ›`}
-        >
-          <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
-            {JSON.stringify(value, null, 2)}
-          </pre>
-        </ExpandablePreview>
+        <div className="flex flex-col gap-0.5 font-mono text-[11.5px] leading-snug">
+          {entries.map(([k, v]) => (
+            <div key={k} className="break-all">
+              <span className="text-muted-foreground">{k}: </span>
+              <span className="text-foreground">{formatObjectValue(v)}</span>
+            </div>
+          ))}
+        </div>
       );
     }
   }
@@ -583,6 +631,13 @@ function HostColumnHeader({
       </motion.div>
     </th>
   );
+}
+
+/** Compact one-line rendering of an object entry's value for inline display. */
+function formatObjectValue(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
 }
 
 function ExpandablePreview({
