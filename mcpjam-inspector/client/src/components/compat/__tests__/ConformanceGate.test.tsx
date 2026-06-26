@@ -103,6 +103,26 @@ describe("ConformanceGate", () => {
     ).toBeInTheDocument();
   });
 
+  it("resets when the active server switches — no stale results bleed across", async () => {
+    const { rerender } = renderGate(httpServer({ name: "server-a" }));
+    fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/Passes spec checks/)).toBeInTheDocument(),
+    );
+
+    // Same component instance, new active server (the page's selector, not a
+    // remount): prior results must clear, button returns to "Run checks".
+    rerender(
+      <MemoryRouter>
+        <ConformanceGate server={httpServer({ name: "server-b" })} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/Passes spec checks/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Run checks/ }),
+    ).toBeInTheDocument();
+  });
+
   it("marks protocol 'not runnable here' for stdio (never failed) but still runs apps", async () => {
     renderGate(stdioServer());
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));

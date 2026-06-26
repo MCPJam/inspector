@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -65,12 +65,31 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
   });
   const [hasRun, setHasRun] = useState(false);
 
+  // Monotonic run token: bumped on every run AND on server switch so an
+  // in-flight conformance promise from a prior server (or a superseded run)
+  // can't write its result over the current server's state. This component is
+  // reused across the page's active-server selector, so unlike the modal it
+  // doesn't remount per server — it must reset itself.
+  const runTokenRef = useRef(0);
+  useEffect(() => {
+    runTokenRef.current += 1;
+    setOutcomes({ protocol: { status: "idle" }, apps: { status: "idle" } });
+    setHasRun(false);
+  }, [server.name]);
+
   const isRunning =
     outcomes.protocol.status === "running" || outcomes.apps.status === "running";
 
   const runChecks = useCallback(async () => {
+    const token = (runTokenRef.current += 1);
     setHasRun(true);
     const serverName = server.name;
+
+    // Drop a write if the server changed or a newer run started mid-flight.
+    const apply = (suite: SuiteId, outcome: SuiteOutcome) => {
+      if (runTokenRef.current !== token) return;
+      setOutcomes((prev) => ({ ...prev, [suite]: outcome }));
+    };
 
     const runSuite = async (
       suite: SuiteId,
@@ -79,35 +98,26 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
       }>,
     ) => {
       if (!support[suite].supported) {
-        setOutcomes((prev) => ({
-          ...prev,
-          [suite]: {
-            status: "unsupported",
-            reason: support[suite].reason ?? "Not runnable for this server.",
-          },
-        }));
+        apply(suite, {
+          status: "unsupported",
+          reason: support[suite].reason ?? "Not runnable for this server.",
+        });
         return;
       }
-      setOutcomes((prev) => ({ ...prev, [suite]: { status: "running" } }));
+      apply(suite, { status: "running" });
       try {
         const { result } = await run();
-        setOutcomes((prev) => ({
-          ...prev,
-          [suite]: {
-            status: "done",
-            passed: result.passed,
-            failedTitles: failedTitlesOf(result.checks),
-            total: result.checks.length,
-          },
-        }));
+        apply(suite, {
+          status: "done",
+          passed: result.passed,
+          failedTitles: failedTitlesOf(result.checks),
+          total: result.checks.length,
+        });
       } catch (err) {
-        setOutcomes((prev) => ({
-          ...prev,
-          [suite]: {
-            status: "error",
-            error: err instanceof Error ? err.message : String(err),
-          },
-        }));
+        apply(suite, {
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     };
 
