@@ -31,7 +31,7 @@ import {
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Download } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -553,7 +553,6 @@ export function RunDetailView({
       metricLabel={metricLabel}
       badgeMetricLabel={badgeMetricLabel}
       includeRunIdentity
-      onExportTraces={onExportTraces}
       hideRecentRuns={hideRecentRuns}
       hideReplayLineage={hideReplayLineage}
       runClient={runClient}
@@ -754,6 +753,23 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3"
       )}
     >
+      {onExportTraces ? (
+        // Always-on run-level action — placed here (not the accuracy hero) so it
+        // survives the folded run-detail layout that hides the hero.
+        <div className="mb-3 flex shrink-0 justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportTraces}
+            className="gap-1.5"
+            data-testid="run-detail-export-traces"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </Button>
+        </div>
+      ) : null}
+
       <div className="shrink-0">{runMetadataBlock}</div>
 
       {useTwoColumnLayout ? (
