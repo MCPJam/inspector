@@ -83,9 +83,14 @@ export function getSupportLevel(
       // supported, only the minimum (≤1) → neutral, some-but-not-all →
       // partial. The matrix cell still renders the per-mode chips; this is the
       // single-level summary used by coverage / filters / the list view.
-      const present = Array.isArray(value) ? value.length : 0;
-      const total = field.kind.modes.length;
-      if (present >= total) return "supported";
+      //
+      // Count membership of the declared candidates (matching the cell's
+      // `Set` check) rather than `value.length`, so duplicate or unknown
+      // entries can't disagree with what the grid shows.
+      const modes = field.kind.modes;
+      const set = new Set(Array.isArray(value) ? (value as string[]) : []);
+      const present = modes.filter((m) => set.has(m)).length;
+      if (present >= modes.length) return "supported";
       if (present <= 1) return "neutral";
       return "partial";
     }

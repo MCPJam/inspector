@@ -278,6 +278,7 @@ export function HostConfigCompareView({
               onQueryChange={setFieldSearchQuery}
               matchCount={matchCount}
               totalCount={totalFieldCount}
+              showCount={orderedSubjects.length > 0}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
             />
@@ -381,6 +382,7 @@ function CompareSearchBar({
   onQueryChange,
   matchCount,
   totalCount,
+  showCount,
   viewMode,
   onViewModeChange,
 }: {
@@ -388,6 +390,8 @@ function CompareSearchBar({
   onQueryChange: (q: string) => void;
   matchCount: number;
   totalCount: number;
+  /** Hidden while hosts are still loading — the count would be meaningless. */
+  showCount: boolean;
   viewMode: CompareViewMode;
   onViewModeChange: (mode: CompareViewMode) => void;
 }) {
@@ -403,9 +407,11 @@ function CompareSearchBar({
         aria-label="Search host config fields"
         className="min-w-[240px] flex-1"
       />
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-        {matchCount} / {totalCount} fields
-      </span>
+      {showCount && (
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+          {matchCount} / {totalCount} fields
+        </span>
+      )}
       <div
         role="group"
         aria-label="View mode"

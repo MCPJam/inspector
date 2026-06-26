@@ -190,6 +190,14 @@ describe("getSupportLevel — mode-set", () => {
       "neutral",
     );
   });
+
+  it("counts declared-mode membership, ignoring duplicates and unknowns", () => {
+    // Matches the matrix cell's Set check: dup inline + unknown 'foo' is still
+    // only one declared mode present → neutral (not "supported" by length).
+    expect(
+      getSupportLevel(modeSetField, { _m: ["inline", "inline", "foo"] } as never),
+    ).toBe("neutral");
+  });
 });
 
 describe("exploded effective capability rows", () => {
