@@ -73,7 +73,8 @@
             "pages": [
               "inspector/guided-oauth",
               "inspector/xaa-debugger",
-              "inspector/xaa-test-idp"
+              "inspector/xaa-test-idp",
+              "inspector/compatibility"
             ]
           },
           {
