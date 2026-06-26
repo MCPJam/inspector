@@ -92,6 +92,7 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 - **No Authentication** - Use this for local or development servers that don't require authentication
 - **Bearer Token** - Use this if you already have an API token from the server
 - **OAuth 2.0** - Use this for servers that require OAuth authorization flow
+- **Cross-App Access (XAA)** - Use this for servers that require the jwt-bearer token-exchange flow (RFC 7523). MCPJam mints the access token server-side using the MCPJam test identity provider.
 
 ### Getting 401 Unauthorized errors
 
