@@ -37,6 +37,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
@@ -449,6 +450,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <LearningRoute />;
     case "conformance":
       return <ConformanceRoute />;
+    case "compatibility":
+      return <CompatibilityRoute />;
     case "oauth-flow":
       return <OAuthFlowRoute />;
     case "xaa-flow":
@@ -879,6 +882,16 @@ export function ConformanceRoute() {
   return <ConformanceTab server={selectedServerEntry ?? null} />;
 }
 
+export function CompatibilityRoute() {
+  const { selectedServerEntry, activeProjectId } = useAppRouteContext();
+  return (
+    <HostCompatPage
+      server={selectedServerEntry ?? null}
+      projectId={activeProjectId}
+    />
+  );
+}
+
 // `/chatboxes` is the publish surface (link / mode / members / sessions /
 // clusters) for the chatbox bound 1:1 to the currently-selected host.
 // Navigation between chatboxes flows through the global host bar — pick
@@ -1268,6 +1281,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1881,6 +1895,7 @@ export default function App() {
       activeTab === "prompts" ||
       activeTab === "tasks" ||
       activeTab === "conformance" ||
+      activeTab === "compatibility" ||
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -2596,6 +2611,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
+    } else if (
+      activeTab === "compatibility" &&
+      compatibilityEnabled !== true
+    ) {
+      navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is
       // `undefined`; redirecting then would strand a flagged-in user who
@@ -2605,6 +2625,7 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
+    compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
@@ -2940,6 +2961,7 @@ export default function App() {
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "conformance" ||
+    activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
