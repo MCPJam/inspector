@@ -260,6 +260,61 @@ export function getIssuerForRequest(
   return getXAAIssuerUrl(`${parsed.origin}${issuerBasePath}`);
 }
 
+/** Minimal stored-server shape needed to assemble XAA mint args. */
+export interface XaaMintServerConfig {
+  url?: string;
+  oauthScopes?: string[];
+  xaaSubject?: string;
+  xaaEmail?: string;
+}
+
+/**
+ * Resolve the MCPJam test-IdP issuer for an XAA mint. In hosted mode only the
+ * `/api/web/xaa` router is mounted (`/api/mcp/*` returns 410), and the TLS-
+ * terminating edge means `c.req.url` is `http://` internally — so we trust
+ * `x-forwarded-proto` to keep the `https://` scheme. Off-hosted, the
+ * `/api/mcp/xaa` router is live and the request scheme is already correct.
+ */
+export function resolveXaaIssuer(c: Context, hostedMode: boolean): string {
+  return getIssuerForRequest(
+    c,
+    hostedMode ? "/api/web" : "/api/mcp",
+    hostedMode,
+  );
+}
+
+/**
+ * Assemble the full `mintXaaAccessToken` args from a stored server config so
+ * every connect surface (local resolver + hosted authorize) shares one identical
+ * shape and can't drift on the wire.
+ */
+export function buildXaaMintArgs(args: {
+  issuer: string;
+  hostedMode: boolean;
+  serverConfig: XaaMintServerConfig;
+  serverId: string;
+  projectId: string;
+  bearerToken: string;
+  resolveServerSecret: ResolveServerSecretFn;
+}): Parameters<typeof mintXaaAccessToken>[0] {
+  const sc = args.serverConfig;
+  return {
+    resolveServerSecret: args.resolveServerSecret,
+    // Hosted targets are always remote HTTPS; off-hosted allows localhost http.
+    httpsOnly: args.hostedMode,
+    issuer: args.issuer,
+    serverId: args.serverId,
+    projectId: args.projectId,
+    bearerToken: args.bearerToken,
+    resource: sc.url,
+    scope: sc.oauthScopes?.join(" ") || undefined,
+    // Mock-login identity: stored override if set, else the XAA IdP mock-login
+    // defaults.
+    subject: sc.xaaSubject || "user-12345",
+    email: sc.xaaEmail || "demo.user@example.com",
+  };
+}
+
 // Full server-side XAA mint for the connect path: resolve the target's
 // confidential credentials + token endpoint, sign an ID-JAG asserting the
 // supplied (already-authenticated) identity, then exchange it for a resource

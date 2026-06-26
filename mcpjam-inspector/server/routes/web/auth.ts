@@ -18,6 +18,7 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
+import { logger } from "../../utils/logger.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -34,7 +35,15 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
-import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
+import {
+  fetchRuntimeServerSecrets,
+  fetchServerClientSecret,
+} from "../../utils/server-secrets.js";
+import {
+  buildXaaMintArgs,
+  mintXaaAccessToken,
+  resolveXaaIssuer,
+} from "../../services/xaa-mint.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
@@ -230,6 +239,13 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
+    // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
+    // hosted authorize endpoint. The confidential client secret + token endpoint
+    // are resolved separately at mint time via the hardened reveal-secret path.
+    useXaa?: boolean;
+    oauthScopes?: string[];
+    xaaSubject?: string;
+    xaaEmail?: string;
   };
   internalLogContext?: InternalLogContext;
 };
@@ -775,6 +791,13 @@ export async function createAuthorizedManager(
      * undefined (SDK chooses at request time).
      */
     mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+    /**
+     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
+     * for Cross-App Access servers. Supplied by callers that have the request
+     * `Context`; when absent, XAA servers fall through with no minted token
+     * (and the resource server returns 401), so connect surfaces must pass it.
+     */
+    xaaIssuer?: string;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -861,6 +884,55 @@ export async function createAuthorizedManager(
         }
       }
 
+      // Cross-App Access: mint the resource access token server-side (MCPJam as
+      // the test IdP) and inject it through the same `oauthAccessToken` channel
+      // that sets the Bearer header. Strictly gated on `useXaa === true &&
+      // useOAuth !== true` so it can never collide with the OAuth branch above.
+      // The XAA token always overrides whatever the authorize batch returned: a
+      // server converted from OAuth still has a stored OAuth token, and reusing
+      // it would inject the wrong credential.
+      let connectToken = oauthToken;
+      let connectOnUnauthorized = onUnauthorized;
+      const useXaa =
+        auth.serverConfig.transportType === "http" &&
+        auth.serverConfig.useXaa === true &&
+        auth.serverConfig.useOAuth !== true;
+      if (useXaa && options?.xaaIssuer) {
+        const mintArgs = buildXaaMintArgs({
+          issuer: options.xaaIssuer,
+          hostedMode: HOSTED_MODE,
+          serverConfig: auth.serverConfig,
+          serverId,
+          projectId,
+          bearerToken,
+          resolveServerSecret: fetchServerClientSecret,
+        });
+        try {
+          connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
+        } catch (error) {
+          logger.error("[XAA connect] mint failed", error, {
+            serverId,
+            serverName: displayServerName,
+            resource: auth.serverConfig.url,
+          });
+          throw error;
+        }
+        // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
+        // second 401 surfaces rather than looping mint→401→mint.
+        let reMinted = false;
+        connectOnUnauthorized = async () => {
+          if (reMinted) {
+            throw new WebRouteError(
+              401,
+              ErrorCode.UNAUTHORIZED,
+              `Server "${displayServerName}" rejected the cross-app access token. Reconnect to retry.`
+            );
+          }
+          reMinted = true;
+          return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
       const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
         serverId,
         options?.initializePins,
@@ -909,9 +981,9 @@ export async function createAuthorizedManager(
         toHttpConfig(
           authForConfig,
           timeoutMs,
-          oauthToken,
+          connectToken,
           clientCapabilities,
-          onUnauthorized,
+          connectOnUnauthorized,
           effectiveInitializePins
         ),
       ] as const;
@@ -1218,6 +1290,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       serverNames,
       initializePins,
       mcpProtocolVersionsByServerId,
+      // Resolve the XAA issuer here (we hold the request `Context`) so the
+      // manager builder can mint Cross-App Access tokens for `useXaa` servers.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
     }
   );
 

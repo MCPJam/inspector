@@ -28,8 +28,9 @@ import {
   fetchServerClientSecret,
 } from "./server-secrets.js";
 import {
-  getIssuerForRequest,
+  buildXaaMintArgs,
   mintXaaAccessToken,
+  resolveXaaIssuer,
 } from "../services/xaa-mint.js";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
@@ -621,33 +622,15 @@ export async function resolveLocalServerForConnect(
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
-    const mintArgs = {
-      resolveServerSecret: fetchServerClientSecret,
-      // Non-HTTPS (localhost) auth servers are allowed only off-hosted, matching
-      // the local XAA router (`httpsOnlyProxy: false`); hosted targets are
-      // always remote HTTPS.
-      httpsOnly: HOSTED_MODE,
-      // The ID-JAG `iss` must match the live IdP issuer whose JWKS the resource
-      // AS fetches. In hosted mode only the `/api/web/xaa` router is mounted
-      // (`/api/mcp/*` returns 410), so the issuer base follows the deployment
-      // mode. Trust `x-forwarded-proto` in hosted mode so the TLS-terminating
-      // edge yields an `https://` issuer (c.req.url is http:// internally) —
-      // same split the `/api/web` (trust) vs `/api/mcp` (no-trust) routers use.
-      issuer: getIssuerForRequest(
-        c,
-        HOSTED_MODE ? "/api/web" : "/api/mcp",
-        HOSTED_MODE,
-      ),
+    const mintArgs = buildXaaMintArgs({
+      issuer: resolveXaaIssuer(c, HOSTED_MODE),
+      hostedMode: HOSTED_MODE,
+      serverConfig: sc,
       serverId,
       projectId,
       bearerToken,
-      resource: sc.url,
-      scope: sc.oauthScopes?.join(" ") || undefined,
-      // Mock-login identity: stored override if set, else the test defaults the
-      // XAA IdP's mock login already uses.
-      subject: sc.xaaSubject || "user-12345",
-      email: sc.xaaEmail || "demo.user@example.com",
-    };
+      resolveServerSecret: fetchServerClientSecret,
+    });
     // Always mint for XAA, overriding any access token the authorize batch
     // returned. A server converted from OAuth still has a stored OAuth token,
     // and reusing it here would inject the wrong credential — the XAA-protected
