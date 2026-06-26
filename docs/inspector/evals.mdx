@@ -88,7 +88,7 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
 - When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
 
-Open a completed run and find the **Goal completion** panel. Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
+Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
 ## Running
 
