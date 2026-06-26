@@ -1,10 +1,22 @@
 import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
+import {
+  JudgeVerdictPanel,
+  type JudgeCase,
+} from "./goal-completion-presentation";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
-import { PredicatesList, parseIterationPredicates } from "./predicates-list";
+import {
+  PredicatesList,
+  parseIterationPredicates,
+} from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
+import {
+  TraceViewModeTabs,
+  type TraceViewMode,
+} from "./trace-view-mode-tabs";
+import { PreviewHeaderSlot } from "./preview/preview-header-slot";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import {
   MessageSquare,
@@ -21,7 +33,6 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { computeIterationResult } from "./pass-criteria";
 import {
   Collapsible,
   CollapsibleContent,
@@ -34,69 +45,28 @@ import {
 } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@mcpjam/design-system/alert";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  isPinnedOnly,
+  isModelFree,
+  normalizeSteps,
+  promptTurnsToSteps,
   resolveDisplayExpectedToolCalls,
-  resolvePromptTurns,
-} from "@/shared/prompt-turns";
+  type TestStep,
+} from "@/shared/steps";
+import {
+  parseStepStatusById,
+  type StepReplayMetadata,
+} from "@/shared/eval-step-replay";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
 const EMPTY_SERVER_NAMES: string[] = [];
 
-type PromptSummaryResult =
-  | "passed"
-  | "failed"
-  | "cancelled"
-  | "timed_out"
-  | "pending";
-
-type PromptSummary = {
-  promptIndex: number;
-  prompt: string;
-  expectedToolCalls: Array<{
-    toolName: string;
-    arguments: Record<string, any>;
-  }>;
-  actualToolCalls: Array<{
-    toolName: string;
-    arguments: Record<string, any>;
-  }>;
-  expectedOutput?: string;
-  passed: boolean;
-  result: PromptSummaryResult;
-  missing: Array<{ toolName: string; arguments: Record<string, any> }>;
-  unexpected: Array<{ toolName: string; arguments: Record<string, any> }>;
-  argumentMismatches: Array<{
-    toolName: string;
-    expectedArgs: Record<string, any>;
-    actualArgs: Record<string, any>;
-  }>;
-};
-
-function promptSummaryResultLabel(result: PromptSummaryResult): string {
-  if (result === "timed_out") return "Timed out";
-  return result.charAt(0).toUpperCase() + result.slice(1);
-}
-
-function promptSummaryBadgeClass(result: PromptSummaryResult): string {
-  if (result === "passed") return "bg-success/50 text-foreground";
-  if (result === "failed") return "bg-destructive/50 text-foreground";
-  if (result === "timed_out") return "bg-warning/50 text-foreground";
-  if (result === "cancelled") return "bg-muted text-muted-foreground";
-  return "bg-warning/50 text-foreground";
-}
-
 function formatToolCallsSummary(
   expected: Array<{ toolName: string }>,
   actual: Array<{ toolName: string }>,
-  maxLen = TOOL_CALLS_SUMMARY_MAX_LEN
+  maxLen = TOOL_CALLS_SUMMARY_MAX_LEN,
 ): string {
   const expPart =
     expected.length === 0 ? "—" : expected.map((t) => t.toolName).join(", ");
@@ -174,7 +144,7 @@ function stringifyToolArgumentValue(value: unknown): string {
 }
 
 export function resolveFormattedArgumentValue(
-  value: unknown
+  value: unknown,
 ):
   | { kind: "structured"; value: unknown }
   | { kind: "text"; value: string; renderAsBlock: boolean } {
@@ -207,7 +177,7 @@ function normalizeModelProvider(provider?: string): ModelProvider {
 
 function resolveTraceModel(
   iteration: EvalIteration,
-  testCase: EvalCase | null
+  testCase: EvalCase | null,
 ): ModelDefinition {
   const snapshotProvider = iteration.testCaseSnapshot?.provider;
   const snapshotModel = iteration.testCaseSnapshot?.model;
@@ -289,6 +259,7 @@ export function IterationDetails({
   serverNames = EMPTY_SERVER_NAMES,
   layoutMode = "compact",
   caseInsightSlot,
+  judgeCase = null,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -296,9 +267,11 @@ export function IterationDetails({
   layoutMode?: "compact" | "full";
   /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
   caseInsightSlot?: ReactNode;
+  /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
+  judgeCase?: JudgeCase | null;
 }) {
   const getBlob = useAction(
-    "testSuites:getTestIterationBlob" as any
+    "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
@@ -308,7 +281,7 @@ export function IterationDetails({
   const [isBlobErrorDetailsOpen, setIsBlobErrorDetailsOpen] = useState(false);
   const prevBlobIdRef = useRef<string | undefined>(undefined);
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
-    "formatted"
+    "formatted",
   );
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, any>>
@@ -319,8 +292,25 @@ export function IterationDetails({
     Record<string, { name: string; inputSchema?: any }>
   >({});
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
-    layoutMode === "full" ? iteration.result !== "passed" : true
+    layoutMode === "full" ? iteration.result !== "passed" : true,
   );
+  type PreviewTraceMode = TraceViewMode | "browser" | "steps";
+  const [previewTraceMode, setPreviewTraceMode] =
+    useState<PreviewTraceMode>("chat");
+
+  // The authored steps this run executed (from its snapshot), so the replay can
+  // offer the same step-aligned "Steps" tab the live preview does. Falls back to
+  // the legacy promptTurns shape for pre-migration snapshots.
+  const snapshotSteps = useMemo<TestStep[]>(() => {
+    const steps = iteration.testCaseSnapshot?.steps;
+    if (Array.isArray(steps) && steps.length > 0) return normalizeSteps(steps);
+    return promptTurnsToSteps(
+      Array.isArray(iteration.testCaseSnapshot?.promptTurns)
+        ? iteration.testCaseSnapshot.promptTurns
+        : [],
+    );
+  }, [iteration.testCaseSnapshot]);
+  const hasSteps = snapshotSteps.length > 0;
 
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
@@ -368,7 +358,15 @@ export function IterationDetails({
   useEffect(() => {
     if (layoutMode !== "full") return;
     setToolCallsSectionOpen(iteration.result !== "passed");
-  }, [layoutMode, iteration._id, iteration.result]);
+    // Step-aligned cases (any interact/assert step) open on the Steps replay —
+    // the 1:1 mirror of the authored steps — matching the live preview default;
+    // pure prompt+grade cases keep Chat.
+    setPreviewTraceMode(
+      snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+        ? "steps"
+        : "chat",
+    );
+  }, [layoutMode, iteration._id, iteration.result, snapshotSteps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -390,54 +388,56 @@ export function IterationDetails({
 
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
-        .then((result: ListToolsResultWithMetadata) => {
-          if (cancelled) return;
+        .then(
+          (result: ListToolsResultWithMetadata) => {
+            if (cancelled) return;
 
-          setConnectedServerIds((prev) =>
-            prev.includes(serverId) ? prev : [...prev, serverId]
-          );
+            setConnectedServerIds((prev) =>
+              prev.includes(serverId) ? prev : [...prev, serverId],
+            );
 
-          if (result.tools?.length) {
-            setToolsWithSchema((prev) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = {
-                  name: tool.name,
-                  inputSchema: tool.inputSchema,
-                };
-              }
-              return next;
-            });
+            if (result.tools?.length) {
+              setToolsWithSchema((prev) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = {
+                    name: tool.name,
+                    inputSchema: tool.inputSchema,
+                  };
+                }
+                return next;
+              });
 
-            setToolServerMap((prev: ToolServerMap) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = serverId;
-              }
-              return next;
-            });
-          }
+              setToolServerMap((prev: ToolServerMap) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = serverId;
+                }
+                return next;
+              });
+            }
 
-          if (result.toolsMetadata) {
-            setToolsMetadata((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(result.toolsMetadata ?? {}).map(
-                  ([toolName, meta]) => [
-                    toolName,
-                    meta as Record<string, unknown>,
-                  ]
-                )
-              ),
-            }));
-          }
-        })
+            if (result.toolsMetadata) {
+              setToolsMetadata((prev) => ({
+                ...prev,
+                ...Object.fromEntries(
+                  Object.entries(result.toolsMetadata ?? {}).map(
+                    ([toolName, meta]) => [
+                      toolName,
+                      meta as Record<string, unknown>,
+                    ],
+                  ),
+                ),
+              }));
+            }
+          },
+        )
         .catch((loadError: unknown) => {
           if (cancelled) return;
 
           console.warn(
             `Failed to fetch tools for server ${serverId}:`,
-            loadError
+            loadError,
           );
         });
     });
@@ -449,16 +449,16 @@ export function IterationDetails({
 
   const traceModel = useMemo(
     () => resolveTraceModel(iteration, testCase),
-    [iteration, testCase]
+    [iteration, testCase],
   );
 
   const estimatedDurationMs = useMemo(
     () =>
       Math.max(
         iteration.updatedAt - (iteration.startedAt ?? iteration.createdAt),
-        0
+        0,
       ),
-    [iteration.updatedAt, iteration.startedAt, iteration.createdAt]
+    [iteration.updatedAt, iteration.startedAt, iteration.createdAt],
   );
   const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
   const traceEndedAtMs = iteration.updatedAt;
@@ -466,62 +466,23 @@ export function IterationDetails({
   // Aggregate expected tools across turns for display (snapshot wins over draft case).
   const expectedToolCalls = resolveDisplayExpectedToolCalls(
     iteration.testCaseSnapshot,
-    testCase
+    testCase,
   );
   const actualToolCalls = iteration.actualToolCalls || [];
-  const promptSummaries = useMemo<PromptSummary[]>(() => {
-    const iterationResult = computeIterationResult(iteration);
-    if (Array.isArray(blob?.prompts) && blob.prompts.length > 0) {
-      return (blob.prompts as Array<Omit<PromptSummary, "result">>).map(
-        (summary) => ({
-          ...summary,
-          result:
-            iterationResult === "cancelled" ||
-            iterationResult === "timed_out" ||
-            iterationResult === "pending"
-              ? iterationResult
-              : summary.passed
-              ? "passed"
-              : "failed",
-        })
-      );
+  const hasEvalToolCalls =
+    expectedToolCalls.length > 0 || actualToolCalls.length > 0;
+  const hasBrowserArtifacts = useMemo(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") {
+      return false;
     }
-
-    const promptTurns = resolvePromptTurns({
-      promptTurns: iteration.testCaseSnapshot?.promptTurns,
-      query: iteration.testCaseSnapshot?.query,
-      expectedToolCalls: iteration.testCaseSnapshot?.expectedToolCalls,
-      expectedOutput: iteration.testCaseSnapshot?.expectedOutput,
-    });
-
-    return promptTurns.map((turn, promptIndex) => ({
-      promptIndex,
-      prompt: turn.prompt,
-      expectedToolCalls: turn.expectedToolCalls,
-      actualToolCalls: promptIndex === 0 ? actualToolCalls : [],
-      expectedOutput: turn.expectedOutput,
-      passed: iterationResult === "passed",
-      result: iterationResult,
-      missing: [],
-      unexpected: [],
-      argumentMismatches: [],
-    }));
-  }, [
-    actualToolCalls,
-    blob?.prompts,
-    iteration,
-    iteration.testCaseSnapshot?.expectedOutput,
-    iteration.testCaseSnapshot?.expectedToolCalls,
-    iteration.testCaseSnapshot?.promptTurns,
-    iteration.testCaseSnapshot?.query,
-  ]);
-  const firstFailedTurnIndex =
-    typeof iteration.metadata?.firstFailedTurnIndex === "number"
-      ? iteration.metadata.firstFailedTurnIndex
-      : promptSummaries.findIndex(
-          (summary) =>
-            summary.result === "failed" || summary.result === "timed_out"
-        );
+    const observations = (blob as { widgetRenderObservations?: unknown })
+      .widgetRenderObservations;
+    const videoUrl = (blob as { videoUrl?: unknown }).videoUrl;
+    return (
+      (Array.isArray(observations) && observations.length > 0) ||
+      (typeof videoUrl === "string" && videoUrl.length > 0)
+    );
+  }, [blob]);
 
   // Helper to format type information
   const formatType = (type: any): string => {
@@ -605,7 +566,7 @@ export function IterationDetails({
 
   const renderRawToolCalls = (
     toolCalls: Array<{ toolName: string; arguments: Record<string, any> }>,
-    emptyMessage: string
+    emptyMessage: string,
   ) => {
     if (toolCalls.length === 0) {
       return (
@@ -646,9 +607,31 @@ export function IterationDetails({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
   const traceFirst = layoutMode === "full" && hasTrace;
+  const previewTraceToolbar =
+    layoutMode === "full" && hasTrace && !loading && !error ? (
+      <PreviewHeaderSlot>
+        <TraceViewModeTabs
+          mode={
+            previewTraceMode === "browser" || previewTraceMode === "steps"
+              ? "timeline"
+              : previewTraceMode
+          }
+          onModeChange={setPreviewTraceMode}
+          showToolsTab={hasEvalToolCalls}
+          showBrowserTab={hasBrowserArtifacts}
+          browserActive={previewTraceMode === "browser"}
+          onSelectBrowser={() => setPreviewTraceMode("browser")}
+          showStepsTab={hasSteps}
+          stepsActive={previewTraceMode === "steps"}
+          onSelectSteps={() => setPreviewTraceMode("steps")}
+          appearance="segment"
+          className="w-full"
+        />
+      </PreviewHeaderSlot>
+    ) : null;
   const toolCallsSummary = formatToolCallsSummary(
     expectedToolCalls,
-    actualToolCalls
+    actualToolCalls,
   );
 
   /**
@@ -665,7 +648,7 @@ export function IterationDetails({
       expectedToolCalls,
       actualToolCalls,
       iteration.testCaseSnapshot?.isNegativeTest,
-    ]
+    ],
   );
 
   const toolCallsGrids =
@@ -843,32 +826,61 @@ export function IterationDetails({
 
   const predicates = useMemo(
     () => parseIterationPredicates(iteration.metadata),
-    [iteration.metadata]
+    [iteration.metadata],
   );
-  // Case-level checks only — per-turn checks (scope.kind === "turn") render
-  // under their turn in the per-turn summary list below, so they aren't
-  // duplicated here.
-  const caseLevelPredicates = useMemo(
-    () => (predicates ? predicates.filter((p) => !p.scope) : null),
-    [predicates],
+  // Persisted per-step verdicts (`metadata.stepResults`), keyed by stepId — the
+  // completed-run analogue of the live step_status stream. Feeds the Steps tab so
+  // each assert/interact shows its own PASS/FAIL inline, which is why the gate
+  // footer below no longer repeats the step-scoped checks.
+  const stepStatusById = useMemo(
+    () =>
+      parseStepStatusById(
+        iteration.metadata as StepReplayMetadata | undefined,
+      ),
+    [iteration.metadata],
   );
+  // A snapshot is a render check ("probe") when its steps are model-free (no
+  // `prompt` step). Probes get an artifacts-first layout with NO Steps tab, so
+  // the gate stays their canonical checks display (see below); every other case
+  // surfaces step verdicts inline on the Steps tab.
+  const isProbe = isModelFree(snapshotSteps);
+  // For the non-probe layout, only CASE-LEVEL (unscoped) predicates belong in the
+  // gate footer: every step-scoped check (toolCalledWith / widgetRendered / …)
+  // corresponds to an authored `assert` step and now renders its verdict inline
+  // on the Steps tab. So the footer carries just the global gates that have no
+  // per-step home, and disappears entirely when every check is step-scoped.
+  // Probes keep the FULL gate (no Steps tab to absorb the step-scoped rows).
+  const gateRows = useMemo(() => {
+    if (!predicates) return null;
+    return isProbe ? predicates : predicates.filter((p) => !p.scope);
+  }, [predicates, isProbe]);
+  // Per-widget render observations off the trace blob, so a `widgetRendered`
+  // (and friends) check can show the rendered widget inline as its evidence.
+  // Absent until the blob loads — the gate renders fine without it.
+  const blobObservations = useMemo<
+    import("@/shared/eval-trace").EvalTraceWidgetRenderObservationView[]
+  >(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") return [];
+    const raw = (blob as { widgetRenderObservations?: unknown })
+      .widgetRenderObservations;
+    return Array.isArray(raw) ? raw : [];
+  }, [blob]);
   const predicatesSection =
-    caseLevelPredicates && caseLevelPredicates.length > 0 ? (
+    gateRows && gateRows.length > 0 ? (
       <div className="space-y-2" data-testid="iteration-predicates-section">
         <div className="flex items-center justify-between border-b border-border/40 pb-2">
-          <div className="text-xs font-semibold">Predicate Gate</div>
+          <div className="text-xs font-semibold">
+            {isProbe ? "Predicate Gate" : "Global Gates"}
+          </div>
         </div>
-        <PredicatesList predicates={caseLevelPredicates} />
+        <PredicatesList predicates={gateRows} observations={blobObservations} />
       </div>
     ) : null;
 
-  // Widget probes get an artifacts-first layout: checks + the rendered
-  // widget. Tool-call diff (expected vs actual is meaningless for a pinned
-  // call) and the full trace viewer (no LLM conversation) are hidden.
-  const isProbe = isPinnedOnly({
-    caseType: iteration.testCaseSnapshot?.caseType,
-    promptTurns: iteration.testCaseSnapshot?.promptTurns,
-  });
+  // Widget probes get an artifacts-first layout: checks + the rendered widget.
+  // Tool-call diff (expected vs actual is meaningless for a pinned call) and the
+  // full trace viewer (no LLM conversation) are hidden. `isProbe` is computed
+  // above (next to the gate, which depends on it).
   // Pure render checks hide the trace viewer (no LLM conversation), so they get
   // a dedicated "Widget Render" section here. Every other case (prompt/hybrid)
   // already surfaces the same observations via the trace viewer's Browser tab,
@@ -901,7 +913,7 @@ export function IterationDetails({
           onDetailsOpenChange={setIsBlobErrorDetailsOpen}
         />
       ) : probeObservations.length > 0 ? (
-        <BrowserArtifactsView observations={probeObservations} steps={[]} />
+        <BrowserArtifactsView observations={probeObservations} />
       ) : (
         <p className="text-xs italic text-muted-foreground">
           No render observation recorded for this iteration.
@@ -915,7 +927,7 @@ export function IterationDetails({
       className={cn(
         "flex flex-col",
         layoutMode === "full" && "min-h-0 flex-1",
-        layoutMode === "full" ? "gap-1" : "gap-1.5"
+        layoutMode === "full" ? "gap-1" : "gap-1.5",
       )}
       data-testid="iteration-trace-section"
     >
@@ -932,7 +944,7 @@ export function IterationDetails({
           layoutMode === "full" &&
             error &&
             !loading &&
-            "min-h-[320px] flex flex-col justify-center"
+            "min-h-[320px] flex flex-col justify-center",
         )}
       >
         {loading ? (
@@ -949,19 +961,29 @@ export function IterationDetails({
           />
         ) : (
           <TraceViewer
-            trace={blob}
-            model={traceModel}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            connectedServerIds={connectedServerIds}
-            traceStartedAtMs={traceStartedAtMs}
-            traceEndedAtMs={traceEndedAtMs}
-            estimatedDurationMs={estimatedDurationMs}
-            traceInsight={caseInsightSlot}
-            chromeDensity={layoutMode === "full" ? "compact" : "default"}
-            expectedToolCalls={expectedToolCalls}
-            actualToolCalls={actualToolCalls}
-          />
+              trace={blob}
+              model={traceModel}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              connectedServerIds={connectedServerIds}
+              traceStartedAtMs={traceStartedAtMs}
+              traceEndedAtMs={traceEndedAtMs}
+              estimatedDurationMs={estimatedDurationMs}
+              traceInsight={caseInsightSlot}
+              chromeDensity={layoutMode === "full" ? "compact" : "default"}
+              fillContent={layoutMode === "full"}
+              hideToolbar={layoutMode === "full"}
+              forcedViewMode={
+                layoutMode === "full" ? previewTraceMode : undefined
+              }
+              steps={snapshotSteps}
+              stepStatusById={
+                stepStatusById.size > 0 ? stepStatusById : undefined
+              }
+              iterationResult={iteration.result}
+              expectedToolCalls={expectedToolCalls}
+              actualToolCalls={actualToolCalls}
+            />
         )}
       </div>
     </div>
@@ -973,76 +995,22 @@ export function IterationDetails({
         {caseInsightSlot}
       </div>
     ) : null;
-  const promptSummarySection =
-    promptSummaries.length > 0 ? (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold">Turn Breakdown</div>
-          <div className="text-[10px] text-muted-foreground">
-            {promptSummaries.length} turn
-            {promptSummaries.length === 1 ? "" : "s"}
-            {firstFailedTurnIndex >= 0
-              ? ` · first failure on turn ${firstFailedTurnIndex + 1}`
-              : ""}
-          </div>
-        </div>
-        <div className="grid gap-2 md:grid-cols-2">
-          {promptSummaries.map((summary) => (
-            <div
-              key={`prompt-summary-${summary.promptIndex}`}
-              className="rounded-md border border-border/50 bg-muted/10 p-3 space-y-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium">
-                  Turn {summary.promptIndex + 1}
-                </div>
-                <div
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                    promptSummaryBadgeClass(summary.result)
-                  )}
-                >
-                  {promptSummaryResultLabel(summary.result)}
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground whitespace-pre-wrap">
-                {summary.prompt || "No prompt recorded"}
-              </div>
-              <div className="text-[10px] text-muted-foreground">
-                Expected {summary.expectedToolCalls.length} · Actual{" "}
-                {summary.actualToolCalls.length}
-              </div>
-              {summary.result === "failed" || summary.result === "timed_out" ? (
-                <div className="text-[10px] text-destructive">
-                  {formatToolCallsSummary(
-                    summary.expectedToolCalls,
-                    summary.actualToolCalls,
-                    120
-                  )}
-                </div>
-              ) : null}
-              {(() => {
-                const turnChecks = predicates?.filter(
-                  (p) => p.scope?.promptIndex === summary.promptIndex,
-                );
-                return turnChecks && turnChecks.length > 0 ? (
-                  <PredicatesList predicates={turnChecks} />
-                ) : null;
-              })()}
-            </div>
-          ))}
-        </div>
-      </div>
-    ) : null;
-
   return (
     <div
       className={cn(
         "flex flex-col",
         layoutMode === "full" && "min-h-0 flex-1",
-        layoutMode === "full" ? "gap-3" : "gap-4 py-2"
+        layoutMode === "full" ? "gap-3" : "gap-4 py-2",
       )}
     >
+      {previewTraceToolbar}
+      {/* Advisory judge verdict — pinned under the tab row so it's visible on
+          every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
+      {layoutMode === "full" && judgeCase ? (
+        <div className="shrink-0 px-3">
+          <JudgeVerdictPanel judgeCase={judgeCase} />
+        </div>
+      ) : null}
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
@@ -1087,7 +1055,6 @@ export function IterationDetails({
       )}
 
       {caseInsightFallback}
-      {promptSummarySection}
 
       {isProbe ? (
         <>

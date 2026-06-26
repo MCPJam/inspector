@@ -1,56 +1,50 @@
-import { useCallback, useMemo, useState } from "react";
-import { Loader2, ChevronDown, Sparkles } from "lucide-react";
-import { motion, useReducedMotion } from "framer-motion";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 import posthog from "posthog-js";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@mcpjam/design-system/collapsible";
+import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
+import { useRunGroupQuality } from "./use-run-group-quality";
+import { GroupFindingList } from "./run-group-diagnosis-presentation";
 import {
-  insightHighlightAccentClass,
-  insightHighlightBodyClass,
-  insightHighlightHeaderRowClass,
+  insightHighlightCompactLabelClass,
+  insightHighlightCompactSectionClass,
   insightHighlightNarrativeClass,
-  insightHighlightSectionClass,
-  insightHighlightSubtitleClass,
-  insightHighlightTitleClass,
-  insightHighlightTriggerClass,
 } from "./insight-highlight-chrome";
+
+/** A selected run group — when present, the banner shows cross-host diagnosis. */
+export interface InsightGroupScope {
+  suiteId: string;
+  runGroupId: string;
+  runs: EvalSuiteRun[];
+}
 
 export interface SuiteInsightsCollapsibleProps {
   runs: EvalSuiteRun[];
   /** Header label, e.g. "Run insights" vs "Commit insights" */
   title?: string;
-}
-
-function runInsightsHeaderSubtitle({
-  pending,
-  failedGeneration,
-  requested,
-}: {
-  pending: boolean;
-  failedGeneration: boolean;
-  requested: boolean;
-}): string {
-  if (pending) return "Generating…";
-  if (failedGeneration) return "Summary unavailable";
-  if (requested) return "Requesting…";
-  return "Compared to your previous completed run";
+  /**
+   * When a run group is selected in the results split, the banner becomes
+   * scope-adaptive and shows the cross-host diagnosis for that group instead
+   * of the latest single-run summary. Absent/null ⇒ run-insights behavior.
+   */
+  groupScope?: InsightGroupScope | null;
+  /**
+   * The single run currently open in the detail pane, if any. The banner shows
+   * THIS run's insights instead of the latest completed run, so the headline
+   * always matches the run you're looking at. Null/absent ⇒ latest completed.
+   */
+  selectedRunId?: string | null;
 }
 
 const RUN_INSIGHTS_FAILED_FALLBACK =
   "Could not load this summary. Hit Retry in the header.";
 
-/**
- * Map the persisted `runInsightsErrorCode` (set by the judge worker on PR B)
- * to user-friendly copy. Unknown / missing codes fall back to the existing
- * generic message so the surface stays stable across server versions.
- */
+/** Roughly two lines at the suite dashboard width — expand only when longer. */
+const SUMMARY_CLAMP_CHARS = 180;
+
 function describeRunInsightsError(code: string | undefined): string {
   switch (code) {
     case "model_timeout":
@@ -66,36 +60,55 @@ function describeRunInsightsError(code: string | undefined): string {
   }
 }
 
+function summaryNeedsExpand(text: string): boolean {
+  return text.replace(/\s+/g, " ").trim().length > SUMMARY_CLAMP_CHARS;
+}
+
+/** Shared banner chrome: sparkle + label on the left, body on the right. */
+function InsightBannerShell({
+  label,
+  children,
+  trailing,
+}: {
+  label: string;
+  children: ReactNode;
+  trailing?: ReactNode;
+}) {
+  return (
+    <section className={insightHighlightCompactSectionClass}>
+      <div className="flex items-start gap-2.5">
+        <div className="flex shrink-0 items-center pt-0.5">
+          <span className={insightHighlightCompactLabelClass}>{label}</span>
+        </div>
+        {children}
+        {trailing}
+      </div>
+    </section>
+  );
+}
+
 /**
  * Diff-based insights for the latest completed suite run (vs prior baseline),
  * generated lazily on first view.
  */
-export function SuiteInsightsCollapsible({
+function RunInsightsBanner({
   runs,
-  title = "Run insights",
-}: SuiteInsightsCollapsibleProps) {
-  // Default closed so the surface starts compact: the first sentence of the
-  // summary is surfaced inline as the header subtitle (see
-  // `runInsightsHeaderSubtitle`); users click to expand for the full text.
-  const [open, setOpen] = useState(false);
-  const shouldReduceMotion = useReducedMotion();
-  const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
-
-  const handleOpenChange = useCallback(
-    (next: boolean) => {
-      if (next && !open) {
-        posthog.capture("eval_run_insights_opened", {
-          location: "suite_insights_collapsible",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          title,
-          run_id: latestCompleted?._id ?? null,
-        });
-      }
-      setOpen(next);
-    },
-    [latestCompleted, open, title],
-  );
+  title,
+  selectedRunId,
+}: {
+  runs: EvalSuiteRun[];
+  title: string;
+  selectedRunId?: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // Show the open run's insights when one is selected, so the headline matches
+  // the run you're viewing; fall back to the latest completed run otherwise.
+  const targetRun = useMemo(() => {
+    if (selectedRunId) {
+      return runs.find((r) => r._id === selectedRunId) ?? null;
+    }
+    return pickLatestCompletedRun(runs);
+  }, [runs, selectedRunId]);
 
   const {
     summary,
@@ -105,114 +118,243 @@ export function SuiteInsightsCollapsible({
     unavailable,
     requested,
     errorMessage,
-  } = useRunInsights(latestCompleted, { autoRequest: true });
+  } = useRunInsights(targetRun, { autoRequest: true });
 
-  if (!latestCompleted || unavailable) {
+  useEffect(() => {
+    if (!targetRun || unavailable) {
+      return;
+    }
+    posthog.capture("eval_run_insights_opened", {
+      location: "suite_insights_collapsible",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      title,
+      run_id: targetRun._id,
+    });
+  }, [targetRun, title, unavailable]);
+
+  if (!targetRun || unavailable) {
     return null;
   }
 
-  const headerSubtitle = runInsightsHeaderSubtitle({
-    pending,
-    failedGeneration,
-    requested,
-  });
-
-  // Persisted error fields land on `testSuiteRun` via PR B (judge worker).
-  // Generated Convex types may not include them on this branch yet — read
-  // defensively. When PR B merges these become first-class on EvalSuiteRun.
   const persistedErrorCode = (
-    latestCompleted as unknown as { runInsightsErrorCode?: string }
+    targetRun as unknown as { runInsightsErrorCode?: string }
   ).runInsightsErrorCode;
   const failedMessage = failedGeneration
     ? describeRunInsightsError(persistedErrorCode)
     : null;
 
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={handleOpenChange}
-      className={insightHighlightSectionClass}
-    >
-      <div className={insightHighlightAccentClass} aria-hidden />
-      <div className={insightHighlightHeaderRowClass}>
-        <CollapsibleTrigger asChild>
-          <motion.button
+  const narrative =
+    errorMessage ??
+    failedMessage ??
+    "Open a completed run to see a short summary vs the previous one.";
+
+  const canExpand = summary != null && summaryNeedsExpand(summary);
+  const showExpandControl = canExpand && !expanded;
+
+  let body: ReactNode;
+  if (summary) {
+    body = (
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            insightHighlightNarrativeClass,
+            showExpandControl && "line-clamp-2",
+          )}
+        >
+          {summary}
+        </p>
+        {canExpand ? (
+          <button
             type="button"
-            className={insightHighlightTriggerClass}
-            whileTap={
-              shouldReduceMotion
-                ? undefined
-                : { scale: 0.992, transition: { duration: 0.08 } }
-            }
-            transition={{ type: "spring", stiffness: 520, damping: 32 }}
+            className="mt-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => setExpanded((value) => !value)}
           >
-            <motion.span
-              className="inline-flex shrink-0 text-muted-foreground"
-              aria-hidden
-              initial={false}
-              animate={{ rotate: open ? 0 : -90 }}
-              transition={
-                shouldReduceMotion
-                  ? { duration: 0 }
-                  : { type: "spring", stiffness: 420, damping: 28 }
-              }
-            >
-              <ChevronDown className="h-4 w-4" />
-            </motion.span>
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-warning/70" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className={insightHighlightTitleClass}>{title}</span>
-                <span className="inline-flex items-center rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning/80 dark:border-warning/25 dark:bg-warning/[0.12]">
-                  AI
-                </span>
-              </div>
-              <p className={insightHighlightSubtitleClass}>{headerSubtitle}</p>
-            </div>
-          </motion.button>
-        </CollapsibleTrigger>
-        {failedGeneration ? (
-          <div className="flex shrink-0 items-center pr-3">
-            <button
-              type="button"
-              className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-              onClick={() => requestRunInsights(true)}
-            >
-              Retry
-            </button>
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        ) : null}
+      </div>
+    );
+  } else if (pending) {
+    body = (
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        Generating insights vs your previous run…
+      </span>
+    );
+  } else if (requested) {
+    body = (
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        Requesting insights…
+      </span>
+    );
+  } else if (narrative) {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">{narrative}</p>
+    );
+  } else {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        Compared to your previous completed run.
+      </p>
+    );
+  }
+
+  return (
+    <InsightBannerShell
+      label={title}
+      trailing={
+        failedGeneration ? (
+          <button
+            type="button"
+            className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => requestRunInsights(true)}
+          >
+            Retry
+          </button>
+        ) : undefined
+      }
+    >
+      {body}
+    </InsightBannerShell>
+  );
+}
+
+/**
+ * Cross-host diagnosis for the selected run group, rendered in the same banner
+ * surface as run insights. The headline summary sits inline; the structured
+ * findings live under "Show more" so the banner stays thin until you dig in.
+ */
+function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
+  const [expanded, setExpanded] = useState(false);
+  const {
+    result,
+    pending,
+    failedGeneration,
+    error,
+    requested,
+    unavailable,
+    allRunsTerminal,
+    request,
+  } = useRunGroupQuality({
+    suiteId: scope.suiteId,
+    runGroupId: scope.runGroupId,
+    runs: scope.runs,
+  });
+
+  // Collapse the detail when switching groups or when a fresh result lands.
+  useEffect(() => {
+    setExpanded(false);
+  }, [scope.runGroupId, result?.generatedAt]);
+
+  // Backend feature not deployed — stay invisible, exactly like run insights.
+  if (unavailable) return null;
+
+  const summary = result?.summary ?? null;
+  const findings = result?.findings ?? [];
+  const canExpand =
+    findings.length > 0 || (summary != null && summaryNeedsExpand(summary));
+  const showExpandControl = canExpand && !expanded;
+
+  let body: ReactNode;
+  if (summary) {
+    body = (
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            insightHighlightNarrativeClass,
+            showExpandControl && "line-clamp-2",
+          )}
+        >
+          {summary}
+        </p>
+        {canExpand ? (
+          <button
+            type="button"
+            className="mt-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded
+              ? "Show less"
+              : findings.length > 0
+                ? `Show ${findings.length} cross-host finding${findings.length === 1 ? "" : "s"}`
+                : "Show more"}
+          </button>
+        ) : null}
+        {expanded && result && findings.length > 0 ? (
+          <div className="mt-2 border-t border-border/50 pt-1">
+            <GroupFindingList result={result} />
           </div>
         ) : null}
       </div>
-      <CollapsibleContent>
-        <div className={insightHighlightBodyClass}>
-          {pending ? (
-            <span className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              Generating insights…
-            </span>
-          ) : summary ? (
-            <p className={insightHighlightNarrativeClass}>{summary}</p>
-          ) : requested ? (
-            <span className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              Requesting insights…
-            </span>
-          ) : errorMessage ? (
-            // Fresh request-time rejections (e.g. spend-cap on a Retry
-            // click) must win over the stale persisted "failed" state —
-            // otherwise the user clicks Retry, the server rejects, and
-            // they keep seeing the same old "Could not load this summary"
-            // copy because `runInsightsStatus` hasn't changed yet.
-            <p className="text-sm text-muted-foreground">{errorMessage}</p>
-          ) : failedGeneration ? (
-            <p className="text-sm text-muted-foreground">{failedMessage}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Open a completed run to see a short summary vs the previous one.
-            </p>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+    );
+  } else if (!allRunsTerminal) {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        Cross-host diagnosis runs once every host in this group has finished.
+      </p>
+    );
+  } else if (pending || requested) {
+    body = (
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        Comparing hosts…
+      </span>
+    );
+  } else if (error) {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-destructive">{error}</p>
+    );
+  } else {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        We'll compare how each host performed on this suite here.
+      </p>
+    );
+  }
+
+  return (
+    <InsightBannerShell
+      label="Cross-host insights"
+      trailing={
+        error || failedGeneration ? (
+          <button
+            type="button"
+            className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => request(true)}
+          >
+            Retry
+          </button>
+        ) : undefined
+      }
+    >
+      {body}
+    </InsightBannerShell>
+  );
+}
+
+/**
+ * Scope-adaptive insight banner. Shows the cross-host diagnosis when a run
+ * group is selected, otherwise the latest-run insights summary. Split into two
+ * child components so each owns its own hooks (the surfaces use different data
+ * sources and must not share a hook-call order).
+ */
+export function SuiteInsightsCollapsible({
+  runs,
+  title = "Run insights",
+  groupScope,
+  selectedRunId,
+}: SuiteInsightsCollapsibleProps) {
+  if (groupScope) {
+    return <CrossHostInsightsBanner scope={groupScope} />;
+  }
+  return (
+    <RunInsightsBanner
+      runs={runs}
+      title={title}
+      selectedRunId={selectedRunId}
+    />
   );
 }

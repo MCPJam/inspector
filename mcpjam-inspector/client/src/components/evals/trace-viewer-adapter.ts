@@ -49,6 +49,12 @@ export interface TraceEnvelope {
   spans?: EvalTraceSpan[];
   widgetRenderObservations?: EvalTraceWidgetRenderObservationView[];
   browserInteractionSteps?: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Resolved URL for the iteration's replay `.webm` (backend resolves
+   * `videoBlobId → videoUrl` the same way it does screenshots). Iteration-level;
+   * absent when no browser ran or the upload failed → no replay player.
+   */
+  videoUrl?: string | null;
   traceStartedAtMs?: number;
   traceEndedAtMs?: number;
   [key: string]: unknown;
@@ -75,8 +81,69 @@ export function adaptTraceToUiMessages(params: {
   // narrow the cast to that field so the rest of the result keeps compile-time
   // checking against the package shape.
   const result = adaptTraceToUiMessagesImpl(params);
+  // Stabilize message React keys across the streaming-trace → persisted-blob
+  // swap. The package adapter assigns index-based ids (`trace-<role>-<index>`),
+  // but the streaming envelope and the persisted blob reconstruct the message
+  // list with different merge/skip patterns, so a tool-bearing message can land
+  // on a different index at completion. `transcript-thread.tsx` keys rows by
+  // `message.id`, so an id shift remounts that message's whole subtree —
+  // reloading any mounted MCP App widget iframe (wiping live widget state, e.g.
+  // a populated cart). Re-key tool-bearing messages by their first toolCallId
+  // (stable across both representations) so the widget's row keeps its identity.
+  // Non-tool rows keep the index-based id (no widget → a harmless text re-render
+  // if their index shifts). toolCallId is unique per UI message here (call +
+  // result are merged into one), so no key collisions; a `seen` guard is kept
+  // for safety.
+  const seenIds = new Set<string>();
+  const idRemap = new Map<string, string>();
+  const stabilizedMessages = (result.messages ?? []).map((message, index) => {
+    const parts = (message.parts ?? []) as Array<{ toolCallId?: unknown }>;
+    const firstToolCallId = parts.find(
+      (part) =>
+        part &&
+        typeof part === "object" &&
+        typeof part.toolCallId === "string" &&
+        part.toolCallId.length > 0,
+    )?.toolCallId as string | undefined;
+    let nextId = firstToolCallId
+      ? `trace-tool-${firstToolCallId}`
+      : (message.id ?? `trace-msg-${index}`);
+    if (seenIds.has(nextId)) nextId = `${nextId}-${index}`;
+    seenIds.add(nextId);
+    if (message.id && nextId !== message.id) idRemap.set(message.id, nextId);
+    return nextId === message.id ? message : { ...message, id: nextId };
+  });
+
+  // Re-keying tool messages above also requires remapping the package's
+  // source-index → uiMessageId lookups (still keyed by the ORIGINAL ids).
+  // Without this, "Reveal in Chat" from a tool/step row resolves a focus id
+  // that no longer matches any rendered message (chat never opens) and tool
+  // rows lose their `data-source-range`.
+  const remapId = (id: string) => idRemap.get(id) ?? id;
+  const uiMessageSourceRanges = Object.fromEntries(
+    Object.entries(result.uiMessageSourceRanges).map(([id, range]) => [
+      remapId(id),
+      range,
+    ]),
+  ) as AdaptedTraceResult["uiMessageSourceRanges"];
+  const sourceMessageIndexToUiMessageIds = Object.fromEntries(
+    Object.entries(result.sourceMessageIndexToUiMessageIds).map(([k, ids]) => [
+      k,
+      (ids as string[]).map(remapId),
+    ]),
+  ) as AdaptedTraceResult["sourceMessageIndexToUiMessageIds"];
+  const sourceMessageIndexToFocusUiMessageId = Object.fromEntries(
+    Object.entries(result.sourceMessageIndexToFocusUiMessageId).map(
+      ([k, id]) => [k, remapId(id as string)],
+    ),
+  ) as AdaptedTraceResult["sourceMessageIndexToFocusUiMessageId"];
+
   return {
     ...result,
+    messages: stabilizedMessages,
+    uiMessageSourceRanges,
+    sourceMessageIndexToUiMessageIds,
+    sourceMessageIndexToFocusUiMessageId,
     toolRenderOverrides:
       result.toolRenderOverrides as AdaptedTraceResult["toolRenderOverrides"],
   };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { navigateApp } from "@/lib/app-navigation";
@@ -45,7 +45,8 @@ import {
   runEvals,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
+import { promptTurnsToSteps } from "@/shared/steps";
 import { notifyCaseUpsertPartial } from "./case-upsert-toast";
 
 interface EvalRunnerProps {
@@ -649,6 +650,18 @@ export function EvalRunner({
         // Generate a UUID for this test template to group variants
         const testTemplateKey = crypto.randomUUID();
 
+        // The Convex mutation rejects `promptTurns`; describe the case as
+        // unified `steps` derived from the template's turns (or its
+        // query/expectedToolCalls when no explicit turns were authored).
+        const steps = promptTurnsToSteps(
+          resolvePromptTurns({
+            promptTurns: template.promptTurns,
+            query: template.query,
+            expectedToolCalls: template.expectedToolCalls,
+            expectedOutput: template.expectedOutput,
+          }),
+        );
+
         return selectedModels.map((model) => ({
           title: template.title,
           query: template.query,
@@ -659,7 +672,7 @@ export function EvalRunner({
           isNegativeTest: template.isNegativeTest,
           scenario: template.scenario,
           expectedOutput: template.expectedOutput,
-          promptTurns: template.promptTurns,
+          steps,
           testTemplateKey,
         }));
       });

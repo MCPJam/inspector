@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, RotateCw, Sparkles } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -29,6 +29,8 @@ export interface AiTriageCardProps {
   error: string | null;
   onRetry: () => void;
   source?: "ui" | "sdk";
+  /** Flush layout inside the run-detail split (no nested card chrome). */
+  embedded?: boolean;
 }
 
 const TOP_N = 3;
@@ -47,36 +49,39 @@ async function copyWithToast(text: string, successLabel: string) {
 }
 
 function CategoryChip({ row }: { row: TriageRow }) {
+  const label = row.category === "tool description" ? "Tool" : "Workflow";
   return (
-    <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-      {row.category}
+    <span className="inline-flex whitespace-nowrap rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+      {label}
     </span>
   );
 }
 
 function TriageRowItem({ row }: { row: TriageRow }) {
   return (
-    <li className="flex items-start gap-3 px-3 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm text-foreground">{row.title}</div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-          <CategoryChip row={row} />
+    <li className="px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm leading-snug text-foreground">{row.title}</p>
+          <div className="mt-1.5">
+            <CategoryChip row={row} />
+          </div>
         </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="h-7 w-7 shrink-0 px-0 text-muted-foreground hover:text-foreground"
           title={`Copy a fix prompt for your coding agent (${row.title})`}
           aria-label={`${COPY_FIX_PROMPT_LABEL}: ${row.title}`}
           onClick={() =>
-            copyWithToast(buildFixPrompt(row), "Fix prompt copied — paste into your agent")
+            copyWithToast(
+              buildFixPrompt(row),
+              "Fix prompt copied — paste into your agent",
+            )
           }
         >
-          <Copy className="h-3 w-3" aria-hidden />
-          {COPY_FIX_PROMPT_LABEL}
+          <Copy className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </div>
     </li>
@@ -93,6 +98,7 @@ export function AiTriageCard({
   error,
   onRetry,
   source,
+  embedded = false,
 }: AiTriageCardProps) {
   const rows = useMemo(
     () => unifyTriageRows({ serverQuality, iterations }),
@@ -119,6 +125,16 @@ export function AiTriageCard({
 
   const metricLabel =
     (source ?? run.source) === "sdk" ? "Pass Rate" : "Accuracy";
+
+  // Host attribution: the snapshot persisted with the analysis is authoritative
+  // (it reflects the run's pinned config). Fall back to the run's named-host id
+  // only as a label when no analysis snapshot exists yet.
+  const host = serverQuality?.host;
+  const hostLabel = (() => {
+    if (!host || host.source === "unknown") return null;
+    const name = host.name ?? "Host";
+    return host.modelId ? `${name} · ${host.modelId}` : name;
+  })();
 
   const hasRows = rows.length > 0;
   // Distinguish "judge returned insights, all good/optimal" (arrays populated,
@@ -152,15 +168,30 @@ export function AiTriageCard({
   })();
 
   return (
-    <section className="rounded-lg border border-border bg-card text-card-foreground">
-      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+    <section
+      className={cn(
+        "flex flex-col text-card-foreground",
+        embedded
+          ? "bg-transparent"
+          : "rounded-lg border border-border bg-card",
+      )}
+    >
+      <header className="flex flex-col gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <h3 className="text-sm font-medium text-foreground">AI insights</h3>
-          <span className="truncate text-sm text-muted-foreground">
-            {headerSubtitle}
-          </span>
         </div>
+        {hostLabel ? (
+          <p
+            className="truncate font-mono text-[11px] leading-snug text-muted-foreground"
+            title={hostLabel}
+          >
+            {hostLabel}
+          </p>
+        ) : null}
+        <p className="text-xs leading-snug text-muted-foreground">
+          {headerSubtitle}
+        </p>
         <div className="flex items-center gap-2">
           {error || failedGeneration ? (
             <Button
@@ -178,7 +209,7 @@ export function AiTriageCard({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 shrink-0 gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             disabled={!hasRows || pending}
             title={`Copy the top ${topRows.length} fix prompt${topRows.length === 1 ? "" : "s"} to paste into your coding agent`}
             aria-label={copyTopFixPromptsLabel(topRows.length)}
@@ -189,14 +220,14 @@ export function AiTriageCard({
               )
             }
           >
-            <Copy className="h-3 w-3" aria-hidden />
-            {copyTopFixPromptsLabel(topRows.length)}
+            <Copy className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{copyTopFixPromptsLabel(topRows.length)}</span>
           </Button>
         </div>
       </header>
 
       <div className="border-t border-border/50 px-3 py-2.5">
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="flex flex-col gap-1">
           <div className="flex items-baseline gap-2">
             <span className={runDetailSectionLabelClass}>{metricLabel}</span>
             <span

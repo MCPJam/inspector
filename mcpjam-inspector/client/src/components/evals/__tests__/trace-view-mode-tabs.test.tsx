@@ -34,7 +34,7 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("hides the Browser tab by default", () => {
+  it("hides the App tab by default", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -42,10 +42,10 @@ describe("TraceViewModeTabs", () => {
         showToolsTab={false}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Browser" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "App" })).toBeNull();
   });
 
-  it("shows the Browser tab when showBrowserTab is set", () => {
+  it("shows the App tab when showBrowserTab is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -55,11 +55,27 @@ describe("TraceViewModeTabs", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Browser" }),
+      screen.getByRole("button", { name: "App" }),
     ).toBeInTheDocument();
   });
 
-  it("applies active styling to the Browser tab when browserActive is set", () => {
+  it("uses segment styling when appearance is segment", () => {
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={vi.fn()}
+        showToolsTab={false}
+        appearance="segment"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
+      "bg-background",
+      "ring-inset",
+    );
+  });
+
+  it("applies active styling to the App tab when browserActive is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -69,11 +85,11 @@ describe("TraceViewModeTabs", () => {
         browserActive
       />,
     );
-    expect(screen.getByRole("button", { name: "Browser" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "App" })).toHaveClass(
       "bg-sidebar-accent",
       "text-sidebar-accent-foreground",
     );
-    // With Browser active, no standard tab is highlighted.
+    // With App active, no standard tab is highlighted.
     expect(screen.getByRole("button", { name: "Trace" })).not.toHaveClass(
       "bg-sidebar-accent",
     );

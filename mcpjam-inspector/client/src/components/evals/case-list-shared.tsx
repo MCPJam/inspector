@@ -26,11 +26,15 @@ export function CaseListColumnHeaders({
   secondColumnLabel: string;
   /** Reserve space to align with a leading checkbox column (batch mode). */
   leadingGutter?: boolean;
-  /** Reserve space to align with a trailing icon control (e.g. Run or edit link). */
-  trailingGutter?: boolean;
+  /**
+   * Reserve space to align with trailing icon controls (e.g. Run, Delete). Pass
+   * a boolean for a single gutter, or a count for multiple stacked controls.
+   */
+  trailingGutter?: boolean | number;
   headerEnd?: ReactNode;
   className?: string;
 }) {
+  const trailingGutterCount = Number(trailingGutter);
   return (
     <div
       className={cn(
@@ -47,7 +51,9 @@ export function CaseListColumnHeaders({
       {headerEnd ? (
         <div className="flex shrink-0 items-center justify-end">{headerEnd}</div>
       ) : null}
-      {trailingGutter ? <div className="w-7 shrink-0" aria-hidden /> : null}
+      {Array.from({ length: trailingGutterCount }).map((_, i) => (
+        <div key={i} className="w-7 shrink-0" aria-hidden />
+      ))}
     </div>
   );
 }

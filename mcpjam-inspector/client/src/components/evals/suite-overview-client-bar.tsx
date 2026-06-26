@@ -333,8 +333,10 @@ export function SuiteOverviewClientBar({
     >
       <div
         className={cn(
-          "flex min-h-9 flex-wrap items-center gap-x-2 gap-y-2 px-1 sm:px-2",
-          containerVariant === "inline" && "w-full min-w-0 max-w-full",
+          "flex min-h-9 items-center gap-x-2 px-1 sm:px-2",
+          containerVariant === "inline"
+            ? "w-max min-w-0 max-w-full flex-nowrap"
+            : "flex-wrap gap-y-2",
         )}
       >
         {showServersSection ? (

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, Loader2, MessageSquare } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
-import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -40,7 +39,7 @@ const EMPTY_SPANS: EvalTraceSpan[] = [];
  * named seam so future read-only consumers can reuse it.
  */
 function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined
+  overrides: Record<string, unknown> | undefined,
 ): Record<string, ChatUiToolRenderOverride> | undefined {
   return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
 }
@@ -59,7 +58,7 @@ interface ShareUsageThreadDetailProps {
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
  */
 async function hydrateSpans(
-  traces: SharedChatTurnTrace[]
+  traces: SharedChatTurnTrace[],
 ): Promise<EvalTraceSpan[]> {
   const results = await Promise.all(
     traces.map(async (trace) => {
@@ -72,7 +71,7 @@ async function hydrateSpans(
       } catch {
         return [];
       }
-    })
+    }),
   );
   return results.flat();
 }
@@ -125,7 +124,7 @@ export function ShareUsageThreadDetail({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
         setError(
-          err instanceof Error ? err.message : "Failed to load messages"
+          err instanceof Error ? err.message : "Failed to load messages",
         );
       } finally {
         if (isActive) {
@@ -167,8 +166,10 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  const hasBrowserArtifacts =
-    renderObservations.length > 0 || interactionSteps.length > 0;
+  // The Browser tab renders only the per-widget render observations now; the
+  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
+  // ride the trace blob below rather than gating this tab.
+  const hasBrowserArtifacts = renderObservations.length > 0;
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -194,13 +195,7 @@ export function ShareUsageThreadDetail({
         ? { browserInteractionSteps: interactionSteps }
         : {}),
     };
-  }, [
-    messages,
-    widgetSnapshots,
-    hydratedSpans,
-    renderObservations,
-    interactionSteps,
-  ]);
+  }, [messages, widgetSnapshots, hydratedSpans, renderObservations, interactionSteps]);
 
   // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
@@ -218,7 +213,7 @@ export function ShareUsageThreadDetail({
       name: thread?.modelId ?? "Unknown",
       provider: "custom" as ModelProvider,
     }),
-    [thread?.modelId]
+    [thread?.modelId],
   );
 
   // Compute trace timing from turn traces
@@ -238,7 +233,7 @@ export function ShareUsageThreadDetail({
     const ok = await copyToClipboard(text);
     if (ok) {
       toast.success(
-        sessionLink ? "Session link copied" : "Session reference copied"
+        sessionLink ? "Session link copied" : "Session reference copied",
       );
     } else {
       toast.error("Failed to copy");
@@ -358,12 +353,6 @@ export function ShareUsageThreadDetail({
         </div>
       </div>
 
-      {/* Phase 1 readiness insight bar — synthetic sessions only, rendered from
-          server-denormalized readiness fields. */}
-      {thread.synthetic === true ? (
-        <SessionInsightBar readiness={thread.readiness} />
-      ) : null}
-
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);
           its active mode lives outside the shared TraceViewMode union. */}
@@ -380,10 +369,7 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView
-              observations={renderObservations}
-              steps={interactionSteps}
-            />
+            <BrowserArtifactsView observations={renderObservations} />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -391,7 +377,7 @@ export function ShareUsageThreadDetail({
               messages={adaptedTrace.messages}
               model={resolvedModel}
               toolRenderOverrides={bridgeToolRenderOverrides(
-                adaptedTrace.toolRenderOverrides
+                adaptedTrace.toolRenderOverrides,
               )}
               reasoningDisplayMode={reasoningDisplayMode}
               widgetPolicy="placeholder"

@@ -21,6 +21,13 @@ import {
   groupRunIterationsByTestCase,
   type RunCaseGroup,
 } from "./run-case-groups";
+import {
+  InlineJudgeBadge,
+  caseKeyForGroup,
+  deterministicCasePassed,
+  judgeDisagreesWithVerdict,
+  type JudgeCase,
+} from "./goal-completion-presentation";
 import type { EvalIteration } from "./types";
 
 function RunCaseFailuresCell({ group }: { group: RunCaseGroup }) {
@@ -110,14 +117,23 @@ function RunCaseListItem({
   onSelect,
   trailingGutter = false,
   reserveTrailing = false,
+  judgeByCaseKey,
 }: {
   group: RunCaseGroup;
   isSelected: boolean;
   onSelect: () => void;
   trailingGutter?: boolean;
   reserveTrailing?: boolean;
+  judgeByCaseKey?: Map<string, JudgeCase> | null;
 }) {
   const showTrailing = trailingGutter || reserveTrailing;
+
+  // Advisory judge verdict for this case, joined by the snapshot caseKey.
+  const caseKey = judgeByCaseKey ? caseKeyForGroup(group) : null;
+  const judgeCase = caseKey ? judgeByCaseKey?.get(caseKey) : undefined;
+  const judgeDisagrees = judgeCase
+    ? judgeDisagreesWithVerdict(deterministicCasePassed(group), judgeCase.passed)
+    : false;
 
   return (
     <div
@@ -141,8 +157,16 @@ function RunCaseListItem({
           evalSurfaceRowHoverClass,
         )}
       >
-        <span className={cn(runCaseTitleClassName, "px-2 py-2")}>
-          {group.title}
+        <span
+          className={cn(
+            runCaseTitleClassName,
+            "flex items-center gap-2 px-2 py-2",
+          )}
+        >
+          <span className="min-w-0 truncate">{group.title}</span>
+          {judgeCase ? (
+            <InlineJudgeBadge judgeCase={judgeCase} disagrees={judgeDisagrees} />
+          ) : null}
         </span>
         <div className={cn(runCaseMetricsRailClassName, "hidden py-2 sm:grid")}>
           <div className="min-w-0 px-2">
@@ -195,6 +219,7 @@ export function RunCaseListWithSections({
   caseCount,
   headerEnd,
   trailingGutter = false,
+  judgeByCaseKey,
 }: {
   iterations: EvalIteration[];
   sortBy: "model" | "test" | "result";
@@ -203,6 +228,8 @@ export function RunCaseListWithSections({
   caseCount?: number;
   headerEnd?: ReactNode;
   trailingGutter?: boolean;
+  /** Advisory judge verdicts by snapshot caseKey; when set, rows show a badge. */
+  judgeByCaseKey?: Map<string, JudgeCase> | null;
 }) {
   const shouldReduceMotion = useReducedMotion();
   const groups = groupRunIterationsByTestCase(iterations, sortBy);
@@ -244,6 +271,7 @@ export function RunCaseListWithSections({
                 onSelect={() => onSelectTestCase(group)}
                 trailingGutter={trailingGutter}
                 reserveTrailing={reserveTrailing}
+                judgeByCaseKey={judgeByCaseKey}
               />
             </motion.div>
           ))}

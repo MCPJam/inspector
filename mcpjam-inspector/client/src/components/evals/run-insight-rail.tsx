@@ -135,6 +135,7 @@ export function RunAccuracyHeroBand({
   onSelectRun,
   includeRunIdentity = false,
   hideReplayLineage = false,
+  hideRecentRuns = false,
   runClient = null,
   className,
 }: {
@@ -156,6 +157,12 @@ export function RunAccuracyHeroBand({
   /** Title, outcome badge, and operational stats (playground run detail). */
   includeRunIdentity?: boolean;
   hideReplayLineage?: boolean;
+  /**
+   * Suppress the "Recent runs" chip strip. Used when an external run switcher
+   * (e.g. the suite results rail) already lists the runs, so the strip would
+   * be redundant.
+   */
+  hideRecentRuns?: boolean;
   /** Attached client this run was executed against (multi-client fan-out). */
   runClient?: { hostId: string; displayName: string } | null;
   className?: string;
@@ -299,7 +306,7 @@ export function RunAccuracyHeroBand({
     </div>
   );
 
-  const recentRunsBlock = hasRecentRuns ? (
+  const recentRunsBlock = hasRecentRuns && !hideRecentRuns ? (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
       <div className="flex min-w-0 items-baseline gap-2">
         <p className={runDetailSectionLabelClass}>Recent runs</p>
@@ -345,7 +352,9 @@ export function RunAccuracyHeroBand({
       <div
         className={cn(
           "flex gap-4 sm:gap-6",
-          hasRecentRuns ? "flex-col sm:flex-row sm:items-end" : "flex-col",
+          hasRecentRuns && !hideRecentRuns
+            ? "flex-col sm:flex-row sm:items-end"
+            : "flex-col",
         )}
       >
         {accuracyBlock}
@@ -407,18 +416,22 @@ export function RunInsightRail({
   triageCard,
   goalCompletionCard,
   className,
+  embedded = false,
 }: {
   triageCard: ReactNode;
   /** Advisory LLM-as-judge panel rendered below the triage card. */
   goalCompletionCard?: ReactNode;
   className?: string;
+  /** Flush layout inside the run-detail split (shared dividers, no card gaps). */
+  embedded?: boolean;
 }) {
   if (!triageCard && !goalCompletionCard) return null;
 
   return (
     <aside
       className={cn(
-        "flex h-full min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain",
+        "flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-y-contain",
+        embedded ? "gap-0 divide-y divide-border/60" : "gap-3",
         className,
       )}
     >

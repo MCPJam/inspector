@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
 import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -31,13 +31,20 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isModelFree } from "@/shared/steps";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
   CaseListColumnHeaders,
 } from "./case-list-shared";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
+import {
+  useCrossHostData,
+  formatHostFallback,
+} from "./cross-host/use-cross-host-data";
+import { HostCell } from "./cross-host/host-cell";
+import { HostChip } from "@/components/hosts/host-chip";
+import { evalSurfaceHeaderClass } from "./eval-surface-chrome";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -89,6 +96,18 @@ interface TestCasesOverviewProps {
   /** Playground / contexts where switching to the runs table is not offered. */
   hideViewModeSelect?: boolean;
   /**
+   * When true, the case list fills the parent pane and scrolls in place instead
+   * of using a fixed max height (suite results split).
+   */
+  fillAvailableHeight?: boolean;
+  /**
+   * Replace the single "Last run" status column with one result column per
+   * attached client (the cross-host matrix, inline). Falls back to "Last run"
+   * when the suite has no client attachments. Used by the suite Cases tab so
+   * cases + per-client results are one surface, not two.
+   */
+  showClientResultColumns?: boolean;
+  /**
    * When set, the Last run summary opens test detail focused on that iteration (one click).
    */
   onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
@@ -121,6 +140,8 @@ export function TestCasesOverview({
   onTestCaseClick,
   clickHint = "Click on a case to view its run history and performance.",
   hideViewModeSelect = false,
+  fillAvailableHeight = false,
+  showClientResultColumns = false,
   onOpenLastRun,
   onDeleteTestCasesBatch,
   onRunTestCase,
@@ -340,6 +361,28 @@ export function TestCasesOverview({
     });
   }, [effectiveCases, effectiveIterations]);
 
+  // Per-client result columns (the cross-host matrix, inline in the case list)
+  // so cases + per-client outcomes are one surface. Falls back to the single
+  // "Last run" column when the suite has no current client attachments.
+  const crossHost = useCrossHostData(
+    suite as unknown as EvalSuite,
+    effectiveCases,
+    runs ?? [],
+    effectiveIterations,
+  );
+  const clientColumns = useMemo(
+    () =>
+      showClientResultColumns
+        ? crossHost.hostColumns.filter((col) => !col.isHistorical)
+        : [],
+    [showClientResultColumns, crossHost.hostColumns],
+  );
+  const showClientRail = clientColumns.length > 0;
+  const clientRailStyle = useMemo(
+    () => ({ gridTemplateColumns: `repeat(${clientColumns.length}, 9rem)` }),
+    [clientColumns.length],
+  );
+
   const batchDelete = Boolean(onDeleteTestCasesBatch);
   const showRunColumn = Boolean(onRunTestCase);
   // Effective list = legacy `environment.servers` merged with any host
@@ -369,7 +412,9 @@ export function TestCasesOverview({
           // Empty state floats with no card border/background; the bordered
           // card only frames an actual list of cases.
           testCaseStats.length === 0 ? "flex flex-col" : caseListCardClassName,
-          isByHostView ? "min-h-[min(70vh,720px)] flex-1" : "max-h-[600px]"
+          fillAvailableHeight || isByHostView
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : "max-h-[600px]",
         )}
       >
         {!isByHostView &&
@@ -481,21 +526,65 @@ export function TestCasesOverview({
               allIterations={allIterations}
               expanded
               onTestCaseClick={onTestCaseClick}
+              onDeleteTestCasesBatch={onDeleteTestCasesBatch}
             />
           </div>
         ) : (
           <>
             {/* Column Headers */}
-            {testCaseStats.length > 0 && (
-              <CaseListColumnHeaders
-                firstColumnLabel="Case name"
-                secondColumnLabel="Last run"
-                leadingGutter={batchDelete}
-                trailingGutter={showRunColumn}
-              />
-            )}
+            {testCaseStats.length > 0 ? (
+              showClientRail ? (
+                <div
+                  className={cn(
+                    "flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-muted-foreground",
+                    evalSurfaceHeaderClass,
+                  )}
+                >
+                  {batchDelete ? (
+                    <div className="w-7 shrink-0" aria-hidden />
+                  ) : null}
+                  <div className="min-w-0 flex-1 [min-width:120px]">
+                    Case name
+                  </div>
+                  <div className="grid shrink-0" style={clientRailStyle}>
+                    {clientColumns.map((col) => (
+                      <div
+                        key={col.hostId}
+                        className="flex justify-center border-l border-border/40 px-2"
+                      >
+                        <HostChip
+                          name={col.hostName ?? formatHostFallback(col.hostId)}
+                          hostId={col.hostId}
+                          className="max-w-[8rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {showRunColumn ? (
+                    <div className="w-7 shrink-0" aria-hidden />
+                  ) : null}
+                  {batchDelete ? (
+                    <div className="w-7 shrink-0" aria-hidden />
+                  ) : null}
+                </div>
+              ) : (
+                <CaseListColumnHeaders
+                  firstColumnLabel="Case name"
+                  secondColumnLabel="Last run"
+                  leadingGutter={batchDelete}
+                  trailingGutter={Number(showRunColumn) + Number(batchDelete)}
+                />
+              )
+            ) : null}
 
-            <div className="divide-y overflow-y-auto">
+            <div
+              className={cn(
+                "divide-y",
+                fillAvailableHeight || isByHostView
+                  ? "min-h-0 flex-1 overflow-y-auto"
+                  : "overflow-y-auto",
+              )}
+            >
               {testCaseStats.length === 0 ? (
                 isGeneratingTestCases ? (
                   <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 px-4 py-12 text-sm text-muted-foreground">
@@ -581,6 +670,41 @@ export function TestCasesOverview({
                 )
               ) : (
                 testCaseStats.map(({ testCase, lastRunIteration }) => {
+                  // Per-client cells for this case + divergence tone: amber when
+                  // clients disagree, red when they all fail (mirrors the matrix).
+                  const byHost = crossHost.matrix.get(testCase._id);
+                  const cellsWithData = clientColumns
+                    .map((col) => byHost?.get(col.hostId))
+                    .filter(
+                      (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
+                    );
+                  const passFlags = cellsWithData.map(
+                    (c) => c.passCount >= c.totalCount,
+                  );
+                  const rowTone: "diverge" | "allfail" | null =
+                    cellsWithData.length >= 2
+                      ? passFlags.every(Boolean)
+                        ? null
+                        : passFlags.some(Boolean)
+                          ? "diverge"
+                          : "allfail"
+                      : null;
+                  const clientRail = showClientRail ? (
+                    <div className="grid shrink-0" style={clientRailStyle}>
+                      {clientColumns.map((col) => (
+                        <div
+                          key={col.hostId}
+                          className="border-l border-border/40"
+                        >
+                          <HostCell data={byHost?.get(col.hostId)} />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null;
+                  const rowToneClass = cn(
+                    rowTone === "diverge" && "bg-amber-500/[0.05]",
+                    rowTone === "allfail" && "bg-destructive/[0.05]",
+                  );
                   const hasConfiguredSuiteServers = suiteServers.length > 0;
                   const missingServers =
                     connectedServerNames == null
@@ -593,10 +717,7 @@ export function TestCasesOverview({
                   // keep the gate explicit rather than riding on their empty
                   // models. Detect both legacy widget_probe and new unified
                   // pinned-only cases.
-                  const isProbeCase = isPinnedOnly({
-                    caseType: testCase.caseType,
-                    promptTurns: testCase.promptTurns,
-                  });
+                  const isProbeCase = isModelFree(testCase.steps);
                   const isThisCaseRunning = runningTestCaseId === testCase._id;
                   const isAnotherCaseRunning =
                     runningTestCaseId != null &&
@@ -715,7 +836,7 @@ export function TestCasesOverview({
                       <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
                         {caseTitle}
                       </span>
-                      {lastPart}
+                      {showClientRail ? null : lastPart}
                     </>
                   );
 
@@ -812,13 +933,40 @@ export function TestCasesOverview({
                       )
                     ) : null;
 
+                  // Per-row delete: hover-revealed trash that reuses the batch
+                  // delete confirmation with this single case preselected. Keeps
+                  // deletion discoverable without forcing checkbox selection.
+                  const deleteControl = batchDelete ? (
+                    <span className="inline-flex shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-muted-foreground/40 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+                        aria-label={`Delete ${caseTitle}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setSelectedCaseIds(new Set([testCase._id]));
+                          setShowBatchDeleteModal(true);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </span>
+                  ) : null;
+
                   if (batchDelete) {
                     const isSelected = selectedCaseIds.has(testCase._id);
                     return (
                       <div
                         key={testCase._id}
                         data-testid={`test-case-row-${testCase._id}`}
-                        className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
+                        data-divergence={rowTone ?? undefined}
+                        className={cn(
+                          "group flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50",
+                          rowToneClass,
+                        )}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           toggleCaseSelection(testCase._id);
@@ -837,7 +985,9 @@ export function TestCasesOverview({
                           />
                         </div>
                         {caseRowClickTarget}
+                        {clientRail}
                         {runControl}
+                        {deleteControl}
                       </div>
                     );
                   }
@@ -846,10 +996,16 @@ export function TestCasesOverview({
                     <div
                       key={testCase._id}
                       data-testid={`test-case-row-${testCase._id}`}
-                      className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
+                      data-divergence={rowTone ?? undefined}
+                      className={cn(
+                        "group flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50",
+                        rowToneClass,
+                      )}
                     >
                       {caseRowClickTarget}
+                      {clientRail}
                       {runControl}
+                      {deleteControl}
                     </div>
                   );
                 })
