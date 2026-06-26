@@ -57,6 +57,15 @@ const buildProjectServerProjection = (
     ? { initializationInfo: server.initializationInfo }
     : {}),
   ...(server.useOAuth === undefined ? {} : { useOAuth: server.useOAuth }),
+  ...(server.useXaa === undefined ? {} : { useXaa: server.useXaa }),
+  ...(server.authServerMode === undefined
+    ? {}
+    : { authServerMode: server.authServerMode }),
+  ...(server.xaaAuthzIssuer === undefined
+    ? {}
+    : { xaaAuthzIssuer: server.xaaAuthzIssuer }),
+  ...(server.xaaSubject === undefined ? {} : { xaaSubject: server.xaaSubject }),
+  ...(server.xaaEmail === undefined ? {} : { xaaEmail: server.xaaEmail }),
   ...(server.hasClientSecret === undefined
     ? {}
     : { hasClientSecret: server.hasClientSecret }),

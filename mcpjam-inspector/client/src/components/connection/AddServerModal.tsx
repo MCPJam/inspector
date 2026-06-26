@@ -17,6 +17,7 @@ import {
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePostHog } from "posthog-js/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useServerForm } from "./hooks/use-server-form";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
@@ -95,9 +96,11 @@ export function AddServerModal({
   projectClientConfig,
 }: AddServerModalProps) {
   const posthog = usePostHog();
+  const { user } = useAuth();
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
+    signedInEmail: user?.email,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
@@ -444,6 +447,13 @@ export function AddServerModal({
               }
               clientIdError={formState.clientIdError}
               clientSecretError={formState.clientSecretError}
+              xaaAuthzIssuer={formState.xaaAuthzIssuer}
+              onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+              xaaSubject={formState.xaaSubject}
+              onXaaSubjectChange={formState.setXaaSubject}
+              xaaEmail={formState.xaaEmail}
+              onXaaEmailChange={formState.setXaaEmail}
+              signedInEmail={user?.email}
             />
           )}
 

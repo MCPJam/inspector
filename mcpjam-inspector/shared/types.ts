@@ -854,6 +854,13 @@ export type ServerFormOAuthRegistrationMode =
   | "dcr"
   | "preregistered";
 
+/**
+ * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
+ * is a distinct flow from "oauth": the inspector server mints the access token
+ * server-side via token-exchange rather than running a browser OAuth flow.
+ */
+export type ServerFormAuthType = "oauth" | "bearer" | "none" | "xaa";
+
 export interface ServerFormData {
   name: string;
   type: "stdio" | "http";
@@ -877,6 +884,22 @@ export interface ServerFormData {
   clearClientSecret?: boolean;
   /** Optional issuer override for the cross-app authorization test target. */
   xaaAuthzIssuer?: string;
+  /**
+   * Cross-App Access (XAA) connect flag. When true the server authenticates via
+   * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive
+   * with `useOAuth` — the form only ever sets one.
+   */
+  useXaa?: boolean;
+  /**
+   * Which identity provider mints the XAA assertion. v1 only writes "mcpjam"
+   * (the built-in test IdP); "own" is reserved for the bring-your-own-IdP
+   * follow-up.
+   */
+  authServerMode?: "mcpjam" | "own";
+  /** Optional simulated-identity override (subject) for the MCPJam test IdP. Blank = signed-in user. */
+  xaaSubject?: string;
+  /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
+  xaaEmail?: string;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

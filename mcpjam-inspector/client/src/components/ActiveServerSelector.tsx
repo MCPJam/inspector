@@ -49,6 +49,12 @@ export interface ActiveServerSelectorProps {
   /** Disconnect a connected server (Playground toggle off = unplug). */
   onDisconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
+  /**
+   * When `showOnlyOAuthServers` is on, also admit Cross-App Access (XAA)
+   * servers (useXaa, useOAuth left false). Scoped to the XAA tab so XAA servers
+   * don't leak into the OAuth-flow tab's list.
+   */
+  includeXaaServers?: boolean;
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
   serversWithViews?: Set<string>; // Set of server names that have saved views
@@ -103,6 +109,7 @@ export function ActiveServerSelector({
   onAddServerRequested,
   onReconnect,
   showOnlyOAuthServers = false,
+  includeXaaServers = false,
   showOnlyServersWithViews = false,
   autoSelectFilteredServer = true,
   serversWithViews,
@@ -131,8 +138,16 @@ export function ActiveServerSelector({
     );
   };
 
+  const isXaaServer = (server: ServerWithName): boolean =>
+    "url" in server.config && server.useXaa === true;
+
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
-    if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+    if (
+      showOnlyOAuthServers &&
+      !isOAuthServer(server) &&
+      !(includeXaaServers && isXaaServer(server))
+    )
+      return false;
     if (showOnlyServersWithViews && !serversWithViews?.has(name)) return false;
     return true;
   });

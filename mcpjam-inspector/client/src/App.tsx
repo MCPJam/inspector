@@ -2986,6 +2986,7 @@ export default function App() {
           showOnlyOAuthServers:
             activeTab === "oauth-flow" ||
             (activeTab === "xaa-flow" && xaaEnabled === true),
+          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
           autoSelectFilteredServer:
             activeTab !== "oauth-flow" &&
             !(activeTab === "xaa-flow" && xaaEnabled === true),

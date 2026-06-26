@@ -13,24 +13,20 @@ function renderModal(
 ) {
   const onSave = vi.fn();
   const onOpenChange = vi.fn();
-  const onIdentityChange = vi.fn();
   render(
     <XAAServerModal
       open
       onOpenChange={onOpenChange}
       existingServerNames={[]}
       onSave={onSave}
-      simulatedUserId="user-12345"
-      simulatedEmail="demo.user@example.com"
-      onIdentityChange={onIdentityChange}
       {...props}
     />,
   );
-  return { onSave, onOpenChange, onIdentityChange };
+  return { onSave, onOpenChange };
 }
 
 describe("XAAServerModal", () => {
-  it("emits ServerFormData with xaaAuthzIssuer and the OAuth credentials on save", async () => {
+  it("emits ServerFormData with the XAA discriminator + resource-AS credentials on save", async () => {
     const user = userEvent.setup();
     const { onSave, onOpenChange } = renderModal();
 
@@ -40,7 +36,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
-    await user.type(screen.getByLabelText("Client Secret"), "super-secret");
+    await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
     await user.type(screen.getByLabelText("Scopes"), "read:tools read:resources");
     await user.type(
       screen.getByLabelText("Authorization Server Issuer"),
@@ -55,7 +51,10 @@ describe("XAAServerModal", () => {
       name: "staging-mcp",
       type: "http",
       url: "https://staging.mcp.example.com",
-      useOAuth: true,
+      // Same discriminator the /servers Connect page writes — not plain OAuth.
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
       clientId: "staging-client",
       clientSecret: "super-secret",
       oauthScopes: ["read:tools", "read:resources"],
@@ -84,7 +83,7 @@ describe("XAAServerModal", () => {
     expect(formData.oauthScopes).toEqual([]);
   });
 
-  it("prefills fields and masks the saved secret when editing", () => {
+  it("prefills fields and shows a Clear control for a saved secret when editing", () => {
     const server = {
       name: "prod-mcp",
       config: { url: "https://prod.mcp.example.com/mcp" },
@@ -114,10 +113,11 @@ describe("XAAServerModal", () => {
     expect(screen.getByLabelText("Authorization Server Issuer")).toHaveValue(
       "https://auth.prod.example.com",
     );
-    // A saved secret is masked behind Replace / Clear controls, not a field.
-    expect(screen.getByText(/saved/i)).toBeInTheDocument();
+    // A saved secret shows the replace-style input plus a Clear control
+    // (shared with the /servers Connect page), not masked placeholder text.
+    expect(screen.getByLabelText(/Client Secret/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Replace" }),
+      screen.getByRole("button", { name: "Clear" }),
     ).toBeInTheDocument();
   });
 
@@ -150,38 +150,41 @@ describe("XAAServerModal", () => {
     expect(formData.clientSecret).toBeUndefined();
   });
 
-  it("shows the global simulated identity prefilled from props", () => {
-    renderModal();
+  it("prefills the per-server simulated identity from the server config", () => {
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      useXaa: true,
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
 
-    expect(screen.getByLabelText("Subject (sub)")).toHaveValue("user-12345");
-    expect(screen.getByLabelText("Email")).toHaveValue(
-      "demo.user@example.com",
-    );
+    renderModal({ server });
+
+    expect(screen.getByLabelText("Subject (sub)")).toHaveValue("alice");
+    expect(screen.getByLabelText("Email")).toHaveValue("alice@example.com");
   });
 
-  it("reports identity edits through onIdentityChange, not the form save", async () => {
+  it("persists the per-server simulated identity in the saved form data", async () => {
     const user = userEvent.setup();
-    const { onIdentityChange, onSave } = renderModal();
+    const { onSave } = renderModal();
 
-    // Editing identity reports the change immediately (it's a global setting,
-    // not part of the server form).
-    await user.type(screen.getByLabelText("Subject (sub)"), "x");
-    expect(onIdentityChange).toHaveBeenLastCalledWith({ userId: "user-12345x" });
-
-    // Saving the server config carries no identity fields.
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.type(screen.getByLabelText("Subject (sub)"), "bob");
     await user.click(
       screen.getByRole("button", { name: "Save configuration" }),
     );
 
     const { formData } = onSave.mock.calls[0][0];
-    expect(formData).not.toHaveProperty("userId");
-    expect(formData).not.toHaveProperty("email");
+    expect(formData.xaaSubject).toBe("bob");
   });
 
   it("rejects a duplicate name when creating a new server", async () => {
@@ -212,9 +215,6 @@ describe("XAAServerModal", () => {
         onOpenChange={onOpenChange}
         existingServerNames={[]}
         onSave={onSave}
-        simulatedUserId="user-12345"
-        simulatedEmail="demo.user@example.com"
-        onIdentityChange={vi.fn()}
       />,
     );
 
@@ -224,7 +224,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
-    await user.type(screen.getByLabelText("Client Secret"), "super-secret");
+    await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
     await user.type(
       screen.getByLabelText("Scopes"),
       "read:tools read:resources",
@@ -247,7 +247,7 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     expect(screen.getByLabelText(/Client ID/)).toHaveValue("staging-client");
-    expect(screen.getByLabelText("Client Secret")).toHaveValue("super-secret");
+    expect(screen.getByLabelText(/Client Secret/)).toHaveValue("super-secret");
     expect(screen.getByLabelText("Scopes")).toHaveValue(
       "read:tools read:resources",
     );
