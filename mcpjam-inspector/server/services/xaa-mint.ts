@@ -27,6 +27,12 @@ export interface ResolvedServerTarget {
    * must sign with it.
    */
   authzIssuer: string;
+  /**
+   * The protected resource (the stored server URL). Pinned server-side so the
+   * mint always exchanges for the target's own resource — never a
+   * caller-supplied one — when using the stored confidential client secret.
+   */
+  resource?: string;
   clientId?: string;
   clientSecret?: string;
 }
@@ -116,6 +122,22 @@ export async function discoverServerTargetTokenEndpoint(
         requestedIssuer: issuer,
         metadataUrl: candidate,
       });
+      // Fail closed on an issuer mismatch: the metadata's advertised issuer
+      // differs from the one we asked for, so its token endpoint can't be
+      // trusted with the stored confidential client secret.
+      if (verdict.issuerMismatch) {
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Authorization server metadata issuer does not match the requested issuer"
+        );
+      }
+      // The AS explicitly declares it doesn't support the jwt-bearer grant —
+      // skip its token endpoint and try the next candidate. (Missing
+      // grant_types is "warn", not "fail", so imperfect metadata isn't skipped.)
+      if (verdict.jwtBearerSupport === "fail") {
+        continue;
+      }
       if (verdict.tokenEndpoint) {
         // Prefer the AS's self-declared canonical issuer from metadata; fall
         // back to the requested issuer. This becomes the ID-JAG `aud`.
@@ -185,6 +207,7 @@ export async function resolveServerTarget(deps: {
   return {
     tokenEndpoint: discovered.tokenEndpoint,
     authzIssuer: discovered.issuer,
+    resource: resolved.serverUrl ?? undefined,
     clientId: resolved.clientId ?? undefined,
     clientSecret: resolved.clientSecret ?? undefined,
   };
@@ -265,6 +288,11 @@ export async function mintXaaAccessToken(args: {
     bearerToken: args.bearerToken,
   });
 
+  // Pin the grant resource to the resolved server target (its stored URL), so
+  // the stored confidential secret is only ever exchanged for the target's own
+  // resource. `args.resource` is only a fallback when the target has no URL.
+  const tokenResource = target.resource ?? args.resource ?? "";
+
   const idJag = issueIdJag({
     issuer: args.issuer,
     subject: args.subject,
@@ -272,7 +300,7 @@ export async function mintXaaAccessToken(args: {
     // The ID-JAG `aud` is the resource authorization server's issuer (what it
     // validates against), NOT its token endpoint.
     audience: target.authzIssuer,
-    resource: args.resource ?? "",
+    resource: tokenResource,
     clientId: target.clientId ?? "",
     scope: args.scope,
   });
@@ -285,7 +313,7 @@ export async function mintXaaAccessToken(args: {
       clientId: target.clientId,
       clientSecret: target.clientSecret,
       scope: args.scope,
-      resource: args.resource,
+      resource: tokenResource || undefined,
     }),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
