@@ -19,8 +19,32 @@ import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
+import type { SupportFilterMode } from "./support-level";
 
 const INLINE_CHIP_LIMIT = 6;
+
+const SUPPORT_FILTERS: ReadonlyArray<{
+  value: SupportFilterMode;
+  label: string;
+  title: string;
+}> = [
+  { value: "all", label: "All", title: "Show every field" },
+  {
+    value: "missing",
+    label: "Missing",
+    title: "Capabilities not supported by at least one host",
+  },
+  {
+    value: "partial",
+    label: "Partial",
+    title: "Capabilities that are partial / Auto for at least one host",
+  },
+  {
+    value: "supported",
+    label: "Full",
+    title: "Capabilities supported by every host",
+  },
+];
 
 interface HostCompareSelectorProps {
   hosts: ReadonlyArray<HostListItem>;
@@ -29,6 +53,8 @@ interface HostCompareSelectorProps {
   onToggleHost: (hostId: string) => void;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
+  supportFilter: SupportFilterMode;
+  onSupportFilterChange: (mode: SupportFilterMode) => void;
   showDescriptions: boolean;
   onShowDescriptionsChange: (enabled: boolean) => void;
   disabled?: boolean;
@@ -42,6 +68,8 @@ export function HostCompareSelector({
   onToggleHost,
   divergingOnly,
   onDivergingOnlyChange,
+  supportFilter,
+  onSupportFilterChange,
   showDescriptions,
   onShowDescriptionsChange,
   disabled = false,
@@ -77,6 +105,36 @@ export function HostCompareSelector({
       ) : null}
 
       <div className="ml-auto flex items-center gap-4">
+        <div
+          role="group"
+          aria-label="Filter by support level"
+          className="flex items-center gap-0.5 rounded-full border border-border p-0.5"
+        >
+          {SUPPORT_FILTERS.map((f) => {
+            const active = supportFilter === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                disabled={disabled}
+                title={f.title}
+                aria-pressed={active}
+                data-testid={`support-filter-${f.value}`}
+                onClick={() => onSupportFilterChange(f.value)}
+                className={cn(
+                  "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                  active
+                    ? "bg-primary/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
         <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
           <Switch
             checked={showDescriptions}

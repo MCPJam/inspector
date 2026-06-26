@@ -21,11 +21,24 @@ import {
   type HostComparisonSubject,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
+import { SupportChip } from "./support-chip";
+import {
+  computeVisibleFieldIds,
+  getCapabilityCaveats,
+  getSupportLevel,
+  rowCoverage,
+  type SupportFilterMode,
+  type SupportLevel,
+} from "./support-level";
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
+  /** caniuse-style row filter by aggregate support level. Default `"all"`. */
+  supportFilter?: SupportFilterMode;
+  /** Free-text query; matches field label / description / subsection. */
+  searchQuery?: string;
   /**
    * When true, render each field's description inline beneath its label.
    * When false (default), the description moves into a hover `i` affordance
@@ -48,6 +61,8 @@ interface HostConfigComparisonMatrixProps {
 export function HostConfigComparisonMatrix({
   subjects,
   divergingOnly = false,
+  supportFilter = "all",
+  searchQuery = "",
   showDescriptions = false,
   onRemoveHost,
   themeMode = "light",
@@ -63,10 +78,32 @@ export function HostConfigComparisonMatrix({
     return set;
   }, [configs]);
 
+  // Rows surviving the diverging toggle, support filter, and search query.
+  // Computed once here so the section/subsection passes stay in lockstep, and
+  // shared with the container's result count via `computeVisibleFieldIds`.
+  const visibleFieldIds = useMemo(
+    () =>
+      computeVisibleFieldIds({
+        configs,
+        divergingOnly,
+        supportFilter,
+        searchQuery,
+      }),
+    [configs, divergingOnly, supportFilter, searchQuery],
+  );
+
   if (subjects.length === 0) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center text-sm text-muted-foreground">
         No hosts to compare. Create at least one host in this project.
+      </div>
+    );
+  }
+
+  if (visibleFieldIds.size === 0) {
+    return (
+      <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
+        No fields match the current search and filters.
       </div>
     );
   }
@@ -78,6 +115,7 @@ export function HostConfigComparisonMatrix({
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="overflow-auto rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]"
     >
+      <SupportLegend />
       <table className="w-full border-collapse text-[13px]">
         <colgroup>
           <col style={{ width: 300 }} />
@@ -108,7 +146,7 @@ export function HostConfigComparisonMatrix({
           {groups.map((group, groupIndex) => {
             const visibleFieldsInGroup = group.subsections
               .flatMap((sub) => sub.fields)
-              .filter((f) => !divergingOnly || divergingIds.has(f.id));
+              .filter((f) => visibleFieldIds.has(f.id));
             if (visibleFieldsInGroup.length === 0) return null;
 
             const groupDivergeCount = group.subsections
@@ -124,7 +162,7 @@ export function HostConfigComparisonMatrix({
                 subsections={group.subsections}
                 subjects={subjects}
                 divergingIds={divergingIds}
-                divergingOnly={divergingOnly}
+                visibleFieldIds={visibleFieldIds}
                 showDescriptions={showDescriptions}
               />
             );
@@ -145,7 +183,7 @@ interface SectionRowsProps {
   }>;
   subjects: ReadonlyArray<HostComparisonSubject>;
   divergingIds: ReadonlySet<string>;
-  divergingOnly: boolean;
+  visibleFieldIds: ReadonlySet<string>;
   showDescriptions: boolean;
 }
 
@@ -156,7 +194,7 @@ function SectionRows({
   subsections,
   subjects,
   divergingIds,
-  divergingOnly,
+  visibleFieldIds,
   showDescriptions,
 }: SectionRowsProps) {
   const colSpan = subjects.length + 1;
@@ -198,9 +236,7 @@ function SectionRows({
       </tr>
 
       {subsections.map((sub) => {
-        const fields = sub.fields.filter(
-          (f) => !divergingOnly || divergingIds.has(f.id),
-        );
+        const fields = sub.fields.filter((f) => visibleFieldIds.has(f.id));
         if (fields.length === 0) return null;
         return (
           <SubsectionRows
@@ -267,6 +303,11 @@ function FieldRow({
   diverges: boolean;
   showDescriptions: boolean;
 }) {
+  // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
+  const coverage =
+    subjects.length >= 2
+      ? rowCoverage(field, subjects.map((s) => s.config))
+      : null;
   return (
     <tr className="border-b border-border last:border-b-0">
       <td
@@ -292,6 +333,15 @@ function FieldRow({
           <span className="text-[13px] font-medium text-foreground leading-tight">
             {field.label}
           </span>
+          {coverage && (
+            <span
+              className="text-[10.5px] text-muted-foreground tabular-nums"
+              title={`Supported by ${coverage.supported} of ${coverage.total} hosts`}
+              data-testid={`coverage-${field.id}`}
+            >
+              {coverage.supported}/{coverage.total}
+            </span>
+          )}
           {field.description && !showDescriptions && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -341,25 +391,55 @@ function FieldCell({
   const value = field.read(subject.config);
   const kind = field.kind;
 
-  // Tri-state fields treat `undefined` as a meaningful value ("auto" — host
-  // decides), so we must NOT short-circuit on undefined for them. Every
-  // other kind renders absence as `—`.
-  if (value === undefined && kind.kind !== "tri-state") {
+  // Tri-state and capability fields treat `undefined` as a meaningful value
+  // (Auto / not-advertised), so we must NOT short-circuit on undefined for
+  // them. Every other kind renders absence as `—`.
+  if (
+    value === undefined &&
+    kind.kind !== "tri-state" &&
+    kind.kind !== "capability"
+  ) {
     return <span className="text-[12px] text-muted-foreground/60">—</span>;
   }
 
   switch (kind.kind) {
-    case "boolean":
-      return <BooleanCellValue value={value === true} />;
+    case "boolean": {
+      const level: SupportLevel = value === true ? "supported" : "neutral";
+      return <SupportChip level={level} label={value === true ? "Yes" : "No"} />;
+    }
 
-    case "tri-state":
+    case "tri-state": {
+      const level: SupportLevel =
+        value === true ? "supported" : value === false ? "neutral" : "partial";
+      const label = value === true ? "On" : value === false ? "Off" : "Auto";
+      return <SupportChip level={level} label={label} />;
+    }
+
+    case "capability": {
+      const level = getSupportLevel(field, subject.config) ?? "neutral";
+      if (value === undefined || value === null) {
+        return <SupportChip level={level} label="Not advertised" />;
+      }
+      const caveats = getCapabilityCaveats(field, subject.config);
+      const keys =
+        typeof value === "object"
+          ? Object.keys(value as Record<string, unknown>)
+          : [];
       return (
-        <TriStateCellValue
-          value={
-            value === true ? true : value === false ? false : undefined
-          }
-        />
+        <span className="inline-flex items-center gap-2">
+          <SupportChip level={level} label="Advertised" caveats={caveats} />
+          {keys.length > 0 && (
+            <ExpandablePreview
+              label={`${keys.length} key${keys.length === 1 ? "" : "s"} ›`}
+            >
+              <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
+                {JSON.stringify(value, null, 2)}
+              </pre>
+            </ExpandablePreview>
+          )}
+        </span>
       );
+    }
 
     case "number":
       return (
@@ -380,8 +460,28 @@ function FieldCell({
       );
     }
 
-    case "enum":
+    case "enum": {
+      if (kind.support) {
+        const level = getSupportLevel(field, subject.config) ?? "neutral";
+        return <SupportChip level={level} label={String(value)} />;
+      }
       return <span className="text-[13px] text-foreground">{String(value)}</span>;
+    }
+
+    case "mode-set": {
+      const present = new Set(Array.isArray(value) ? (value as string[]) : []);
+      return (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          {kind.modes.map((mode) => (
+            <SupportChip
+              key={mode}
+              level={present.has(mode) ? "supported" : "neutral"}
+              label={mode}
+            />
+          ))}
+        </span>
+      );
+    }
 
     case "string": {
       const s = String(value);
@@ -426,59 +526,59 @@ function FieldCell({
       if (typeof value !== "object" || value === null) {
         return <span className="text-[12px] text-muted-foreground/60">—</span>;
       }
-      const keys = Object.keys(value as Record<string, unknown>);
-      const noun = kind.itemNoun ?? "key";
-      if (keys.length === 0) {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) {
         return (
           <span className="font-mono text-[11px] text-muted-foreground">
             {"{} empty"}
           </span>
         );
       }
+      // Nothing hidden: render entries inline. Only genuinely large blobs
+      // collapse behind the expand popover.
+      const json = JSON.stringify(value);
+      if (entries.length > 8 || json.length > 220) {
+        const noun = kind.itemNoun ?? "key";
+        return (
+          <ExpandablePreview
+            label={`${entries.length} ${noun}${entries.length === 1 ? "" : "s"} ›`}
+          >
+            <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
+              {JSON.stringify(value, null, 2)}
+            </pre>
+          </ExpandablePreview>
+        );
+      }
       return (
-        <ExpandablePreview
-          label={`${keys.length} ${noun}${keys.length === 1 ? "" : "s"} ›`}
-        >
-          <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
-            {JSON.stringify(value, null, 2)}
-          </pre>
-        </ExpandablePreview>
+        <div className="flex flex-col gap-0.5 font-mono text-[11.5px] leading-snug">
+          {entries.map(([k, v]) => (
+            <div key={k} className="break-all">
+              <span className="text-muted-foreground">{k}: </span>
+              <span className="text-foreground">{formatObjectValue(v)}</span>
+            </div>
+          ))}
+        </div>
       );
     }
   }
 }
 
-function BooleanCellValue({ value }: { value: boolean }) {
+/**
+ * Decodes the chip colors. Labels are kind-agnostic because the same colors are
+ * shared by booleans (Yes/No), tri-state (On/Off/Auto), and capabilities
+ * (Advertised/Not advertised) — `neutral` covers all the "off / absent" states.
+ * Red `unsupported` is omitted until a field maps to it.
+ */
+function SupportLegend() {
   return (
-    <span
-      className={cn(
-        "text-[13px]",
-        value ? "text-foreground" : "text-muted-foreground",
-      )}
-    >
-      {value ? "Yes" : "No"}
-    </span>
-  );
-}
-
-function TriStateCellValue({
-  value,
-}: {
-  value: boolean | undefined;
-}) {
-  const label =
-    value === true ? "On" : value === false ? "Off" : "Auto";
-  return (
-    <span
-      className={cn(
-        "text-[13px]",
-        value === true && "text-foreground",
-        value === false && "text-muted-foreground",
-        value === undefined && "text-muted-foreground/80",
-      )}
-    >
-      {label}
-    </span>
+    <div className="flex flex-wrap items-center justify-end gap-2.5 border-b border-border px-4 py-2">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Support
+      </span>
+      <SupportChip level="supported" label="Supported" />
+      <SupportChip level="partial" label="Partial" />
+      <SupportChip level="neutral" label="Off / absent" />
+    </div>
   );
 }
 
@@ -532,6 +632,13 @@ function HostColumnHeader({
       </motion.div>
     </th>
   );
+}
+
+/** Compact one-line rendering of an object entry's value for inline display. */
+function formatObjectValue(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
 }
 
 function ExpandablePreview({
