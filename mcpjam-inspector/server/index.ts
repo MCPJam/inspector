@@ -503,13 +503,14 @@ if (process.env.NODE_ENV === "production") {
   app.use("/*", inAppBrowserMiddleware);
 
   // Vanity-domain landing: caniuse.dev (the "Can I use" host-compare showcase)
-  // points at this same service, so send its root straight to the comparison
-  // page. Deep links pass through untouched. Host-gated so app.mcpjam.com and
-  // every other domain keep their normal home.
+  // points at this same service, so send its root straight to the chrome-less
+  // comparison page (no sidebar/nav, NUX-bypassed). Deep links pass through
+  // untouched. Host-gated so app.mcpjam.com and every other domain keep their
+  // normal home.
   app.use("/*", async (c, next) => {
     const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
     if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
-      return c.redirect("/host-compare", 302);
+      return c.redirect("/embed/host-compare", 302);
     }
     return next();
   });

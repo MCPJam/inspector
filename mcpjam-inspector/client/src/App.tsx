@@ -642,7 +642,7 @@ export function HostsRoute() {
   );
 }
 
-export function HostCompareRoute() {
+export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
@@ -655,8 +655,9 @@ export function HostCompareRoute() {
   );
 
   // Mirror the gating HostsRoute uses: when signed out, Compare has no peer
-  // Servers/Client tabs to switch to, so render bare.
-  if (!isAuthenticated) {
+  // Servers/Client tabs to switch to, so render bare. `bare` forces the same
+  // for the chrome-less embed route (caniuse.dev) regardless of auth.
+  if (bare || !isAuthenticated) {
     return compareView;
   }
 
@@ -1313,6 +1314,12 @@ export default function App() {
   const isChatboxChatRoute =
     !exitedChatboxChat && hostedRouteKind === "chatbox";
 
+  // Chrome-less host-compare for vanity domains (caniuse.dev): rendered
+  // full-bleed without the sidebar/header, and the first-run onboarding
+  // redirect is suppressed so guests land directly on the comparison.
+  const isBareCompareRoute =
+    window.location.pathname === routePaths.embedHostCompare;
+
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
 
@@ -1811,6 +1818,7 @@ export default function App() {
       activeProjectId === "none");
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
+    !isBareCompareRoute &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -3247,6 +3255,22 @@ export default function App() {
     </SidebarProvider>
   );
 
+  // Vanity-domain embed (caniuse.dev): render the matched route
+  // (`HostCompareRoute bare`) full-bleed without the sidebar/header chrome.
+  // Still nested inside every provider in the return below, so auth, project,
+  // and the guest session resolve exactly as on the normal route.
+  const bareCompareContent = (
+    <div className="h-screen w-screen overflow-auto bg-background">
+      <AppRouteReactContext.Provider value={routeContext}>
+        {locationContext ? (
+          <Outlet context={routeContext} />
+        ) : (
+          <NoRouterRouteBody activeTab={activeTab} />
+        )}
+      </AppRouteReactContext.Provider>
+    </div>
+  );
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -3318,6 +3342,8 @@ export default function App() {
                     pathToken={chatboxPathToken}
                     onExitChatboxChat={() => setExitedChatboxChat(true)}
                   />
+                ) : isBareCompareRoute ? (
+                  bareCompareContent
                 ) : (
                   appContent
                 )}
