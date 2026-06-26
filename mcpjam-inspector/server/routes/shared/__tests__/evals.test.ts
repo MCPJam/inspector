@@ -672,6 +672,30 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     ).not.toThrow();
   });
 
+  it("treats legacy widget_probe cases (caseType + probeConfig, no steps) as model-free", () => {
+    // Pre-steps render checks are model-free: derive the probe's toolCall step
+    // so they count 0 LLM calls, even highly iterated, instead of being
+    // over-counted as a prompt placeholder and tripping the cap.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "Legacy probe",
+        runs: 10,
+        caseType: "widget_probe",
+        probeConfig: {
+          serverId: "srv-1",
+          serverName: "server-1",
+          toolName: "show_map",
+          arguments: {},
+        },
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].steps.some((s) => s.kind === "prompt")).toBe(false);
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never)
+    ).not.toThrow();
+  });
+
   it("a persisted suite over the cap is rejected (the scheduled-run gap)", () => {
     // 31 cases x 1 model x 10 runs x 1 prompt step = 310 > 300
     const cases = Array.from({ length: 31 }, (_, i) => ({

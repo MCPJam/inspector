@@ -468,20 +468,26 @@ export function buildCapEntriesFromPersistedCases(
     steps?: unknown;
     promptTurns?: unknown;
     advancedConfig?: unknown;
+    caseType?: TestCaseType;
+    probeConfig?: ProbeConfig;
   }>
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
     const steps = (
-      Array.isArray(testCase.steps) && testCase.steps.length > 0
-        ? testCase.steps
-        : // Pre-migration cases carry legacy `promptTurns` instead of `steps`.
-          // Derive the real steps so a multi-turn case counts every model turn
-          // toward MAX_TOTAL_LLM_CALLS — a single empty `prompt` placeholder
-          // would under-count and let it slip past the cap.
-          (legacyCaseStepsFallback(testCase) ?? [
-            { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
-          ])
+      // Resolve real steps for cap math so the count matches what executes:
+      //  - explicit `steps` (or legacy `widget_probe`+`probeConfig`, which is
+      //    MODEL-FREE → 0 LLM calls) via resolveAuthoringSteps;
+      //  - legacy multi-turn `promptTurns` (top-level/advancedConfig) so every
+      //    model turn is counted;
+      //  - else an empty `prompt` placeholder (counts once).
+      // Without the probe branch, a legacy widget probe would synthesize a
+      // `prompt` placeholder and be over-counted as a model call, so big/iterated
+      // probe suites could be wrongly rejected over MAX_TOTAL_LLM_CALLS.
+      resolveAuthoringSteps(testCase) ??
+      legacyCaseStepsFallback(testCase) ?? [
+        { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
+      ]
     ) as RunEvalsRequest["tests"][number]["steps"];
     // Model-free cases (no `prompt` step) need one cap entry; model cases fan
     // out per model. The cap reducer counts `prompt` steps, so a model-free
