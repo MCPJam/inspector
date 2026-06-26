@@ -1,0 +1,92 @@
+---
+title: "@mcpjam/chat-ui"
+description: "Read-only transcript renderer for AI SDK chat messages"
+icon: "message-square"
+---
+
+[**@mcpjam/chat-ui**](https://www.npmjs.com/package/@mcpjam/chat-ui) is a provider-free React component library for rendering AI SDK `UIMessage` transcripts in read-only mode. It renders text, reasoning, files, sources, JSON/data parts, and tool call/result blocks — with no dependency on Convex, PostHog, inspector stores, or any widget runtime.
+
+## Installation
+
+```bash
+npm install @mcpjam/chat-ui
+```
+
+Peer dependencies: `react`, `react-dom`, `ai`, `@ai-sdk/react`.
+
+## Basic usage
+
+```tsx
+import { ReadOnlyTranscript } from "@mcpjam/chat-ui";
+import "@mcpjam/chat-ui/styles.css";
+
+export function Transcript({ messages }) {
+  return (
+    <ReadOnlyTranscript
+      messages={messages}
+      model={{ id: "gpt-4o", name: "GPT-4o", provider: "openai" }}
+      reasoningDisplayMode="collapsed"
+      widgetPolicy="placeholder"
+      themeMode="system"
+    />
+  );
+}
+```
+
+## `ReadOnlyTranscript` props
+
+| Prop | Type | Default |
+| --- | --- | --- |
+| `messages` | `UIMessage[]` | — |
+| `model` | `ChatUiModel` | `{ id: "unknown", name: "Unknown", provider: "custom" }` |
+| `toolsMetadata` | `Record<string, Record<string, unknown>>` | `{}` |
+| `toolServerMap` | `Record<string, string>` | `{}` |
+| `toolRenderOverrides` | `Record<string, ToolRenderOverride>` | — |
+| `themeMode` | `"light" \| "dark" \| "system"` | `"system"` |
+| `reasoningDisplayMode` | `"inline" \| "collapsible" \| "collapsed" \| "hidden"` | `"inline"` |
+| `widgetPolicy` | `"placeholder" \| "hidden"` | `"placeholder"` |
+| `className` | `string` | — |
+
+## Host integration
+
+`ReadOnlyTranscript` is fully static. If you need interactivity — for example, to mount real widgets or inject a custom tool block — use the lower-level `Transcript` component and supply the host seams:
+
+- **`renderTool(ctx)`** — replace the static tool block with your own interactive component.
+- **`renderWidget(input)`** — mount a real widget surface instead of the placeholder.
+
+```tsx
+import { Transcript } from "@mcpjam/chat-ui";
+
+<Transcript
+  messages={messages}
+  renderTool={(ctx) => <MyInteractiveToolPart {...ctx} />}
+  renderWidget={(input) => <MyWidget {...input} />}
+/>
+```
+
+When `renderWidget` is omitted, widget-bearing tool calls render a `WidgetPlaceholder` (or are hidden when `widgetPolicy="hidden"`).
+
+## Styling
+
+The renderer uses shadcn-style semantic utility classes (`text-muted-foreground`, `bg-card`, `border-border`, …). Import `@mcpjam/chat-ui/styles.css` to get scoped CSS variable defaults for light and dark themes, applied under the `.mcpjam-chat-ui` root class.
+
+Override any `--token` variable to theme the transcript:
+
+```css
+.mcpjam-chat-ui {
+  --foreground: 240 10% 3.9%;
+  --muted: 240 4.8% 95.9%;
+}
+```
+
+<Note>
+A fully self-contained compiled CSS bundle (so consumers don't need their own Tailwind setup) is planned for a future release.
+</Note>
+
+## Widget policy
+
+Tools that carry an interactive widget surface (MCP Apps or OpenAI Apps SDK templates) are detected automatically. In `ReadOnlyTranscript`, these tools render a static `WidgetPlaceholder` by default. Set `widgetPolicy="hidden"` to suppress the placeholder entirely.
+
+## Scope
+
+`@mcpjam/chat-ui` covers read-only transcript review. Full MCP Apps widget replay (sandbox origin, CSP, security review) is a separate effort and is not part of this package.
