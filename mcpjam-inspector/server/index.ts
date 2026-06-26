@@ -129,6 +129,7 @@ import {
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
+  CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
@@ -500,6 +501,18 @@ if (process.env.NODE_ENV === "production") {
 
   // In-app browser redirect (before SPA fallback)
   app.use("/*", inAppBrowserMiddleware);
+
+  // Vanity-domain landing: caniuse.dev (the "Can I use" host-compare showcase)
+  // points at this same service, so send its root straight to the comparison
+  // page. Deep links pass through untouched. Host-gated so app.mcpjam.com and
+  // every other domain keep their normal home.
+  app.use("/*", async (c, next) => {
+    const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
+    if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
+      return c.redirect("/host-compare", 302);
+    }
+    return next();
+  });
 
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
