@@ -377,7 +377,7 @@ function CompareSearchBar({
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       <span className="shrink-0 text-[15px] font-medium tracking-tight text-foreground">
-        Can this host…
+        Can I use…
       </span>
       <SearchInput
         value={query}
