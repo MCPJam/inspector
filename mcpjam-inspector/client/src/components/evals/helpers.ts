@@ -188,6 +188,9 @@ export function computeIterationSummary(items: EvalIteration[]) {
     if (iteration.result === "passed") summary.passed += 1;
     else if (iteration.result === "failed") summary.failed += 1;
     else if (iteration.result === "cancelled") summary.cancelled += 1;
+    // A timed-out iteration is terminal; without an explicit verdict it counts
+    // as failed, not pending.
+    else if (iteration.status === "timed_out") summary.failed += 1;
     else summary.pending += 1;
 
     summary.tokens += iteration.tokensUsed || 0;

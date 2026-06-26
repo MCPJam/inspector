@@ -207,6 +207,6 @@ describe("HostCell", () => {
 
   it("uses a taller empty state in trends layout", () => {
     render(<HostCell data={undefined} trendsLayout />);
-    expect(screen.getByTestId("host-cell-empty")).toHaveClass("min-h-[11rem]");
+    expect(screen.getByTestId("host-cell-empty")).toHaveClass("min-h-[9rem]");
   });
 });
