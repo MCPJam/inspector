@@ -176,6 +176,64 @@ The URL updates automatically as you toggle hosts on or off. When all live hosts
 
 In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a **Compare** button. When two or more hosts are attached to the suite, clicking **Compare** opens the Compare view with exactly those hosts pre-selected. The button is disabled (with a tooltip) when fewer than two hosts are attached.
 
+### Reading the comparison grid
+
+The comparison grid uses color-coded support chips so you can scan capability coverage at a glance, similar to [caniuse.com](https://caniuse.com).
+
+**Support chip colors**
+
+| Chip | Meaning |
+| --- | --- |
+| Green — Supported | Boolean `Yes`, tri-state `On`, or MCP capability advertised |
+| Amber — Partial | Tri-state `Auto` (host decides), or a capability advertised with a known limitation |
+| Gray — Off / absent | Boolean `No`, tri-state `Off`, or capability not advertised |
+
+A legend at the top of the matrix shows only the levels that appear in the current view.
+
+**Row coverage**
+
+When two or more hosts are selected, each capability row shows an `n/m` count next to its label — the number of hosts that support that capability out of the total selected. Scalar rows (model, temperature, etc.) do not show a coverage count.
+
+**Caveat footnotes**
+
+Some capability chips carry a superscript number. Click the chip to open a popover listing the caveats — for example, "Advertised without list-changed notifications" on a Roots capability that omits `listChanged`. The chip color reflects the downgraded level (amber for a partial advertise), and the footnote explains why.
+
+### Searching and filtering
+
+**"Can I use…" search bar**
+
+Type in the search bar at the top of the Compare view to filter rows by label, description, or subsection name. A `n / m fields` counter updates live to show how many rows match out of the total.
+
+**Support-level filter**
+
+The segmented control in the toolbar filters rows by their aggregate support level across all selected hosts:
+
+| Filter | Shows |
+| --- | --- |
+| All | Every field (default) |
+| Missing | Capabilities not supported by at least one host |
+| Partial | Capabilities that are partial or Auto for at least one host |
+| Full | Capabilities supported by every selected host |
+
+The support filter and the **Only diverging** toggle compose: both conditions must pass for a row to appear. Scalar rows (model, temperature, etc.) are hidden under any non-All filter.
+
+### Tables vs. List view
+
+The **Tables / List** toggle in the search bar switches between two layouts:
+
+- **Tables** (default) — the full comparison matrix with one column per host and one row per field. All field types are shown.
+- **List** — one card per host, grouping its capability fields into **Supported**, **Partial**, and **Off / absent** walls. Only support-shaped fields (booleans, tri-states, MCP capabilities, display-mode sets) appear in List view; scalar fields are omitted. The `n / m fields` counter narrows to the support-shaped subset when List is active.
+
+### Apps section in the matrix
+
+The **Apps** section of the matrix shows the *effective* per-host capability surface — the host-style preset baseline merged with any sparse overrides — rather than the raw override blobs. This means each row reflects what the host actually advertises to widgets at runtime.
+
+The Apps section is split into three subsections:
+
+- **MCP Apps capabilities** — one row per SEP-1865 spec-bridge dimension (e.g. `openLinks`, `serverTools`, `toolInputPartial`), plus `availableDisplayModes` (display-mode chips) and `widgetDisplayModeRequests` (support-mapped enum chip).
+- **OpenAI compat shim** — one row per `window.openai.*` method, showing whether the shim is injected and which methods are available.
+- **Sandbox permissions** — one row per permission (`camera`, `microphone`, `geolocation`, `clipboardWrite`), shown as green/gray chips.
+
 ## Best practices
 
 - **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
