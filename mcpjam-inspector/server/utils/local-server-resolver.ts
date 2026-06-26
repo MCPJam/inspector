@@ -32,6 +32,7 @@ import {
   mintXaaAccessToken,
 } from "../services/xaa-mint.js";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
+import { HOSTED_MODE } from "../config.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -622,11 +623,15 @@ export async function resolveLocalServerForConnect(
     const sc = result.serverConfig;
     const mintArgs = {
       resolveServerSecret: fetchServerClientSecret,
-      // Local connect path: non-HTTPS (localhost) auth servers are allowed,
-      // matching the local XAA router (`httpsOnlyProxy: false`). Hosted mode
-      // uses a separate path and would pin this to true.
-      httpsOnly: false,
-      issuer: getIssuerForRequest(c, "/api/mcp", false),
+      // Non-HTTPS (localhost) auth servers are allowed only off-hosted, matching
+      // the local XAA router (`httpsOnlyProxy: false`); hosted targets are
+      // always remote HTTPS.
+      httpsOnly: HOSTED_MODE,
+      // The ID-JAG `iss` must match the live IdP issuer whose JWKS the resource
+      // AS fetches. In hosted mode only the `/api/web/xaa` router is mounted
+      // (`/api/mcp/*` returns 410), so the issuer base follows the deployment
+      // mode — same split the debugger uses.
+      issuer: getIssuerForRequest(c, HOSTED_MODE ? "/api/web" : "/api/mcp", false),
       serverId,
       projectId,
       bearerToken,
