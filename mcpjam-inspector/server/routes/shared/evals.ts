@@ -51,6 +51,7 @@ import {
   probeConfigToToolCallStep,
   promptTurnsToSteps,
   stepsSchema,
+  type PromptTurn,
   type TestStep,
 } from "@/shared/steps";
 import {
@@ -70,11 +71,29 @@ const toolChoiceSchema = z.union([
 ]);
 
 /**
+ * Resolve legacy multi-turn data from BOTH the top-level `promptTurns` and the
+ * historical `advancedConfig.promptTurns` storage location (pre-migration cases
+ * stored turns there). Returns [] when neither carries turns, so callers keep
+ * their own single-turn / placeholder fallbacks. Mirrors the source precedence
+ * of `resolvePromptTurns` without its query-synthesis tail.
+ */
+function resolveLegacyPromptTurns(src: {
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+}): PromptTurn[] {
+  const topLevel = normalizePromptTurns(src.promptTurns);
+  if (topLevel.length > 0) return topLevel;
+  return normalizePromptTurns(
+    (src.advancedConfig as { promptTurns?: unknown } | undefined)?.promptTurns
+  );
+}
+
+/**
  * Boundary compat: project a wire test's legacy fields onto the steps-first
  * `TestStep[]` contract. Precedence mirrors `internalCaseToSteps` in
  * routes/v1/evals.ts so every surface converges on the same shape:
  *   1. explicit `steps` (or `widget_probe` + `probeConfig`) win;
- *   2. multi-turn `promptTurns`        → `promptTurnsToSteps`;
+ *   2. multi-turn `promptTurns` (top-level OR `advancedConfig`) → `promptTurnsToSteps`;
  *   3. single-turn `query`/`expectedToolCalls` → one `prompt` step + asserts.
  * `query` is required on the wire, so this always returns ≥1 step.
  */
@@ -83,13 +102,14 @@ function wireTestToSteps(test: {
   caseType?: TestCaseType;
   probeConfig?: ProbeConfig;
   promptTurns?: unknown;
+  advancedConfig?: unknown;
   query?: string;
   expectedToolCalls?: any[];
 }): TestStep[] {
   const explicit = resolveAuthoringSteps(test);
   if (explicit && explicit.length > 0) return explicit;
 
-  const turns = normalizePromptTurns(test.promptTurns);
+  const turns = resolveLegacyPromptTurns(test);
   if (turns.length > 0) return promptTurnsToSteps(turns);
 
   const steps: TestStep[] = [
@@ -124,8 +144,9 @@ function wireTestToSteps(test: {
  */
 function legacyCaseStepsFallback(testCase: {
   promptTurns?: unknown;
+  advancedConfig?: unknown;
 }): TestStep[] | undefined {
-  const turns = normalizePromptTurns(testCase.promptTurns);
+  const turns = resolveLegacyPromptTurns(testCase);
   return turns.length > 0 ? promptTurnsToSteps(turns) : undefined;
 }
 
@@ -347,15 +368,13 @@ export const RunTestCaseRequestSchema = z.object({
       // suite's `defaultPredicates` per the case mode.
       predicates: casePredicatesSchema.optional(),
     })
-    // Convert a legacy `promptTurns` override to `steps` when the caller
-    // didn't send `steps` directly, so the runner's `overrides.steps ??
-    // case.steps` precedence picks up unsaved multi-turn edits.
+    // Convert a legacy `promptTurns` override (top-level OR `advancedConfig`)
+    // to `steps` when the caller didn't send `steps` directly, so the runner's
+    // `overrides.steps ?? case.steps` precedence picks up unsaved multi-turn
+    // edits.
     .transform((overrides) => {
-      if (
-        (!overrides.steps || overrides.steps.length === 0) &&
-        Array.isArray(overrides.promptTurns)
-      ) {
-        const turns = normalizePromptTurns(overrides.promptTurns);
+      if (!overrides.steps || overrides.steps.length === 0) {
+        const turns = resolveLegacyPromptTurns(overrides);
         if (turns.length > 0) {
           return { ...overrides, steps: promptTurnsToSteps(turns) };
         }
@@ -448,6 +467,7 @@ export function buildCapEntriesFromPersistedCases(
     models?: Array<{ model: string; provider: string }>;
     steps?: unknown;
     promptTurns?: unknown;
+    advancedConfig?: unknown;
   }>
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
@@ -1694,7 +1714,9 @@ export async function runEvalTestCaseWithManager(
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
       (testCase as { steps?: TestStep[] }).steps ??
-      legacyCaseStepsFallback(testCase as { promptTurns?: unknown }),
+      legacyCaseStepsFallback(
+        testCase as { promptTurns?: unknown; advancedConfig?: unknown }
+      ),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -2067,7 +2089,9 @@ export async function streamEvalTestCaseWithManager(
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
       (testCase as { steps?: TestStep[] }).steps ??
-      legacyCaseStepsFallback(testCase as { promptTurns?: unknown }),
+      legacyCaseStepsFallback(
+        testCase as { promptTurns?: unknown; advancedConfig?: unknown }
+      ),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(

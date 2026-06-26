@@ -628,6 +628,27 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     expect(entries[0].steps).not.toMatchObject([{ id: "legacy-cap-prompt" }]);
   });
 
+  it("derives steps from legacy advancedConfig.promptTurns too", () => {
+    // The oldest cases stored turns under advancedConfig.promptTurns (no
+    // top-level field); they must still count every model turn.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "legacy advancedConfig multi-turn",
+        runs: 1,
+        models: [{ model: "m", provider: "p" }],
+        advancedConfig: {
+          promptTurns: [
+            { id: "turn-1", prompt: "one" },
+            { id: "turn-2", prompt: "two" },
+          ],
+        },
+      },
+    ]);
+    const promptSteps = entries[0].steps.filter((s) => s.kind === "prompt");
+    expect(promptSteps).toHaveLength(2);
+    expect(entries[0].steps).not.toMatchObject([{ id: "legacy-cap-prompt" }]);
+  });
+
   it("excludes model-free (toolCall-only) cases from the cap reducer", () => {
     const entries = buildCapEntriesFromPersistedCases([
       {
