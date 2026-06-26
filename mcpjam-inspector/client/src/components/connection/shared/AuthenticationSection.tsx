@@ -701,6 +701,8 @@ export function AuthenticationSection({
               xaaEmail={xaaEmail}
               onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
               signedInEmail={signedInEmail}
+              projectId={projectId}
+              hostedServerId={hostedServerId}
             />
           </div>
         )}

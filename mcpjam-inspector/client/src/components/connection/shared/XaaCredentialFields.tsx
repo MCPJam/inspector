@@ -1,13 +1,17 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
   EyeOff,
   Info,
+  Loader2,
 } from "lucide-react";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import {
   Select,
   SelectContent,
@@ -58,6 +62,12 @@ export interface XaaCredentialFieldsProps {
   identityHelpText?: string;
   /** Start the Advanced section expanded (Debugger wants identity visible). */
   defaultAdvancedOpen?: boolean;
+  /**
+   * Hosted-mode reveal context. When both are present and a secret is stored,
+   * a "Reveal" button fetches the saved secret (same API + UX as OAuth).
+   */
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function XaaCredentialFields({
@@ -82,9 +92,99 @@ export function XaaCredentialFields({
   signedInEmail,
   identityHelpText,
   defaultAdvancedOpen = false,
+  projectId = null,
+  hostedServerId = null,
 }: XaaCredentialFieldsProps) {
   const [showAdvanced, setShowAdvanced] = useState(defaultAdvancedOpen);
   const [isSecretVisible, setIsSecretVisible] = useState(false);
+  // Hosted-mode reveal — mirrors the OAuth client-secret reveal exactly, using
+  // the same endpoint (the secret lives in the same vault column).
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [revealedContextKey, setRevealedContextKey] = useState<string | null>(
+    null,
+  );
+  const [isRevealedVisible, setIsRevealedVisible] = useState(false);
+  const [isRevealing, setIsRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [didCopy, setDidCopy] = useState(false);
+  const [isReplacing, setIsReplacing] = useState(false);
+
+  const canReveal =
+    hasStoredClientSecret &&
+    !clearClientSecret &&
+    !!projectId &&
+    !!hostedServerId;
+  const revealContextKey = canReveal ? `${projectId}:${hostedServerId}` : null;
+  const visibleRevealedSecret =
+    revealedContextKey === revealContextKey ? revealedSecret : null;
+
+  // Drop any revealed value when the saved-secret context changes (replacement
+  // typed, Clear toggled, or a different server selected).
+  useEffect(() => {
+    if (revealedContextKey !== revealContextKey) {
+      setRevealedSecret(null);
+      setRevealedContextKey(null);
+      setIsRevealedVisible(false);
+      setRevealError(null);
+      setDidCopy(false);
+      setIsReplacing(false);
+    }
+  }, [revealContextKey, revealedContextKey]);
+
+  const handleReveal = async () => {
+    if (!projectId || !hostedServerId || !revealContextKey || isRevealing)
+      return;
+    setIsRevealing(true);
+    setRevealError(null);
+    setIsReplacing(false);
+    try {
+      const result = await fetchOAuthClientSecret({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setRevealedSecret(result.clientSecret);
+      setRevealedContextKey(revealContextKey);
+      setIsRevealedVisible(true);
+    } catch (error) {
+      setRevealedSecret(null);
+      setRevealedContextKey(null);
+      setIsRevealedVisible(false);
+      setRevealError(
+        error instanceof Error
+          ? error.message
+          : "Failed to reveal client secret",
+      );
+    } finally {
+      setIsRevealing(false);
+    }
+  };
+
+  const handleHideRevealed = () => {
+    setRevealedSecret(null);
+    setRevealedContextKey(null);
+    setIsRevealedVisible(false);
+    setRevealError(null);
+    setDidCopy(false);
+    if (isReplacing) onClientSecretChange("");
+    setIsReplacing(false);
+  };
+
+  const handleCopyRevealed = async (value: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setDidCopy(true);
+      setTimeout(() => setDidCopy(false), 2000);
+    } catch {
+      // Clipboard failures are non-fatal.
+    }
+  };
+
+  // While showing the saved secret (not yet edited) render the revealed value;
+  // once the user edits, track their replacement.
+  const secretFieldValue = isReplacing
+    ? clientSecret
+    : (visibleRevealedSecret ?? "");
   const baseId = useId();
   const ids = {
     clientId: `${baseId}-client-id`,
@@ -161,6 +261,33 @@ export function XaaCredentialFields({
               Client Secret (Optional)
             </label>
             <div className="flex items-center gap-1">
+              {canReveal && !visibleRevealedSecret && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => void handleReveal()}
+                  disabled={isRevealing}
+                >
+                  {isRevealing ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    "Reveal"
+                  )}
+                </Button>
+              )}
+              {visibleRevealedSecret && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={handleHideRevealed}
+                >
+                  Hide
+                </Button>
+              )}
               {hasStoredClientSecret && !clearClientSecret && (
                 <Button
                   type="button"
@@ -188,6 +315,71 @@ export function XaaCredentialFields({
           {hasStoredClientSecret && clearClientSecret ? (
             <p className="text-xs text-muted-foreground">
               Saved client secret will be removed when you save.
+            </p>
+          ) : visibleRevealedSecret !== null ? (
+            <>
+              <div className="relative">
+                <Input
+                  id={ids.clientSecret}
+                  type={isRevealedVisible ? "text" : "password"}
+                  value={secretFieldValue}
+                  onChange={(e) => {
+                    if (!isReplacing) setIsReplacing(true);
+                    onClientSecretChange(e.target.value);
+                  }}
+                  placeholder="Enter a new value to replace."
+                  autoComplete="off"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
+                  className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
+                />
+                <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={
+                      isRevealedVisible
+                        ? "Hide client secret"
+                        : "Show client secret"
+                    }
+                    title={
+                      isRevealedVisible
+                        ? "Hide client secret"
+                        : "Show client secret"
+                    }
+                    onClick={() => setIsRevealedVisible((prev) => !prev)}
+                    className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                  >
+                    {isRevealedVisible ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Copy client secret"
+                    title="Copy client secret"
+                    onClick={() => void handleCopyRevealed(secretFieldValue)}
+                    className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                  >
+                    {didCopy ? (
+                      <Check className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              {!isReplacing && (
+                <p className="text-xs text-muted-foreground">
+                  Editing this replaces the saved secret when you save.
+                </p>
+              )}
+            </>
+          ) : canReveal ? (
+            <p className="text-xs text-muted-foreground">
+              A client secret is saved. Reveal it to view or replace it.
             </p>
           ) : (
             <div className="relative">
@@ -228,6 +420,9 @@ export function XaaCredentialFields({
           )}
           {clientSecretError && (
             <p className="text-xs text-red-500">{clientSecretError}</p>
+          )}
+          {revealError && (
+            <p className="text-xs text-red-500">{revealError}</p>
           )}
         </div>
 
