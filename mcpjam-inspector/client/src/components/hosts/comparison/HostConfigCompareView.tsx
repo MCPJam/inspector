@@ -13,6 +13,7 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
+import type { SupportFilterMode } from "./support-level";
 
 const HOSTS_QUERY_PARAM = "hosts";
 
@@ -56,6 +57,7 @@ export function HostConfigCompareView({
   >({});
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
+  const [supportFilter, setSupportFilter] = useState<SupportFilterMode>("all");
   const [showDescriptions, setShowDescriptions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // Tracks whether the initial URL-driven selection has been applied.
@@ -237,6 +239,8 @@ export function HostConfigCompareView({
               onToggleHost={handleToggleHost}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
+              supportFilter={supportFilter}
+              onSupportFilterChange={setSupportFilter}
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={setShowDescriptions}
               disabled={listLoading}
@@ -261,6 +265,7 @@ export function HostConfigCompareView({
                 <HostConfigComparisonMatrix
                   subjects={orderedSubjects}
                   divergingOnly={divergingOnly}
+                  supportFilter={supportFilter}
                   showDescriptions={showDescriptions}
                   themeMode={themeMode}
                   onRemoveHost={

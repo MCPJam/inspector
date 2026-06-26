@@ -135,7 +135,7 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.queryByText("modelId")).not.toBeInTheDocument();
   });
 
-  it("renders boolean values as plain Yes/No text", () => {
+  it("renders boolean values as Yes/No support chips", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[
@@ -155,6 +155,57 @@ describe("HostConfigComparisonMatrix", () => {
       />,
     );
     expect(screen.getAllByText("Auto").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders client capabilities as Advertised / Not advertised chips", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+        ]}
+      />,
+    );
+    // sampling present → Advertised
+    expect(screen.getAllByText("Advertised").length).toBeGreaterThanOrEqual(1);
+    // roots/elicitation/experimental absent → Not advertised
+    expect(
+      screen.getAllByText("Not advertised").length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows a per-row coverage stat for capability rows", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+          makeSubject("h_b", "B", { clientCapabilities: {} }),
+        ]}
+      />,
+    );
+    // sampling supported by 1 of 2 hosts
+    expect(screen.getByTestId("coverage-capabilities.sampling")).toHaveTextContent(
+      "1/2",
+    );
+    // scalar rows get no coverage stat
+    expect(screen.queryByTestId("coverage-modelId")).not.toBeInTheDocument();
+  });
+
+  it("filters to rows missing support when supportFilter=missing", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+          makeSubject("h_b", "B", { clientCapabilities: { sampling: {} } }),
+        ]}
+        supportFilter="missing"
+      />,
+    );
+    // sampling supported by all → hidden
+    expect(screen.queryByText("Sampling")).not.toBeInTheDocument();
+    // roots not advertised by either → still shown
+    expect(screen.getByText("Roots")).toBeInTheDocument();
+    // scalar rows are hidden under a capability filter
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
   });
 
   it("renders column remove buttons when onRemoveHost is provided", async () => {

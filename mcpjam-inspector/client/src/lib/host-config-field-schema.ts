@@ -62,6 +62,11 @@ export type HostConfigFieldKind =
   /** Long string (system prompt). Matrix shows first-line preview + char count. */
   | { kind: "string-long" }
   | { kind: "string-array" }
+  /**
+   * MCP capability advertised by object *presence* (absent = not advertised).
+   * Matrix renders a caniuse-style support chip; non-empty values still expand.
+   */
+  | { kind: "capability" }
   /** Object/Record. Matrix shows `N keys ›` summary; click to expand. */
   | { kind: "object"; itemNoun?: string };
 
@@ -238,7 +243,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Roots",
     path: "clientCapabilities.roots",
     description: "Filesystem roots exposed to the server.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.roots,
   },
   {
@@ -248,7 +253,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Sampling",
     path: "clientCapabilities.sampling",
     description: "Server-initiated LLM calls.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.sampling,
   },
   {
@@ -258,7 +263,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Elicitation",
     path: "clientCapabilities.elicitation",
     description: "Mid-call structured prompts back to the user.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.elicitation,
   },
   {
@@ -268,7 +273,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Experimental",
     path: "clientCapabilities.experimental",
     description: "Vendor-extension capabilities.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.experimental,
   },
 
