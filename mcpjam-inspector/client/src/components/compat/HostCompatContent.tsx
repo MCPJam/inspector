@@ -21,6 +21,7 @@ import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
+import { ConformanceGate } from "@/components/compat/ConformanceGate";
 import type {
   CompatFinding,
   CompatLane,
@@ -219,6 +220,8 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
+      <ConformanceGate server={server} />
+
       <p className="pb-1 text-[11px] text-muted-foreground">
         Static checks from connect-time data · best-effort host profiles
         {requirements.unknownDimensions.length > 0
