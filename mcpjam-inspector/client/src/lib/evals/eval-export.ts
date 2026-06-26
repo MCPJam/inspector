@@ -26,7 +26,9 @@ function resolveExportPromptTurns(source: {
   expectedToolCalls?: unknown;
   expectedOutput?: string;
 }): PromptTurn[] {
-  if (Array.isArray(source.steps)) {
+  // Gate on length, not mere array-ness: an empty `steps: []` must fall through
+  // to the query→turn-1 fallback (matches server resolveSteps / resolveEvalTestCase).
+  if (Array.isArray(source.steps) && source.steps.length > 0) {
     return stepsToPromptTurns(source.steps as never);
   }
   return resolvePromptTurns(source);

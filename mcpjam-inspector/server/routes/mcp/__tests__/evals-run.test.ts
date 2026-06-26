@@ -98,9 +98,19 @@ describe("mcp eval run route", () => {
       message: "Eval run started. Results will appear shortly.",
       caseUpsert: { committed: [], failed: [] },
     });
+    // The shared run schema projects this legacy body (query/expectedToolCalls,
+    // no `steps`) onto the steps-first contract before prepareEvalRun runs.
     expect(prepareEvalRunMock).toHaveBeenCalledWith(
       { id: "manager" },
-      runSuiteBody,
+      expect.objectContaining({
+        ...runSuiteBody,
+        tests: [
+          expect.objectContaining({
+            ...runSuiteBody.tests[0],
+            steps: [{ id: "step-1-prompt", kind: "prompt", prompt: "Hello" }],
+          }),
+        ],
+      }),
     );
 
     await flushPromises();

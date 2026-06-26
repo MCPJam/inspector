@@ -40,6 +40,7 @@ import {
 import {
   stepsSchema,
   normalizeSteps,
+  isModelFree,
   deriveQuery,
   isPromptStep,
   isToolCallStep,
@@ -586,7 +587,15 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  // The runner finalizes run/iteration timeouts as `timed_out` before
+  // rethrowing into the detached catch. Treat it as terminal so the defensive
+  // re-finalize can't overwrite a timeout result with `failed`.
+  "timed_out",
+]);
 
 /**
  * Whether the run record already reached a terminal status. Used by the
@@ -639,7 +648,8 @@ function toIterationDto(iteration: IterationDoc) {
   const isTerminal =
     iteration.status === "completed" ||
     iteration.status === "failed" ||
-    iteration.status === "cancelled";
+    iteration.status === "cancelled" ||
+    iteration.status === "timed_out";
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -1100,6 +1110,13 @@ function buildCaseMutationArgs(
     defaultModels?: Array<{ model: string; provider: string }>;
     /** The persisted case's caseType, so a kind-less PATCH keeps its kind. */
     existingCaseType?: string;
+    /**
+     * The persisted case's `steps`, so a step-native render-check row (a single
+     * model-free `toolCall` step) created WITHOUT a legacy `caseType` is still
+     * recognized as render-check — otherwise a same-kind PATCH is wrongly
+     * rejected as an immutable kind change.
+     */
+    existingSteps?: unknown;
     /** The persisted case's match options, to merge a partial PATCH onto. */
     existingMatchOptions?: unknown;
     /** The persisted case's probeConfig, to merge a partial renderCheck PATCH onto. */
@@ -1128,8 +1145,13 @@ function buildCaseMutationArgs(
     isModelFreeStepsCase = derived.caseType === "widget_probe";
     const derivedKind =
       derived.caseType === "widget_probe" ? "render-check" : "prompt";
-    const existingKind =
-      opts.existingCaseType === "widget_probe" ? "render-check" : "prompt";
+    // Recognize the persisted kind from EITHER the legacy `caseType` OR the
+    // shape of the stored `steps` (a model-free case is render-check), so
+    // step-native render-checks without a `caseType` aren't misread as prompt.
+    const existingIsRenderCheck =
+      opts.existingCaseType === "widget_probe" ||
+      isModelFree(normalizeSteps(opts.existingSteps));
+    const existingKind = existingIsRenderCheck ? "render-check" : "prompt";
 
     if (!opts.forCreate && derivedKind !== existingKind) {
       throw new WebRouteError(
@@ -1731,9 +1753,10 @@ evals.get(
     }
 
     const snapshot = (iteration.testCaseSnapshot ?? {}) as Record<string, any>;
-    const steps: TestStep[] = Array.isArray(snapshot.steps)
-      ? normalizeSteps(snapshot.steps as TestStep[])
-      : [];
+    // Reconstruct legacy snapshots (promptTurns / query / probeConfig with no
+    // persisted steps) via the shared helper so the Steps view isn't empty for
+    // pre-migration iterations. internalCaseToSteps no-ops when steps exist.
+    const steps: TestStep[] = internalCaseToSteps(snapshot as CaseDoc);
 
     // Evidence is best-effort: the trace blob may be absent (still-running or
     // never-persisted iteration). Verdicts from metadata still return.
@@ -2181,6 +2204,16 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       "title is required."
     );
   }
+  // `steps` is optional on the shared case shape so PATCH can be a partial
+  // update, but a CREATE must carry the steps-first contract — otherwise the
+  // case is persisted with no executable steps.
+  if (!Array.isArray(body.steps) || body.steps.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "steps is required and must be a non-empty array when creating a case."
+    );
+  }
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -2243,6 +2276,7 @@ evals.patch(
       forCreate: false,
       existingCaseType:
         typeof existing.caseType === "string" ? existing.caseType : undefined,
+      existingSteps: existing.steps,
       existingMatchOptions: existing.matchOptions,
       existingProbeConfig: existing.probeConfig,
     });
@@ -2466,9 +2500,23 @@ evals.post(
                 : {}),
             },
           ];
-      const steps = Array.isArray(draft.steps)
+      const normalizedSteps = Array.isArray(draft.steps)
         ? normalizeSteps(draft.steps)
-        : promptTurnsToSteps(promptTurns);
+        : [];
+      // Negative cases must carry no expected tool calls, so drop any
+      // `toolCalledWith` asserts that survive inside authored steps; and fall
+      // back to the promptTurns/query conversion when steps normalize to empty.
+      const draftSteps = isNeg
+        ? normalizedSteps.filter(
+            (s) =>
+              !(
+                s.kind === "assert" &&
+                (s.assertion as { type?: string }).type === "toolCalledWith"
+              )
+          )
+        : normalizedSteps;
+      const steps =
+        draftSteps.length > 0 ? draftSteps : promptTurnsToSteps(promptTurns);
       const args: Record<string, unknown> = {
         suiteId,
         title: draft.title,

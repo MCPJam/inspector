@@ -102,6 +102,9 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
+  // Cancelling a run terminates in-flight work — state-changing, so clients
+  // should be able to confirm before it fires.
+  cancelEvalRunOperation.name,
 ]);
 
 /**

@@ -103,7 +103,9 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
 
 import {
   createConcurrencyLimiter,
+  EVAL_ITERATION_TIMEOUT_MS,
   runEvalSuiteWithAiSdk,
+  runIterationWithTimeout,
   streamTestCase,
 } from "../../evals-runner";
 
@@ -314,6 +316,69 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(recorder.finalize).toHaveBeenCalledWith({
       status: "failed",
       summary: undefined,
+    });
+  });
+
+  // Regression: the run-lifecycle watchdog must stop a stuck iteration.
+  // Without `runIterationWithTimeout`, a hung iteration (stuck LLM call /
+  // browser render) leaves the suite run "running" forever. These lock the
+  // wrapper that the runner uses to bound every iteration.
+  describe("runIterationWithTimeout (lifecycle watchdog)", () => {
+    it("rejects with the iteration-timeout stop reason and fires onTimeout when the run hangs", async () => {
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        const rejection = runIterationWithTimeout({
+          run: () => new Promise<never>(() => {}), // never settles
+          onTimeout,
+          shouldSkipTimeout: () => false,
+        });
+        // Assert before the timer fires so the rejection is observed (no leak).
+        const assertion = expect(rejection).rejects.toMatchObject({
+          stopReason: "iteration_timeout",
+          terminalStatus: "timed_out",
+        });
+        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
+        await assertion;
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("resolves with the run result and never fires onTimeout when the run finishes first", async () => {
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn();
+        const result = await runIterationWithTimeout({
+          run: async () => "done",
+          onTimeout,
+          shouldSkipTimeout: () => false,
+        });
+        expect(result).toBe("done");
+        expect(onTimeout).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("skips the timeout (no onTimeout, no reject) when the run was already aborted", async () => {
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn();
+        let resolveRun: (v: string) => void = () => {};
+        const rejection = runIterationWithTimeout({
+          run: () => new Promise<string>((res) => (resolveRun = res)),
+          onTimeout,
+          shouldSkipTimeout: () => true, // run was aborted elsewhere
+        });
+        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
+        resolveRun("late");
+        await expect(rejection).resolves.toBe("late");
+        expect(onTimeout).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

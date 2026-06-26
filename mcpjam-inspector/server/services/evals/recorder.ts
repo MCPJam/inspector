@@ -18,6 +18,9 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
+// Run-level (not per-iteration) terminal stop reason, threaded into the
+// suite-run finalize so the dashboard can show why a run stopped.
+type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 
 /**
  * When a Convex mutation rejects because a billing/entitlement cap was hit
@@ -132,7 +135,7 @@ export type SuiteRunRecorder = {
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
-    status: "completed" | "failed" | "cancelled";
+    status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
       total: number;
       passed: number;
@@ -140,6 +143,7 @@ export type SuiteRunRecorder = {
       passRate: number;
     };
     notes?: string;
+    stopReason?: RunStopReason;
   }): Promise<void>;
 };
 
@@ -265,7 +269,7 @@ export const createSuiteRunRecorder = ({
         },
       });
     },
-    async finalize({ status, summary, notes }) {
+    async finalize({ status, summary, notes, stopReason }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return;
@@ -277,6 +281,7 @@ export const createSuiteRunRecorder = ({
           status,
           summary,
           notes,
+          stopReason,
         });
       } catch (error) {
         const errorMessage =

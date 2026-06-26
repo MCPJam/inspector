@@ -77,6 +77,10 @@ export interface WidgetRenderObservation {
   screenshotBase64?: string;
   consoleErrors?: string[];
   blockedRequests?: string[];
+  /** `ui/message` follow-ups a widget emitted DURING render (auto-send-on-
+   *  render). The runner drains these as model-continuation turns. Distinct
+   *  from render-time tool calls, which are not action results and are dropped. */
+  followUps?: string[];
   elapsedMs: number;
   ts: number;
 }
@@ -945,9 +949,12 @@ export class McpAppBrowserHarness {
       };
     }
 
-    // app->host calls during render are not part of an action result.
+    // Tool calls a widget makes during render are not part of an action
+    // result, so drop them. But `ui/message` follow-ups emitted during render
+    // (auto-send-on-render widgets) ARE intended model-continuation turns —
+    // carry them out on the observation so the runner can drain them.
     this.toolCallBuffer = [];
-    this.followUpBuffer = [];
+    const renderFollowUps = this.followUpBuffer.splice(0);
 
     if (!pageResult.mounted) {
       await this.unmount(input.toolCallId);
@@ -1027,6 +1034,7 @@ export class McpAppBrowserHarness {
       blockedRequests: this.blockedRequests.length
         ? [...this.blockedRequests]
         : undefined,
+      ...(renderFollowUps.length ? { followUps: renderFollowUps } : {}),
       elapsedMs: Date.now() - started,
     };
   }
