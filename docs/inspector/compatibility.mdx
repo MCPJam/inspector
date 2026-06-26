@@ -1,0 +1,87 @@
+---
+title: "Compatibility"
+description: "Check whether your MCP server works on each host — spec conformance first, then per-host apps and server gaps."
+icon: "boxes"
+---
+
+The Compatibility page answers the question: **does my server work on these hosts?** It runs static checks against your connected server and shows a verdict for each supported host (Claude, ChatGPT, Cursor, Copilot, Codex, and others).
+
+The page has two layers:
+
+1. **Spec conformance gate** — a spec failure breaks on every host, so it's checked first and shown separately.
+2. **Per-host report** — host-specific gaps in widget rendering, capability support, and protocol version compatibility.
+
+## Multi-server matrix
+
+When two or more servers are connected, the page leads with a **servers × hosts matrix**. Each cell shows a verdict dot for that server on that host. The footer row summarizes how many servers work on each host (for example, `2/3`).
+
+Click any server row (or the server name button) to select it. The selected server's full report renders below the matrix.
+
+With a single connected server, the matrix is hidden and only that server's report is shown.
+
+## Spec conformance gate
+
+The conformance gate sits above the per-host report. It runs the Protocol and Apps conformance suites on demand against the live server.
+
+Click **Run checks** to start. Results appear inline:
+
+| State | Meaning |
+| --- | --- |
+| ✅ Passed | All checks in this suite passed. |
+| ❌ Failed | One or more checks failed — the failed check titles are listed. |
+| — Not runnable | The suite can't run for this transport. Protocol conformance requires an HTTP server; over stdio it shows "not runnable here" rather than "failed". |
+
+If any suite fails, a banner reads **"Fix these spec failures first — they break on every host."** If all runnable suites pass, a green banner confirms the gaps below are host-specific, not spec problems.
+
+Click **Details** to open the full Conformance page for a deeper breakdown.
+
+## Per-host report
+
+Below the conformance gate, each supported host has a row showing:
+
+- A **verdict dot** — colored green (works), amber (degraded), red (blocked), or grey (unknown).
+- The **verdict label** and a summary of findings.
+
+Expand a host row to see the individual findings, grouped into two lanes:
+
+### Apps lane
+
+Widget and rendering gaps — does the host render this server's widgets, and does it expose the host APIs the widgets call?
+
+Common findings:
+
+- **App-only tools unusable** — a tool is hidden from the model and needs a UI the host can't render.
+- **Widgets fall back to text** — the host won't render the widget; users get the plain-text result instead.
+- **Missing host capability** — a widget calls a host API (for example, `notifications/message`) that the host doesn't support.
+
+### Server lane
+
+Capability negotiation gaps — does the host speak the same MCP protocol version as this server?
+
+Common findings:
+
+- **Protocol version differs** — the server negotiated a protocol version that isn't in the host's advertised set. The host may still negotiate a shared version, but if it can't, the connection won't establish.
+
+This finding is shown as `info` (not a hard failure) because only one negotiated version was sampled; the host may accept a different version in production.
+
+## Verdict meanings
+
+| Verdict | Meaning |
+| --- | --- |
+| **Works** | No blocking or degrading gaps found. |
+| **Degraded** | The server works but some widgets fall back to text or minor capabilities are missing. |
+| **Blocked** | One or more app-only tools are completely unusable on this host. |
+| **Unknown** | Not enough information to determine compatibility (tools not yet loaded, or an unanalyzed dimension). |
+
+## Provenance
+
+Each host profile is sourced from real captures or vendor documentation. The provenance label on a finding tells you how authoritative that fact is:
+
+- **Probe** — captured from a live host session.
+- **Vendor doc** — verified from the vendor's published documentation.
+- **Assumed** — best-effort preset, unverified.
+
+## Notes
+
+- The "Test in host" button is not available on this page. To create a host from a compatibility report, open the server detail modal and use the Compatibility tab there.
+- The Compatibility page is behind the `mcpjam-compatibility` feature flag and may not be visible in all environments.
