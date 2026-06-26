@@ -173,6 +173,7 @@ export function useToolExecution({
       params: Record<string, unknown>,
       result: unknown,
       toolCallId?: string,
+      serverId?: string,
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -183,10 +184,11 @@ export function useToolExecution({
 
       const definitionMeta = toolsMetadata[effectiveToolName];
       const mergedMeta =
-        definitionMeta || resultMeta
+        definitionMeta || resultMeta || serverId
           ? {
               ...(definitionMeta ?? {}),
               ...(resultMeta ?? {}),
+              ...(serverId ? { _serverId: serverId } : {}),
             }
           : undefined;
 
@@ -303,7 +305,13 @@ export function useToolExecution({
         }
 
         const result = response.result;
-        storeCompletedToolResult(effectiveToolName, params, result);
+        storeCompletedToolResult(
+          effectiveToolName,
+          params,
+          result,
+          undefined,
+          effectiveServerName,
+        );
 
         // Log successful tool execution
         posthog.capture("app_builder_tool_executed", {
@@ -412,6 +420,7 @@ interface ExecuteAppToolArgs {
     params: Record<string, unknown>,
     result: unknown,
     toolCallId?: string,
+    serverId?: string,
   ) => void;
 }
 
@@ -488,7 +497,13 @@ async function executeAppTool({
     // Store the full untouched CallToolResult — the playground inspector
     // should be able to see `structuredContent`/`_meta` the chat path
     // intentionally strips before handing back to the model.
-    storeCompletedToolResult(entry.rawName, params, raw);
+    storeCompletedToolResult(
+      entry.rawName,
+      params,
+      raw,
+      undefined,
+      entry.instance.serverId,
+    );
 
     recordAppToolInvocation(
       {

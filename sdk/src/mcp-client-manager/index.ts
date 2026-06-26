@@ -87,6 +87,17 @@ export {
   type ConvertedToolSet,
   type CallToolExecutor,
 } from "./tool-converters.js";
+export {
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpLinkedResourceReader,
+} from "./model-output.js";
 
 // Utility functions (useful for testing and advanced use cases)
 export { buildRequestInit } from "./transport-utils.js";

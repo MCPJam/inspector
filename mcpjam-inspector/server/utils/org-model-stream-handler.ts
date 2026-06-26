@@ -42,6 +42,7 @@ import { logger } from "./logger.js";
 import {
   consumeDirectChatTurnHeadless,
   runDirectChatTurn,
+  withMcpToolOriginChunkMetadata,
   type DirectChatTurnPersistEvent,
   type DirectChatTurnTraceEvents,
   type RunDirectChatTurnHandle,
@@ -77,6 +78,8 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
+  /** Host/client capability for eligible MCP image-bearing tool results. */
+  modelVisibleMcpImageToolResults?: boolean;
   /**
    * Approval mode forwarded into the wrapped MCPJam handler. Synthetic
    * callers pass `"auto-deny"` so approval-required tool calls auto-deny
@@ -398,7 +401,7 @@ export function handleLocalOrgChatModel(
             return formatLocalStreamError(error);
           },
         })) {
-          writer.write(chunk);
+          writer.write(withMcpToolOriginChunkMetadata(chunk, options.tools));
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -504,7 +507,10 @@ function buildLocalOrgOnPersist(params: {
 export interface RunLocalOrgChatTurnHeadlessOptions
   extends Omit<
     OrgLocalModelHandlerOptions,
-    "onConversationComplete" | "onStreamComplete" | "onStreamWriterReady" | "onLiveTextDelta"
+    | "onConversationComplete"
+    | "onStreamComplete"
+    | "onStreamWriterReady"
+    | "onLiveTextDelta"
   > {
   /** Per-step advertised-tool narrowing (browser session context gate). */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
@@ -719,6 +725,7 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
+    modelVisibleMcpImageToolResults: options.modelVisibleMcpImageToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }
       : {}),

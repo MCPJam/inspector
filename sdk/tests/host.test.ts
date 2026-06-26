@@ -91,6 +91,47 @@ describe("Host — public surface", () => {
     }
   });
 
+  it("migrates legacy image policy out of app-visible hostContext", () => {
+    const json = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      hostContext: {
+        modelVisibleMcpImageToolResults: false,
+        theme: "dark",
+      },
+    }).toJSON();
+
+    expect(json.modelVisibleMcpImageToolResults).toBe(false);
+    expect(json.hostContext).toEqual({ theme: "dark" });
+  });
+
+  it("keeps the top-level image policy when legacy hostContext disagrees", () => {
+    const json = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      modelVisibleMcpImageToolResults: true,
+      hostContext: {
+        modelVisibleMcpImageToolResults: false,
+        theme: "dark",
+      },
+    }).toJSON();
+
+    expect(json.modelVisibleMcpImageToolResults).toBe(true);
+    expect(json.hostContext).toEqual({ theme: "dark" });
+  });
+
+  it("migrates legacy image policy from direct hostContext mutation", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.hostContext = {
+      modelVisibleMcpImageToolResults: false,
+      theme: "dark",
+    };
+
+    const json = host.toJSON();
+    expect(json.modelVisibleMcpImageToolResults).toBe(false);
+    expect(json.hostContext).toEqual({ theme: "dark" });
+  });
+
   it("validates lazily at toJSON() (invalid profile throws)", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.apps = { mcpAppsOverrides: { availableDisplayModes: [] } };

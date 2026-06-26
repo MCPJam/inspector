@@ -32,6 +32,10 @@ export type ChatboxRuntimeConfig = {
   // mcpjam-backend PR #334 (which adds the field) returns omitted →
   // undefined and the inspector falls back to its auto policy.
   progressiveToolDiscovery?: boolean;
+  // Host/client policy for whether eligible MCP image-bearing tool results are
+  // passed to the model as media. Optional so older backends return omitted →
+  // the runtime default stays enabled.
+  modelVisibleMcpImageToolResults?: boolean;
   // Built-in tool ids from the pinned HostConfigV2 (e.g. ["web_search"]).
   // Optional so a backend older than mcpjam-backend PR #484 (which adds
   // the field to runtime-config) returns omitted → no built-in tools.

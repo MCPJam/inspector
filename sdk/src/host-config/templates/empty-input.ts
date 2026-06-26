@@ -43,6 +43,7 @@ export type SeededHostConfigInput = {
   serverIds: string[];
   optionalServerIds: string[];
   builtInToolIds: string[];
+  modelVisibleMcpImageToolResults?: boolean;
   computer?: { kind: "personal"; workdir?: string };
   // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
   // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.
@@ -114,6 +115,8 @@ export function emptyHostConfigInputV2(
       ? [...partial.optionalServerIds]
       : [],
     builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
+    modelVisibleMcpImageToolResults:
+      partial.modelVisibleMcpImageToolResults,
     computer: partial.computer
       ? {
           kind: "personal",

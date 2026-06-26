@@ -147,6 +147,7 @@ import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
   buildPreludeTraceEnvelope,
+  hostStyleSupportsModelVisibleMcpImageToolResults,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
@@ -771,6 +772,8 @@ export function PlaygroundMain({
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
+    modelVisibleMcpImageToolResults:
+      previewedHost?.config?.modelVisibleMcpImageToolResults,
     // Same live-source pattern: built-in tool attachments flow from the
     // previewed host's hostConfig. The server re-resolves via the shared
     // execution-context helper, so this also flows through chatbox sessions
@@ -1365,8 +1368,12 @@ export function PlaygroundMain({
     ? Object.values(compareHasMessages).some(Boolean)
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
-    () => buildPreludeTraceEnvelope(preludeTraceExecutions),
-    [preludeTraceExecutions]
+    () =>
+      buildPreludeTraceEnvelope(preludeTraceExecutions, {
+        modelVisibleMcpImageToolResults:
+          hostStyleSupportsModelVisibleMcpImageToolResults(hostStyle),
+      }),
+    [hostStyle, preludeTraceExecutions]
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
@@ -3792,6 +3799,9 @@ export function PlaygroundMain({
                               previewedHost?.config?.progressiveToolDiscovery,
                             respectToolVisibility:
                               previewedHost?.config?.respectToolVisibility,
+                            modelVisibleMcpImageToolResults:
+                              previewedHost?.config
+                                ?.modelVisibleMcpImageToolResults,
                             builtInToolIds:
                               previewedHost?.config?.builtInToolIds,
                           }}

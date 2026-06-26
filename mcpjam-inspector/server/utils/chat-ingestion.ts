@@ -48,14 +48,12 @@ interface ResumeConfig {
  * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
  * chats (serverShare and chatbox flows skip it).
  *
- * Phase 3 read switch: `hostStyle` carries the real host style
- * (`claude` / `chatgpt`). The legacy literal `"direct"` is kept in
- * the union for one deploy so an old backend (still expecting
- * `'direct'`) keeps working until its roll lands; the new backend
- * accepts both and normalizes legacy `'direct'` to the project
- * default's real style with a `legacy_direct_style` warn.
+ * Phase 3 read switch: `hostStyle` carries the real host style. HostConfig v2
+ * treats this as an extensible string (Claude, ChatGPT, Cursor, Codex, custom
+ * hosts, etc.); old inspector builds that send `"direct"` are still accepted
+ * by the backend and normalized there.
  */
-export type DirectChatHostStyle = "claude" | "chatgpt" | "direct";
+export type DirectChatHostStyle = string;
 export interface DirectHostConfig {
   hostStyle: DirectChatHostStyle;
   systemPrompt: string;
@@ -68,6 +66,7 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   selectedServerIds: string[];
 }
 
@@ -92,6 +91,7 @@ export function buildDirectHostConfig(input: {
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {
@@ -102,6 +102,7 @@ export function buildDirectHostConfig(input: {
     resolvedTemperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpImageToolResults,
     selectedServerIds,
   } = input;
   return {
@@ -118,6 +119,7 @@ export function buildDirectHostConfig(input: {
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     respectToolVisibility,
+    modelVisibleMcpImageToolResults,
     selectedServerIds: selectedServerIds ?? [],
   };
 }

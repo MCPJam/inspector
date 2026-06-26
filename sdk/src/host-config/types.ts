@@ -305,6 +305,10 @@ export type HostConfigInputV2 = {
   // table. undefined OR [] → omitted from the canonical hash so pre-feature
   // rows stay byte-identical; a populated set dedupes + sorts before hashing.
   builtInToolIds?: ReadonlyArray<string>;
+  // Host/client policy for whether eligible MCP image-bearing tool results are
+  // passed to the model as media. Optional so absent rows keep their historical
+  // hash and runtime defaults can treat "unset" as enabled.
+  modelVisibleMcpImageToolResults?: boolean;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -354,6 +358,9 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
   // empty so pre-feature rows hash byte-identically; deduped + sorted when set.
   builtInToolIds?: Array<string>;
+  // Mirrors HostConfigInputV2.modelVisibleMcpImageToolResults. Optional so
+  // absent rows hash byte-identically; explicit true/false are real snapshots.
+  modelVisibleMcpImageToolResults?: boolean;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;

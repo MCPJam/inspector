@@ -24,7 +24,7 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { convertToModelMessages, type ToolSet } from "ai";
+import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -59,14 +59,15 @@ import {
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
-import {
-  ErrorCode,
-  WebRouteError,
-} from "./../routes/web/errors.js";
+import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import type { Harness } from "@mcpjam/sdk";
+import {
+  convertToMcpjamModelMessages,
+  createLinkedResourceServerIdResolver,
+} from "./mcp-tool-result-model-output.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -107,7 +108,9 @@ export interface WebChatTurnPersistContext {
   hostConfig?:
     | DirectHostConfig
     | null
-    | ((args: { resolvedTemperature: number | undefined }) => DirectHostConfig | null);
+    | ((args: {
+        resolvedTemperature: number | undefined;
+      }) => DirectHostConfig | null);
   /** Direct-chat only — selectedServers as names when available. */
   selectedServerNames?: string[];
   /** Required for `resumeConfig.selectedServers` fallback on direct chat. */
@@ -142,6 +145,7 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -203,9 +207,23 @@ export async function streamWebChatTurn(
   const sessionStartedAt = Date.now();
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
-  const modelMessages = (await convertToModelMessages(
-    prepare.uiMessages as never
-  )) as ModelMessage[];
+  const modelMessages = await convertToMcpjamModelMessages(
+    prepare.uiMessages as never,
+    {
+      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
+      abortSignal: c.req.raw.signal as AbortSignal | undefined,
+      readLinkedResource: ({ serverId, uri, options }) => {
+        const requestOptions = options?.abortSignal
+          ? { signal: options.abortSignal }
+          : undefined;
+        return manager.readResource(serverId, { uri }, requestOptions);
+      },
+      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
+        serverIds: prepare.selectedServerIds,
+        listTools: (serverId) => manager.listTools(serverId),
+      }),
+    }
+  );
 
   let prepared;
   try {
@@ -217,6 +235,7 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.progressiveToolDiscovery !== undefined
@@ -344,9 +363,7 @@ export async function streamWebChatTurn(
                     ? persist.selectedServerNames
                     : persist.selectedServerIds,
               },
-              ...(resolvedHostConfig
-                ? { hostConfig: resolvedHostConfig }
-                : {}),
+              ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
         turnTrace,
@@ -359,7 +376,9 @@ export async function streamWebChatTurn(
   };
 
   if (!isMCPJam) {
-    const providerKeyResult = deriveOrgProviderKeyResult(prepare.modelDefinition);
+    const providerKeyResult = deriveOrgProviderKeyResult(
+      prepare.modelDefinition
+    );
     if (!providerKeyResult.ok) {
       throw new WebRouteError(
         400,
@@ -375,12 +394,17 @@ export async function streamWebChatTurn(
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
     const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-      ? await resolveOrgProviderRuntime(persist.projectId, providerKey, modelId, {
-          authHeader: runtime.authHeader,
-          chatboxId: persist.chatboxId,
-          accessVersion: persist.accessVersion,
-          serverIds: persist.selectedServerIds,
-        })
+      ? await resolveOrgProviderRuntime(
+          persist.projectId,
+          providerKey,
+          modelId,
+          {
+            authHeader: runtime.authHeader,
+            chatboxId: persist.chatboxId,
+            accessVersion: persist.accessVersion,
+            serverIds: persist.selectedServerIds,
+          }
+        )
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
@@ -437,6 +461,7 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
+      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) =>
@@ -472,6 +497,7 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins

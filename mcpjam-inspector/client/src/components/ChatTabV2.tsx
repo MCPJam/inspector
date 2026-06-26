@@ -2348,6 +2348,8 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            modelVisibleMcpImageToolResults:
+                              executionConfig?.modelVisibleMcpImageToolResults,
                             // Same rationale: forward attached built-in
                             // tools so each per-model card resolves the
                             // same ToolSet the single-model path would.

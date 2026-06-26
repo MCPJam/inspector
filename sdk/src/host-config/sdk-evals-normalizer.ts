@@ -101,6 +101,10 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
   if (json.respectToolVisibility !== undefined) {
     input.respectToolVisibility = json.respectToolVisibility;
   }
+  if (json.modelVisibleMcpImageToolResults !== undefined) {
+    input.modelVisibleMcpImageToolResults =
+      json.modelVisibleMcpImageToolResults;
+  }
   if (json.hostCapabilitiesOverride !== undefined) {
     input.hostCapabilitiesOverride = json.hostCapabilitiesOverride;
   }

@@ -62,6 +62,27 @@ import {
 // should fail loudly, not silently get MCPJam chrome on a Claude-style flow.
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
+  "modelVisibleMcpImageToolResults";
+
+function normalizeHostContextAndImagePolicy(
+  hostContext: Record<string, unknown> | undefined,
+  explicitPolicy: boolean | undefined
+): {
+  hostContext: Record<string, unknown>;
+  modelVisibleMcpImageToolResults: boolean | undefined;
+} {
+  const nextHostContext = { ...(hostContext ?? {}) };
+  const legacyPolicy =
+    nextHostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  delete nextHostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  return {
+    hostContext: nextHostContext,
+    modelVisibleMcpImageToolResults:
+      explicitPolicy ??
+      (typeof legacyPolicy === "boolean" ? legacyPolicy : undefined),
+  };
+}
 
 /** Map the public `HostMcp` (spec vocab) to the internal `mcpProfile`. */
 function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
@@ -175,6 +196,9 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.respectToolVisibility !== undefined) {
     out.respectToolVisibility = c.respectToolVisibility;
   }
+  if (c.modelVisibleMcpImageToolResults !== undefined) {
+    out.modelVisibleMcpImageToolResults = c.modelVisibleMcpImageToolResults;
+  }
   if (c.computer !== undefined) {
     out.computer = c.computer;
   }
@@ -248,6 +272,9 @@ export class Host {
    * implement visibility).
    */
   respectToolVisibility?: boolean;
+
+  /** Whether eligible MCP tool-returned images are exposed to the model. */
+  modelVisibleMcpImageToolResults?: boolean;
 
   /**
    * Personal cloud workstation attached to this host (chat `bash` tool +
@@ -343,6 +370,12 @@ export class Host {
     this.requireToolApproval = cfg.requireToolApproval ?? false;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
+    const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
+      cfg.hostContext,
+      cfg.modelVisibleMcpImageToolResults
+    );
+    this.modelVisibleMcpImageToolResults =
+      hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
     this.computer = cfg.computer;
     this.harness = cfg.harness;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
@@ -355,7 +388,7 @@ export class Host {
         cfg.connectionDefaults?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
     };
     this.clientCapabilities = cfg.clientCapabilities ?? {};
-    this.hostContext = cfg.hostContext ?? {};
+    this.hostContext = hostContextAndImagePolicy.hostContext;
     this.hostCapabilitiesOverride = cfg.hostCapabilitiesOverride;
     this.chatUiOverride = cfg.chatUiOverride;
     this.mcp = cfg.mcp ?? {};
@@ -397,6 +430,11 @@ export class Host {
 
   setRespectToolVisibility(respect: boolean): this {
     this.respectToolVisibility = respect;
+    return this;
+  }
+
+  setModelVisibleMcpImageToolResults(enabled: boolean): this {
+    this.modelVisibleMcpImageToolResults = enabled;
     return this;
   }
 
@@ -502,6 +540,7 @@ export class Host {
       requireToolApproval: this.requireToolApproval,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
+      modelVisibleMcpImageToolResults: this.modelVisibleMcpImageToolResults,
       computer: this.computer,
       harness: this.harness,
       servers: this.servers,
@@ -515,6 +554,11 @@ export class Host {
       serverOverrides: this.serverOverrides,
     });
 
+    const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
+      snap.hostContext,
+      snap.modelVisibleMcpImageToolResults
+    );
+
     const input: HostConfigInputV2 = {
       hostStyle: snap.style,
       modelId: snap.model,
@@ -525,13 +569,17 @@ export class Host {
       optionalServerIds: snap.optionalServers,
       connectionDefaults: snap.connectionDefaults,
       clientCapabilities: snap.clientCapabilities,
-      hostContext: snap.hostContext,
+      hostContext: hostContextAndImagePolicy.hostContext,
     };
     if (snap.progressiveToolDiscovery !== undefined) {
       input.progressiveToolDiscovery = snap.progressiveToolDiscovery;
     }
     if (snap.respectToolVisibility !== undefined) {
       input.respectToolVisibility = snap.respectToolVisibility;
+    }
+    if (hostContextAndImagePolicy.modelVisibleMcpImageToolResults !== undefined) {
+      input.modelVisibleMcpImageToolResults =
+        hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
     }
     // `null` (detached) is forwarded — the canonicalizer collapses it to
     // undefined so it hashes identically to "never set".
@@ -658,13 +706,40 @@ export function isHostJson(value: unknown): value is HostJson {
   );
 }
 
+function normalizeHostJsonSnapshot(host: HostJson): HostJson {
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      host.hostContext,
+      LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY
+    )
+  ) {
+    return host;
+  }
+
+  const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
+    host.hostContext,
+    host.modelVisibleMcpImageToolResults
+  );
+  const normalized: HostJson = {
+    ...host,
+    hostContext: hostContextAndImagePolicy.hostContext,
+  };
+  if (hostContextAndImagePolicy.modelVisibleMcpImageToolResults !== undefined) {
+    normalized.modelVisibleMcpImageToolResults =
+      hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
+  } else {
+    delete normalized.modelVisibleMcpImageToolResults;
+  }
+  return normalized;
+}
+
 /**
- * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent:
- * an already-snapshotted `HostJson` is returned unchanged (same reference),
- * so `HostRunner` constructed with a pre-snapshotted host does NOT re-snapshot.
+ * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent
+ * for current snapshots; legacy snapshots with the old image policy under
+ * `hostContext` are migrated before app-visible host context is exposed.
  */
 export function snapshotHostSource(host: HostSource): HostJson {
-  if (isHostJson(host)) return host;
+  if (isHostJson(host)) return normalizeHostJsonSnapshot(host);
   if (host instanceof Host) return host.toJSON();
   return new Host(host).toJSON();
 }

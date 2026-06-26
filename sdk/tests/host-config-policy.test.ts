@@ -13,6 +13,7 @@ describe("extractHostExecutionPolicy", () => {
     expect(policy.requireToolApproval).toBe(false);
     expect(policy.respectToolVisibility).toBeUndefined();
     expect(policy.progressiveDiscoveryEnabled).toBe(false);
+    expect(policy.modelVisibleMcpImageToolResults).toBe(true);
     expect(policy.hostStyle).toBeUndefined();
     expect(policy.namedHostId).toBeUndefined();
   });
@@ -61,12 +62,51 @@ describe("extractHostExecutionPolicy", () => {
   });
 
   it("extracts hostStyle and namedHostId", () => {
-    const policy = extractHostExecutionPolicy(
-      { hostStyle: "cursor" },
-      "h_abc",
-    );
+    const policy = extractHostExecutionPolicy({ hostStyle: "cursor" }, "h_abc");
     expect(policy.hostStyle).toBe("cursor");
     expect(policy.namedHostId).toBe("h_abc");
+  });
+
+  it("enables model-visible MCP image tool results by default for all host styles", () => {
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "claude" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "claude-code" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "chatgpt" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "mcpjam" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "cursor" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+    expect(
+      extractHostExecutionPolicy({ hostStyle: "some-custom-host" })
+        .modelVisibleMcpImageToolResults
+    ).toBe(true);
+  });
+
+  it("allows hostContext to override model-visible MCP image tool results", () => {
+    expect(
+      extractHostExecutionPolicy({
+        hostStyle: "cursor",
+        hostContext: { modelVisibleMcpImageToolResults: false },
+      }).modelVisibleMcpImageToolResults
+    ).toBe(false);
+    expect(
+      extractHostExecutionPolicy({
+        hostStyle: "custom",
+        hostContext: { modelVisibleMcpImageToolResults: true },
+      }).modelVisibleMcpImageToolResults
+    ).toBe(true);
   });
 });
 
@@ -75,6 +115,7 @@ describe("buildHostIterationMetadata", () => {
     requireToolApproval: false,
     respectToolVisibility: undefined,
     progressiveDiscoveryEnabled: false,
+    modelVisibleMcpImageToolResults: false,
     hostStyle: undefined,
     namedHostId: undefined,
   };
@@ -129,6 +170,15 @@ describe("buildHostIterationMetadata", () => {
     expect(meta.progressive_discovery_enabled).toBe(true);
   });
 
+  it("stamps model_visible_mcp_image_tool_results when true", () => {
+    const policy: HostExecutionPolicy = {
+      ...basePolicy,
+      modelVisibleMcpImageToolResults: true,
+    };
+    const meta = buildHostIterationMetadata(policy, baseSignals, 0, false);
+    expect(meta.model_visible_mcp_image_tool_results).toBe(true);
+  });
+
   it("stamps openai_compat_injected when true", () => {
     const meta = buildHostIterationMetadata(basePolicy, baseSignals, 0, true);
     expect(meta.openai_compat_injected).toBe(true);
@@ -165,7 +215,7 @@ describe("HostJson shape (public API) compatibility", () => {
     const snapshot = host.toJSON();
 
     const policy = extractHostExecutionPolicy(
-      snapshot as unknown as Record<string, unknown>,
+      snapshot as unknown as Record<string, unknown>
     );
     expect(policy.hostStyle).toBe("claude");
   });
@@ -180,14 +230,18 @@ describe("HostJson shape (public API) compatibility", () => {
 });
 
 describe("buildHostSnapshotMetadata", () => {
-  it("returns an empty object when the snapshot has no notable fields", () => {
-    const host = new Host({ style: "claude", model: "anthropic/claude-3" }).toJSON();
+  it("stamps host style and model-visible MCP image policy from snapshot", () => {
+    const host = new Host({
+      style: "claude",
+      model: "anthropic/claude-3",
+    }).toJSON();
     const meta = buildHostSnapshotMetadata(
-      host as unknown as Record<string, unknown>,
+      host as unknown as Record<string, unknown>
     );
-    // `claude` is not progressive-discovery / no named host id, but it IS a
-    // hostStyle, so host_style should be stamped.
+    // `claude` has no progressive discovery / named host id, but it does
+    // carry a host style and default image-result policy.
     expect(meta.host_style).toBe("claude");
+    expect(meta.model_visible_mcp_image_tool_results).toBe(true);
     expect(meta.host_id).toBeUndefined();
     expect(meta.progressive_discovery_enabled).toBeUndefined();
   });
@@ -199,7 +253,7 @@ describe("buildHostSnapshotMetadata", () => {
       progressiveToolDiscovery: true,
     }).toJSON();
     const meta = buildHostSnapshotMetadata(
-      host as unknown as Record<string, unknown>,
+      host as unknown as Record<string, unknown>
     );
     expect(meta.progressive_discovery_enabled).toBe(true);
     expect(meta.host_style).toBe("mcpjam");

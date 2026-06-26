@@ -16,6 +16,7 @@ import type {
   UserModelMessage,
   StepResult,
 } from "ai";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -32,6 +33,7 @@ import {
   ensureJsonSchemaObject,
   isAppOnlyTool,
 } from "./mcp-client-manager/tool-converters.js";
+import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -131,7 +133,10 @@ function dropAppOnlyTools(tools: Tool[]): Tool[] {
  * handled at the HostRunner prep step (single-gated by host policy), not
  * inside this converter.
  */
-function convertToToolSet(tools: Tool[]): ToolSet {
+function convertToToolSet(
+  tools: Tool[],
+  options: { modelVisibleMcpImageToolResults?: boolean } = {},
+): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
     const converted = dynamicTool({
@@ -142,6 +147,13 @@ function convertToToolSet(tools: Tool[]): ToolSet {
         const result = await tool.execute(args as Record<string, unknown>);
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
+      toModelOutput: ({ output }) =>
+        ((options.modelVisibleMcpImageToolResults
+          ? mcpCallToolResultToModelOutput(output as CallToolResult)
+          : undefined) ?? {
+          type: "json" as const,
+          value: output as any,
+        }) as any,
     });
 
     // Preserve _serverId like getToolsForAiSdk() does
@@ -284,7 +296,10 @@ export class HostRunner implements HostExecutor {
       : config.tools;
 
     this.tools = isToolArray(preparedTools)
-      ? convertToToolSet(preparedTools)
+      ? convertToToolSet(preparedTools, {
+          modelVisibleMcpImageToolResults:
+            this.hostPolicy?.modelVisibleMcpImageToolResults,
+        })
       : preparedTools;
     // Stash the original (unfiltered) input so withOptions can re-run the
     // prep step under a replacement host's policy. Tool[] inputs are

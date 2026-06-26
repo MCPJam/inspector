@@ -9,6 +9,7 @@ import type {
   LiveChatTraceToolCall,
 } from "@/shared/live-chat-trace";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk/browser";
 
 export interface PreludeTraceExecution {
   toolCallId: string;
@@ -17,6 +18,16 @@ export interface PreludeTraceExecution {
   result: unknown;
   state: "output-available" | "output-error";
   errorText?: string;
+}
+
+export interface PreludeTraceOptions {
+  modelVisibleMcpImageToolResults?: boolean;
+}
+
+export function hostStyleSupportsModelVisibleMcpImageToolResults(
+  _hostStyle: string | null | undefined
+): boolean {
+  return true;
 }
 
 function toTraceJsonValue(value: unknown): JSONValue {
@@ -33,12 +44,22 @@ function toTraceJsonValue(value: unknown): JSONValue {
 
 function toTraceToolResultOutput(
   execution: PreludeTraceExecution,
+  options: PreludeTraceOptions = {}
 ): LanguageModelV2ToolResultOutput {
   if (execution.state === "output-error") {
     return {
       type: "error-text",
       value: execution.errorText ?? "Tool execution failed",
     };
+  }
+
+  const modelOutput = options.modelVisibleMcpImageToolResults
+    ? mcpCallToolResultToModelOutput(
+        execution.result as Parameters<typeof mcpCallToolResultToModelOutput>[0]
+      )
+    : undefined;
+  if (modelOutput) {
+    return modelOutput;
   }
 
   return {
@@ -49,6 +70,7 @@ function toTraceToolResultOutput(
 
 export function buildPreludeTraceEnvelope(
   executions: PreludeTraceExecution[],
+  options: PreludeTraceOptions = {}
 ): LiveChatTraceEnvelope | null {
   if (executions.length === 0) {
     return null;
@@ -77,7 +99,7 @@ export function buildPreludeTraceEnvelope(
       toolName: execution.toolName,
       arguments: execution.params,
     };
-    const toolResultOutput = toTraceToolResultOutput(execution);
+    const toolResultOutput = toTraceToolResultOutput(execution, options);
 
     messages.push({
       role: "user",
@@ -185,7 +207,7 @@ export function buildPreludeTraceEnvelope(
       output: toolResultOutput,
       errorText:
         execution.state === "output-error"
-          ? (execution.errorText ?? "Tool execution failed")
+          ? execution.errorText ?? "Tool execution failed"
           : undefined,
     });
     events.push({

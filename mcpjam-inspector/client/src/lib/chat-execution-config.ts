@@ -16,6 +16,11 @@ export type ExecutionConfig = {
   /** See HostConfigInputV2.respectToolVisibility. */
   respectToolVisibility?: boolean;
   /**
+   * Host-level switch for whether eligible MCP tool-returned images are exposed
+   * to the model as media. `undefined` means use the runtime default (enabled).
+   */
+  modelVisibleMcpImageToolResults?: boolean;
+  /**
    * Catalog ids of host-managed built-in tools (e.g. ["web_search"]). Sourced
    * from HostConfigV2.builtInToolIds. Forwarded into the chat-v2 POST body so
    * the server can resolve them into AI SDK tools via the built-in registry.

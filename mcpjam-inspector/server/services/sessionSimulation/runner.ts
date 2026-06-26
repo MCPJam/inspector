@@ -1207,6 +1207,12 @@ export async function drainAssistantTurn(
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
+    ...(args.modelVisibleMcpImageToolResults !== undefined
+      ? {
+          modelVisibleMcpImageToolResults:
+            args.modelVisibleMcpImageToolResults,
+        }
+      : {}),
     // Harness selector: when the chatbox host runs harness: "claude-code",
     // synthetic turns run the real Claude Code runtime. requireToolApproval is
     // already threaded above, so runHarnessTurn fail-closes correctly.

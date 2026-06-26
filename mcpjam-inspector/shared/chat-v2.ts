@@ -61,6 +61,12 @@ export interface ChatV2Request {
    */
   respectToolVisibility?: boolean;
   /**
+   * Host-level MCP tool-result image policy. `undefined` uses the runtime
+   * default; explicit `false` disables model-visible media conversion for
+   * eligible MCP tool-returned images on this request.
+   */
+  modelVisibleMcpImageToolResults?: boolean;
+  /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —
    * so existing call sites that don't yet thread this through still
@@ -69,7 +75,7 @@ export interface ChatV2Request {
    * the backend accepts both and normalizes with a
    * `legacy_direct_style` warn.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Project ID for direct-chat history persistence and, when set, the server
    * resolves model-provider config from the org backing this project.

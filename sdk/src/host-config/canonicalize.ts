@@ -93,6 +93,8 @@ const MCP_APPS_WIDGET_DISPLAY_MODE_REQUEST_VALUES = [
   "user-initiated-only",
   "decline",
 ] as const;
+const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
+  "modelVisibleMcpImageToolResults";
 
 const MCP_APPS_DISPLAY_MODE_VALUE_SET: ReadonlySet<string> = new Set(
   MCP_APPS_DISPLAY_MODE_VALUES
@@ -1063,6 +1065,15 @@ export function canonicalizeHostConfigV2(
   }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
+  const hostContext = requireRecord(input.hostContext, "hostContext");
+  const legacyModelVisibleMcpImageToolResults =
+    hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  delete hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  const modelVisibleMcpImageToolResults =
+    input.modelVisibleMcpImageToolResults ??
+    (typeof legacyModelVisibleMcpImageToolResults === "boolean"
+      ? legacyModelVisibleMcpImageToolResults
+      : undefined);
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
@@ -1086,6 +1097,9 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // Preserve undefined-vs-set: absent rows keep their historical hash, while
+    // an explicit off/on snapshot survives template hostContext reseeds.
+    modelVisibleMcpImageToolResults,
     connectionDefaults: {
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,
@@ -1100,7 +1114,7 @@ export function canonicalizeHostConfigV2(
       input.clientCapabilities,
       "clientCapabilities"
     ),
-    hostContext: requireRecord(input.hostContext, "hostContext"),
+    hostContext,
     // Preserve undefined (omitted → dedupes with preset) vs {} (explicit empty
     // → hashes distinctly).
     hostCapabilitiesOverride:

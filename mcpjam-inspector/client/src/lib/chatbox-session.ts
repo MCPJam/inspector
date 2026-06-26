@@ -72,6 +72,7 @@ export interface ChatboxBootstrapPayload {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
   chatUi?: ChatUiPayload | null;
@@ -308,6 +309,10 @@ export function normalizeChatboxSession(
       modelId: payload.modelId,
       temperature: payload.temperature,
       requireToolApproval: payload.requireToolApproval,
+      modelVisibleMcpImageToolResults:
+        typeof payload.modelVisibleMcpImageToolResults === "boolean"
+          ? payload.modelVisibleMcpImageToolResults
+          : undefined,
       servers: payload.servers
         .filter(
           (server): server is ChatboxBootstrapServer =>

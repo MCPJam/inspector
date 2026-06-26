@@ -295,6 +295,23 @@ describe("prepareChatV2", () => {
     );
   });
 
+  it("passes model-visible MCP image-result policy into MCP tool conversion", async () => {
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "srv");
+
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      modelVisibleMcpImageToolResults: true,
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["srv"], {
+      modelVisibleMcpImageToolResults: true,
+    });
+  });
+
   describe("progressive discovery", () => {
     function manyToolsManager(count: number) {
       const tools: Record<string, unknown> = {};

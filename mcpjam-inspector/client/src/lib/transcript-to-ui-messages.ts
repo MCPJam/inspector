@@ -1,4 +1,8 @@
 import { type UIMessage } from "@ai-sdk/react";
+import {
+  mergeMcpToolOriginMetadata,
+  readMcpToolOriginServerId,
+} from "@/shared/mcp-tool-origin-metadata";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -122,6 +126,33 @@ function readToolCallId(part: TranscriptPart): string | undefined {
   return undefined;
 }
 
+function readToolOriginMetadata(
+  part: TranscriptPart
+): Record<string, unknown> | undefined {
+  const metadataCandidates = [
+    part.providerOptions,
+    part.callProviderMetadata,
+    part.resultProviderMetadata,
+    part.providerMetadata,
+  ];
+  const providerMetadata = metadataCandidates.find(
+    (candidate) =>
+      candidate !== null &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+  );
+  const directServerId =
+    typeof part.serverId === "string" && part.serverId.length > 0
+      ? part.serverId
+      : undefined;
+  const serverId =
+    directServerId ??
+    metadataCandidates
+      .map((candidate) => readMcpToolOriginServerId(candidate))
+      .find((candidate): candidate is string => !!candidate);
+  return mergeMcpToolOriginMetadata(providerMetadata, serverId);
+}
+
 function cloneTranscriptMessage(msg: TranscriptMessage): TranscriptMessage {
   if (typeof msg.content === "string") {
     return { ...msg };
@@ -189,6 +220,11 @@ export function mergeTranscriptToolResults(transcript: unknown[]): unknown[] {
             if (tp.output !== undefined) {
               p.output = tp.output;
             }
+            const providerMetadata =
+              readToolOriginMetadata(tp) ?? readToolOriginMetadata(p);
+            if (providerMetadata) {
+              p.providerOptions = providerMetadata;
+            }
             patched = true;
             break;
           }
@@ -243,6 +279,7 @@ function convertParts(
     if (partType === "text" && typeof part.text === "string") {
       parts.push({ type: "text", text: part.text });
     } else if (partType === "tool-call") {
+      const providerMetadata = readToolOriginMetadata(part);
       // Use "dynamic-tool" format so that PartSwitch can access toolCallId
       // at the top level (required for toolRenderOverrides lookup).
       // Use "output-available" state (not "result") — the rendering pipeline
@@ -256,6 +293,9 @@ function convertParts(
         state: "output-available" as const,
         input: part.args ?? part.input ?? {},
         output: part.output ?? part.result ?? {},
+        ...(providerMetadata
+          ? { callProviderMetadata: providerMetadata }
+          : {}),
       } as any);
     } else if (partType === "tool-result") {
       // Tool results are typically already captured via tool-call results

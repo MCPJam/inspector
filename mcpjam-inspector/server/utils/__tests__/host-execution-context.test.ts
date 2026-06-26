@@ -97,6 +97,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         requireToolApproval: true,
         respectToolVisibility: false,
         progressiveToolDiscovery: true,
+        modelVisibleMcpImageToolResults: false,
         modelId: "claude-haiku-4.5",
         selectedServerIds: ["srv-1", "srv-2"],
       },
@@ -106,6 +107,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         requireToolApproval: false,
         respectToolVisibility: true,
         progressiveToolDiscovery: false,
+        modelVisibleMcpImageToolResults: true,
         modelId: "gpt-4-turbo",
         selectedServerIds: ["other-srv"],
       },
@@ -117,6 +119,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.requireToolApproval).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
     expect(result.progressiveToolDiscovery).toBe(true);
+    expect(result.hostPolicy.modelVisibleMcpImageToolResults).toBe(false);
     expect(result.modelId).toBe("claude-haiku-4.5");
     expect(result.selectedServerIds).toEqual(["srv-1", "srv-2"]);
   });
@@ -136,12 +139,14 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
       overrides: {
         progressiveToolDiscovery: true,
         respectToolVisibility: false,
+        modelVisibleMcpImageToolResults: false,
       },
       precedence: "host-wins",
     });
 
     expect(result.progressiveToolDiscovery).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
+    expect(result.hostPolicy.modelVisibleMcpImageToolResults).toBe(false);
     expect(result.systemPrompt).toBe("host system prompt");
   });
 
@@ -155,6 +160,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         systemPrompt: "body system prompt",
         temperature: 0.3,
         requireToolApproval: false,
+        modelVisibleMcpImageToolResults: false,
         selectedServerIds: ["srv-A"],
       },
       precedence: "host-wins",
@@ -163,6 +169,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.systemPrompt).toBe("body system prompt");
     expect(result.temperature).toBe(0.3);
     expect(result.requireToolApproval).toBe(false);
+    expect(result.hostPolicy.modelVisibleMcpImageToolResults).toBe(false);
     expect(result.selectedServerIds).toEqual(["srv-A"]);
   });
 
@@ -514,6 +521,7 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       requireToolApproval: true,
       respectToolVisibility: false,
       progressiveDiscoveryEnabled: true,
+      modelVisibleMcpImageToolResults: true,
       hostStyle: "claude",
       namedHostId: "host-abc",
     });
@@ -530,8 +538,20 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       requireToolApproval: false,
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
+      modelVisibleMcpImageToolResults: true,
       hostStyle: undefined,
       namedHostId: "host-xyz",
     });
+  });
+
+  it("uses override hostStyle for null-hostConfig policy derivation", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { hostStyle: "claude" },
+      precedence: "host-wins",
+    });
+
+    expect(result.hostPolicy.hostStyle).toBe("claude");
+    expect(result.hostPolicy.modelVisibleMcpImageToolResults).toBe(true);
   });
 });

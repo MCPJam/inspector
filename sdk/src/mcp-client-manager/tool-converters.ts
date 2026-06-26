@@ -16,6 +16,12 @@ import {
   type ToolSet,
 } from "ai";
 import { assertCallToolResult } from "./result-guards.js";
+import {
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
+  type McpLinkedResourceReader,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+} from "./model-output.js";
 
 /**
  * Normalizes a schema to a valid JSON Schema object.
@@ -86,7 +92,7 @@ export type ToolSchemaOverrides = Record<
  * When "automatic", returns generic record
  */
 export type ConvertedToolSet<
-  SCHEMAS extends ToolSchemaOverrides | "automatic",
+  SCHEMAS extends ToolSchemaOverrides | "automatic"
 > = SCHEMAS extends ToolSchemaOverrides
   ? { [K in keyof SCHEMAS]: Tool }
   : Record<string, Tool>;
@@ -95,7 +101,7 @@ export type ConvertedToolSet<
  * Options for tool conversion
  */
 export interface ConvertOptions<
-  TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic",
+  TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic"
 > {
   /** Schema overrides or "automatic" for dynamic conversion */
   schemas?: TOOL_SCHEMAS;
@@ -111,6 +117,17 @@ export interface ConvertOptions<
    * host that does not implement SEP-1865 visibility filtering.
    */
   includeAppOnly?: boolean;
+  /**
+   * When true, eligible MCP image-bearing tool-result blocks are converted
+   * into model-visible image content. Hosts that do not support this should
+   * leave results on the normal JSON path.
+   */
+  modelVisibleMcpImageToolResults?: boolean;
+  /**
+   * Optional MCP `resources/read` bridge for resolving image `resource_link`
+   * content. The converter never fetches linked resource URIs directly.
+   */
+  readResource?: McpLinkedResourceReader;
 }
 
 /**
@@ -192,6 +209,37 @@ export function scrubMetaAndStructuredContentFromToolResult(
   return scrubMetaFromToolResult(scrubStructuredContentFromToolResult(result));
 }
 
+function mcpToolResultToModelOutput(
+  result: CallToolResult,
+  options: {
+    modelVisibleMcpImageToolResults?: boolean;
+    readResource?: McpLinkedResourceReader;
+    abortSignal?: AbortSignal;
+  }
+): any {
+  if (options.modelVisibleMcpImageToolResults && options.readResource) {
+    return mcpCallToolResultToModelOutputWithLinkedResources(result, {
+      readResource: options.readResource,
+      abortSignal: options.abortSignal,
+    }).then(
+      (output) =>
+        output ?? {
+          type: "json" as const,
+          value: result as any,
+        }
+    );
+  }
+
+  return (
+    (options.modelVisibleMcpImageToolResults
+      ? mcpCallToolResultToModelOutput(result)
+      : undefined) ?? {
+      type: "json" as const,
+      value: result as any,
+    }
+  );
+}
+
 /**
  * Converts MCP tools to Vercel AI SDK format.
  *
@@ -222,6 +270,8 @@ export async function convertMCPToolsToVercelTools(
     callTool,
     needsApproval,
     includeAppOnly = false,
+    modelVisibleMcpImageToolResults = false,
+    readResource,
   }: ConvertOptions<ToolSchemaOverrides | "automatic">
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
@@ -248,23 +298,53 @@ export async function convertMCPToolsToVercelTools(
     // For MCP app tools, strip _meta and structuredContent before sending to the LLM.
     // For ChatGPT app tools, strip structuredContent before sending to the LLM.
     // The raw execute() return value still reaches the UI stream unchanged.
-    // Runtime signature: ({ toolCallId, input, output }) => ToolResultOutput
+    // Runtime signature: ({ toolCallId, input, output }) => ToolResultOutput.
+    // MCPJam also passes abortSignal from its local executor so linked
+    // resource reads can stop promptly when the user cancels the turn.
     // Note: Type assertion needed due to slight type misalignment between CallToolResult and JSONValue
     const toModelOutput = isMcpAppTool(toolMeta)
-      ? (opts: { toolCallId: string; input: unknown; output: unknown }) => {
+      ? (opts: {
+          toolCallId: string;
+          input: unknown;
+          output: unknown;
+          abortSignal?: AbortSignal;
+        }) => {
           const scrubbed = scrubMetaAndStructuredContentFromToolResult(
             opts.output as CallToolResult
           );
-          return { type: "json" as const, value: scrubbed as any } as any;
+          return mcpToolResultToModelOutput(scrubbed, {
+            modelVisibleMcpImageToolResults,
+            readResource,
+            abortSignal: opts.abortSignal,
+          });
         }
       : isChatGPTAppTool(toolMeta)
-        ? (opts: { toolCallId: string; input: unknown; output: unknown }) => {
-            const scrubbed = scrubStructuredContentFromToolResult(
-              opts.output as CallToolResult
-            );
-            return { type: "json" as const, value: scrubbed as any } as any;
-          }
-        : undefined;
+      ? (opts: {
+          toolCallId: string;
+          input: unknown;
+          output: unknown;
+          abortSignal?: AbortSignal;
+        }) => {
+          const scrubbed = scrubStructuredContentFromToolResult(
+            opts.output as CallToolResult
+          );
+          return mcpToolResultToModelOutput(scrubbed, {
+            modelVisibleMcpImageToolResults,
+            readResource,
+            abortSignal: opts.abortSignal,
+          });
+        }
+      : (opts: {
+          toolCallId: string;
+          input: unknown;
+          output: unknown;
+          abortSignal?: AbortSignal;
+        }) =>
+          mcpToolResultToModelOutput(opts.output as CallToolResult, {
+            modelVisibleMcpImageToolResults,
+            readResource,
+            abortSignal: opts.abortSignal,
+          });
 
     let vercelTool: Tool;
 
@@ -275,7 +355,7 @@ export async function convertMCPToolsToVercelTools(
         description,
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
-        ...(toModelOutput ? { toModelOutput } : {}),
+        toModelOutput,
         ...(needsApproval != null ? { needsApproval } : {}),
       });
     } else {
@@ -288,11 +368,12 @@ export async function convertMCPToolsToVercelTools(
         description,
         inputSchema: overrides[name].inputSchema,
         execute,
-        ...(toModelOutput ? { toModelOutput } : {}),
+        toModelOutput,
         ...(needsApproval != null ? { needsApproval } : {}),
       });
     }
 
+    (vercelTool as any)[MCP_PRESERVE_RAW_RESULT_FOR_UI] = true;
     tools[name] = vercelTool;
   }
 

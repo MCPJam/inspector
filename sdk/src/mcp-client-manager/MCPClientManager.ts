@@ -100,10 +100,7 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "./capabilities.js";
-import {
-  assertCallToolResult,
-  isCreateTaskResult,
-} from "./result-guards.js";
+import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
 import {
   createManagedMcpClient,
   wrapLegacyClient,
@@ -144,7 +141,7 @@ function createPendingStatelessClientStub(): ManagedMcpClient {
   };
   const fail = (method: string) => {
     throw new Error(
-      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`,
+      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`
     );
   };
   return {
@@ -212,7 +209,10 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
-  private readonly retryAbortControllers = new Map<string, Set<AbortController>>();
+  private readonly retryAbortControllers = new Map<
+    string,
+    Set<AbortController>
+  >();
   private readonly unauthorizedRefreshInFlight = new Map<
     string,
     Promise<string>
@@ -383,7 +383,7 @@ export class MCPClientManager {
    * code instead of `getClient()`.
    */
   getManagedClient(
-    serverId: string,
+    serverId: string
   ): import("./managed-mcp-client.js").ManagedMcpClient | undefined {
     return this.liveClientStates.get(serverId)?.client;
   }
@@ -641,13 +641,19 @@ export class MCPClientManager {
        * mirroring a host that does not implement visibility filtering.
        */
       includeAppOnly?: boolean;
+      /**
+       * When true, eligible MCP image-bearing tool results are passed through
+       * as model-visible image content. Defaults to false unless the caller's
+       * host policy opts in.
+       */
+      modelVisibleMcpImageToolResults?: boolean;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-        ? [serverIds]
-        : this.listServers();
+      ? [serverIds]
+      : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -658,6 +664,14 @@ export class MCPClientManager {
             schemas: options.schemas,
             needsApproval: options.needsApproval,
             includeAppOnly: options.includeAppOnly,
+            modelVisibleMcpImageToolResults:
+              options.modelVisibleMcpImageToolResults,
+            readResource: async ({ uri, options: readOptions }) => {
+              const requestOptions = readOptions?.abortSignal
+                ? { signal: readOptions.abortSignal }
+                : undefined;
+              return this.readResource(id, { uri }, requestOptions);
+            },
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
@@ -668,10 +682,7 @@ export class MCPClientManager {
                 (args ?? {}) as ExecuteToolArguments,
                 requestOptions
               );
-              return assertCallToolResult(
-                result,
-                `Tool "${name}" result`
-              );
+              return assertCallToolResult(result, `Tool "${name}" result`);
             },
           });
 
@@ -1248,10 +1259,7 @@ export class MCPClientManager {
       const resolvedClientInfo: Record<string, unknown> = {
         ...this.defaultClientInfoExtras,
         ...(config.clientInfo ?? {}),
-        name:
-          config.clientInfo?.name ??
-          this.defaultClientName ??
-          serverId,
+        name: config.clientInfo?.name ?? this.defaultClientName ?? serverId,
         version:
           config.clientInfo?.version ??
           config.version ??
@@ -1277,8 +1285,9 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const resolvedProtocolVersion =
-        !this.isStdioConfig(config) ? config.mcpProtocolVersion : undefined;
+      const resolvedProtocolVersion = !this.isStdioConfig(config)
+        ? config.mcpProtocolVersion
+        : undefined;
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
@@ -1458,11 +1467,7 @@ export class MCPClientManager {
     } catch (error) {
       const stderrOutput = stderrDrain.getCapturedOutput();
       stderrDrain.cleanup();
-      throw this.annotateStdioConnectError(
-        serverId,
-        error,
-        stderrOutput
-      );
+      throw this.annotateStdioConnectError(serverId, error, stderrOutput);
     }
 
     state.stdioStderrCleanup = stderrDrain.cleanup;
@@ -1620,13 +1625,13 @@ export class MCPClientManager {
         fetchFn: typeof fetch;
       };
       const isAuthProvider = (
-        p: unknown,
+        p: unknown
       ): p is {
         token: () => Promise<string | undefined>;
         onUnauthorized?: (ctx: UnauthorizedContextShape) => Promise<void>;
       } => !!p && typeof (p as { token?: unknown }).token === "function";
       const isOAuthClientProvider = (
-        p: unknown,
+        p: unknown
       ): p is {
         tokens: () =>
           | { access_token?: string }
@@ -1673,9 +1678,7 @@ export class MCPClientManager {
         }
         return tokenHolder.current;
       };
-      const on401 = async (
-        response: Response,
-      ): Promise<string | undefined> => {
+      const on401 = async (response: Response): Promise<string | undefined> => {
         if (config.onUnauthorized) {
           const refreshed = await config.onUnauthorized({
             serverId,
@@ -1728,7 +1731,11 @@ export class MCPClientManager {
       wireOpts.assignClient(previewClient);
       this.notificationManager.applyToClient(serverId, previewClient);
       if (this.defaultProgressHandler) {
-        applyProgressHandler(serverId, previewClient, this.defaultProgressHandler);
+        applyProgressHandler(
+          serverId,
+          previewClient,
+          this.defaultProgressHandler
+        );
       }
       const elicitationCaps = (
         this.buildCapabilities(serverId, config) as Record<string, unknown>
@@ -1836,9 +1843,10 @@ export class MCPClientManager {
     );
   }
 
-  private createStdioStderrDrain(
-    transport: StdioClientTransport
-  ): { cleanup: () => void; getCapturedOutput: () => string } {
+  private createStdioStderrDrain(transport: StdioClientTransport): {
+    cleanup: () => void;
+    getCapturedOutput: () => string;
+  } {
     const stderrStream = transport.stderr as NodeJS.ReadableStream | null;
     if (!stderrStream) {
       return {
@@ -1876,8 +1884,7 @@ export class MCPClientManager {
     error: unknown,
     stderrOutput: string
   ): Error {
-    const baseMessage =
-      error instanceof Error ? error.message : String(error);
+    const baseMessage = error instanceof Error ? error.message : String(error);
     const stderrSection = stderrOutput
       ? `\n\nChild process stderr:\n${stderrOutput}`
       : "";
@@ -2055,8 +2062,8 @@ export class MCPClientManager {
       const currentAccessToken =
         liveState?.authProvider?.tokens()?.access_token;
       const currentRefreshToken = liveState?.authProvider
-          ?.prepareTokenRequest()
-          .get("refresh_token");
+        ?.prepareTokenRequest()
+        .get("refresh_token");
       const clientId = config.clientId?.trim();
       const clientSecret = config.clientSecret?.trim();
 
@@ -2172,7 +2179,8 @@ export class MCPClientManager {
     const mergedOptions = this.withTimeout(serverId, options);
 
     if (!mergedOptions.onprogress && this.defaultProgressHandler) {
-      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
+      const progressToken = `${serverId}-request-${Date.now()}-${++this
+        .progressTokenCounter}`;
       mergedOptions.onprogress = (progress) => {
         this.defaultProgressHandler!({
           serverId,
@@ -2204,8 +2212,10 @@ export class MCPClientManager {
       return exactCapabilities as ClientCapabilityOptions;
     }
 
-    const configuredCapabilities =
-      mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
+    const configuredCapabilities = mergeClientCapabilities(
+      this.defaultCapabilities,
+      config.capabilities
+    );
 
     return applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
@@ -2249,8 +2259,8 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-      typeof value === "object" &&
-      ("request" in value || "retry" in value)
+        typeof value === "object" &&
+        ("request" in value || "retry" in value)
     );
   }
 
@@ -2294,7 +2304,10 @@ export class MCPClientManager {
       resetConnectionOnRetry?: boolean;
     } = {}
   ): Promise<T> {
-    const { signal, cleanup } = this.createRetrySignal(serverId, options?.signal);
+    const { signal, cleanup } = this.createRetrySignal(
+      serverId,
+      options?.signal
+    );
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -2364,12 +2377,11 @@ export class MCPClientManager {
           );
         }
         return accessToken;
-      })()
-        .finally(() => {
-          if (this.unauthorizedRefreshInFlight.get(serverId) === refreshPromise) {
-            this.unauthorizedRefreshInFlight.delete(serverId);
-          }
-        });
+      })().finally(() => {
+        if (this.unauthorizedRefreshInFlight.get(serverId) === refreshPromise) {
+          this.unauthorizedRefreshInFlight.delete(serverId);
+        }
+      });
       this.unauthorizedRefreshInFlight.set(serverId, refreshPromise);
     }
 

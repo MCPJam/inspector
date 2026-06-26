@@ -111,6 +111,8 @@ export interface RunAssistantTurnOptions {
    * approval gate at mcpjam-stream-handler.ts:834–843 fires when set.
    */
   requireToolApproval?: boolean;
+  /** Host/client capability for eligible MCP image-bearing tool results. */
+  modelVisibleMcpImageToolResults?: boolean;
 
   /**
    * Which real agent harness runs this turn. Absent ⇒ MCPJam's emulated engine
@@ -330,7 +332,9 @@ function buildHandlerOptions(
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
     authHeader: opts.authContext.token,
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts.temperature !== undefined
+      ? { temperature: opts.temperature }
+      : {}),
     ...(opts.chatboxId ? { chatboxId: opts.chatboxId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
@@ -349,6 +353,11 @@ function buildHandlerOptions(
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),
+    ...(opts.modelVisibleMcpImageToolResults !== undefined
+      ? {
+          modelVisibleMcpImageToolResults: opts.modelVisibleMcpImageToolResults,
+        }
+      : {}),
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
       : {}),
@@ -359,9 +368,7 @@ function buildHandlerOptions(
     ...(opts.onStreamWriterReady
       ? { onStreamWriterReady: opts.onStreamWriterReady }
       : {}),
-    ...(opts.onLiveTextDelta
-      ? { onLiveTextDelta: opts.onLiveTextDelta }
-      : {}),
+    ...(opts.onLiveTextDelta ? { onLiveTextDelta: opts.onLiveTextDelta } : {}),
     // PR 5b-pre: pass-through chunk-level + step-level callbacks.
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
@@ -383,9 +390,7 @@ function buildHandlerOptions(
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
     ...(opts.maxSteps !== undefined ? { maxSteps: opts.maxSteps } : {}),
-    ...(opts.progressivePlan
-      ? { progressivePlan: opts.progressivePlan }
-      : {}),
+    ...(opts.progressivePlan ? { progressivePlan: opts.progressivePlan } : {}),
     ...(opts.discoveryState ? { discoveryState: opts.discoveryState } : {}),
   };
 
@@ -498,9 +503,7 @@ export async function runAssistantTurn(
   // stream drains. We prefer the captured snapshot when available
   // (post-onFinish view) and fall back to the engine ref otherwise —
   // never to opts.messages.
-  const messages =
-    capturedMessages ??
-    engineResult.messageHistory;
+  const messages = capturedMessages ?? engineResult.messageHistory;
   const assistantMessages = extractAssistantMessages(messages);
   const toolCalls = extractToolCalls(messages);
   const toolResults = extractToolResults(messages);

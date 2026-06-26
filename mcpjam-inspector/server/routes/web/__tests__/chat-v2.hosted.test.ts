@@ -504,6 +504,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpImageToolResults: true,
+      })
+    );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",
@@ -521,6 +526,45 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
+        }),
+      })
+    );
+  });
+
+  it("honors direct chat image visibility opt-out from the request body", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        chatSessionId: "chat-session-direct-images-off",
+        directVisibility: "project",
+        modelVisibleMcpImageToolResults: false,
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpImageToolResults: false,
+      })
+    );
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostConfig: expect.objectContaining({
+          modelVisibleMcpImageToolResults: false,
         }),
       })
     );

@@ -8,6 +8,7 @@
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 
 type DeterministicToolState = "output-available" | "output-error";
 
@@ -18,6 +19,15 @@ interface DeterministicToolOptions {
   errorText?: string;
   /** Optional fixed toolCallId for in-place updates */
   toolCallId?: string;
+}
+
+function readServerIdFromToolMeta(
+  toolMeta: Record<string, unknown> | undefined,
+): string | undefined {
+  const serverId = toolMeta?._serverId ?? toolMeta?.serverId;
+  return typeof serverId === "string" && serverId.length > 0
+    ? serverId
+    : undefined;
 }
 
 /**
@@ -50,6 +60,10 @@ export function createDeterministicToolMessages(
   const invocationText = invokedMessage || `Invoked \`${toolName}\``;
   const uiType = detectUIType(toolMeta, result);
   const isTextTool = uiType === null;
+  const providerMetadata = mergeMcpToolOriginMetadata(
+    undefined,
+    readServerIdFromToolMeta(toolMeta),
+  );
 
   // Properly typed dynamic tool part based on state
   const toolPart: DynamicToolUIPart =
@@ -61,6 +75,7 @@ export function createDeterministicToolMessages(
           state: "output-error",
           input: params,
           errorText: options?.errorText ?? "Unknown error",
+          ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
         }
       : {
           type: "dynamic-tool",
@@ -69,6 +84,7 @@ export function createDeterministicToolMessages(
           state: "output-available",
           input: params,
           output: result,
+          ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
         };
 
   const assistantParts: UIMessage["parts"] = [

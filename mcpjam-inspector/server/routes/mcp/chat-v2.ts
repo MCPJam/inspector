@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
-  convertToModelMessages,
   type ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
@@ -63,11 +62,16 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   runDirectChatTurn,
+  withMcpToolOriginChunkMetadata,
   type RunDirectChatTurnHandle,
 } from "../../utils/direct-chat-turn";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  convertToMcpjamModelMessages,
+  createLinkedResourceServerIdResolver,
+} from "../../utils/mcp-tool-result-model-output.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -246,7 +250,9 @@ function streamDirectChatWithLiveTrace(options: {
             return formatStreamError(error, provider);
           },
         })) {
-          writer.write(chunk);
+          writer.write(
+            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools)
+          );
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -387,6 +393,9 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        modelVisibleMcpImageToolResults:
+          body.modelVisibleMcpImageToolResults,
+        hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
       // Chatbox: published host wins. Host preview: owner's body tweaks win,
@@ -418,6 +427,15 @@ chatV2.post("/", async (c) => {
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
           "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
+          {
+            chatboxId: bodyChatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          }
+        );
+      } else if (entry.field === "modelVisibleMcpImageToolResults") {
+        logger.warn(
+          "[mcp/chat-v2] client modelVisibleMcpImageToolResults differs from host; using host value",
           {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
@@ -466,6 +484,30 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
+    const modelVisibleMcpImageToolResults =
+      resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
+    const mcpToolResultModelOutputOptions = {
+      modelVisibleMcpImageToolResults,
+      abortSignal: c.req.raw.signal as AbortSignal | undefined,
+      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
+        serverIds: Array.isArray(selectedServers) ? selectedServers : [],
+        listTools: (serverId) => c.mcpClientManager.listTools(serverId),
+      }),
+      readLinkedResource: ({
+        serverId,
+        uri,
+        options,
+      }: {
+        serverId: string;
+        uri: string;
+        options?: { abortSignal?: AbortSignal };
+      }) => {
+        const requestOptions = options?.abortSignal
+          ? { signal: options.abortSignal }
+          : undefined;
+        return mcpClientManager.readResource(serverId, { uri }, requestOptions);
+      },
+    };
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -538,7 +580,10 @@ chatV2.post("/", async (c) => {
     // prior `load_mcp_tools` calls into discovery state. The downstream
     // paths call convertToModelMessages again; that's intentional and
     // independent — this conversion is solely for hydration.
-    const priorModelMessages = await convertToModelMessages(messages);
+    const priorModelMessages = await convertToMcpjamModelMessages(
+      messages,
+      mcpToolResultModelOutputOptions
+    );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
     // boundary. The chat request body is not trusted; oversize / malformed
@@ -631,6 +676,7 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         respectToolVisibility,
+        modelVisibleMcpImageToolResults,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
         ...(builtInTools ? { builtInTools } : {}),
@@ -690,6 +736,7 @@ chatV2.post("/", async (c) => {
           resolvedTemperature,
           requireToolApproval,
           respectToolVisibility,
+          modelVisibleMcpImageToolResults,
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
@@ -717,7 +764,10 @@ chatV2.post("/", async (c) => {
         );
       }
 
-      const modelMessages = await convertToModelMessages(messages);
+      const modelMessages = await convertToMcpjamModelMessages(
+        messages,
+        mcpToolResultModelOutputOptions
+      );
       const sessionStartedAt = Date.now();
 
       const chatSessionId = body.chatSessionId;
@@ -739,6 +789,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        modelVisibleMcpImageToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
@@ -809,7 +860,10 @@ chatV2.post("/", async (c) => {
       }
       const providerKey = providerKeyResult.key;
       const modelMessages = scrubMessages(
-        (await convertToModelMessages(messages)) as ModelMessage[]
+        await convertToMcpjamModelMessages(
+          messages,
+          mcpToolResultModelOutputOptions
+        )
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -917,6 +971,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
+        modelVisibleMcpImageToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
@@ -959,7 +1014,10 @@ chatV2.post("/", async (c) => {
       body.customProviders
     );
 
-    const modelMessages = await convertToModelMessages(messages);
+    const modelMessages = await convertToMcpjamModelMessages(
+      messages,
+      mcpToolResultModelOutputOptions
+    );
 
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");

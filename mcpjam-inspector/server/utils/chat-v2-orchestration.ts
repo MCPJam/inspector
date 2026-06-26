@@ -467,6 +467,12 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /**
+   * Host/client capability for eligible MCP image-bearing tool results. This
+   * only changes the model-facing output; raw results remain available to
+   * UI/debug history.
+   */
+  modelVisibleMcpImageToolResults?: boolean;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
@@ -550,6 +556,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpImageToolResults,
     customProviders,
     appTools,
     builtInTools,
@@ -564,12 +571,17 @@ export async function prepareChatV2(
   );
 
   const toolOptions =
-    requireToolApproval || respectToolVisibility === false
+    requireToolApproval ||
+    respectToolVisibility === false ||
+    modelVisibleMcpImageToolResults !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
             : {}),
           ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
+          ...(modelVisibleMcpImageToolResults !== undefined
+            ? { modelVisibleMcpImageToolResults }
+            : {}),
         }
       : undefined;
 
@@ -641,7 +653,7 @@ export async function prepareChatV2(
   for (const name of Object.keys(builtInToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`
       );
       delete mcpTools[name];
     }
@@ -650,7 +662,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app or skill tool.`
       );
     }
   }
@@ -679,11 +691,11 @@ export async function prepareChatV2(
     hydrateDiscoveryStateFromHistory(
       discoveryState,
       options.priorMessages,
-      catalog,
+      catalog
     );
   }
   const envOverride = parseProgressiveToolsEnv(
-    process.env.MCPJAM_PROGRESSIVE_TOOLS,
+    process.env.MCPJAM_PROGRESSIVE_TOOLS
   );
   const progressivePlan = decideProgressivePlan({
     catalog,
@@ -730,7 +742,7 @@ export async function prepareChatV2(
       // tool already claimed the name.
       if (Object.prototype.hasOwnProperty.call(realTools, name)) {
         throw new Error(
-          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`
         );
       }
     }

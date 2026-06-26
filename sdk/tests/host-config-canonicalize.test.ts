@@ -148,6 +148,46 @@ describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
       await hash(base({ progressiveToolDiscovery: false }))
     );
   });
+
+  it("distinguishes modelVisibleMcpImageToolResults undefined from explicit values", async () => {
+    const omitted = JSON.parse(JSON.stringify(canonicalizeHostConfigV2(base())));
+    expect("modelVisibleMcpImageToolResults" in omitted).toBe(false);
+    expect(await hash(base())).not.toBe(
+      await hash(base({ modelVisibleMcpImageToolResults: false }))
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(base({ modelVisibleMcpImageToolResults: true }))
+    );
+  });
+
+  it("migrates legacy hostContext image policy to the top-level field", () => {
+    const canonical = canonicalizeHostConfigV2(
+      base({
+        hostContext: {
+          modelVisibleMcpImageToolResults: false,
+          other: "keep",
+        },
+      })
+    );
+
+    expect(canonical.modelVisibleMcpImageToolResults).toBe(false);
+    expect(canonical.hostContext).toEqual({ other: "keep" });
+  });
+
+  it("prefers top-level image policy over legacy hostContext policy", () => {
+    const canonical = canonicalizeHostConfigV2(
+      base({
+        modelVisibleMcpImageToolResults: true,
+        hostContext: {
+          modelVisibleMcpImageToolResults: false,
+          other: "keep",
+        },
+      })
+    );
+
+    expect(canonical.modelVisibleMcpImageToolResults).toBe(true);
+    expect(canonical.hostContext).toEqual({ other: "keep" });
+  });
 });
 
 describe("canonicalizeHostConfigV2 — computer", () => {

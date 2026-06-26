@@ -132,6 +132,12 @@ export type HostConfigInputV2 = {
    * hostConfig row.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Host/client policy for whether eligible MCP image-bearing tool results are
+   * passed to the model as media. Optional so older configs and new untouched
+   * hosts default to enabled at runtime without forcing a new snapshot.
+   */
+  modelVisibleMcpImageToolResults?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -226,6 +232,8 @@ export type HostConfigDtoV2 = {
   respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpImageToolResults. */
+  modelVisibleMcpImageToolResults?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -279,6 +287,24 @@ export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
   partial?: Partial<HostConfigInputV2>,
 ) => HostConfigInputV2;
 
+const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
+  "modelVisibleMcpImageToolResults";
+
+function normalizeHostContextForInput(dto: HostConfigDtoV2): {
+  hostContext: Record<string, unknown>;
+  legacyModelVisibleMcpImageToolResults: boolean | undefined;
+} {
+  const hostContext = deepCloneJsonRecord(dto.hostContext);
+  const legacyValue =
+    hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  delete hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
+  return {
+    hostContext,
+    legacyModelVisibleMcpImageToolResults:
+      typeof legacyValue === "boolean" ? legacyValue : undefined,
+  };
+}
+
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
   // hostContext can be nested (e.g. the SDK's default capabilities
@@ -286,6 +312,11 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // would leave the inner trees aliased to the source DTO; any nested
   // edit through the returned input would silently mutate the
   // baseline used for resets and dirty comparisons.
+  const {
+    hostContext,
+    legacyModelVisibleMcpImageToolResults,
+  } = normalizeHostContextForInput(dto);
+
   return {
     hostStyle: dto.hostStyle,
     modelId: dto.modelId,
@@ -296,6 +327,9 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
+    modelVisibleMcpImageToolResults:
+      dto.modelVisibleMcpImageToolResults ??
+      legacyModelVisibleMcpImageToolResults,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
@@ -314,7 +348,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
       requestTimeout: dto.connectionDefaults.requestTimeout,
     },
     clientCapabilities: deepCloneJsonRecord(dto.clientCapabilities),
-    hostContext: deepCloneJsonRecord(dto.hostContext),
+    hostContext,
     hostCapabilitiesOverride: dto.hostCapabilitiesOverride
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
@@ -737,6 +771,10 @@ export function hostConfigInputsEqual(
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
+  if (
+    a.modelVisibleMcpImageToolResults !== b.modelVisibleMcpImageToolResults
+  )
+    return false;
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   // Order-insensitive, same semantics as server ids — toggling a built-in

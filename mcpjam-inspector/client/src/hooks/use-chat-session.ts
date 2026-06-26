@@ -197,11 +197,11 @@ export interface UseChatSessionOptions {
   /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
-   * the user's actual host style (`claude` / `chatgpt`) rather than
-   * defaulting to `'claude'`. Omitted for chatbox flows — the
+   * the user's actual host style rather than defaulting to `'claude'`.
+   * Omitted for chatbox flows — the
    * backend resolves chatbox host style from the chatbox row.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
@@ -221,6 +221,11 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  /**
+   * Host-level MCP tool-result image policy. `false` keeps eligible MCP
+   * tool-returned images out of model-visible media for this turn.
+   */
+  modelVisibleMcpImageToolResults?: boolean;
   /**
    * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
    * model should see this turn. Sourced from the caller's resolved host
@@ -1209,6 +1214,12 @@ export function useChatSession(
     options.respectToolVisibility ??
     options.executionConfig?.respectToolVisibility ??
     respectToolVisibility;
+  const modelVisibleMcpImageToolResultsRef = useRef<boolean | undefined>(
+    undefined
+  );
+  modelVisibleMcpImageToolResultsRef.current =
+    options.modelVisibleMcpImageToolResults ??
+    options.executionConfig?.modelVisibleMcpImageToolResults;
   // Host-managed built-in tools. Top-level option wins (mirrors the
   // progressiveToolDiscovery / respectToolVisibility pattern), then
   // executionConfig as a fallback for surfaces that thread everything
@@ -1599,6 +1610,12 @@ export function useChatSession(
               }),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          ...(modelVisibleMcpImageToolResultsRef.current !== undefined
+            ? {
+                modelVisibleMcpImageToolResults:
+                  modelVisibleMcpImageToolResultsRef.current,
+              }
+            : {}),
           // Only send when the user explicitly set the host-level toggle.
           // Omitting the field tells the backend orchestrator to use its
           // auto policy (currently: off for hosted unless the env override

@@ -423,6 +423,49 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
+  it("sends host-level MCP image visibility overrides from uncontrolled callers", async () => {
+    const selectedServers = ["server-1"];
+    const { result, rerender } = renderHook(
+      ({
+        modelVisibleMcpImageToolResults,
+      }: {
+        modelVisibleMcpImageToolResults: boolean;
+      }) =>
+        useChatSession({
+          selectedServers,
+          minimalMode: true,
+          modelVisibleMcpImageToolResults,
+        }),
+      { initialProps: { modelVisibleMcpImageToolResults: false } }
+    );
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toContainEqual(
+        expect.objectContaining({
+          modelVisibleMcpImageToolResults: false,
+        })
+      );
+    });
+
+    rerender({ modelVisibleMcpImageToolResults: true });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello again" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toContainEqual(
+        expect.objectContaining({
+          modelVisibleMcpImageToolResults: true,
+        })
+      );
+    });
+  });
+
   it("soft-fails shared metadata auth denial without noisy warning", async () => {
     mockGetToolsMetadata.mockRejectedValue({
       status: 403,

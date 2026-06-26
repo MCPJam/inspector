@@ -70,7 +70,7 @@ describe("hostConfigField()", () => {
 
   it("throws on an unknown id so renames fail loudly at the call site", () => {
     expect(() => hostConfigField("does-not-exist")).toThrow(
-      /unknown field id/i,
+      /unknown field id/i
     );
   });
 });
@@ -80,15 +80,17 @@ describe("groupHostConfigFields", () => {
     const groups = groupHostConfigFields();
     const totalFields = groups.reduce(
       (acc, g) => acc + g.subsections.reduce((a, s) => a + s.fields.length, 0),
-      0,
+      0
     );
     expect(totalFields).toBe(HOST_CONFIG_FIELDS.length);
   });
 
   it("preserves the order fields appear in the registry within each subsection", () => {
-    const agent = groupHostConfigFields().find((g) => g.section.id === "agent")!;
+    const agent = groupHostConfigFields().find(
+      (g) => g.section.id === "agent"
+    )!;
     const modelSampling = agent.subsections.find(
-      (s) => s.label === "Model & sampling",
+      (s) => s.label === "Model & sampling"
     );
     expect(modelSampling).toBeTruthy();
     expect(modelSampling!.fields.map((f) => f.id)).toEqual([
@@ -96,8 +98,45 @@ describe("groupHostConfigFields", () => {
       "temperature",
       "requireToolApproval",
       "respectToolVisibility",
+      "modelVisibleMcpImageToolResults",
       "progressiveToolDiscovery",
     ]);
+  });
+});
+
+describe("modelVisibleMcpImageToolResults field", () => {
+  it("defaults to enabled and reads explicit top-level opt-outs", () => {
+    const field = fieldById("modelVisibleMcpImageToolResults");
+
+    expect(field.label).toBe("Expose tool images to model");
+    expect(field.read(makeConfig())).toBe(true);
+    expect(
+      field.read(
+        makeConfig({
+          modelVisibleMcpImageToolResults: false,
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("falls back to the legacy hostContext value for pre-migration rows", () => {
+    const field = fieldById("modelVisibleMcpImageToolResults");
+
+    expect(
+      field.read(
+        makeConfig({
+          hostContext: { modelVisibleMcpImageToolResults: false },
+        })
+      )
+    ).toBe(false);
+    expect(
+      field.read(
+        makeConfig({
+          modelVisibleMcpImageToolResults: true,
+          hostContext: { modelVisibleMcpImageToolResults: false },
+        })
+      )
+    ).toBe(true);
   });
 });
 
@@ -123,7 +162,7 @@ describe("fieldDiverges", () => {
     const a = makeConfig();
     const b = makeConfig();
     expect(fieldDiverges(fieldById("progressiveToolDiscovery"), [a, b])).toBe(
-      false,
+      false
     );
   });
 
@@ -133,8 +172,9 @@ describe("fieldDiverges", () => {
     // coerces undefined → false.
     const auto = makeConfig({ progressiveToolDiscovery: undefined });
     const off = makeConfig({ progressiveToolDiscovery: false });
-    expect(fieldDiverges(fieldById("progressiveToolDiscovery"), [auto, off]))
-      .toBe(true);
+    expect(
+      fieldDiverges(fieldById("progressiveToolDiscovery"), [auto, off])
+    ).toBe(true);
   });
 
   it("compares nested object values by stable canonical form", () => {
@@ -151,8 +191,9 @@ describe("fieldDiverges", () => {
         requestTimeout: 60_000,
       },
     });
-    expect(fieldDiverges(fieldById("connectionDefaults.headers"), [a, b]))
-      .toBe(false);
+    expect(fieldDiverges(fieldById("connectionDefaults.headers"), [a, b])).toBe(
+      false
+    );
   });
 
   it("flags divergence on a nested mcpProfile field across hosts", () => {
@@ -174,7 +215,11 @@ describe("fieldDiverges", () => {
   it("coerces respectToolVisibility undefined → true so pre-feature rows don't show as diverging from a row that explicitly set true", () => {
     const preFeature = makeConfig({ respectToolVisibility: undefined });
     const explicitTrue = makeConfig({ respectToolVisibility: true });
-    expect(fieldDiverges(fieldById("respectToolVisibility"), [preFeature, explicitTrue]))
-      .toBe(false);
+    expect(
+      fieldDiverges(fieldById("respectToolVisibility"), [
+        preFeature,
+        explicitTrue,
+      ])
+    ).toBe(false);
   });
 });

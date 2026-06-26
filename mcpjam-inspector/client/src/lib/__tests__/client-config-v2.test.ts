@@ -119,6 +119,27 @@ describe("hostConfigInputsEqual", () => {
     });
     expect(hostConfigInputsEqual(a, b)).toBe(false);
   });
+
+  it("distinguishes unset, enabled, and disabled model-visible MCP image policy", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpImageToolResults: undefined }),
+        makeInput({ modelVisibleMcpImageToolResults: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpImageToolResults: undefined }),
+        makeInput({ modelVisibleMcpImageToolResults: true })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpImageToolResults: true }),
+        makeInput({ modelVisibleMcpImageToolResults: false })
+      )
+    ).toBe(false);
+  });
 });
 
 describe("emptyHostConfigInputV2", () => {
@@ -345,6 +366,35 @@ describe("hostConfigDtoToInput", () => {
     };
     const input = hostConfigDtoToInput(dto);
     expect(input.hostCapabilitiesOverride).toBeUndefined();
+  });
+
+  it("migrates legacy hostContext image policy to the top-level host config field", () => {
+    const input = hostConfigDtoToInput(
+      makeDto({
+        hostContext: {
+          modelVisibleMcpImageToolResults: false,
+          other: "keep",
+        },
+      })
+    );
+
+    expect(input.modelVisibleMcpImageToolResults).toBe(false);
+    expect(input.hostContext).toEqual({ other: "keep" });
+  });
+
+  it("prefers the top-level image policy over a legacy hostContext value", () => {
+    const input = hostConfigDtoToInput(
+      makeDto({
+        modelVisibleMcpImageToolResults: false,
+        hostContext: {
+          modelVisibleMcpImageToolResults: true,
+          other: "keep",
+        },
+      })
+    );
+
+    expect(input.modelVisibleMcpImageToolResults).toBe(false);
+    expect(input.hostContext).toEqual({ other: "keep" });
   });
 });
 

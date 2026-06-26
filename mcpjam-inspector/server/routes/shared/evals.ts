@@ -2176,6 +2176,9 @@ export async function streamEvalTestCaseWithManager(
     suiteHostPolicy
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
           includeAppOnly: true,
+          ...(suiteHostPolicy.modelVisibleMcpImageToolResults
+            ? { modelVisibleMcpImageToolResults: true }
+            : {}),
         })
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;

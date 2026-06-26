@@ -12,6 +12,16 @@ export {
   normalizeClientCapabilities,
   mergeClientCapabilities,
 } from "./mcp-client-manager/capabilities.js";
+export {
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpLinkedResourceReader,
+} from "./mcp-client-manager/model-output.js";
 export { redactSensitiveValue } from "./redaction.js";
 
 // Error describer — pure, browser-safe. Same module exported from the

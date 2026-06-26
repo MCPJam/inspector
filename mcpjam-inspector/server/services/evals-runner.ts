@@ -390,15 +390,27 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   mcpClientManager: MCPClientManager;
   serverIds: string[];
   includeAppOnly: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): Promise<ToolSet> {
+  const toolOptions =
+    args.includeAppOnly || args.modelVisibleMcpImageToolResults
+      ? {
+          ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
+          ...(args.modelVisibleMcpImageToolResults
+            ? { modelVisibleMcpImageToolResults: true }
+            : {}),
+        }
+      : undefined;
+
   const perServerTools = await Promise.all(
     args.serverIds.map(async (serverId) => {
       try {
-        return args.includeAppOnly
-          ? await args.mcpClientManager.getToolsForAiSdk([serverId], {
-              includeAppOnly: true,
-            })
+        return toolOptions
+          ? await args.mcpClientManager.getToolsForAiSdk(
+              [serverId],
+              toolOptions,
+            )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
       } catch (error) {
         const serverLabel = getServerLabelForEvalError(
@@ -1798,6 +1810,8 @@ export const runEvalSuiteWithAiSdk = async ({
       mcpClientManager,
       serverIds,
       includeAppOnly: Boolean(hostExecutionPolicy),
+      modelVisibleMcpImageToolResults:
+        hostExecutionPolicy?.modelVisibleMcpImageToolResults,
       environment: config.environment,
     });
 

@@ -51,6 +51,7 @@ export type HostRuntimeManager = HostServerRegistry & {
     options?: {
       includeAppOnly?: boolean;
       needsApproval?: boolean;
+      modelVisibleMcpImageToolResults?: boolean;
     },
   ): Promise<AiSdkToolRecord>;
   /**
@@ -136,6 +137,8 @@ export class HostRuntime implements HostExecutor {
     const serverIds = resolveKnownServerIds(hostSnapshot, this.manager);
     const tools = await this.manager.getToolsForAiSdk(serverIds, {
       includeAppOnly: policy.respectToolVisibility === false,
+      modelVisibleMcpImageToolResults:
+        policy.modelVisibleMcpImageToolResults,
     });
 
     // Dynamic import keeps `host-config` browser-safe: `HostRunner` pulls

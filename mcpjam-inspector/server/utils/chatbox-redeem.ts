@@ -43,6 +43,7 @@ export type ChatboxRedeemBootstrap = {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   welcomeDialog: unknown | null;
   feedbackDialog: unknown | null;
   servers: ChatboxRedeemBootstrapServer[];

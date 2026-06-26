@@ -68,6 +68,8 @@ export interface ExecutionOverrides {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
+  hostStyle?: string;
   modelId?: string;
   selectedServerIds?: string[];
   builtInToolIds?: string[];
@@ -177,6 +179,18 @@ function readProgressiveToolDiscovery(
   return undefined;
 }
 
+function readModelVisibleMcpImageToolResults(
+  hostConfig: Record<string, unknown>,
+): boolean | undefined {
+  const topLevel = readBoolean(hostConfig, "modelVisibleMcpImageToolResults");
+  if (topLevel !== undefined) return topLevel;
+  const hostContext = isRecord(hostConfig.hostContext)
+    ? hostConfig.hostContext
+    : undefined;
+  const legacy = hostContext?.modelVisibleMcpImageToolResults;
+  return typeof legacy === "boolean" ? legacy : undefined;
+}
+
 /**
  * Value equality for drift detection. Array fields (`selectedServerIds`,
  * `builtInToolIds`) arrive as fresh allocations on every request — a
@@ -238,12 +252,25 @@ export function resolveExecutionContext(args: {
   namedHostId?: string;
 }): ResolvedExecutionContext {
   const { hostConfig, overrides = {}, precedence, namedHostId } = args;
-  const hostPolicy = extractHostExecutionPolicy(hostConfig, namedHostId);
   const drift: ExecutionDriftEntry[] = [];
 
   // hostConfig === null short-circuit: no host values, return overrides
   // as-is. `requireToolApproval` still has its boolean-default semantic.
   if (!hostConfig) {
+    const policySource =
+      overrides.hostStyle ||
+      overrides.modelVisibleMcpImageToolResults !== undefined
+        ? {
+            ...(overrides.hostStyle ? { hostStyle: overrides.hostStyle } : {}),
+            ...(overrides.modelVisibleMcpImageToolResults !== undefined
+              ? {
+                  modelVisibleMcpImageToolResults:
+                    overrides.modelVisibleMcpImageToolResults,
+                }
+              : {}),
+          }
+        : null;
+    const hostPolicy = extractHostExecutionPolicy(policySource, namedHostId);
     return {
       systemPrompt: overrides.systemPrompt,
       temperature: overrides.temperature,
@@ -265,6 +292,8 @@ export function resolveExecutionContext(args: {
     requireToolApproval: readBoolean(hostConfig, "requireToolApproval"),
     respectToolVisibility: readBoolean(hostConfig, "respectToolVisibility"),
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
+    modelVisibleMcpImageToolResults:
+      readModelVisibleMcpImageToolResults(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
     builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
@@ -310,6 +339,16 @@ export function resolveExecutionContext(args: {
   );
   if (progressiveToolDiscovery.drift) drift.push(progressiveToolDiscovery.drift);
 
+  const modelVisibleMcpImageToolResults = pickField(
+    "modelVisibleMcpImageToolResults",
+    overrides.modelVisibleMcpImageToolResults,
+    hostFields.modelVisibleMcpImageToolResults,
+    precedence,
+  );
+  if (modelVisibleMcpImageToolResults.drift) {
+    drift.push(modelVisibleMcpImageToolResults.drift);
+  }
+
   const modelId = pickField(
     "modelId",
     overrides.modelId,
@@ -333,6 +372,17 @@ export function resolveExecutionContext(args: {
     precedence,
   );
   if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
+
+  const hostPolicy = extractHostExecutionPolicy(
+    modelVisibleMcpImageToolResults.value !== undefined
+      ? {
+          ...hostConfig,
+          modelVisibleMcpImageToolResults:
+            modelVisibleMcpImageToolResults.value,
+        }
+      : hostConfig,
+    namedHostId,
+  );
 
   return {
     systemPrompt: systemPrompt.value,

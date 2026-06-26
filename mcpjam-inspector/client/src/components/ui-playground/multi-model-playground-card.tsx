@@ -36,6 +36,7 @@ import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
+  hostStyleSupportsModelVisibleMcpImageToolResults,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import {
@@ -309,6 +310,8 @@ export function MultiModelPlaygroundCard({
     // policy in that case.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
+    modelVisibleMcpImageToolResults:
+      hostCapsResolver?.modelVisibleMcpImageToolResults,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -357,8 +360,12 @@ export function MultiModelPlaygroundCard({
   ]);
 
   const preludeTraceEnvelope = useMemo(
-    () => buildPreludeTraceEnvelope(preludeTraceExecutions),
-    [preludeTraceExecutions],
+    () =>
+      buildPreludeTraceEnvelope(preludeTraceExecutions, {
+        modelVisibleMcpImageToolResults:
+          hostStyleSupportsModelVisibleMcpImageToolResults(hostStyle),
+      }),
+    [hostStyle, preludeTraceExecutions],
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming

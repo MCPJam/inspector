@@ -361,8 +361,23 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(res.status).toBe(200);
       expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
         ["server-1", "server-2"],
-        undefined,
+        { modelVisibleMcpImageToolResults: true },
       );
+    });
+
+    it("passes direct request image visibility opt-out to MCP tool conversion", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        selectedServers: ["server-1"],
+        modelVisibleMcpImageToolResults: false,
+      });
+
+      expect(res.status).toBe(200);
+      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["server-1"], {
+        modelVisibleMcpImageToolResults: false,
+      });
     });
 
     it("returns streaming response", async () => {
@@ -492,6 +507,215 @@ describe("POST /api/mcp/chat-v2", () => {
         expect.objectContaining({
           abortSignal: expect.any(AbortSignal),
         }),
+      );
+    });
+
+    it("maps direct MCP image tool history to media content before streaming", async () => {
+      const { streamText } = await import("ai");
+      manager.getToolsForAiSdk.mockResolvedValue({
+        qa_return_image_tool_result: {
+          description: "Returns a PNG image for example.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          execute: vi.fn(),
+        },
+      });
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [
+          { role: "user", content: "Execute `qa_return_image_tool_result`" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-1",
+                toolName: "qa_return_image_tool_result",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "qa_return_image_tool_result",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "image",
+                        data: "aGVsbG8=",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          { role: "user", content: "describe that image" },
+        ],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostStyle: "claude",
+      });
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              content: [
+                expect.objectContaining({
+                  type: "tool-result",
+                  output: {
+                    type: "content",
+                    value: [
+                      {
+                        type: "media",
+                        data: "aGVsbG8=",
+                        mediaType: "image/png",
+                      },
+                    ],
+                  },
+                }),
+              ],
+            }),
+          ]),
+        })
+      );
+    });
+
+    it("maps linked MCP image resource history to media content before streaming", async () => {
+      const { streamText } = await import("ai");
+      manager.getToolsForAiSdk.mockResolvedValue({
+        qa_return_linked_image_resource: {
+          description: "Returns a linked PNG image resource for example.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          execute: vi.fn(),
+        },
+      });
+      manager.listTools.mockResolvedValue({
+        tools: [{ name: "qa_return_linked_image_resource" }],
+      });
+      manager.readResource.mockResolvedValue({
+        contents: [
+          {
+            uri: "example://linked-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        ],
+      });
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Execute `qa_return_linked_image_resource`",
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "Invoked `qa_return_linked_image_resource`",
+              },
+              {
+                type: "tool-call",
+                toolCallId: "playground-L6XNQZ9X4Swm2LUv",
+                toolName: "qa_return_linked_image_resource",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "playground-L6XNQZ9X4Swm2LUv",
+                toolName: "qa_return_linked_image_resource",
+                output: {
+                  type: "json",
+                  value: {
+                    type: "json",
+                    value: {
+                      content: [
+                        {
+                          mimeType: "image/png",
+                          name: "Linked PNG resource",
+                          type: "resource_link",
+                          uri: "example://linked-image.png",
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "what can you tell me about the image",
+              },
+            ],
+          },
+        ],
+        selectedServers: ["qa-server"],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostStyle: "claude",
+      });
+
+      expect(manager.listTools).toHaveBeenCalledWith("qa-server");
+      expect(manager.readResource).toHaveBeenCalledWith(
+        "qa-server",
+        { uri: "example://linked-image.png" },
+        { signal: expect.any(AbortSignal) }
+      );
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              content: [
+                expect.objectContaining({
+                  type: "tool-result",
+                  output: {
+                    type: "content",
+                    value: [
+                      {
+                        type: "media",
+                        data: "aGVsbG8=",
+                        mediaType: "image/png",
+                      },
+                    ],
+                  },
+                }),
+              ],
+            }),
+          ]),
+        })
       );
     });
 
@@ -1073,6 +1297,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           temperature: 0.4,
           requireToolApproval: true,
+          modelVisibleMcpImageToolResults: true,
           selectedServerIds: ["abc123serverid", "def456serverid"],
         });
       } finally {

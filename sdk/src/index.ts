@@ -71,8 +71,17 @@ export type {
 export {
   isChatGPTAppTool,
   isMcpAppTool,
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpLinkedResourceReader,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -555,9 +564,7 @@ export type {
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
-export {
-  evaluateToolCalls,
-} from "./matchers.js";
+export { evaluateToolCalls } from "./matchers.js";
 export type {
   EvalArgumentMismatch,
   EvalMatchOptions,

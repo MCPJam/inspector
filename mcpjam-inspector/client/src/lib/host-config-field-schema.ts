@@ -324,6 +324,18 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => cfg.respectToolVisibility ?? true,
   },
   {
+    id: "modelVisibleMcpImageToolResults",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Expose tool images to model",
+    path: "modelVisibleMcpImageToolResults",
+    description: "Pass eligible MCP tool-returned images to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      cfg.modelVisibleMcpImageToolResults ??
+      (cfg.hostContext?.modelVisibleMcpImageToolResults !== false),
+  },
+  {
     id: "progressiveToolDiscovery",
     section: "agent",
     subsection: "Model & sampling",
@@ -494,6 +506,17 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // Apps · MCP Apps spec bridge (config)
   // ============================================================
   {
+    id: "mcpAppsOverrides",
+    section: "apps",
+    subsection: "MCP Apps spec bridge",
+    label: "Spec-bridge overrides",
+    path: "mcpProfile.apps.mcpAppsOverrides",
+    description:
+      "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
+    kind: { kind: "object", itemNoun: "dimension" },
+    read: (cfg) => mcpProfile(cfg)?.apps?.mcpAppsOverrides,
+  },
+  {
     id: "uiInitialize.hostInfo",
     section: "apps",
     subsection: "MCP Apps spec bridge",
@@ -578,7 +601,7 @@ export function hostConfigField(id: string): HostConfigFieldDef {
   if (!f) {
     throw new Error(
       `hostConfigField: unknown field id "${id}". ` +
-        `Did you rename it in host-config-field-schema.ts without updating callers?`,
+        `Did you rename it in host-config-field-schema.ts without updating callers?`
     );
   }
   return f;
@@ -607,8 +630,8 @@ function stableStringify(value: unknown): string {
     .map(
       (k) =>
         `${JSON.stringify(k)}:${stableStringify(
-          (value as Record<string, unknown>)[k],
-        )}`,
+          (value as Record<string, unknown>)[k]
+        )}`
     )
     .join(",")}}`;
 }
@@ -616,7 +639,7 @@ function stableStringify(value: unknown): string {
 /** True when at least two hosts disagree on this field's value. */
 export function fieldDiverges(
   field: HostConfigFieldDef,
-  hosts: ReadonlyArray<HostConfigDtoV2>,
+  hosts: ReadonlyArray<HostConfigDtoV2>
 ): boolean {
   if (hosts.length < 2) return false;
   const first = stableStringify(field.read(hosts[0]));
@@ -636,7 +659,7 @@ export interface HostConfigFieldGroup {
 }
 
 export function groupHostConfigFields(
-  fields: ReadonlyArray<HostConfigFieldDef> = HOST_CONFIG_FIELDS,
+  fields: ReadonlyArray<HostConfigFieldDef> = HOST_CONFIG_FIELDS
 ): ReadonlyArray<HostConfigFieldGroup> {
   return HOST_CONFIG_SECTIONS.map((section) => {
     const fieldsForSection = fields.filter((f) => f.section === section.id);

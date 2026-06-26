@@ -260,6 +260,61 @@ describe("transcriptToUIMessages", () => {
     expect(modelMessages.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("preserves MCP tool origin metadata through transcript hydration", async () => {
+    const transcript = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-image-1",
+            toolName: "qa_return_linked_image_resource",
+            args: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-image-1",
+            output: {
+              content: [
+                {
+                  type: "resource_link",
+                  uri: "mcp://images/one",
+                  name: "one.png",
+                  mimeType: "image/png",
+                },
+              ],
+            },
+            providerOptions: { mcpjam: { serverId: "srv-1" } },
+          },
+        ],
+      },
+    ];
+
+    const messages = transcriptToUIMessages(transcript);
+    const toolPart = messages[0].parts[0] as any;
+    expect(toolPart.callProviderMetadata).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
+
+    const modelMessages = await convertToModelMessages(messages);
+    const assistantToolCall = (modelMessages[0].content as any[])[0];
+    expect(assistantToolCall.providerOptions).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
+
+    const toolMessage = modelMessages.find(
+      (message) => message.role === "tool"
+    ) as any;
+    expect(toolMessage.content[0].providerOptions).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
+  });
+
   it("generates IDs when not present", () => {
     const transcript = [{ role: "user", content: "Hi" }];
     const messages = transcriptToUIMessages(transcript);

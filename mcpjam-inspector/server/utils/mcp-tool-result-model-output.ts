@@ -1,0 +1,344 @@
+import { convertToModelMessages } from "ai";
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import {
+  type McpLinkedResourceReader,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+} from "@mcpjam/sdk";
+import {
+  readMcpToolOriginServerId,
+  stripMcpToolOriginMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+
+export type McpToolResultModelOutputOptions = {
+  modelVisibleMcpImageToolResults?: boolean;
+  readLinkedResource?: (params: {
+    serverId: string;
+    uri: string;
+    options?: { abortSignal?: AbortSignal };
+  }) => Promise<unknown>;
+  resolveLinkedResourceServerId?: (params: {
+    toolCallId?: string;
+    toolName?: string;
+  }) => string | undefined | Promise<string | undefined>;
+  abortSignal?: AbortSignal;
+};
+
+function linkedResourceReaderForPart(
+  part: unknown,
+  fallbackServerId: string | undefined,
+  options: McpToolResultModelOutputOptions
+): McpLinkedResourceReader | undefined {
+  const serverId = readServerIdFromToolResultPart(part) ?? fallbackServerId;
+  if (typeof serverId !== "string" || !options.readLinkedResource) {
+    return undefined;
+  }
+
+  return ({ uri, options: readOptions }) =>
+    options.readLinkedResource!({
+      serverId,
+      uri,
+      options: readOptions,
+    });
+}
+
+function readServerIdFromToolResultPart(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const record = part as Record<string, unknown>;
+  const legacy = record.serverId;
+  if (typeof legacy === "string" && legacy.length > 0) {
+    return legacy;
+  }
+  return readMcpToolOriginServerId(record.providerOptions);
+}
+
+function readToolCallId(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const toolCallId = (part as { toolCallId?: unknown }).toolCallId;
+  return typeof toolCallId === "string" && toolCallId.length > 0
+    ? toolCallId
+    : undefined;
+}
+
+function readToolName(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const toolName = (part as { toolName?: unknown }).toolName;
+  return typeof toolName === "string" && toolName.length > 0
+    ? toolName
+    : undefined;
+}
+
+function readPartType(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const type = (part as { type?: unknown }).type;
+  return typeof type === "string" ? type : undefined;
+}
+
+function unwrapJsonToolOutput(output: unknown): unknown {
+  let current = output;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return current;
+    }
+    const record = current as Record<string, unknown>;
+    if (
+      record.type !== "json" ||
+      !Object.prototype.hasOwnProperty.call(record, "value")
+    ) {
+      return current;
+    }
+    current = record.value;
+  }
+  return current;
+}
+
+function hasImageResourceLinkCandidate(result: unknown): boolean {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return false;
+  }
+  const content = (result as { content?: unknown }).content;
+  return (
+    Array.isArray(content) &&
+    content.some(
+      (block) =>
+        !!block &&
+        typeof block === "object" &&
+        !Array.isArray(block) &&
+        (block as { type?: unknown }).type === "resource_link" &&
+        typeof (block as { mimeType?: unknown }).mimeType === "string" &&
+        ((block as { mimeType: string }).mimeType).startsWith("image/")
+    )
+  );
+}
+
+function isImageOmissionMarkerText(text: string): boolean {
+  return (
+    text.startsWith("[image omitted:") ||
+    text.startsWith("[resource link omitted:") ||
+    text.startsWith("[audio omitted:") ||
+    text.startsWith("[embedded resource omitted") ||
+    text.startsWith("[unsupported MCP content omitted:")
+  );
+}
+
+function readReplayableImageModelOutput(output: unknown): unknown | undefined {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return undefined;
+  }
+
+  const record = output as Record<string, unknown>;
+  if (record.type !== "content" || !Array.isArray(record.value)) {
+    return undefined;
+  }
+
+  let sawImageMedia = false;
+  let sawOmissionMarker = false;
+  const value: unknown[] = [];
+
+  for (const part of record.value) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      return undefined;
+    }
+    const partRecord = part as Record<string, unknown>;
+    if (partRecord.type === "text") {
+      if (typeof partRecord.text !== "string") return undefined;
+      if (isImageOmissionMarkerText(partRecord.text)) {
+        sawOmissionMarker = true;
+      }
+      value.push({ type: "text", text: partRecord.text });
+      continue;
+    }
+
+    if (partRecord.type === "media" || partRecord.type === "image-data") {
+      if (
+        typeof partRecord.data !== "string" ||
+        typeof partRecord.mediaType !== "string" ||
+        !partRecord.mediaType.startsWith("image/")
+      ) {
+        return undefined;
+      }
+      sawImageMedia = true;
+      value.push({
+        type: partRecord.type,
+        data: partRecord.data,
+        mediaType: partRecord.mediaType,
+      });
+      continue;
+    }
+
+    return undefined;
+  }
+
+  if (!sawImageMedia && !sawOmissionMarker) {
+    return undefined;
+  }
+
+  return { type: "content", value };
+}
+
+export function createLinkedResourceServerIdResolver(args: {
+  serverIds: readonly string[];
+  listTools: (serverId: string) => Promise<{
+    tools?: Array<{ name?: unknown }>;
+  }>;
+}): NonNullable<McpToolResultModelOutputOptions["resolveLinkedResourceServerId"]> {
+  const cache = new Map<string, Promise<string | undefined>>();
+  return ({ toolName }) => {
+    if (!toolName) return undefined;
+    let cached = cache.get(toolName);
+    if (!cached) {
+      cached = (async () => {
+        const matches: string[] = [];
+        for (const serverId of args.serverIds) {
+          try {
+            const result = await args.listTools(serverId);
+            if (
+              Array.isArray(result.tools) &&
+              result.tools.some((tool) => tool.name === toolName)
+            ) {
+              matches.push(serverId);
+            }
+          } catch {
+            // Best-effort fallback only. Metadata-bearing results never use this.
+          }
+        }
+        return matches.length === 1 ? matches[0] : undefined;
+      })();
+      cache.set(toolName, cached);
+    }
+    return cached;
+  };
+}
+
+function stripInternalProviderOptions(part: unknown): unknown {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+  const record = part as Record<string, unknown>;
+  if (!record.providerOptions) return part;
+  const providerOptions = stripMcpToolOriginMetadata(record.providerOptions);
+  const { providerOptions: _providerOptions, ...rest } = record;
+  return providerOptions ? { ...rest, providerOptions } : rest;
+}
+
+export async function mapMcpImageToolOutputs(
+  messages: ModelMessage[],
+  options: McpToolResultModelOutputOptions = {}
+): Promise<ModelMessage[]> {
+  if (!options.modelVisibleMcpImageToolResults) {
+    return messages;
+  }
+
+  const mappedMessages: ModelMessage[] = [];
+  const serverIdByToolCallId = new Map<string, string>();
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      mappedMessages.push(message);
+      continue;
+    }
+
+    let didChange = false;
+    const content: unknown[] = [];
+
+    for (const part of message.content) {
+      const toolCallId = readToolCallId(part);
+      if (toolCallId && readPartType(part) === "tool-call") {
+        const serverId = readServerIdFromToolResultPart(part);
+        if (serverId) {
+          serverIdByToolCallId.set(toolCallId, serverId);
+        }
+      }
+
+      if (message.role !== "tool") {
+        const stripped = stripInternalProviderOptions(part);
+        if (stripped !== part) didChange = true;
+        content.push(stripped);
+        continue;
+      }
+
+      if (
+        part.type !== "tool-result" ||
+        part.output?.type !== "json"
+      ) {
+        const stripped = stripInternalProviderOptions(part);
+        if (stripped !== part) didChange = true;
+        content.push(stripped);
+        continue;
+      }
+
+      const rawOutputValue = unwrapJsonToolOutput(part.output);
+      if (rawOutputValue == null || typeof rawOutputValue !== "object") {
+        const stripped = stripInternalProviderOptions(part);
+        if (stripped !== part) didChange = true;
+        content.push(stripped);
+        continue;
+      }
+
+      const replayedModelOutput =
+        readReplayableImageModelOutput(rawOutputValue);
+      if (replayedModelOutput) {
+        const strippedPart = stripInternalProviderOptions(part);
+        didChange = true;
+        content.push({
+          ...(strippedPart as Record<string, unknown>),
+          output: replayedModelOutput,
+        });
+        continue;
+      }
+
+      const toolName = readToolName(part);
+      const metadataServerId = toolCallId
+        ? serverIdByToolCallId.get(toolCallId)
+        : undefined;
+      const resolvedServerId =
+        metadataServerId ??
+        (hasImageResourceLinkCandidate(rawOutputValue)
+          ? await options.resolveLinkedResourceServerId?.({
+              toolCallId,
+              toolName,
+            })
+          : undefined);
+      const readResource = linkedResourceReaderForPart(
+        part,
+        resolvedServerId,
+        options
+      );
+      const strippedPart = stripInternalProviderOptions(part);
+      const modelOutput = readResource
+        ? await mcpCallToolResultToModelOutputWithLinkedResources(
+            rawOutputValue as any,
+            {
+              readResource,
+              abortSignal: options.abortSignal,
+            }
+          )
+        : mcpCallToolResultToModelOutput(rawOutputValue as any);
+      if (!modelOutput) {
+        if (strippedPart !== part) didChange = true;
+        content.push(strippedPart);
+        continue;
+      }
+
+      didChange = true;
+      content.push({
+        ...(strippedPart as Record<string, unknown>),
+        output: modelOutput,
+      });
+    }
+
+    mappedMessages.push(
+      didChange ? ({ ...message, content } as ModelMessage) : message
+    );
+  }
+
+  return mappedMessages;
+}
+
+export async function convertToMcpjamModelMessages(
+  messages: Parameters<typeof convertToModelMessages>[0],
+  options: McpToolResultModelOutputOptions = {}
+): Promise<ModelMessage[]> {
+  return mapMcpImageToolOutputs(
+    (await convertToModelMessages(messages)) as ModelMessage[],
+    options
+  );
+}

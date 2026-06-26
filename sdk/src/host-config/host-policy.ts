@@ -27,10 +27,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * span: inspector eval runners (canonical, via Convex), SDK `HostRunner`
  * (public, via `Host.toJSON()`), and unit tests on both.
  */
-function readHostStyle(hostConfig: Record<string, unknown>): string | undefined {
+function readHostStyle(
+  hostConfig: Record<string, unknown>
+): string | undefined {
   if (typeof hostConfig.hostStyle === "string") return hostConfig.hostStyle;
   if (typeof hostConfig.style === "string") return hostConfig.style;
   return undefined;
+}
+
+function readHostContext(
+  hostConfig: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  return isRecord(hostConfig.hostContext) ? hostConfig.hostContext : undefined;
+}
+
+function readBooleanPolicyOverride(
+  hostConfig: Record<string, unknown>,
+  key: string
+): boolean | undefined {
+  if (typeof hostConfig[key] === "boolean") {
+    return hostConfig[key] as boolean;
+  }
+
+  const hostContext = readHostContext(hostConfig);
+  const hostContextValue = hostContext?.[key];
+  return typeof hostContextValue === "boolean" ? hostContextValue : undefined;
 }
 
 export type HostExecutionPolicy = {
@@ -38,19 +59,26 @@ export type HostExecutionPolicy = {
   /** undefined = spec default (filter app-only tools from model). false = opt out. */
   respectToolVisibility: boolean | undefined;
   progressiveDiscoveryEnabled: boolean;
+  /**
+   * Whether eligible MCP image-bearing tool-result content should be passed
+   * through as model-visible image content instead of staying as JSON. This is
+   * a host/client capability, not a storage or UI-rendering concern.
+   */
+  modelVisibleMcpImageToolResults: boolean;
   hostStyle: string | undefined;
   namedHostId: string | undefined;
 };
 
 export function extractHostExecutionPolicy(
   hostConfig: Record<string, unknown> | null,
-  namedHostId?: string,
+  namedHostId?: string
 ): HostExecutionPolicy {
   if (!hostConfig) {
     return {
       requireToolApproval: false,
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
+      modelVisibleMcpImageToolResults: true,
       hostStyle: undefined,
       namedHostId,
     };
@@ -73,11 +101,15 @@ export function extractHostExecutionPolicy(
       : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
   const hostStyle = readHostStyle(hostConfig);
+  const modelVisibleMcpImageToolResults =
+    readBooleanPolicyOverride(hostConfig, "modelVisibleMcpImageToolResults") ??
+    true;
 
   return {
     requireToolApproval,
     respectToolVisibility,
     progressiveDiscoveryEnabled,
+    modelVisibleMcpImageToolResults,
     hostStyle,
     namedHostId,
   };
@@ -105,12 +137,19 @@ export function extractHostExecutionPolicy(
  * runtime access (inspector eval runner, future `HostRuntime` plumbing).
  */
 export function buildHostSnapshotMetadata(
-  hostConfig: Record<string, unknown> | null,
+  hostConfig: Record<string, unknown> | null
 ): Record<string, string | number | boolean> {
+  if (!hostConfig) {
+    return {};
+  }
+
   const policy = extractHostExecutionPolicy(hostConfig);
   const meta: Record<string, string | number | boolean> = {};
   if (policy.progressiveDiscoveryEnabled) {
     meta.progressive_discovery_enabled = true;
+  }
+  if (policy.modelVisibleMcpImageToolResults) {
+    meta.model_visible_mcp_image_tool_results = true;
   }
   if (policy.namedHostId) {
     meta.host_id = policy.namedHostId;
@@ -125,7 +164,7 @@ export function buildHostIterationMetadata(
   policy: HostExecutionPolicy,
   signals: ToolExposureSignals,
   approvalsWouldRequire: number,
-  injectOpenAiCompat: boolean,
+  injectOpenAiCompat: boolean
 ): Record<string, string | number | boolean> {
   const meta: Record<string, string | number | boolean> = {
     tools_total_before: signals.toolsTotalBefore,
@@ -140,6 +179,9 @@ export function buildHostIterationMetadata(
   }
   if (policy.progressiveDiscoveryEnabled) {
     meta.progressive_discovery_enabled = true;
+  }
+  if (policy.modelVisibleMcpImageToolResults) {
+    meta.model_visible_mcp_image_tool_results = true;
   }
   if (injectOpenAiCompat) {
     meta.openai_compat_injected = true;

@@ -49,6 +49,7 @@ import {
   emitToolInput,
   emitToolOutput,
 } from "../chat-stream-chunks.js";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { tunnelManager } from "../../services/tunnel-manager.js";
 import { logger } from "../logger.js";
 import type {
@@ -726,6 +727,7 @@ export async function runHarnessTurn(
               toolCallId: string;
               toolName: string;
               input: unknown;
+              providerOptions?: Record<string, unknown>;
             }
         > = [];
         const pendingResults: Array<{
@@ -733,6 +735,7 @@ export async function runHarnessTurn(
           toolName: string | undefined;
           output: unknown;
           isError: boolean;
+          serverId?: string;
         }> = [];
         const flushSegment = () => {
           if (assistantParts.length > 0) {
@@ -799,6 +802,14 @@ export async function runHarnessTurn(
                             : JSON.stringify(tr.output),
                       }
                     : { type: "json", value: tr.output },
+                  ...(tr.serverId
+                    ? {
+                        providerOptions: mergeMcpToolOriginMetadata(
+                          undefined,
+                          tr.serverId,
+                        ),
+                      }
+                    : {}),
                 },
               ],
             } as unknown as ModelMessage);
@@ -938,11 +949,17 @@ export async function runHarnessTurn(
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
             // auto-continues, re-submitting the turn forever.
-            emitToolInput(writer, {
+            const providerMetadata = mergeMcpToolOriginMetadata(
+              undefined,
+              serverId
+            );
+            writer.write({
+              type: "tool-input-available",
               toolCallId,
               toolName,
               input,
               providerExecuted: true,
+              ...(providerMetadata ? { providerMetadata } : {}),
             });
             await onToolCall?.({
               toolCallId,
@@ -957,6 +974,9 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
+              ...(providerMetadata
+                ? { providerOptions: providerMetadata }
+                : {}),
             });
           } else if (
             type === "tool-result" ||
@@ -1020,6 +1040,7 @@ export async function runHarnessTurn(
               toolName: meta.toolName,
               output,
               isError,
+              ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
           } else if (type === "file-change") {
             // Some runtimes (Codex) report file mutations as a `file-change`

@@ -116,6 +116,7 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
     requireToolApproval: false,
     respectToolVisibility: undefined,
     progressiveDiscoveryEnabled: false,
+    modelVisibleMcpImageToolResults: false,
     hostStyle: undefined,
     namedHostId: undefined,
   };

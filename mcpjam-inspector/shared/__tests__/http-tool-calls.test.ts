@@ -207,7 +207,7 @@ describe("executeToolCallsFromMessages", () => {
         expect.objectContaining({
           toolCallId: "call-123",
           messages,
-        }),
+        })
       );
       expect(messages).toHaveLength(2);
       expect(messages[1].role).toBe("tool");
@@ -307,7 +307,7 @@ describe("executeToolCallsFromMessages", () => {
       expect(messages).toHaveLength(2);
       expect((messages[1] as any).content[0].output.type).toBe("error-text");
       expect((messages[1] as any).content[0].output.value).toContain(
-        "Tool 'unknown_tool' not found",
+        "Tool 'unknown_tool' not found"
       );
     });
   });
@@ -342,7 +342,7 @@ describe("executeToolCallsFromMessages", () => {
         expect.objectContaining({
           toolCallId: "call-prefixed",
           messages,
-        }),
+        })
       );
     });
   });
@@ -491,7 +491,7 @@ describe("executeToolCallsFromMessages", () => {
 
       expect((messages[1] as any).content[0].output.type).toBe("json");
       expect((messages[1] as any).content[0].output.value.big).toBe(
-        "12345678901234567890",
+        "12345678901234567890"
       );
     });
   });
@@ -896,10 +896,10 @@ describe("executeToolCallsFromMessages", () => {
       // The unresolved app tool call must NOT have produced a synthetic
       // error result (that would corrupt model context).
       const allResults = messages.flatMap((m) =>
-        m.role === "tool" ? (m as any).content : [],
+        m.role === "tool" ? (m as any).content : []
       );
       const appResult = allResults.find(
-        (c: any) => c.toolCallId === "call-app",
+        (c: any) => c.toolCallId === "call-app"
       );
       expect(appResult).toBeUndefined();
     });
@@ -926,7 +926,7 @@ describe("executeToolCallsFromMessages", () => {
 
       expect(messages).toHaveLength(2);
       expect((messages[1] as any).content[0].output.value).toMatch(
-        /not found/i,
+        /not found/i
       );
     });
 
@@ -984,7 +984,7 @@ describe("executeToolCallsFromMessages", () => {
       // the unknown tool so this regression is loud.
       expect(messages).toHaveLength(2);
       expect((messages[1] as any).content[0].output.value).toMatch(
-        /not found/i,
+        /not found/i
       );
     });
   });
@@ -1019,7 +1019,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
           type: "content",
           value: [
             {
-              type: "image-data",
+              type: "media",
               data: (output as { screenshotBase64: string }).screenshotBase64,
               mediaType: "image/png",
             },
@@ -1042,9 +1042,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     expect(part.toolCallId).toBe("call-cu-1");
     expect(part.output).toEqual({
       type: "content",
-      value: [
-        { type: "image-data", data: "aGVsbG8=", mediaType: "image/png" },
-      ],
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
     });
   });
 
@@ -1067,6 +1065,35 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({ type: "text", value: "ok" });
     expect("result" in part).toBe(false);
+  });
+
+  it("preserves the raw result for an SDK-converted MCP toModelOutput tool", async () => {
+    const implResult = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+      _meta: { debug: true },
+    };
+    const tools = {
+      screenshot: {
+        execute: async () => implResult,
+        toModelOutput: () => ({
+          type: "content",
+          value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+        }),
+        _mcpjamPreserveRawResultForUi: true,
+      },
+    };
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(part.result).toEqual(implResult);
   });
 
   it("preserves the raw result for a toModelOutput tool that returns structuredContent (widget UI hydration)", async () => {
@@ -1164,5 +1191,235 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({ type: "json", value: { ok: true } });
     expect(part.result).toEqual({ ok: true });
+  });
+
+  it("maps direct MCP image results without toModelOutput to model-visible content", async () => {
+    const implResult = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+      _meta: { raw: "kept" },
+    };
+    const tools = {
+      screenshot: {
+        execute: async () => implResult,
+      },
+    };
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+      modelVisibleMcpImageToolResults: true,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(part.result).toEqual(implResult);
+  });
+
+  it("maps embedded MCP image resources without toModelOutput to model-visible content", async () => {
+    const implResult = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "mcp://images/one",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        },
+      ],
+    };
+    const tools = {
+      screenshot: {
+        execute: async () => implResult,
+      },
+    };
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+      modelVisibleMcpImageToolResults: true,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(part.result).toEqual(implResult);
+  });
+
+  it("resolves linked MCP image resources without toModelOutput through resources/read", async () => {
+    const implResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "mcp://images/one",
+          name: "one.png",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const tools = {
+      screenshot: {
+        _serverId: "srv-1",
+        execute: async () => implResult,
+      },
+    };
+    const readLinkedResource = vi.fn(
+      async ({
+        uri,
+      }: {
+        serverId: string;
+        uri: string;
+        options?: { abortSignal?: AbortSignal };
+      }) => ({
+        contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],
+      })
+    );
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+      modelVisibleMcpImageToolResults: true,
+      readLinkedResource,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(part.result).toEqual(implResult);
+    expect(readLinkedResource).toHaveBeenCalledWith({
+      serverId: "srv-1",
+      uri: "mcp://images/one",
+      options: undefined,
+    });
+  });
+
+  it("propagates aborts during linked MCP image resource mapping", async () => {
+    const abortController = new AbortController();
+    const implResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "mcp://images/one",
+          name: "one.png",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const tools = {
+      screenshot: {
+        _serverId: "srv-1",
+        execute: async () => implResult,
+      },
+    };
+    const readLinkedResource = vi.fn(async () => {
+      abortController.abort();
+      return {
+        contents: [{ blob: "aGVsbG8=", mimeType: "image/png" }],
+      };
+    });
+
+    const messages = callMessage("screenshot");
+    await expect(
+      executeToolCallsFromMessages(messages, {
+        tools,
+        modelVisibleMcpImageToolResults: true,
+        readLinkedResource,
+        abortSignal: abortController.signal,
+      })
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(messages).toHaveLength(1);
+    expect(readLinkedResource).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes abortSignal into toModelOutput and drops results after abort", async () => {
+    const abortController = new AbortController();
+    const toModelOutput = vi.fn(
+      async ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+        expect(abortSignal).toBe(abortController.signal);
+        abortController.abort();
+        return {
+          type: "content",
+          value: [
+            { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+          ],
+        };
+      }
+    );
+    const tools = {
+      screenshot: {
+        execute: async () => ({ ok: true }),
+        toModelOutput,
+      },
+    };
+
+    const messages = callMessage("screenshot");
+    await expect(
+      executeToolCallsFromMessages(messages, {
+        tools,
+        abortSignal: abortController.signal,
+      })
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(messages).toHaveLength(1);
+    expect(toModelOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps direct MCP image results on JSON when model-visible images are not enabled", async () => {
+    const implResult = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+    const tools = {
+      screenshot: {
+        execute: async () => implResult,
+      },
+    };
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({ type: "json", value: implResult });
+  });
+
+  it("keeps linked MCP image resources on JSON when model-visible images are not enabled", async () => {
+    const implResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "mcp://images/one",
+          name: "one.png",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const tools = {
+      screenshot: {
+        _serverId: "srv-1",
+        execute: async () => implResult,
+      },
+    };
+    const readLinkedResource = vi.fn(async () => ({
+      contents: [{ blob: "aGVsbG8=", mimeType: "image/png" }],
+    }));
+
+    const messages = callMessage("screenshot");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+      readLinkedResource,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({ type: "json", value: implResult });
+    expect(readLinkedResource).not.toHaveBeenCalled();
   });
 });

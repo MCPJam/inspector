@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 
@@ -14,7 +16,11 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+      },
     ],
   }),
 }));
@@ -29,6 +35,13 @@ vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
 }));
 
 import { BehaviorTab } from "../BehaviorTab";
+
+function StatefulBehaviorTab() {
+  const [draft, setDraft] = useState(emptyHostConfigInputV2());
+  return (
+    <BehaviorTab draft={draft} onDraftChange={setDraft} attention={[]} />
+  );
+}
 
 /**
  * Coupling test: the focus tabs read their labels and descriptions from
@@ -47,7 +60,7 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
   }
 
@@ -67,6 +80,29 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
     renderTab();
     const label = hostConfigField("respectToolVisibility").label;
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+
+  it("renders the schema label for `modelVisibleMcpImageToolResults`", () => {
+    renderTab();
+    const label = hostConfigField("modelVisibleMcpImageToolResults").label;
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+
+  it("toggles `modelVisibleMcpImageToolResults`", async () => {
+    const user = userEvent.setup();
+    render(<StatefulBehaviorTab />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /expose tool images to model/i,
+    });
+
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
   });
 
   it("renders the schema label for `progressiveToolDiscovery`", () => {

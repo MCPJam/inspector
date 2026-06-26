@@ -459,6 +459,22 @@ describe("snapshotHostSource + isHostJson", () => {
     expect(snapshotHostSource(snap)).toBe(snap);
   });
 
+  it("snapshotHostSource migrates legacy image policy out of hostContext", () => {
+    const snap = new Host({ style: "mcpjam", model: "openai/gpt-4o" }).toJSON();
+    const legacySnap = {
+      ...snap,
+      hostContext: {
+        modelVisibleMcpImageToolResults: false,
+        theme: "dark",
+      },
+    };
+
+    const normalized = snapshotHostSource(legacySnap);
+    expect(normalized).not.toBe(legacySnap);
+    expect(normalized.modelVisibleMcpImageToolResults).toBe(false);
+    expect(normalized.hostContext).toEqual({ theme: "dark" });
+  });
+
   it("snapshotHostSource calls toJSON on a Host", () => {
     const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
     const snap = snapshotHostSource(host);

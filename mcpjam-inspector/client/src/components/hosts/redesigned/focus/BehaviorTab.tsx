@@ -34,24 +34,44 @@ import type { HostAttentionIssue } from "../types";
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
 function progressiveValueToTri(
-  value: boolean | undefined,
+  value: boolean | undefined
 ): ProgressiveTriState {
   if (value === true) return "on";
   if (value === false) return "off";
   return "auto";
 }
 function triToProgressiveValue(
-  value: ProgressiveTriState,
+  value: ProgressiveTriState
 ): boolean | undefined {
   if (value === "on") return true;
   if (value === "off") return false;
   return undefined;
 }
 
+function resolveModelVisibleMcpImages(draft: HostConfigInputV2): boolean {
+  if (typeof draft.modelVisibleMcpImageToolResults === "boolean") {
+    return draft.modelVisibleMcpImageToolResults;
+  }
+  const legacy = draft.hostContext?.modelVisibleMcpImageToolResults;
+  return typeof legacy === "boolean" ? legacy : true;
+}
+
+function updateModelVisibleMcpImages(
+  draft: HostConfigInputV2,
+  checked: boolean
+): Partial<HostConfigInputV2> {
+  const hostContext = { ...(draft.hostContext ?? {}) };
+  delete hostContext.modelVisibleMcpImageToolResults;
+  return {
+    modelVisibleMcpImageToolResults: checked,
+    hostContext,
+  };
+}
+
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -99,8 +119,10 @@ export function BehaviorTab({
   const fTemp = hostConfigField("temperature");
   const fApproval = hostConfigField("requireToolApproval");
   const fVisibility = hostConfigField("respectToolVisibility");
+  const fToolImages = hostConfigField("modelVisibleMcpImageToolResults");
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
+  const toolImagesEnabled = resolveModelVisibleMcpImages(draft);
 
   // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
   // cross into its runtime until the MCP proxy mediates them — and a few never
@@ -209,6 +231,21 @@ export function BehaviorTab({
         />
 
         <FieldRow
+          label={fToolImages.label}
+          description={fToolImages.description}
+          control={
+            <Switch
+              checked={toolImagesEnabled}
+              onCheckedChange={(checked) =>
+                update(updateModelVisibleMcpImages(draft, checked))
+              }
+              aria-label={fToolImages.label}
+              disabled={readOnly}
+            />
+          }
+        />
+
+        <FieldRow
           label={
             <span className="inline-flex items-center gap-1.5">
               {fProgressive.label}
@@ -258,7 +295,7 @@ export function BehaviorTab({
                 if (!value) return;
                 update({
                   progressiveToolDiscovery: triToProgressiveValue(
-                    value as ProgressiveTriState,
+                    value as ProgressiveTriState
                   ),
                 });
               }}

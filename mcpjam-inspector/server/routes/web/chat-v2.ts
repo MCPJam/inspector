@@ -188,6 +188,9 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        modelVisibleMcpImageToolResults:
+          body.modelVisibleMcpImageToolResults,
+        hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
       // Chatbox: the published host wins (a share-link client can't override).
@@ -218,6 +221,15 @@ chatV2.post("/", async (c) => {
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
           "[chat-v2] client respectToolVisibility differs from host; using host value",
+          {
+            chatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          }
+        );
+      } else if (entry.field === "modelVisibleMcpImageToolResults") {
+        logger.warn(
+          "[chat-v2] client modelVisibleMcpImageToolResults differs from host; using host value",
           {
             chatboxId,
             body: entry.overrideValue,
@@ -262,6 +274,8 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
+    const modelVisibleMcpImageToolResults =
+      resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
     // Host-config tools (web_search, bash, …) — one resolver owns which
     // config field produces which tool and with which gates (see
     // built-in-tools/registry.ts). `computer` comes exclusively from the
@@ -418,6 +432,7 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           respectToolVisibility,
+          modelVisibleMcpImageToolResults,
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -469,6 +484,7 @@ chatV2.post("/", async (c) => {
                   resolvedTemperature,
                   requireToolApproval,
                   respectToolVisibility,
+                  modelVisibleMcpImageToolResults,
                   selectedServerIds,
                 })
             : null,

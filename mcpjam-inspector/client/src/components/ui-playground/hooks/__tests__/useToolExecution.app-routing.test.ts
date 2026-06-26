@@ -148,6 +148,7 @@ describe("useToolExecution app-tool routing", () => {
     );
     expect(callTool).not.toHaveBeenCalled();
     expect(outcome?.ok).toBe(true);
+    expect(result.current.pendingExecution?.toolMeta?._serverId).toBe("srv-1");
   });
 
   it("app tool dispatches via bridge.callTool with rawName, not the alias", async () => {

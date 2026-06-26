@@ -395,4 +395,26 @@ describe("createDeterministicToolMessages", () => {
     expect((toolPart as any).input).toEqual({ url: "https://example.com" });
     expect((toolPart as any).output).toBe(result);
   });
+
+  it("preserves MCP server origin metadata on deterministic tool parts", () => {
+    const { messages } = createDeterministicToolMessages(
+      "qa_return_linked_image_resource",
+      {},
+      {
+        content: [
+          {
+            type: "resource_link",
+            uri: "example://linked-image.png",
+            mimeType: "image/png",
+          },
+        ],
+      },
+      { _serverId: "qa-server" },
+    );
+
+    const toolPart = messages[1].parts[1] as DynamicToolUIPart;
+    expect((toolPart as any).callProviderMetadata).toEqual({
+      mcpjam: { serverId: "qa-server" },
+    });
+  });
 });

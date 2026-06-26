@@ -904,6 +904,8 @@ export function ChatboxChatPage({
             systemPrompt: session.payload.systemPrompt,
             temperature: session.payload.temperature,
             requireToolApproval: session.payload.requireToolApproval,
+            modelVisibleMcpImageToolResults:
+              session.payload.modelVisibleMcpImageToolResults,
           }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}

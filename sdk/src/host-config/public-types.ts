@@ -88,6 +88,7 @@ export interface HostJson {
   requireToolApproval: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpImageToolResults?: boolean;
   /** Personal computer attached to this host; absent ⇒ none. Normalized:
    * `null` input never survives to `HostJson`. */
   computer?: HostComputer;
@@ -140,6 +141,8 @@ export interface HostInit {
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
+  /** Whether eligible MCP tool-returned images are exposed to the model. */
+  modelVisibleMcpImageToolResults?: boolean;
   /**
    * Attach a personal cloud workstation (chat `bash` tool + web terminal).
    * Absent or `null` ⇒ no computer; `null` is accepted so an editor can
