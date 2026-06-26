@@ -794,8 +794,8 @@ export async function createAuthorizedManager(
     /**
      * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
      * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`; when absent, XAA servers fall through with no minted token
-     * (and the resource server returns 401), so connect surfaces must pass it.
+     * `Context`. Required whenever the batch contains a `useXaa` server — the
+     * builder throws a 500 rather than connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
   }
@@ -897,7 +897,18 @@ export async function createAuthorizedManager(
         auth.serverConfig.transportType === "http" &&
         auth.serverConfig.useXaa === true &&
         auth.serverConfig.useOAuth !== true;
-      if (useXaa && options?.xaaIssuer) {
+      if (useXaa) {
+        if (!options?.xaaIssuer) {
+          // Caller-contract violation: a `useXaa` server reached a manager
+          // builder that didn't thread the issuer (only callers holding the
+          // request `Context` can resolve it). Fail loud here rather than
+          // connecting tokenless and surfacing a confusing downstream 401.
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
+          );
+        }
         const mintArgs = buildXaaMintArgs({
           issuer: options.xaaIssuer,
           hostedMode: HOSTED_MODE,
