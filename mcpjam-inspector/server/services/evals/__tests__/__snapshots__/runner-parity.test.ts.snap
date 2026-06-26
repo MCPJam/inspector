@@ -199,6 +199,20 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 2,
         "unexpectedCount": 0,
       },
@@ -319,6 +333,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -439,6 +461,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -575,6 +605,21 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           },
         ],
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "assert",
+            "reason": "final assistant message contains "Done"",
+            "status": "ok",
+            "stepId": "turn-1-check-0",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -649,6 +694,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             ],
             "missing": [],
             "passed": true,
+            "predicateResults": [
+              {
+                "passed": false,
+                "predicate": {
+                  "args": {
+                    "args": {
+                      "id": 1,
+                    },
+                  },
+                  "toolName": "add-to-cart",
+                  "type": "toolCalledWith",
+                },
+                "reason": "expected tool "add-to-cart" called ≥1× with {"id":1} (partial match), but it was never called",
+                "scope": {
+                  "kind": "turn",
+                  "promptIndex": 0,
+                },
+              },
+            ],
             "prompt": "Add it",
             "promptIndex": 0,
             "unexpected": [],
@@ -702,10 +766,44 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "predicates": [
+          {
+            "passed": false,
+            "predicate": {
+              "args": {
+                "args": {
+                  "id": 1,
+                },
+              },
+              "toolName": "add-to-cart",
+              "type": "toolCalledWith",
+            },
+            "reason": "expected tool "add-to-cart" called ≥1× with {"id":1} (partial match), but it was never called",
+            "scope": {
+              "kind": "turn",
+              "promptIndex": 0,
+            },
+          },
+        ],
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "assert",
+            "reason": "expected tool "add-to-cart" called ≥1× with {"id":1} (partial match), but it was never called",
+            "status": "fail",
+            "stepId": "turn-1-expect-0",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
-      "result": "passed",
+      "result": "failed",
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
@@ -784,6 +882,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
               "type": "widgetRendered",
             },
             "reason": "no widget render observations recorded",
+          },
+        ],
+        "stepResults": [
+          {
+            "kind": "toolCall",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
           },
         ],
         "turnCount": 1,
@@ -910,6 +1016,20 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 2,
         "unexpectedCount": 0,
       },
@@ -985,6 +1105,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1060,6 +1188,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1113,6 +1249,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             ],
             "missing": [],
             "passed": true,
+            "predicateResults": [
+              {
+                "passed": true,
+                "predicate": {
+                  "args": {
+                    "args": {
+                      "q": "x",
+                    },
+                  },
+                  "toolName": "search",
+                  "type": "toolCalledWith",
+                },
+                "reason": "tool "search" called with matching args (1/1 required; partial match)",
+                "scope": {
+                  "kind": "turn",
+                  "promptIndex": 0,
+                },
+              },
+            ],
             "prompt": "Search",
             "promptIndex": 0,
             "unexpected": [],
@@ -1156,6 +1311,40 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "predicates": [
+          {
+            "passed": true,
+            "predicate": {
+              "args": {
+                "args": {
+                  "q": "x",
+                },
+              },
+              "toolName": "search",
+              "type": "toolCalledWith",
+            },
+            "reason": "tool "search" called with matching args (1/1 required; partial match)",
+            "scope": {
+              "kind": "turn",
+              "promptIndex": 0,
+            },
+          },
+        ],
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "assert",
+            "reason": "tool "search" called with matching args (1/1 required; partial match)",
+            "status": "ok",
+            "stepId": "turn-1-expect-0",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1246,6 +1435,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1336,6 +1533,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1411,6 +1616,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },
@@ -1503,6 +1716,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
               "type": "widgetRendered",
             },
             "reason": "widget rendered (1/1 observation(s))",
+          },
+        ],
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
           },
         ],
         "turnCount": 1,
@@ -1629,6 +1850,20 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
         "turnCount": 2,
         "unexpectedCount": 0,
       },
@@ -1854,6 +2089,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+        ],
         "turnCount": 1,
         "unexpectedCount": 0,
       },

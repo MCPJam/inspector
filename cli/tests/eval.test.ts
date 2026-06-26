@@ -289,8 +289,18 @@ test("eval create posts an authored suite and echoes the new suite id", async ()
       cases: [
         {
           title: "echo works",
-          query: "say hi",
-          expectedToolCalls: ["echo"],
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "say hi" },
+            {
+              id: "s2",
+              kind: "assert",
+              assertion: {
+                type: "toolCalledWith",
+                toolName: "echo",
+                args: { args: {} },
+              },
+            },
+          ],
           advancedConfig: { system: "be terse", temperature: 0.1 },
         },
       ],
@@ -341,7 +351,7 @@ test("eval create lets --server override the file's servers", async () => {
       name: "Override",
       servers: ["Stdio Server"],
       model: "anthropic/claude-haiku-4.5",
-      cases: [{ title: "t", query: "q" }],
+      cases: [{ title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] }],
     };
     const run = await captureProcessOutput(() =>
       main(
@@ -386,7 +396,7 @@ test("eval create forwards a --provider override for bare model ids", async () =
           "--server",
           "Ready Server",
           "--json",
-          JSON.stringify({ cases: [{ title: "t", query: "q" }] }),
+          JSON.stringify({ cases: [{ title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] }] }),
         ),
         { telemetry: telemetryDisabled },
       ),
@@ -409,7 +419,7 @@ test("eval create rejects stdio servers before any write", async () => {
       name: "Bad",
       servers: ["Stdio Server"],
       model: "anthropic/claude-haiku-4.5",
-      cases: [{ title: "t", query: "q" }],
+      cases: [{ title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] }],
     };
     const run = await captureProcessOutput(() =>
       main(

@@ -21,6 +21,7 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -45,9 +46,12 @@ import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize
 import {
   countModelSteps,
   isModelFree,
+  normalizePromptTurns,
   normalizeSteps,
   probeConfigToToolCallStep,
+  promptTurnsToSteps,
   stepsSchema,
+  type PromptTurn,
   type TestStep,
 } from "@/shared/steps";
 import {
@@ -65,6 +69,86 @@ const toolChoiceSchema = z.union([
     toolName: z.string().min(1),
   }),
 ]);
+
+/**
+ * Resolve legacy multi-turn data from BOTH the top-level `promptTurns` and the
+ * historical `advancedConfig.promptTurns` storage location (pre-migration cases
+ * stored turns there). Returns [] when neither carries turns, so callers keep
+ * their own single-turn / placeholder fallbacks. Mirrors the source precedence
+ * of `resolvePromptTurns` without its query-synthesis tail.
+ */
+function resolveLegacyPromptTurns(src: {
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+}): PromptTurn[] {
+  const topLevel = normalizePromptTurns(src.promptTurns);
+  if (topLevel.length > 0) return topLevel;
+  return normalizePromptTurns(
+    (src.advancedConfig as { promptTurns?: unknown } | undefined)?.promptTurns
+  );
+}
+
+/**
+ * Boundary compat: project a wire test's legacy fields onto the steps-first
+ * `TestStep[]` contract. Precedence mirrors `internalCaseToSteps` in
+ * routes/v1/evals.ts so every surface converges on the same shape:
+ *   1. explicit `steps` (or `widget_probe` + `probeConfig`) win;
+ *   2. multi-turn `promptTurns` (top-level OR `advancedConfig`) → `promptTurnsToSteps`;
+ *   3. single-turn `query`/`expectedToolCalls` → one `prompt` step + asserts.
+ * `query` is required on the wire, so this always returns ≥1 step.
+ */
+function wireTestToSteps(test: {
+  steps?: unknown;
+  caseType?: TestCaseType;
+  probeConfig?: ProbeConfig;
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+  query?: string;
+  expectedToolCalls?: any[];
+}): TestStep[] {
+  const explicit = resolveAuthoringSteps(test);
+  if (explicit && explicit.length > 0) return explicit;
+
+  const turns = resolveLegacyPromptTurns(test);
+  if (turns.length > 0) return promptTurnsToSteps(turns);
+
+  const steps: TestStep[] = [
+    {
+      id: "step-1-prompt",
+      kind: "prompt",
+      prompt: typeof test.query === "string" ? test.query : "",
+    },
+  ];
+  const expected = Array.isArray(test.expectedToolCalls)
+    ? test.expectedToolCalls
+    : [];
+  expected.forEach((call: any, i: number) => {
+    steps.push({
+      id: `step-1-expect-${i}`,
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: String(call?.toolName ?? ""),
+        args: { args: call?.arguments ?? {} },
+      },
+    });
+  });
+  return steps;
+}
+
+/**
+ * Quick-run compat: a PERSISTED case that predates the `steps` field but still
+ * carries legacy `promptTurns` converts to steps so a single-case quick/compare
+ * run executes every turn — without this it falls back to the top-level
+ * `query`/`expectedToolCalls` and silently drops later turns/assertions.
+ */
+function legacyCaseStepsFallback(testCase: {
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+}): TestStep[] | undefined {
+  const turns = resolveLegacyPromptTurns(testCase);
+  return turns.length > 0 ? promptTurnsToSteps(turns) : undefined;
+}
 
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
@@ -90,8 +174,15 @@ export const RunEvalsRequestSchema = z.object({
         expectedOutput: z.string().optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
-        // (feedback_zod_strips_unthreaded_fields).
-        steps: stepsSchema.min(1),
+        // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
+        // pre-migration callers (UI run path, MCP/hosted, scheduled worker)
+        // that still send `query`/`expectedToolCalls`/`promptTurns` are
+        // accepted; the `.transform` below projects those legacy fields onto
+        // `steps` so everything downstream sees the steps-first contract.
+        steps: stepsSchema.optional(),
+        // Legacy multi-turn shape. Accepted (not stripped) purely so the
+        // transform can convert it to `steps`; never persisted as-is.
+        promptTurns: z.array(z.any()).optional(),
         advancedConfig: z
           .object({
             system: z.string().optional(),
@@ -132,6 +223,15 @@ export const RunEvalsRequestSchema = z.object({
             message: "probeConfig is only allowed on widget_probe cases",
           });
         }
+      })
+      // Project legacy fields onto `steps` so the rest of the pipeline only
+      // ever deals with the steps-first contract. Steps-first callers pass
+      // through UNCHANGED (no normalization churn); only legacy bodies are
+      // converted. `query` is always present (required above), so the
+      // single-turn fallback guarantees ≥1 step.
+      .transform((test) => {
+        if (Array.isArray(test.steps) && test.steps.length > 0) return test;
+        return { ...test, steps: wireTestToSteps(test) };
       })
   ),
   serverIds: z
@@ -242,6 +342,11 @@ export const RunTestCaseRequestSchema = z.object({
       // Unified `TestStep[]` override for a single-case quick run. Declared so
       // Zod doesn't strip it off the wire.
       steps: stepsSchema.min(1).optional(),
+      // Legacy multi-turn override still sent by the test-template editor's
+      // quick-run path. Accepted (not stripped) so the transform below can
+      // convert it to `steps`; otherwise unsaved multi-turn/pinned edits are
+      // silently dropped and the run falls back to the persisted case.
+      promptTurns: z.array(z.any()).optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
@@ -262,6 +367,19 @@ export const RunTestCaseRequestSchema = z.object({
       // through every Zod boundary; the runner resolves it against the
       // suite's `defaultPredicates` per the case mode.
       predicates: casePredicatesSchema.optional(),
+    })
+    // Convert a legacy `promptTurns` override (top-level OR `advancedConfig`)
+    // to `steps` when the caller didn't send `steps` directly, so the runner's
+    // `overrides.steps ?? case.steps` precedence picks up unsaved multi-turn
+    // edits.
+    .transform((overrides) => {
+      if (!overrides.steps || overrides.steps.length === 0) {
+        const turns = resolveLegacyPromptTurns(overrides);
+        if (turns.length > 0) {
+          return { ...overrides, steps: promptTurnsToSteps(turns) };
+        }
+      }
+      return overrides;
     })
     .optional(),
   /**
@@ -348,14 +466,28 @@ export function buildCapEntriesFromPersistedCases(
     runs?: number;
     models?: Array<{ model: string; provider: string }>;
     steps?: unknown;
+    promptTurns?: unknown;
+    advancedConfig?: unknown;
+    caseType?: TestCaseType;
+    probeConfig?: ProbeConfig;
   }>
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
     const steps = (
-      Array.isArray(testCase.steps) && testCase.steps.length > 0
-        ? testCase.steps
-        : [{ id: "legacy-cap-prompt", kind: "prompt", prompt: "" }]
+      // Resolve real steps for cap math so the count matches what executes:
+      //  - explicit `steps` (or legacy `widget_probe`+`probeConfig`, which is
+      //    MODEL-FREE → 0 LLM calls) via resolveAuthoringSteps;
+      //  - legacy multi-turn `promptTurns` (top-level/advancedConfig) so every
+      //    model turn is counted;
+      //  - else an empty `prompt` placeholder (counts once).
+      // Without the probe branch, a legacy widget probe would synthesize a
+      // `prompt` placeholder and be over-counted as a model call, so big/iterated
+      // probe suites could be wrongly rejected over MAX_TOTAL_LLM_CALLS.
+      resolveAuthoringSteps(testCase) ??
+      legacyCaseStepsFallback(testCase) ?? [
+        { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
+      ]
     ) as RunEvalsRequest["tests"][number]["steps"];
     // Model-free cases (no `prompt` step) need one cap entry; model cases fan
     // out per model. The cap reducer counts `prompt` steps, so a model-free
@@ -409,6 +541,8 @@ export function assertBareRerunCasesRunnable(
     model?: string;
     provider?: string;
     steps?: unknown;
+    caseType?: TestCaseType;
+    probeConfig?: ProbeConfig;
   }> | null
 ): void {
   const unrunnable = (cases ?? [])
@@ -416,7 +550,10 @@ export function assertBareRerunCasesRunnable(
       (c) =>
         // Model-free cases (every step is a `toolCall`/no `prompt`) need no
         // model and ARE runnable — don't flag them as unrunnable prompt cases.
-        !isModelFree(Array.isArray(c.steps) ? c.steps : []) &&
+        // Derive steps through `resolveAuthoringSteps` so PRE-MIGRATION
+        // `widget_probe` rows (no `steps`, only `caseType`/`probeConfig`) are
+        // recognized as model-free instead of mistaken for prompt cases.
+        !isModelFree(resolveAuthoringSteps(c) ?? []) &&
         !(c.models && c.models.length > 0) &&
         !(c.model && c.provider)
     )
@@ -975,9 +1112,15 @@ export async function authorEvalSuite(args: {
         const hasStepKey = (testCaseData.steps?.length ?? 0) > 0;
         const existingTestCase = existingTestCases?.find((tc: any) => {
           if (tc.title !== testCaseData.title) return false;
-          if (hasStepKey || Array.isArray(tc.steps)) {
+          // Match on `steps` only when BOTH sides carry them. A pre-migration
+          // row persisted with only `query` (no `steps`) must still match a
+          // steps-bearing wire payload by its legacy title+query identity —
+          // otherwise the upsert creates a duplicate instead of migrating the
+          // existing row forward.
+          const storedHasSteps = Array.isArray(tc.steps) && tc.steps.length > 0;
+          if (hasStepKey && storedHasSteps) {
             return (
-              JSON.stringify(normalizeForComparison(tc.steps || [])) ===
+              JSON.stringify(normalizeForComparison(tc.steps)) ===
               testCaseStepsKey
             );
           }
@@ -1526,8 +1669,10 @@ export async function runEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
+    // resolveSteps converts legacy promptTurns/probe rows so multi-turn cases
+    // without persisted `steps` count their real model calls, not a floored 1.
     modelStepCount: countModelSteps(
-      (testCase as { steps?: TestStep[] }).steps ?? []
+      resolveSteps(testCase as unknown as Parameters<typeof resolveSteps>[0])
     ),
   });
 
@@ -1574,7 +1719,10 @@ export async function runEvalTestCaseWithManager(
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps,
+      (testCase as { steps?: TestStep[] }).steps ??
+      legacyCaseStepsFallback(
+        testCase as { promptTurns?: unknown; advancedConfig?: unknown }
+      ),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -1896,8 +2044,10 @@ export async function streamEvalTestCaseWithManager(
   }
 
   assertTestCaseRunWithinCap(request, 1, {
+    // resolveSteps converts legacy promptTurns/probe rows so multi-turn cases
+    // without persisted `steps` count their real model calls, not a floored 1.
     modelStepCount: countModelSteps(
-      (testCase as { steps?: TestStep[] }).steps ?? []
+      resolveSteps(testCase as unknown as Parameters<typeof resolveSteps>[0])
     ),
   });
 
@@ -1944,7 +2094,10 @@ export async function streamEvalTestCaseWithManager(
       testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
     steps:
       (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps,
+      (testCase as { steps?: TestStep[] }).steps ??
+      legacyCaseStepsFallback(
+        testCase as { promptTurns?: unknown; advancedConfig?: unknown }
+      ),
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     matchOptions: resolveMatchOptions(
@@ -2093,7 +2246,8 @@ export async function streamEvalTestCaseWithManager(
           return (
             status === "completed" ||
             status === "failed" ||
-            status === "cancelled"
+            status === "cancelled" ||
+            status === "timed_out"
           );
         };
         let latestIteration: unknown = null;
@@ -2119,14 +2273,25 @@ export async function streamEvalTestCaseWithManager(
             "testSuites:listTestIterations" as any,
             { testCaseId }
           );
-          // Prefer the row we know we created; only then fall back to "most
-          // recent for this case" (legacy behavior, kept as a last resort).
+          // Prefer a TERMINAL row so we never emit a `running` iteration on
+          // `complete` (the client reads that as a failed run). Order: our own
+          // created row if terminal → most recent terminal row → then the
+          // non-terminal fallbacks only as a last resort.
           const byId = expectedIterationId
             ? recentIterations?.find(
                 (iter: any) => iter?._id === expectedIterationId
               )
             : undefined;
-          latestIteration = byId ?? recentIterations?.[0] ?? latestIteration;
+          const terminalById = isTerminalIteration(byId) ? byId : undefined;
+          const terminalRecent = recentIterations?.find((iter: any) =>
+            isTerminalIteration(iter)
+          );
+          latestIteration =
+            terminalById ??
+            terminalRecent ??
+            byId ??
+            recentIterations?.[0] ??
+            latestIteration;
         }
 
         // Update lastMessageRun

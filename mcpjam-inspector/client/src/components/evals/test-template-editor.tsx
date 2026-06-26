@@ -2103,11 +2103,17 @@ export function TestTemplateEditor({
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
     const previewExpectedToolCalls = deriveExpectedToolCalls(savePayload.steps);
-    // Step-aligned cases (any interact/assert step) open on the Steps replay —
-    // the 1:1 mirror of the authored steps; pure prompt+grade cases keep Chat.
+    // Step-aligned cases (a widget interact, or a DOM widget assertion) open on
+    // the Steps replay — the 1:1 mirror of the authored steps. Pure prompt+grade
+    // cases keep Chat: a transcript predicate like `toolCalledWith` (derived
+    // from expectedToolCalls) is a grade, NOT a recorded widget step.
     const defaultRunColumnTab: RunColumnTab = normalizeSteps(
       savePayload.steps,
-    ).some((s) => s.kind === "interact" || s.kind === "assert")
+    ).some(
+      (s) =>
+        s.kind === "interact" ||
+        (s.kind === "assert" && isWidgetAssertion(s.assertion)),
+    )
       ? "steps"
       : "chat";
     setRunColumnTabByModel((previous) => ({

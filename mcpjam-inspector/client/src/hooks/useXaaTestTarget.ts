@@ -115,7 +115,11 @@ export function useXaaTestTarget({
       : null;
   const serverUrl = httpConfig?.url ? String(httpConfig.url) : "";
   const isHttp = Boolean(httpConfig);
+  // A server is XAA-testable if it uses OAuth (legacy XAA targets carry
+  // useOAuth) OR it was configured with the Cross-App Access auth type on the
+  // Connect page (useXaa, useOAuth left false).
   const useOAuth = server?.useOAuth === true;
+  const useXaa = server?.useXaa === true;
   const clientId =
     server?.oauthFlowProfile?.clientId ??
     (typeof (httpConfig as any)?.clientId === "string"
@@ -173,7 +177,7 @@ export function useXaaTestTarget({
       };
     }
 
-    const isTestable = isHttp && Boolean(serverUrl) && useOAuth;
+    const isTestable = isHttp && Boolean(serverUrl) && (useOAuth || useXaa);
     if (!isTestable) {
       return {
         targetSource: "bar_server",
@@ -205,8 +209,11 @@ export function useXaaTestTarget({
         // the browser; public clients simply have none.
         clientSecret: "",
         scope,
-        userId,
-        email,
+        // Per-server simulated identity is the source of truth (synced with the
+        // /servers Connect page); fall back to the global run-settings default
+        // when the server has no stored subject/email.
+        userId: server?.xaaSubject?.trim() ? server.xaaSubject : userId,
+        email: server?.xaaEmail?.trim() ? server.xaaEmail : email,
         negativeTestMode,
       },
       targetKey: `bar_server:${selectedServerName}`,

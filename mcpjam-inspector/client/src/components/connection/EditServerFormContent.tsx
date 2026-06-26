@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { useAuth } from "@workos-inc/authkit-react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -42,6 +43,7 @@ export function EditServerFormContent({
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
 }: EditServerFormContentProps) {
+  const { user: signedInUser } = useAuth();
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
@@ -266,6 +268,13 @@ export function EditServerFormContent({
             clientSecretError={formState.clientSecretError}
             projectId={projectId}
             hostedServerId={hostedServerId}
+            xaaAuthzIssuer={formState.xaaAuthzIssuer}
+            onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaSubject={formState.xaaSubject}
+            onXaaSubjectChange={formState.setXaaSubject}
+            xaaEmail={formState.xaaEmail}
+            onXaaEmailChange={formState.setXaaEmail}
+            signedInEmail={signedInUser?.email}
           />
         </div>
       )}

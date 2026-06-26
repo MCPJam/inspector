@@ -83,6 +83,100 @@ describe("useServerForm", () => {
     });
   });
 
+  it("emits useXaa (not useOAuth) and the resource-AS credentials for the XAA auth type", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setShowAuthSettings(true);
+      result.current.setClientId("resource-client-id");
+      result.current.setOauthScopesInput("read:tools");
+      result.current.setXaaAuthzIssuer("https://idp.example.com");
+      result.current.setXaaSubject("alice");
+      result.current.setXaaEmail("alice@example.com");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      name: "XAA server",
+      type: "http",
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      clientId: "resource-client-id",
+      oauthScopes: ["read:tools"],
+      xaaAuthzIssuer: "https://idp.example.com",
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+    });
+  });
+
+  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      xaaSubject: "john@mcpjam.com",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
+  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("john");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "john",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
+  it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaAuthzIssuer: "https://idp.example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("xaa");
+    });
+
+    // The round-trip must keep it XAA — a silent rewrite to OAuth would be data
+    // corruption (see CLAUDE.local.md resolvedAuthType guard).
+    const built = result.current.buildFormData();
+    expect(built.useXaa).toBe(true);
+    expect(built.useOAuth).toBe(false);
+  });
+
   it("retains bearer authorization headers even without custom headers", () => {
     const { result } = renderHook(() => useServerForm());
 

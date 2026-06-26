@@ -302,7 +302,9 @@ describe("evals-api hosted mode", () => {
 
     expect(caught).toBeInstanceOf(Error);
     const message = getBillingErrorMessage(caught, "Failed to start eval run");
-    expect(message).toContain("Eval iteration limit reached");
+    // Matches the canonical billing-entitlements message:
+    // "This organization has reached its eval iteration limit (25). Resets …"
+    expect(message).toContain("eval iteration limit");
     expect(message).not.toContain("Failed to start eval run");
     // Billing limits must NOT trigger the rate-limit dialog.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
@@ -532,6 +534,58 @@ describe("evals-api hosted mode", () => {
     ).rejects.toThrow("Daily usage limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("rebuilds the eval-iteration billing error on the stream path so getBillingErrorMessage renders the upgrade message", async () => {
+    // Streamed single-case runs hit the same 402 billing caps as buffered runs
+    // and must surface the same shared billing UX, not a generic failure.
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "BILLING_LIMIT_REACHED",
+          message: 'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+          details: {
+            code: "billing_limit_reached",
+            message:
+              'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+            limit: "maxEvalIterationsPerMonth",
+            gateKey: "maxEvalIterationsPerMonth",
+            plan: "free",
+            currentValue: 31,
+            allowedValue: 25,
+            upgradePlan: "team",
+            enforcementState: "enforcing",
+            resetsAt: 1782000000000,
+            windowKind: "day",
+          },
+        }),
+        { status: 402, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    let caught: unknown;
+    try {
+      await streamEvalTestCase(
+        {
+          projectId: "workspace-1",
+          testCaseId: "test-case-1",
+          model: "openai/gpt-5-mini",
+          provider: "openai",
+          serverIds: ["Server A"],
+          convexAuthToken: "convex-token",
+        },
+        () => {}
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = getBillingErrorMessage(caught, "Failed to start eval run");
+    expect(message).toContain("eval iteration limit");
+    expect(message).not.toContain("Failed to start eval run");
+    // Billing caps must NOT open the rate-limit dialog.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("opens the mcpjam-limit dialog for hosted stream error events", async () => {

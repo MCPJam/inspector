@@ -294,6 +294,64 @@ export type RunEvalSuiteWithAiSdkResult = {
 
 const MAX_STEPS = 20;
 
+// ── Run-lifecycle guards ────────────────────────────────────────────────────
+// A suite run must always terminate: a hung LLM call or browser render can
+// otherwise leave the run "running" forever (and hold a headless Chromium).
+// These bound it — a 20-min whole-run cap, a 10-min per-iteration cap, periodic
+// liveness heartbeats, and a cancellation poll — all surfacing through one
+// `EvalRunStoppedError` that aborts in-flight work and finalizes the run.
+const EVAL_RUN_TIMEOUT_MS = 20 * 60 * 1000;
+export const EVAL_ITERATION_TIMEOUT_MS = 10 * 60 * 1000;
+const EVAL_CANCEL_POLL_MS = 10 * 1000;
+const EVAL_ABORT_GRACE_MS = 30 * 1000;
+const EVAL_HEARTBEAT_MS = 15 * 1000;
+
+type EvalRunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+
+class EvalRunStoppedError extends Error {
+  readonly stopReason: EvalRunStopReason;
+  readonly terminalStatus: "cancelled" | "timed_out";
+  readonly notes: string;
+
+  constructor(args: {
+    stopReason: EvalRunStopReason;
+    terminalStatus: "cancelled" | "timed_out";
+    notes: string;
+  }) {
+    super(args.notes);
+    this.name = "EvalRunStoppedError";
+    this.stopReason = args.stopReason;
+    this.terminalStatus = args.terminalStatus;
+    this.notes = args.notes;
+  }
+}
+
+const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
+  stopReason: "user_cancelled",
+  terminalStatus: "cancelled",
+  notes: "Run cancelled by user",
+});
+
+const RUN_TIMEOUT_ERROR = new EvalRunStoppedError({
+  stopReason: "run_timeout",
+  terminalStatus: "timed_out",
+  notes: "Run timed out after 20 minutes",
+});
+
+const ITERATION_TIMEOUT_ERROR = new EvalRunStoppedError({
+  stopReason: "iteration_timeout",
+  terminalStatus: "timed_out",
+  notes: "Run timed out because an iteration exceeded 10 minutes",
+});
+
+function isEvalRunStoppedError(error: unknown): error is EvalRunStoppedError {
+  return error instanceof EvalRunStoppedError;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
@@ -1149,6 +1207,133 @@ const runHostedIteration = async (
 // The model resolution, precreate-iterations, and run loop are identical; only
 // the guard-vs-model-free-fork at the top and the per-branch runner family
 // differ. `runTestCase` / `streamTestCase` are thin wrappers below.
+// Locate the pending/running iteration row for a (test, runIndex) so a timeout
+// can mark it `timed_out`. Prefers the precreated id; otherwise matches on
+// testCaseId (model-free) or snapshot identity + iteration number.
+async function findIterationIdForTimeout(args: {
+  convexClient: ConvexHttpClient;
+  runId: string | null;
+  precreatedIterationId?: string;
+  test: EvalTestCase;
+  runIndex: number;
+}): Promise<string | undefined> {
+  if (args.precreatedIterationId) {
+    return args.precreatedIterationId;
+  }
+  if (args.runId === null) {
+    return undefined;
+  }
+
+  const resolvedTest = resolveEvalTestCase(args.test);
+  const shouldMatchByTestCaseOnly =
+    !turnsNeedModel({
+      caseType: args.test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    }) && Boolean(args.test.testCaseId);
+  try {
+    const response = await args.convexClient.query(
+      "testSuites:getTestSuiteRunDetails" as any,
+      { runId: args.runId }
+    );
+    const iterations = response?.iterations ?? [];
+    const matching = iterations.find((iteration: any) => {
+      if (
+        shouldMatchByTestCaseOnly &&
+        iteration.testCaseId === args.test.testCaseId &&
+        iteration.iterationNumber === args.runIndex + 1 &&
+        (iteration.status === "pending" || iteration.status === "running")
+      ) {
+        return true;
+      }
+
+      const snapshot = iteration.testCaseSnapshot ?? {};
+      return (
+        snapshot.title === args.test.title &&
+        snapshot.query === resolvedTest.query &&
+        snapshot.model === args.test.model &&
+        snapshot.provider === args.test.provider &&
+        iteration.iterationNumber === args.runIndex + 1 &&
+        (iteration.status === "pending" || iteration.status === "running")
+      );
+    });
+    return matching?._id as string | undefined;
+  } catch (error) {
+    logger.warn("[evals] Failed to locate iteration for timeout", {
+      runId: args.runId,
+      runIndex: args.runIndex,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+async function markIterationTimedOut(args: {
+  convexClient: ConvexHttpClient;
+  runId: string | null;
+  precreatedIterationId?: string;
+  test: EvalTestCase;
+  runIndex: number;
+}): Promise<void> {
+  const iterationId = await findIterationIdForTimeout(args);
+  if (!iterationId) {
+    return;
+  }
+
+  const message = "Iteration timed out after 10 minutes";
+  try {
+    await args.convexClient.action("testSuites:updateTestIteration" as any, {
+      iterationId,
+      status: "timed_out",
+      result: "timed_out",
+      actualToolCalls: [],
+      tokensUsed: 0,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [{ role: "assistant", content: message }],
+      error: message,
+      resultSource: "derived",
+      metadata: { stopReason: "iteration_timeout" },
+    });
+  } catch (error) {
+    logger.warn("[evals] Failed to mark timed-out iteration", {
+      iterationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+// Race a single iteration against the 10-minute per-iteration cap. On timeout
+// the loser (`onTimeout`) aborts the run and marks the row; a finished or
+// already-aborted iteration skips the timeout cleanly.
+export async function runIterationWithTimeout<T>(args: {
+  run: () => Promise<T>;
+  onTimeout: () => Promise<void>;
+  shouldSkipTimeout: () => boolean;
+}): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      args.run(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          if (args.shouldSkipTimeout()) {
+            return;
+          }
+          reject(ITERATION_TIMEOUT_ERROR);
+          void args.onTimeout().catch((error) => {
+            logger.warn("[evals] Iteration timeout cleanup failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }, EVAL_ITERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 const executeTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
@@ -1165,6 +1350,8 @@ const executeTestCase = async (params: {
   suiteId?: string;
   runId: string | null;
   abortSignal?: AbortSignal;
+  /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
+  abortRun?: (error: EvalRunStoppedError) => void;
   compareRunId?: string;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
    *  stream* runners. Absent ⇒ batch mode. */
@@ -1201,6 +1388,7 @@ const executeTestCase = async (params: {
     suiteId,
     runId,
     abortSignal,
+    abortRun,
     compareRunId,
     emit,
     injectOpenAiCompat,
@@ -1216,6 +1404,35 @@ const executeTestCase = async (params: {
   // so the unified engine sees one shape. No-op for already-pinned / prompt
   // cases.
   const normalizedTest = normalizeTestForPinnedTurns(test);
+
+  // Run a single iteration under the per-iteration timeout + run-abort guards.
+  // Bails immediately if the run was already stopped; on timeout it aborts the
+  // whole run (via `abortRun`) and marks the row `timed_out`.
+  const runSingleIteration = async <T extends EvalIterationOutcome>(
+    runner: () => Promise<T>,
+    precreatedIterationId: string | undefined,
+    runIndex: number,
+    timeoutTest: EvalTestCase = normalizedTest
+  ): Promise<T> => {
+    if (abortSignal?.aborted) {
+      const reason = abortSignal.reason;
+      throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
+    }
+    return await runIterationWithTimeout({
+      run: runner,
+      shouldSkipTimeout: () => abortSignal?.aborted === true,
+      onTimeout: async () => {
+        abortRun?.(ITERATION_TIMEOUT_ERROR);
+        await markIterationTimedOut({
+          convexClient,
+          runId,
+          precreatedIterationId,
+          test: timeoutTest,
+          runIndex,
+        });
+      },
+    });
+  };
 
   // Pinned-only case (today's render check): no model turns at all. Run it
   // through the local AI-SDK engine, model-free — it skips all model/BYOK setup
@@ -1261,10 +1478,16 @@ const executeTestCase = async (params: {
         environment,
       };
       outcomes.push(
-        await runLocalIteration({
-          ...modelFreeParams,
-          ...(streaming ? { emit: emit! } : {}),
-        })
+        await runSingleIteration(
+          () =>
+            runLocalIteration({
+              ...modelFreeParams,
+              ...(streaming ? { emit: emit! } : {}),
+            }),
+          undefined,
+          runIndex,
+          normalizedTest
+        )
       );
     }
     return outcomes;
@@ -1391,10 +1614,16 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
       };
-      const iterationOutcome = await runHostedIteration({
-        ...backendParams,
-        ...(streaming ? { emit: emit! } : {}),
-      });
+      const iterationOutcome = await runSingleIteration(
+        () =>
+          runHostedIteration({
+            ...backendParams,
+            ...(streaming ? { emit: emit! } : {}),
+          }),
+        precreatedIterationId,
+        runIndex,
+        test
+      );
       outcomes.push(iterationOutcome);
       continue;
     }
@@ -1431,10 +1660,16 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
       };
-      const iterationOutcome = await runHostedIteration({
-        ...backendParams,
-        ...(streaming ? { emit: emit! } : {}),
-      });
+      const iterationOutcome = await runSingleIteration(
+        () =>
+          runHostedIteration({
+            ...backendParams,
+            ...(streaming ? { emit: emit! } : {}),
+          }),
+        precreatedIterationId,
+        runIndex,
+        test
+      );
       outcomes.push(iterationOutcome);
       continue;
     }
@@ -1468,10 +1703,16 @@ const executeTestCase = async (params: {
       // for prompt-only cases.
       environment,
     };
-    const iterationOutcome = await runLocalIteration({
-      ...localParams,
-      ...(streaming ? { emit: emit! } : {}),
-    });
+    const iterationOutcome = await runSingleIteration(
+      () =>
+        runLocalIteration({
+          ...localParams,
+          ...(streaming ? { emit: emit! } : {}),
+        }),
+      precreatedIterationId,
+      runIndex,
+      test
+    );
     outcomes.push(iterationOutcome);
   }
 
@@ -1580,6 +1821,16 @@ export const runEvalSuiteWithAiSdk = async ({
 
     // Create AbortController to cancel in-flight requests
     const abortController = new AbortController();
+    // Abort the whole run with a reason (cancel vs timeout). The reason rides on
+    // the AbortSignal so iteration runners and the catch below can distinguish
+    // user-cancel from a hard timeout.
+    const abortRun = (error: EvalRunStoppedError) => {
+      if (!abortController.signal.aborted) {
+        abortController.abort(error);
+      }
+    };
+    let stopControls = false;
+    let runTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
     // Run tests in parallel, but cap concurrent render checks: each
     // `widget_probe` case launches a headless Chromium, so an all-render-check
@@ -1607,6 +1858,7 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteId,
         runId,
         abortSignal: abortController.signal,
+        abortRun,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
@@ -1626,26 +1878,29 @@ export const runEvalSuiteWithAiSdk = async ({
         : runOne(test)
     );
 
-    // Create a cancellation checker that polls every 2s
-    let stopPolling = false;
+    // Poll the run status: user cancellation, or a `timed_out` status set
+    // elsewhere (e.g. a sibling worker), both abort the run with a reason.
     const createCancellationChecker = async () => {
       if (runId === null) return; // Quick runs can't be cancelled
 
-      while (!stopPolling) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (stopPolling) return;
+      while (!stopControls) {
+        await delay(EVAL_CANCEL_POLL_MS);
+        if (stopControls) return;
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
             { runId }
           );
           if (currentRun?.status === "cancelled") {
-            // Abort all in-flight LLM requests
-            abortController.abort();
-            throw new Error("RUN_CANCELLED");
+            abortRun(RUN_CANCELLED_ERROR);
+            throw RUN_CANCELLED_ERROR;
+          }
+          if (currentRun?.status === "timed_out") {
+            abortRun(RUN_TIMEOUT_ERROR);
+            throw RUN_TIMEOUT_ERROR;
           }
         } catch (error) {
-          if (error instanceof Error && error.message === "RUN_CANCELLED") {
+          if (isEvalRunStoppedError(error)) {
             throw error;
           }
           // If run not found, it was deleted - treat as cancelled
@@ -1655,43 +1910,106 @@ export const runEvalSuiteWithAiSdk = async ({
             errorMessage.includes("not found") ||
             errorMessage.includes("unauthorized")
           ) {
-            // Abort all in-flight LLM requests
-            abortController.abort();
-            throw new Error("RUN_CANCELLED");
+            abortRun(RUN_CANCELLED_ERROR);
+            throw RUN_CANCELLED_ERROR;
           }
         }
       }
     };
 
+    // Periodic liveness ping so the run isn't reaped as stalled while working.
+    const createHeartbeatLoop = async () => {
+      if (runId === null) return;
+      while (!stopControls) {
+        try {
+          await convexClient.mutation(
+            "testSuites:heartbeatTestSuiteRun" as any,
+            { runId }
+          );
+        } catch (error) {
+          logger.warn("[evals] Failed to heartbeat eval run", {
+            runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        await delay(EVAL_HEARTBEAT_MS);
+      }
+    };
+
+    // Hard whole-run timeout: aborts in-flight work and rejects the race.
+    // Returns Promise<never> (only ever rejects) so the race result type stays
+    // PromiseSettledResult[].
+    const createRunTimeout = (): Promise<never> =>
+      new Promise<never>((_, reject) => {
+        runTimeoutId = setTimeout(() => {
+          abortRun(RUN_TIMEOUT_ERROR);
+          reject(RUN_TIMEOUT_ERROR);
+        }, EVAL_RUN_TIMEOUT_MS);
+      });
+
+    // Surface an `EvalRunStoppedError` thrown by ANY iteration immediately
+    // (e.g. a per-iteration timeout). `Promise.allSettled` would otherwise
+    // swallow it, so the run-level race would never see the stop.
+    const never = () => new Promise<never>(() => {});
+    const firstLifecycleStop = Promise.race(
+      testPromises.map((promise) =>
+        promise.then(never, (error) => {
+          if (isEvalRunStoppedError(error)) {
+            throw error;
+          }
+          return never();
+        })
+      )
+    );
+    const allTestsSettled = Promise.allSettled(testPromises);
+
     let results: PromiseSettledResult<EvalIterationOutcome[]>[];
+    const heartbeatLoop = createHeartbeatLoop().catch((error) => {
+      logger.warn("[evals] Eval heartbeat loop stopped unexpectedly", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
 
     try {
-      // Race between all tests completing and cancellation check
+      // Race tests completing, a lifecycle stop from an iteration, user
+      // cancellation, and the hard run timeout.
       results = await Promise.race([
-        Promise.allSettled(testPromises),
+        Promise.race([allTestsSettled, firstLifecycleStop]),
         createCancellationChecker().then(() => {
           // This will never resolve, only reject if cancelled
           return new Promise<never>(() => {});
         }),
+        createRunTimeout(),
       ]);
     } catch (error) {
-      if (error instanceof Error && error.message === "RUN_CANCELLED") {
-        logger.debug(
-          "[evals] Run was cancelled, all in-flight requests aborted"
-        );
+      if (isEvalRunStoppedError(error)) {
+        logger.debug("[evals] Run stopped by lifecycle guard", {
+          reason: error.stopReason,
+        });
 
-        // Finalize the run as cancelled
+        // Give in-flight iterations a brief grace to settle after the abort
+        // before we finalize, so partial rows can flush.
+        await Promise.race([
+          Promise.allSettled(testPromises),
+          delay(EVAL_ABORT_GRACE_MS),
+        ]);
         if (recorder) {
           await recorder.finalize({
-            status: "cancelled",
-            notes: "Run cancelled by user",
+            status: error.terminalStatus,
+            notes: error.notes,
+            stopReason: error.stopReason,
           });
         }
         return undefined;
       }
       throw error;
     } finally {
-      stopPolling = true;
+      stopControls = true;
+      if (runTimeoutId) {
+        clearTimeout(runTimeoutId);
+      }
+      void heartbeatLoop;
     }
 
     const quickRunOutcomes: EvalIterationOutcome[] = [];

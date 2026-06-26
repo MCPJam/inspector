@@ -28,7 +28,11 @@ const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
+  // breaks the whole suite; the explicit stubs below keep the data-testids the
+  // assertions rely on.
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
   ArrowUp: () => <span data-testid="icon-arrow-up" />,
   Braces: () => <span data-testid="icon-braces" />,

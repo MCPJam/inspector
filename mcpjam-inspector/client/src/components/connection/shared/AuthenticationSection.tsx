@@ -19,15 +19,17 @@ import {
 } from "@mcpjam/design-system/select";
 import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
 import type {
+  ServerFormAuthType,
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { XaaCredentialFields } from "./XaaCredentialFields";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
-  authType: "oauth" | "bearer" | "none";
-  onAuthTypeChange: (value: "oauth" | "bearer" | "none") => void;
+  authType: ServerFormAuthType;
+  onAuthTypeChange: (value: ServerFormAuthType) => void;
   showAuthSettings: boolean;
   bearerToken: string;
   onBearerTokenChange: (value: string) => void;
@@ -60,6 +62,16 @@ interface AuthenticationSectionProps {
   /** Hosted-mode reveal context. Both must be provided to enable the Reveal button. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  // Cross-App Access (XAA) fields. Client id / secret / scopes reuse the props
+  // above; these are XAA-specific.
+  xaaAuthzIssuer?: string;
+  onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaSubject?: string;
+  onXaaSubjectChange?: (value: string) => void;
+  xaaEmail?: string;
+  onXaaEmailChange?: (value: string) => void;
+  /** Signed-in user's email — shown as the default for the simulated identity. */
+  signedInEmail?: string;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -112,6 +124,13 @@ export function AuthenticationSection({
   clientSecretError,
   projectId = null,
   hostedServerId = null,
+  xaaAuthzIssuer = "",
+  onXaaAuthzIssuerChange,
+  xaaSubject = "",
+  onXaaSubjectChange,
+  xaaEmail = "",
+  onXaaEmailChange,
+  signedInEmail,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
@@ -279,7 +298,7 @@ export function AuthenticationSection({
           </label>
           <Select
             value={authType}
-            onValueChange={(value: "oauth" | "bearer" | "none") => {
+            onValueChange={(value: ServerFormAuthType) => {
               if (value !== "oauth") {
                 setShowAdvancedOAuth(false);
               }
@@ -293,6 +312,7 @@ export function AuthenticationSection({
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -655,6 +675,35 @@ export function AuthenticationSection({
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Cross-App Access (XAA) Settings */}
+        {showAuthSettings && authType === "xaa" && (
+          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+            <XaaCredentialFields
+              clientId={clientId}
+              onClientIdChange={onClientIdChange}
+              clientIdError={clientIdError}
+              clientSecret={clientSecret}
+              onClientSecretChange={onClientSecretChange}
+              hasStoredClientSecret={hasStoredClientSecret}
+              clearClientSecret={clearClientSecret}
+              onClearClientSecret={onClearClientSecret}
+              onUndoClearClientSecret={onUndoClearClientSecret}
+              clientSecretError={clientSecretError}
+              scopes={oauthScopesInput}
+              onScopesChange={onOauthScopesChange}
+              xaaAuthzIssuer={xaaAuthzIssuer}
+              onXaaAuthzIssuerChange={(v) => onXaaAuthzIssuerChange?.(v)}
+              xaaSubject={xaaSubject}
+              onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
+              xaaEmail={xaaEmail}
+              onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
+              signedInEmail={signedInEmail}
+              projectId={projectId}
+              hostedServerId={hostedServerId}
+            />
           </div>
         )}
       </div>

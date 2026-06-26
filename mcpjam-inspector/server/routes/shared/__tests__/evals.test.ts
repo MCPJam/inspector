@@ -96,7 +96,7 @@ describe("RunEvalsRequestSchema runs cap", () => {
     ).toBe(false);
   });
 
-  it("rejects suite tests without steps", () => {
+  it("accepts legacy suite tests without steps and derives them from query/expectedToolCalls", () => {
     const base = buildSuiteRequest() as {
       tests: Array<Record<string, unknown>>;
     };
@@ -104,9 +104,57 @@ describe("RunEvalsRequestSchema runs cap", () => {
     const { steps: _steps, ...withoutSteps } = test;
     const result = RunEvalsRequestSchema.safeParse({
       ...base,
-      tests: [withoutSteps],
+      tests: [{ ...withoutSteps, query: "do the thing" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    // The boundary transform projects the legacy `query` onto a steps-first
+    // contract so the rest of the pipeline only ever sees `steps`.
+    const derived = result.success ? result.data.tests[0].steps : [];
+    expect(derived).toEqual([
+      { id: "step-1-prompt", kind: "prompt", prompt: "do the thing" },
+    ]);
+  });
+
+  it("derives toolCalledWith asserts from legacy expectedToolCalls", () => {
+    const base = buildSuiteRequest() as {
+      tests: Array<Record<string, unknown>>;
+    };
+    const [test] = base.tests;
+    const { steps: _steps, ...withoutSteps } = test;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      tests: [
+        {
+          ...withoutSteps,
+          query: "weather",
+          expectedToolCalls: [{ toolName: "get_weather", arguments: { q: "x" } }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    const derived = result.success ? result.data.tests[0].steps : [];
+    expect(derived).toEqual([
+      { id: "step-1-prompt", kind: "prompt", prompt: "weather" },
+      {
+        id: "step-1-expect-0",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "get_weather",
+          args: { args: { q: "x" } },
+        },
+      },
+    ]);
+  });
+
+  it("preserves explicit steps unchanged (no normalization churn)", () => {
+    const base = buildSuiteRequest() as {
+      tests: Array<Record<string, unknown>>;
+    };
+    const result = RunEvalsRequestSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    const steps = result.success ? result.data.tests[0].steps : [];
+    expect(steps).toEqual([{ id: "t0-s0", kind: "prompt", prompt: "q" }]);
   });
 });
 
@@ -561,6 +609,46 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     );
   });
 
+  it("derives steps from legacy promptTurns so multi-turn cases aren't under-counted", () => {
+    // A pre-migration case with N model turns must count N LLM calls, not 1 —
+    // otherwise a multi-turn legacy suite slips past MAX_TOTAL_LLM_CALLS.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "legacy multi-turn",
+        runs: 1,
+        models: [{ model: "m", provider: "p" }],
+        promptTurns: [
+          { id: "turn-1", prompt: "one" },
+          { id: "turn-2", prompt: "two" },
+        ],
+      },
+    ]);
+    const promptSteps = entries[0].steps.filter((s) => s.kind === "prompt");
+    expect(promptSteps).toHaveLength(2);
+    expect(entries[0].steps).not.toMatchObject([{ id: "legacy-cap-prompt" }]);
+  });
+
+  it("derives steps from legacy advancedConfig.promptTurns too", () => {
+    // The oldest cases stored turns under advancedConfig.promptTurns (no
+    // top-level field); they must still count every model turn.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "legacy advancedConfig multi-turn",
+        runs: 1,
+        models: [{ model: "m", provider: "p" }],
+        advancedConfig: {
+          promptTurns: [
+            { id: "turn-1", prompt: "one" },
+            { id: "turn-2", prompt: "two" },
+          ],
+        },
+      },
+    ]);
+    const promptSteps = entries[0].steps.filter((s) => s.kind === "prompt");
+    expect(promptSteps).toHaveLength(2);
+    expect(entries[0].steps).not.toMatchObject([{ id: "legacy-cap-prompt" }]);
+  });
+
   it("excludes model-free (toolCall-only) cases from the cap reducer", () => {
     const entries = buildCapEntriesFromPersistedCases([
       {
@@ -579,6 +667,30 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     ]);
     expect(entries).toHaveLength(1);
     // No prompt step → zero model calls, so a high `runs` doesn't trip the cap.
+    expect(() =>
+      assertSuiteRunWithinCap({ tests: entries } as never)
+    ).not.toThrow();
+  });
+
+  it("treats legacy widget_probe cases (caseType + probeConfig, no steps) as model-free", () => {
+    // Pre-steps render checks are model-free: derive the probe's toolCall step
+    // so they count 0 LLM calls, even highly iterated, instead of being
+    // over-counted as a prompt placeholder and tripping the cap.
+    const entries = buildCapEntriesFromPersistedCases([
+      {
+        title: "Legacy probe",
+        runs: 10,
+        caseType: "widget_probe",
+        probeConfig: {
+          serverId: "srv-1",
+          serverName: "server-1",
+          toolName: "show_map",
+          arguments: {},
+        },
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].steps.some((s) => s.kind === "prompt")).toBe(false);
     expect(() =>
       assertSuiteRunWithinCap({ tests: entries } as never)
     ).not.toThrow();

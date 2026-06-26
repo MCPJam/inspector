@@ -94,7 +94,9 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.queryByText("Latency")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Results/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Tool Calls/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows comparison chrome when enabled", () => {
@@ -557,7 +559,7 @@ describe("ModelCompareCardHeader", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Results/i }),
+      screen.getByRole("button", { name: /Tool Calls/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Trace/i })).toBeInTheDocument();

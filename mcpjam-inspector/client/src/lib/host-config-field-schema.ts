@@ -10,11 +10,21 @@
  * the description strings, then the paths.
  */
 
+import {
+  resolveEffectiveCompatRuntime,
+  resolveEffectiveMcpAppsCapabilities,
+} from "@/lib/client-config-v2";
 import type {
   HostConfigDtoV2,
   HostStyleId,
   McpProtocolVersion,
 } from "@/lib/client-config-v2";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
+import {
+  ALL_DISPLAY_MODES,
+  MCP_APPS_DIMENSIONS,
+  OPENAI_APPS_METHOD_LABELS,
+} from "@/lib/apps-capability-dimensions";
 
 export type HostConfigSectionId = "agent" | "protocol" | "apps";
 
@@ -45,6 +55,13 @@ export const HOST_CONFIG_SECTIONS: ReadonlyArray<HostConfigSection> = [
 ];
 
 /**
+ * caniuse-grade support level for a (field, host) pair. Defined here (rather
+ * than in the comparison component) so the field schema can declare enum→level
+ * maps; `support-level.ts` re-exports this type for its consumers.
+ */
+export type SupportLevel = "supported" | "partial" | "neutral" | "unsupported";
+
+/**
  * Discriminated render hint. The matrix translates this into a pill
  * variant; the comparator uses it to know how to test for equality
  * (numbers compare by ===, JSON objects compare by stable stringify).
@@ -56,12 +73,27 @@ export type HostConfigFieldKind =
   | { kind: "number" }
   /** Number rendered as `60,000 ms`. */
   | { kind: "duration-ms" }
-  | { kind: "enum"; options?: ReadonlyArray<string> }
+  | {
+      kind: "enum";
+      options?: ReadonlyArray<string>;
+      /**
+       * When set, the matrix renders a support chip (level mapped via this
+       * table) instead of plain text, and the row joins coverage/filters.
+       */
+      support?: Readonly<Record<string, SupportLevel>>;
+    }
+  /** Set of modes (e.g. display modes); each candidate renders present/absent. */
+  | { kind: "mode-set"; modes: ReadonlyArray<string> }
   /** Short string rendered inline. */
   | { kind: "string" }
   /** Long string (system prompt). Matrix shows first-line preview + char count. */
   | { kind: "string-long" }
   | { kind: "string-array" }
+  /**
+   * MCP capability advertised by object *presence* (absent = not advertised).
+   * Matrix renders a caniuse-style support chip; non-empty values still expand.
+   */
+  | { kind: "capability" }
   /** Object/Record. Matrix shows `N keys ›` summary; click to expand. */
   | { kind: "object"; itemNoun?: string };
 
@@ -91,6 +123,158 @@ export interface HostConfigFieldDef {
 }
 
 const mcpProfile = (cfg: HostConfigDtoV2) => cfg.mcpProfile;
+
+// ============================================================
+// Effective-capability resolution (Apps section).
+//
+// The Apps capability rows show the EFFECTIVE per-host value: the hostStyle
+// preset baseline with the user's sparse overrides merged on top — the same
+// resolution the canvas/renderer use. The DTO carries `hostStyle` + `mcpProfile`,
+// so `read(cfg)` can resolve directly. Results are memoized per config object
+// because coverage/filter/search/divergence all call `read` repeatedly.
+// ============================================================
+
+const mcpAppsCache = new WeakMap<HostConfigDtoV2, ResolvedMcpAppsCapabilities>();
+const effMcpApps = (cfg: HostConfigDtoV2): ResolvedMcpAppsCapabilities => {
+  let v = mcpAppsCache.get(cfg);
+  if (!v) {
+    v = resolveEffectiveMcpAppsCapabilities({
+      profile: cfg.mcpProfile,
+      hostStyle: cfg.hostStyle,
+    });
+    mcpAppsCache.set(cfg, v);
+  }
+  return v;
+};
+
+type EffCompat = ReturnType<typeof resolveEffectiveCompatRuntime>;
+const compatCache = new WeakMap<HostConfigDtoV2, EffCompat>();
+const effCompat = (cfg: HostConfigDtoV2): EffCompat => {
+  let v = compatCache.get(cfg);
+  if (!v) {
+    v = resolveEffectiveCompatRuntime({
+      profile: cfg.mcpProfile,
+      hostStyle: cfg.hostStyle,
+    });
+    compatCache.set(cfg, v);
+  }
+  return v;
+};
+
+const DISPLAY_MODE_SUPPORT: Readonly<Record<string, SupportLevel>> = {
+  accept: "supported",
+  "user-initiated-only": "partial",
+  decline: "neutral",
+};
+const REQUEST_DISPLAY_MODE_SUPPORT: Readonly<Record<string, SupportLevel>> = {
+  all: "supported",
+  "fullscreen-only": "partial",
+  none: "neutral",
+};
+
+/** "MCP Apps capabilities" subsection — effective SEP-1865 spec-bridge matrix. */
+const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "appsCap.availableDisplayModes",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "availableDisplayModes",
+    path: "mcpProfile.apps.mcpAppsOverrides.availableDisplayModes (effective)",
+    description: "Display modes the host offers widgets (inline / fullscreen / pip).",
+    kind: { kind: "mode-set", modes: ALL_DISPLAY_MODES },
+    read: (cfg) => effMcpApps(cfg).availableDisplayModes,
+  },
+  {
+    id: "appsCap.widgetDisplayModeRequests",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "widgetDisplayModeRequests",
+    path: "mcpProfile.apps.mcpAppsOverrides.widgetDisplayModeRequests (effective)",
+    description: "Policy for honoring widget display-mode change requests.",
+    kind: { kind: "enum", support: DISPLAY_MODE_SUPPORT },
+    read: (cfg) => effMcpApps(cfg).widgetDisplayModeRequests,
+  },
+  ...MCP_APPS_DIMENSIONS.map(
+    ({ key, description }): HostConfigFieldDef => ({
+      id: `appsCap.${key}`,
+      section: "apps",
+      subsection: "MCP Apps capabilities",
+      label: key,
+      path: `mcpProfile.apps.mcpAppsOverrides.${key} (effective)`,
+      description,
+      kind: { kind: "boolean" },
+      read: (cfg) => effMcpApps(cfg)[key],
+    }),
+  ),
+];
+
+/** "OpenAI compat shim" subsection — effective window.openai surface. */
+const OPENAI_SHIM_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    // Keeps the `compatRuntime.openaiApps` id so the editor's
+    // `hostConfigField("compatRuntime.openaiApps")` label lookup still resolves;
+    // the matrix shows the EFFECTIVE injected boolean rather than the raw tri-state.
+    id: "compatRuntime.openaiApps",
+    section: "apps",
+    subsection: "OpenAI compat shim",
+    label: "Inject window.openai",
+    path: "mcpProfile.apps.compatRuntime.openaiApps",
+    description:
+      "Inject the `window.openai` Apps-SDK shim. Undefined = use hostStyle preset.",
+    kind: { kind: "boolean" },
+    read: (cfg) => effCompat(cfg).injected,
+  },
+  ...OPENAI_APPS_METHOD_LABELS.filter(({ key }) => key !== "requestDisplayMode").map(
+    ({ key, label }): HostConfigFieldDef => ({
+      id: `openaiShim.${key}`,
+      section: "apps",
+      subsection: "OpenAI compat shim",
+      label,
+      path: `mcpProfile.apps.compatRuntime.openaiAppsOverrides.${key} (effective)`,
+      description: `window.openai.${key}() available to widgets (shim must be injected).`,
+      kind: { kind: "boolean" },
+      read: (cfg) => {
+        const c = effCompat(cfg);
+        return c.injected ? Boolean(c.capabilities[key]) : false;
+      },
+    }),
+  ),
+  {
+    id: "openaiShim.requestDisplayMode",
+    section: "apps",
+    subsection: "OpenAI compat shim",
+    label: "requestDisplayMode",
+    path: "mcpProfile.apps.compatRuntime.openaiAppsOverrides.requestDisplayMode (effective)",
+    description: "Which display-mode requests the shim honors.",
+    kind: { kind: "enum", support: REQUEST_DISPLAY_MODE_SUPPORT },
+    read: (cfg) => {
+      const c = effCompat(cfg);
+      return c.injected ? c.capabilities.requestDisplayMode : "none";
+    },
+  },
+];
+
+/** "Sandbox permissions" subsection — per-permission allow flags. */
+const SANDBOX_PERMISSION_KEYS = [
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboardWrite",
+] as const;
+const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  SANDBOX_PERMISSION_KEYS.map(
+    (key): HostConfigFieldDef => ({
+      id: `sandboxPerm.${key}`,
+      section: "apps",
+      subsection: "Sandbox permissions",
+      label: key,
+      path: `mcpProfile.apps.sandbox.permissions.allow.${key}`,
+      description: `Grant the app iframe ${key} access.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        Boolean(mcpProfile(cfg)?.apps?.sandbox?.permissions?.allow?.[key]),
+    }),
+  );
 
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
@@ -238,7 +422,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Roots",
     path: "clientCapabilities.roots",
     description: "Filesystem roots exposed to the server.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.roots,
   },
   {
@@ -248,7 +432,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Sampling",
     path: "clientCapabilities.sampling",
     description: "Server-initiated LLM calls.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.sampling,
   },
   {
@@ -258,7 +442,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Elicitation",
     path: "clientCapabilities.elicitation",
     description: "Mid-call structured prompts back to the user.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.elicitation,
   },
   {
@@ -268,7 +452,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Experimental",
     path: "clientCapabilities.experimental",
     description: "Vendor-extension capabilities.",
-    kind: { kind: "object", itemNoun: "key" },
+    kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.experimental,
   },
 
@@ -297,58 +481,18 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Apps · Advertise
+  // Apps · MCP Apps capabilities (effective per-host SEP-1865 matrix)
   // ============================================================
-  {
-    id: "hostCapabilitiesOverride",
-    section: "apps",
-    subsection: "Advertise & capability",
-    label: "Host capabilities override",
-    path: "hostCapabilitiesOverride",
-    description:
-      "User override on SEP-1865 hostCapabilities. Absent = use the hostStyle preset.",
-    kind: { kind: "object", itemNoun: "field" },
-    read: (cfg) => cfg.hostCapabilitiesOverride,
-  },
+  ...APPS_MCP_CAP_FIELDS,
 
   // ============================================================
-  // Apps · OpenAI compat shim
+  // Apps · OpenAI compat shim (effective window.openai surface)
   // ============================================================
-  {
-    id: "compatRuntime.openaiApps",
-    section: "apps",
-    subsection: "OpenAI compat shim",
-    label: "Inject window.openai",
-    path: "mcpProfile.apps.compatRuntime.openaiApps",
-    description:
-      "Inject the `window.openai` Apps-SDK shim. Undefined = use hostStyle preset.",
-    kind: { kind: "tri-state" },
-    read: (cfg) => mcpProfile(cfg)?.apps?.compatRuntime?.openaiApps,
-  },
-  {
-    id: "compatRuntime.openaiAppsOverrides",
-    section: "apps",
-    subsection: "OpenAI compat shim",
-    label: "Shim method overrides",
-    path: "mcpProfile.apps.compatRuntime.openaiAppsOverrides",
-    description: "Sparse per-method overrides on the shim surface.",
-    kind: { kind: "object", itemNoun: "method" },
-    read: (cfg) => mcpProfile(cfg)?.apps?.compatRuntime?.openaiAppsOverrides,
-  },
+  ...OPENAI_SHIM_FIELDS,
 
   // ============================================================
-  // Apps · MCP Apps spec-bridge overrides
+  // Apps · MCP Apps spec bridge (config)
   // ============================================================
-  {
-    id: "mcpAppsOverrides",
-    section: "apps",
-    subsection: "MCP Apps spec bridge",
-    label: "Spec-bridge overrides",
-    path: "mcpProfile.apps.mcpAppsOverrides",
-    description: "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
-    kind: { kind: "object", itemNoun: "dimension" },
-    read: (cfg) => mcpProfile(cfg)?.apps?.mcpAppsOverrides,
-  },
   {
     id: "uiInitialize.hostInfo",
     section: "apps",
@@ -389,16 +533,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     },
     read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.permissions?.mode,
   },
-  {
-    id: "sandbox.permissions.allow",
-    section: "apps",
-    subsection: "Sandbox",
-    label: "Permissions allow-list",
-    path: "mcpProfile.apps.sandbox.permissions.allow",
-    description: "Per-permission allow flags (camera, microphone, etc.).",
-    kind: { kind: "object", itemNoun: "permission" },
-    read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.permissions?.allow,
-  },
+  ...SANDBOX_PERMISSION_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

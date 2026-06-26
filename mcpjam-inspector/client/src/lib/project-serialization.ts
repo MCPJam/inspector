@@ -55,6 +55,18 @@ function serializeServersInternal(
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
     }
+    if (server.useXaa !== undefined) {
+      serializedServer.useXaa = server.useXaa;
+    }
+    if (server.authServerMode !== undefined) {
+      serializedServer.authServerMode = server.authServerMode;
+    }
+    if (server.xaaSubject !== undefined) {
+      serializedServer.xaaSubject = server.xaaSubject;
+    }
+    if (server.xaaEmail !== undefined) {
+      serializedServer.xaaEmail = server.xaaEmail;
+    }
 
     if (server.config) {
       const config: Record<string, unknown> = {};
@@ -99,7 +111,7 @@ function serializeServersInternal(
       serializedServer.config = config;
     }
 
-    if (server.useOAuth && server.oauthFlowProfile) {
+    if ((server.useOAuth || server.useXaa) && server.oauthFlowProfile) {
       // OAuthTestProfile.scopes is a UI-shaped string ("read,write" or
       // "read write"); the Convex `servers.oauthScopes` field is
       // v.array(v.string()). Split here so syncProjectServers can pass the
@@ -228,6 +240,18 @@ export function deserializeServersFromConvex(
       serverData.xaaAuthzIssuer ?? serverData.config?.xaaAuthzIssuer;
     if (xaaAuthzIssuer !== undefined) {
       server.xaaAuthzIssuer = xaaAuthzIssuer;
+    }
+    if (serverData.useXaa !== undefined) {
+      server.useXaa = serverData.useXaa === true;
+    }
+    if (serverData.authServerMode !== undefined) {
+      server.authServerMode = serverData.authServerMode;
+    }
+    if (serverData.xaaSubject !== undefined) {
+      server.xaaSubject = serverData.xaaSubject;
+    }
+    if (serverData.xaaEmail !== undefined) {
+      server.xaaEmail = serverData.xaaEmail;
     }
 
     // Handle oauthFlowProfile from legacy nested structure

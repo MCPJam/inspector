@@ -1385,16 +1385,20 @@ describe("TestTemplateEditor run view from route", () => {
     // Default tab is Chat, so the host shell is visible immediately.
     expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
-    await user.click(within(card).getByRole("button", { name: /^Trace$/i }));
+    // Single-model runs render through the Preview pane, which portals the
+    // trace-view tab strip into the pane header (outside the compare card), so
+    // the tab buttons are queried screen-wide. The "Results" tab was renamed to
+    // "Tool Calls". The host-shell assertions still target the card body.
+    await user.click(screen.getByRole("button", { name: /^Trace$/i }));
     expect(card.querySelector("[data-host-style]")).toBeNull();
 
-    await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
+    await user.click(screen.getByRole("button", { name: /^Chat$/i }));
     expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
-    await user.click(within(card).getByRole("button", { name: /^Raw$/i }));
+    await user.click(screen.getByRole("button", { name: /^Raw$/i }));
     expect(card.querySelector("[data-host-style]")).toBeNull();
 
-    await user.click(within(card).getByRole("button", { name: /^Results$/i }));
+    await user.click(screen.getByRole("button", { name: /^Tool Calls$/i }));
     expect(card.querySelector("[data-host-style]")).toBeNull();
   });
 
@@ -1440,9 +1444,10 @@ describe("TestTemplateEditor run view from route", () => {
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
     await waitFor(() => {
-      expect(
-        within(getCompareCard("GPT-4")).getByText("Failed"),
-      ).toBeInTheDocument();
+      // The single-model run streams into the Preview pane, which portals the
+      // result pill into the pane header (outside the compare-card wrapper).
+      // Scope to the screen; "Failed" (exact) matches only the pill.
+      expect(screen.getByText("Failed")).toBeInTheDocument();
     });
     expect(runEvalTestCaseMock).not.toHaveBeenCalled();
     expect(screen.getByText("Pinned stream failed")).toBeInTheDocument();
