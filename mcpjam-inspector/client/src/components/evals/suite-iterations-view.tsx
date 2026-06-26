@@ -1507,12 +1507,14 @@ export function SuiteIterationsView({
         cases={exportState?.cases ?? []}
         serverEntries={appState.servers}
       />
-      <ExportTracesModal
-        open={tracesExportOpen}
-        onOpenChange={setTracesExportOpen}
-        projectId={projectId}
-        runChatSessionIds={runChatSessionIds}
-      />
+      {tracesExportOpen ? (
+        <ExportTracesModal
+          open
+          onOpenChange={setTracesExportOpen}
+          projectId={projectId}
+          runChatSessionIds={runChatSessionIds}
+        />
+      ) : null}
     </div>
   );
 }
