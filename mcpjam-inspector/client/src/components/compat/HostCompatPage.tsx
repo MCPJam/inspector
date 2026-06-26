@@ -80,11 +80,13 @@ export function HostCompatPage({
 
       {detailServer && (
         <section>
-          {showMatrix && (
-            <h2 className="mb-1.5 text-sm font-medium text-foreground">
-              {detailServer.name}
-            </h2>
-          )}
+          {/* Always name the server the report is for — HostCompatContent
+              renders no visible server identity, so without this a
+              single-connected-server report (matrix hidden) could be read as
+              a different, globally-selected server's. */}
+          <h2 className="mb-1.5 text-sm font-medium text-foreground">
+            {detailServer.name}
+          </h2>
           <HostCompatContent
             server={detailServer}
             toolsData={toolsData}

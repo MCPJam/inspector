@@ -1,5 +1,5 @@
 import { runByMode } from "@/lib/apis/mode-client";
-import { authFetch } from "@/lib/session-token";
+import { localPost } from "@/lib/apis/local-post";
 
 /**
  * Client wrapper for the local headless widget-render route
@@ -43,19 +43,6 @@ export interface RenderWidgetInput {
   /** Inject the `window.openai` shim (for ChatGPT/Copilot-style hosts). */
   injectOpenAiCompat?: boolean;
   viewport?: { width: number; height: number };
-}
-
-async function localPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await authFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
-  }
-  return data as T;
 }
 
 export async function renderWidget(
