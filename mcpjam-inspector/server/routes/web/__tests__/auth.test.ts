@@ -108,9 +108,13 @@ describe("web routes — auth enforcement", () => {
 
   it("keeps mcp-apps sandbox-proxy public without bearer token", async () => {
     const res = await getJson(app, "/api/web/apps/mcp-apps/sandbox-proxy");
+    const body = await res.text();
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(body).toContain('const RECORDER_SHIM = "(function(){');
+    expect(body).toContain("recorderBootstrap();");
+    expect(body).not.toContain('const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";');
   });
 
   it("returns 400 for tools/list with missing required fields", async () => {

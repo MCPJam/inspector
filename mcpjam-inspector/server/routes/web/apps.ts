@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/ext-apps";
 import { CORS_ORIGINS } from "../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../apps/SandboxProxyHtml.bundled.js";
+import { RECORDER_SHIM_JS } from "../apps/mcp-apps/recorder-shim.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import {
   projectServerSchema,
@@ -20,6 +21,10 @@ import {
 const apps = new Hono();
 
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
+const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
+  '"__MCPJAM_RECORDER_SHIM__"',
+  () => JSON.stringify(RECORDER_SHIM_JS),
+);
 
 /**
  * Hosted-mode mirror of `extractLegacyOpenAICsp` in
@@ -131,7 +136,7 @@ apps.get("/mcp-apps/sandbox-proxy", (c) => {
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   c.header("Content-Security-Policy", buildFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
+  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
 });
 
 // ── MCP Apps Widget Content ──────────────────────────────────────────
