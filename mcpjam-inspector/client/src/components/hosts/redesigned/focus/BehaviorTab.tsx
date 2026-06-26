@@ -231,7 +231,57 @@ export function BehaviorTab({
         />
 
         <FieldRow
-          label={fToolImages.label}
+          label={
+            <span className="inline-flex items-center gap-1.5">
+              {fToolImages.label}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="About exposing tool images to the model"
+                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <Info className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent
+                  variant="muted"
+                  side="top"
+                  sideOffset={4}
+                  className="max-w-[260px] leading-snug"
+                >
+                  Covers{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#image-content"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    direct image blocks
+                  </a>
+                  ,{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#embedded-resources"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    embedded resource blobs
+                  </a>
+                  , and{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#resource-links"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    image resource links
+                  </a>
+                  .
+                </TooltipContent>
+              </Tooltip>
+            </span>
+          }
           description={fToolImages.description}
           control={
             <Switch
