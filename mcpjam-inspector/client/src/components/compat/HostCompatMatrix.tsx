@@ -77,13 +77,27 @@ function MatrixRow({
 
   return (
     <tr
+      // Mouse convenience: click anywhere on the row to select. The real
+      // keyboard/AT control is the button in the server cell below — the row
+      // carries no button role so assistive tech isn't told a table row is a
+      // button.
       onClick={() => onSelect(server.name)}
-      className={`cursor-pointer border-t border-border/50 ${
+      className={`border-t border-border/50 ${
         selected ? "bg-muted/50" : "hover:bg-muted/30"
       }`}
     >
-      <td className="sticky left-0 z-10 max-w-[12rem] truncate bg-inherit px-3 py-2 text-xs font-medium text-foreground">
-        {server.name}
+      <td className="sticky left-0 z-10 bg-inherit px-3 py-2">
+        <button
+          type="button"
+          aria-pressed={selected}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(server.name);
+          }}
+          className="block max-w-[11rem] truncate rounded text-left text-xs font-medium text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {server.name}
+        </button>
       </td>
       {hosts.map((h) => {
         const verdict = byHost.get(h.id)?.verdict ?? "unknown";

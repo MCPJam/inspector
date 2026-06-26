@@ -6,8 +6,8 @@ import type { ServerWithName } from "@/state/app-types";
 // Two-host registry keeps the rendered grid small and assertions tractable.
 vi.mock("@/lib/host-compat/profiles", () => ({
   buildHostCompatProfiles: () => [
-    { id: "claude", label: "Claude", logoSrc: "" },
-    { id: "codex", label: "Codex", logoSrc: "" },
+    { id: "claude", label: "Claude", logoSrc: "/claude.png" },
+    { id: "codex", label: "Codex", logoSrc: "/codex.svg" },
   ],
 }));
 
@@ -85,8 +85,9 @@ describe("HostCompatMatrix", () => {
     await waitFor(() => expect(screen.getByText("2/2")).toBeInTheDocument());
     expect(screen.getByText("0/2")).toBeInTheDocument();
 
-    // Clicking server b's row selects it.
-    fireEvent.click(screen.getByText("b").closest("tr")!);
+    // The per-server control is a real button (keyboard-reachable, not a
+    // mouse-only row handler) and selects on activation.
+    fireEvent.click(screen.getByRole("button", { name: "b" }));
     expect(onSelectServer).toHaveBeenCalledWith("b");
   });
 });

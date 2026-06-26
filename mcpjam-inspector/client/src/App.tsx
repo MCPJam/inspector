@@ -888,10 +888,15 @@ export function CompatibilityRoute() {
   const connectedServers = Object.values<ServerWithName>(
     appState.servers,
   ).filter((s) => s.connectionStatus === "connected");
+  // Only hand down a selected server that's actually in the matrix (connected);
+  // otherwise the detail pane could show a disconnected server the matrix
+  // doesn't list. The page falls back to the first connected one.
+  const selectedConnected =
+    connectedServers.find((s) => s.name === selectedServerEntry?.name) ?? null;
   return (
     <HostCompatPage
       servers={connectedServers}
-      selectedServer={selectedServerEntry ?? null}
+      selectedServer={selectedConnected}
       onSelectServer={setSelectedServer}
       projectId={activeProjectId}
     />

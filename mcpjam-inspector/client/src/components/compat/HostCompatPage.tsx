@@ -31,10 +31,11 @@ export function HostCompatPage({
   onSelectServer: (name: string) => void;
   projectId?: string | null;
 }) {
-  // Fall back to the sole server so the detail isn't blank before the active
-  // server resolves. Hook runs unconditionally; it no-ops for a null server.
-  const detailServer =
-    selectedServer ?? (servers.length === 1 ? servers[0] : null);
+  // Anchor the detail to a CONNECTED server (the matrix only lists connected
+  // ones), falling back to the first so the report is never blank — and so the
+  // matrix highlight (`detailServer.name`) always matches a real row. Hook runs
+  // unconditionally; it no-ops for a null/empty server.
+  const detailServer = selectedServer ?? servers[0] ?? null;
   const toolsData = useServerToolsData(detailServer);
 
   if (servers.length === 0) {
