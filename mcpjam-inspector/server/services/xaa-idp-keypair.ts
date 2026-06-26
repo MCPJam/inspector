@@ -43,6 +43,40 @@ function setKeyPair(nextPrivateKey: KeyObject, nextPublicKey: KeyObject): void {
   publicKey = nextPublicKey;
 }
 
+function normalizePrivateKeyPem(raw: string): string {
+  const trimmed = raw.trim();
+  // Accept a PEM with real newlines, a PEM whose newlines were escaped as
+  // literal "\n" (common when stored in a single-line env var), or a base64
+  // blob of the whole PEM.
+  if (trimmed.includes("BEGIN")) {
+    return trimmed.replace(/\\n/g, "\n");
+  }
+  return Buffer.from(trimmed, "base64").toString("utf-8");
+}
+
+function loadSecretKeyPair(): boolean {
+  const raw = process.env.XAA_IDP_PRIVATE_KEY;
+  if (!raw || raw.trim() === "") {
+    return false;
+  }
+
+  try {
+    const pem = normalizePrivateKeyPem(raw);
+    const nextPrivateKey = createPrivateKey(pem);
+    const nextPublicKey = createPublicKey(nextPrivateKey);
+    setKeyPair(nextPrivateKey, nextPublicKey);
+    logger.info(
+      "XAA issuer: using signing key pair from XAA_IDP_PRIVATE_KEY secret.",
+    );
+    return true;
+  } catch (error) {
+    logger.warn(
+      `XAA issuer: XAA_IDP_PRIVATE_KEY is set but could not be parsed, falling back (${error instanceof Error ? error.message : String(error)})`,
+    );
+    return false;
+  }
+}
+
 function createAndPersistLocalKeyPair(): void {
   const { privatePath, publicPath } = getLocalXAAKeyPaths();
   const dir = path.dirname(privatePath);
@@ -118,7 +152,7 @@ export function initXAAIdpKeyPair(): void {
     return;
   }
 
-  if (!loadPersistedLocalKeyPair()) {
+  if (!loadSecretKeyPair() && !loadPersistedLocalKeyPair()) {
     try {
       createAndPersistLocalKeyPair();
     } catch (error) {
