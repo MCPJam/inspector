@@ -20,6 +20,10 @@ import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
 import { AiTriageCard } from "./ai-triage-card";
+import {
+  computeRunPassRatePercent,
+  unifyTriageRows,
+} from "./ai-triage-helpers";
 import { GoalCompletionCard } from "./goal-completion-card";
 import {
   buildJudgeCaseMap,
@@ -585,23 +589,84 @@ export function RunDetailView({
 
   const hasInsightContent = Boolean(serverQualityTriage || goalCompletionPanel);
 
-  // Collapsed summary for the run-level band (replaces the side rail in the
-  // embedded results view). The per-case detail now lives in the matrix cells.
-  const insightBandSummary = (
-    <>
-      <span className="font-medium text-foreground">AI insights</span>
-      {judgeHeadline ? (
-        <span className="truncate text-muted-foreground">
-          · Judge {judgeHeadline.meet}/{judgeHeadline.total} meet goal
-          {judgeHeadline.disagreements > 0
-            ? ` · ${judgeHeadline.disagreements} disagree${
-                judgeHeadline.disagreements === 1 ? "s" : ""
-              } with pass/fail`
-            : ""}
-        </span>
-      ) : null}
-    </>
+  const triageFixCount = useMemo(
+    () =>
+      unifyTriageRows({
+        serverQuality: serverQualityResult ?? null,
+        iterations: caseGroupsForSelectedRun,
+      }).length,
+    [serverQualityResult, caseGroupsForSelectedRun],
   );
+
+  const bandPassRatePercent = useMemo(() => {
+    if (!hideAccuracyHero) return null;
+    return computeRunPassRatePercent({
+      selectedRunDetails,
+      caseGroupsForSelectedRun,
+    });
+  }, [hideAccuracyHero, selectedRunDetails, caseGroupsForSelectedRun]);
+
+  // Collapsed summary for the run-level band (replaces the side rail in the
+  // embedded results view). Lead with the actionable signal; secondary line is
+  // context (pass rate, judge headline) the user can ignore until they expand.
+  const insightBandSummary = useMemo(() => {
+    const metricWord = metricLabel.toLowerCase();
+    const primary = (() => {
+      if (triageFixCount > 0) {
+        return `${triageFixCount} suggested fix${triageFixCount === 1 ? "" : "es"}`;
+      }
+      if ((judgeHeadline?.disagreements ?? 0) > 0) {
+        const n = judgeHeadline!.disagreements;
+        return `${n} judge disagreement${n === 1 ? "" : "s"}`;
+      }
+      if (judgeHeadline) {
+        return `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`;
+      }
+      return "Run insights";
+    })();
+
+    const secondaryParts: string[] = [];
+    if (bandPassRatePercent !== null) {
+      secondaryParts.push(`${bandPassRatePercent}% ${metricWord}`);
+    }
+    if (judgeHeadline && triageFixCount > 0) {
+      if (judgeHeadline.disagreements > 0) {
+        secondaryParts.push(
+          `${judgeHeadline.disagreements} judge disagreement${
+            judgeHeadline.disagreements === 1 ? "" : "s"
+          }`,
+        );
+      } else {
+        secondaryParts.push(
+          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+        );
+      }
+    } else if (
+      judgeHeadline &&
+      triageFixCount === 0 &&
+      judgeHeadline.disagreements === 0
+    ) {
+      secondaryParts.push(
+        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+      );
+    }
+
+    return (
+      <>
+        <span className="font-medium text-foreground">{primary}</span>
+        {secondaryParts.length > 0 ? (
+          <span className="truncate text-xs text-muted-foreground">
+            {secondaryParts.join(" · ")}
+          </span>
+        ) : null}
+      </>
+    );
+  }, [
+    bandPassRatePercent,
+    judgeHeadline,
+    metricLabel,
+    triageFixCount,
+  ]);
 
   const insightBand = hasInsightContent ? (
     <RunInsightBand summary={insightBandSummary} severity={insightSeverity}>
@@ -620,7 +685,7 @@ export function RunDetailView({
           </div>
         )}
 
-      {runClient && !showAccuracyHero ? (
+      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Host</span>
           <HostChip

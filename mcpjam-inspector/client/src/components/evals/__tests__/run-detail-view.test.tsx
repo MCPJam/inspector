@@ -299,6 +299,46 @@ describe("RunDetailView", () => {
     expect(root).not.toHaveClass("p-4");
   });
 
+  it("omits the Host metadata row when folded into the suite results split", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun({ namedHostId: "host-copilot" })}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideKpiStrip
+        hideAccuracyHero
+        hostNamesById={new Map([["host-copilot", "Copilot"]])}
+      />,
+    );
+
+    expect(screen.queryByText("Host")).not.toBeInTheDocument();
+    expect(screen.queryByText("Copilot")).not.toBeInTheDocument();
+  });
+
+  it("shows the Host metadata row when not embedded and the accuracy hero is hidden", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun({ namedHostId: "host-copilot" })}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideAccuracyHero
+        omitIterationList
+        hostNamesById={new Map([["host-copilot", "Copilot"]])}
+      />,
+    );
+
+    expect(screen.getByText("Host")).toBeInTheDocument();
+    expect(screen.getByText("Copilot")).toBeInTheDocument();
+  });
+
   it("does not surface per-iteration case insight captions in the run view (open a test from the list to inspect a case)", () => {
     render(
       <RunDetailView

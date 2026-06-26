@@ -212,12 +212,12 @@ export function GoalCompletionCard({
           : "rounded-lg border border-border bg-card",
       )}
     >
-      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-sm font-medium text-foreground">
-            LLM as Judge
+            {embedded ? "Goal judge" : "LLM as Judge"}
           </span>
-          <span className="truncate text-sm text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground">
             {headerSubtitle}
           </span>
         </div>

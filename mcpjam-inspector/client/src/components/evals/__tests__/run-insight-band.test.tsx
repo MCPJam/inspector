@@ -19,7 +19,7 @@ describe("RunInsightBand", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("full insight cards")).not.toBeInTheDocument();
 
-    const toggle = screen.getByRole("button", { name: /expand ai insights/i });
+    const toggle = screen.getByRole("button", { name: /expand run insights/i });
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("full insight cards")).toBeInTheDocument();
@@ -42,7 +42,7 @@ describe("RunInsightBand", () => {
     );
     const band = container.querySelector("[data-severity]");
     expect(band).toHaveAttribute("data-severity", "warn");
-    expect(band?.className).toContain("bg-warning/10");
+    expect(band?.className).toContain("border-l-warning");
   });
 
   it("can default to open", () => {
@@ -53,7 +53,7 @@ describe("RunInsightBand", () => {
     );
     expect(screen.getByText("cards")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /collapse ai insights/i }),
+      screen.getByRole("button", { name: /collapse run insights/i }),
     ).toHaveAttribute("aria-expanded", "true");
   });
 });

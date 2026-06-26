@@ -68,6 +68,29 @@ function makeData(): CrossHostData {
   };
 }
 
+function makeMultiHostData(): CrossHostData {
+  const matrix = new Map<string, Map<string, CellData>>([
+    [
+      "c1",
+      new Map([
+        ["h1", makeCell(5000, 1000, 1)],
+        ["h2", makeCell(6000, 1100, 1)],
+      ]),
+    ],
+  ]);
+
+  return {
+    hostColumns: [
+      { hostId: "h1", hostName: "MCPJam", isHistorical: false },
+      { hostId: "h2", hostName: "Copilot", isHistorical: false },
+    ],
+    caseRows: [{ caseId: "c1", caseTitle: "Shared case" }],
+    matrix,
+    hasAnyData: true,
+    hasHostAttachments: true,
+  };
+}
+
 describe("CrossHostMatrix row sort and summaries", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -95,6 +118,17 @@ describe("CrossHostMatrix row sort and summaries", () => {
       "style",
       expect.stringContaining("width: 300"),
     );
+  });
+
+  it("hides host column headers when only one host is shown", () => {
+    render(<CrossHostMatrix data={makeData()} expanded />);
+    expect(screen.queryByText("MCPJam")).not.toBeInTheDocument();
+  });
+
+  it("renders host column headers when comparing multiple hosts", () => {
+    render(<CrossHostMatrix data={makeMultiHostData()} expanded />);
+    expect(screen.getByText("MCPJam")).toBeInTheDocument();
+    expect(screen.getByText("Copilot")).toBeInTheDocument();
   });
 
   it("reorders rows when sorting by latency", async () => {
