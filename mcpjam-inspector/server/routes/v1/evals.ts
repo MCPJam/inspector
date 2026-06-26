@@ -1753,9 +1753,10 @@ evals.get(
     }
 
     const snapshot = (iteration.testCaseSnapshot ?? {}) as Record<string, any>;
-    const steps: TestStep[] = Array.isArray(snapshot.steps)
-      ? normalizeSteps(snapshot.steps as TestStep[])
-      : [];
+    // Reconstruct legacy snapshots (promptTurns / query / probeConfig with no
+    // persisted steps) via the shared helper so the Steps view isn't empty for
+    // pre-migration iterations. internalCaseToSteps no-ops when steps exist.
+    const steps: TestStep[] = internalCaseToSteps(snapshot as CaseDoc);
 
     // Evidence is best-effort: the trace blob may be absent (still-running or
     // never-persisted iteration). Verdicts from metadata still return.
