@@ -79,4 +79,16 @@ describe("ComputerTab", () => {
       screen.getByRole("switch", { name: "Personal computer" }),
     ).toBeChecked();
   });
+
+  it("locks the toggle when a harness depends on the computer", () => {
+    const draft = {
+      ...emptyHostConfigInputV2(),
+      computer: { kind: "personal" as const },
+      harness: "claude-code" as const,
+    };
+    render(<ComputerTab draft={draft} onDraftChange={vi.fn()} />);
+    const toggle = screen.getByRole("switch", { name: "Personal computer" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+  });
 });

@@ -42,6 +42,7 @@ import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import { fetchHarnessModelCredential } from "./harness-model-credential.js";
 import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
@@ -57,58 +58,41 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
 /**
  * Resolve the model credential the harness hands to the in-sandbox Claude Code
- * CLI. The inspector server holds no long-lived model key by design (keys live
- * in Convex), so this reads a deploy-configured credential.
+ * CLI — from Convex, like every other model key (keys live in Convex; the
+ * inspector holds none by design). The CLI makes its own Anthropic calls inside
+ * the sandbox, so it needs a real credential; we fetch the project org's BYOK
+ * **Anthropic** key (vault-decrypted server-side) via the bearer-authed Convex
+ * endpoint. The harness is Anthropic-only.
  *
- * MVP seam: `AI_GATEWAY_API_KEY` (preferred) or `ANTHROPIC_API_KEY`. Production
- * hardening (per the plan): a short-lived, project-scoped AI-Gateway token
- * minted by Convex per turn — swap this function's body for that mint without
- * touching the rest of the turn.
+ * Fails closed: a project with no Anthropic provider (or a non-Anthropic model)
+ * throws here, BEFORE the computer is woken (this is the first step of the
+ * turn), so a misconfigured turn never provisions a box.
  */
-function resolveHarnessModelAuth():
-  | { gateway: { apiKey: string; baseUrl?: string } }
-  | { anthropic: { apiKey?: string; authToken?: string; baseUrl?: string } } {
-  // Fail closed: this hands a deploy-level model key to the in-sandbox Claude
-  // Code CLI (and the generated .mcp.json may carry per-server auth headers)
-  // inside a reused executable computer, which crosses the server-side trust
-  // boundary. Require an explicit operator opt-in until the per-turn
-  // Convex-minted token replaces it.
-  if (process.env.MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL !== "true") {
-    throw new Error(
-      "harness env credential path is disabled — set " +
-        "MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL=true to opt in (dev/owner only; " +
-        "production uses a per-turn scoped token minted by Convex)",
-    );
+async function resolveHarnessModelAuth(args: {
+  projectId: string;
+  modelId: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<{
+  anthropic: { apiKey: string; baseUrl?: string };
+}> {
+  const result = await fetchHarnessModelCredential({
+    projectId: args.projectId,
+    modelId: args.modelId,
+    bearer: args.bearer,
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!result.ok) {
+    throw new Error(result.error);
   }
-  const gatewayKey = process.env.AI_GATEWAY_API_KEY?.trim();
-  if (gatewayKey) {
-    return {
-      gateway: {
-        apiKey: gatewayKey,
-        ...(process.env.AI_GATEWAY_BASE_URL
-          ? { baseUrl: process.env.AI_GATEWAY_BASE_URL }
-          : {}),
-      },
-    };
-  }
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
-  const anthropicToken = process.env.ANTHROPIC_AUTH_TOKEN?.trim();
-  if (anthropicKey || anthropicToken) {
-    return {
-      anthropic: {
-        ...(anthropicKey ? { apiKey: anthropicKey } : {}),
-        ...(anthropicToken ? { authToken: anthropicToken } : {}),
-        ...(process.env.ANTHROPIC_BASE_URL
-          ? { baseUrl: process.env.ANTHROPIC_BASE_URL }
-          : {}),
-      },
-    };
-  }
-  throw new Error(
-    "harness model credential not configured — set AI_GATEWAY_API_KEY or " +
-      "ANTHROPIC_API_KEY on the inspector server (production: per-turn scoped " +
-      "token minted by Convex)",
-  );
+  return {
+    anthropic: {
+      apiKey: result.credential.apiKey,
+      ...(result.credential.baseUrl
+        ? { baseUrl: result.credential.baseUrl }
+        : {}),
+    },
+  };
 }
 
 /**
@@ -237,11 +221,17 @@ export async function runHarnessTurn(
         );
       }
 
-      // 1. Resolve the model credential FIRST. It's a pure, fail-fast check —
-      // the env-credential gate throws when disabled/unset — so doing it before
-      // resolveHarnessSandbox keeps a misconfigured turn from waking/provisioning
-      // the user's computer (and bumping its activity) only to fail afterward.
-      const auth = resolveHarnessModelAuth();
+      // 1. Resolve the model credential FIRST — fetched from Convex (the
+      // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
+      // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
+      // user's computer (and bumps its activity), so a misconfigured turn never
+      // touches the box.
+      const auth = await resolveHarnessModelAuth({
+        projectId,
+        modelId,
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
 
       // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
       // harnessServerInputFromConfig throws e.g. for a local stdio server with

@@ -295,8 +295,10 @@ export interface HostTemplate {
  * validated against the backend built-in tool catalog; `computer` is the
  * Project Computers resource). Recorded verbatim so a future
  * computer-use / host-native-toolset feature can seed an honest Claude
- * Code environment instead of guessing. Deliberately NOT wired into the
- * "claude-code" template seed below.
+ * Code environment instead of guessing. These are NOT wired into
+ * `builtInToolIds` — when the "claude-code" template runs under
+ * `harness: "claude-code"`, the real Claude Code runtime provides them from
+ * inside the sandbox; this catalogue is documentation of that surface.
  */
 export const CLAUDE_CODE_NATIVE_TOOLS = {
   /** Always loaded at session start. */
@@ -692,6 +694,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: false,
+        // Run the REAL Claude Code runtime (the @ai-sdk/harness-claude-code
+        // adapter) instead of MCPJam's emulated engine. The harness executes
+        // inside an attached personal computer, so seed one too — the backend
+        // enforces the `harness ⇒ computer` invariant on write.
+        harness: "claude-code",
+        computer: { kind: "personal" },
       });
       // Verbatim from a live mcpjam-learn `start-host-probe` against
       // Claude Code CLI v2.1.176: raw `initialize` capabilities are
@@ -705,9 +713,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         roots: {},
         elicitation: {},
       };
-      // Progressive tool discovery ON. Product choice, not probe data —
-      // tool disclosure isn't an MCP `initialize` capability, so nothing
-      // about it was (or could be) extracted from the host probe.
+      // Progressive tool discovery ON. No-op while the harness runs (the real
+      // Claude Code owns its own tool discovery from the generated .mcp.json,
+      // and runHarnessTurn ignores this flag), but it stays the honest value
+      // for the emulated fallback path. Product choice, not probe data — tool
+      // disclosure isn't an MCP `initialize` capability.
       base.progressiveToolDiscovery = true;
       // CLI client: no widget rendering, so `hostContext` stays the
       // empty object.
@@ -724,9 +734,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // returned no ui/initialize snapshot at all.
       base.hostCapabilitiesOverride = {};
       //
-      // The CLI's native harness toolset (Bash/Read/Write/etc.) is
-      // catalogued in CLAUDE_CODE_NATIVE_TOOLS above for a future
-      // computer-use feature; intentionally not attached to this seed.
+      // The CLI's native harness toolset (Bash/Read/Write/etc.) is NOT seeded
+      // into `builtInToolIds` — under `harness: "claude-code"` those tools come
+      // from the real Claude Code runtime inside the sandbox, not MCPJam's
+      // built-in tool registry. CLAUDE_CODE_NATIVE_TOOLS above remains the
+      // documented catalogue of what that runtime exposes.
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {

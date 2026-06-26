@@ -16,6 +16,8 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -272,6 +274,8 @@ chatV2.post("/", async (c) => {
       chatboxId?: string;
       accessVersion?: number;
       surface?: "preview" | "share_link";
+      // Saved host being previewed (Playground over /mcp). See web/chat-v2.ts.
+      hostId?: string;
     };
     const mcpClientManager = c.mcpClientManager;
     const {
@@ -287,6 +291,7 @@ chatV2.post("/", async (c) => {
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
+      hostId: bodyHostId,
     } = body;
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
@@ -345,6 +350,32 @@ chatV2.post("/", async (c) => {
           );
         }
       }
+    } else if (!isChatboxSession && bodyHostId) {
+      // Host-bound direct session (Playground). FAIL CLOSED on fetch failure —
+      // see web/chat-v2.ts for the rationale (a harness host must never quietly
+      // fall back to the emulated engine).
+      const bearer = c.req.header("authorization") ?? "";
+      const runtime = await fetchHostRuntimeConfig({
+        hostId: bodyHostId,
+        bearer,
+      });
+      if (runtime.ok) {
+        hostRuntimeConfig = runtime.config as unknown as Record<
+          string,
+          unknown
+        >;
+      } else {
+        logger.warn(
+          "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
+          { hostId: bodyHostId, status: runtime.status, error: runtime.error }
+        );
+        return c.json(
+          {
+            error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+          },
+          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+        );
+      }
     }
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -356,7 +387,9 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         builtInToolIds: body.builtInToolIds,
       },
-      precedence: "host-wins",
+      // Chatbox: published host wins. Host preview: owner's body tweaks win,
+      // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
+      precedence: isChatboxSession ? "host-wins" : "override-wins",
     });
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
@@ -530,13 +563,36 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // Harness preflight: fail closed with a clear message when a host-resolved
+    // Claude Code harness can't run on this server (never silent-fallback).
+    if (resolvedExecution.harness === "claude-code") {
+      const availability = checkHarnessRuntimeAvailable({
+        requireToolApproval: resolvedExecution.requireToolApproval,
+      });
+      if (!availability.ok) {
+        return c.json(
+          {
+            error: `This host runs the Claude Code harness, which isn't available: ${availability.reason}.`,
+          },
+          503
+        );
+      }
+    }
+
     // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
     // HTTP action, which needs a bearer + projectId to authorize. Local
     // requests without either (anonymous local mode, no project) omit the
     // tools — same degradation as a host that never enabled them.
     const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
     const builtInTools = resolveHostTools(
-      { builtInToolIds: resolvedExecution.builtInToolIds },
+      {
+        builtInToolIds: resolvedExecution.builtInToolIds,
+        // Computer comes from the server-resolved runtime config (chatbox OR
+        // host-by-id), never the request body.
+        computer: hostRuntimeConfig
+          ? (hostRuntimeConfig as { computer?: unknown }).computer
+          : undefined,
+      },
       builtInAuthHeader && typeof body.projectId === "string" && body.projectId
         ? {
             authHeader: builtInAuthHeader,

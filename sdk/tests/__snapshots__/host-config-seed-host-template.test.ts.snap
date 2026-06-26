@@ -13,6 +13,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "agentcore",
@@ -52,6 +53,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "agentcore",
@@ -102,6 +104,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "message": {},
@@ -215,6 +218,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "message": {},
@@ -313,11 +317,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "elicitation": {},
       "roots": {},
     },
-    "computer": undefined,
+    "computer": {
+      "kind": "personal",
+    },
     "connectionDefaults": {
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": "claude-code",
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "claude-code",
@@ -353,11 +360,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "elicitation": {},
       "roots": {},
     },
-    "computer": undefined,
+    "computer": {
+      "kind": "personal",
+    },
     "connectionDefaults": {
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": "claude-code",
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "claude-code",
@@ -403,6 +413,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "downloadFile": {},
       "logging": {},
@@ -696,6 +707,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "downloadFile": {},
       "logging": {},
@@ -981,6 +993,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "cline",
@@ -1015,6 +1028,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "cline",
@@ -1051,6 +1065,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "codex",
@@ -1088,6 +1103,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "codex",
@@ -1136,6 +1152,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "message": {
         "text": {},
@@ -1237,6 +1254,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "message": {
         "text": {},
@@ -1339,6 +1357,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},
@@ -1426,6 +1445,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},
@@ -1510,6 +1530,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "openLinks": {},
     },
@@ -1747,6 +1768,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "openLinks": {},
     },
@@ -1981,6 +2003,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "downloadFile": {},
       "experimental": {},
@@ -2165,6 +2188,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "downloadFile": {},
       "experimental": {},
@@ -2349,6 +2373,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "message": {
@@ -2499,6 +2524,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "message": {
@@ -2641,6 +2667,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "n8n",
@@ -2675,6 +2702,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "n8n",
@@ -2709,6 +2737,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "notion",
@@ -2743,6 +2772,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "notion",
@@ -2777,6 +2807,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "perplexity",
@@ -2811,6 +2842,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {},
     "hostContext": {},
     "hostStyle": "perplexity",
@@ -2853,6 +2885,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},
@@ -3047,6 +3080,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},
@@ -3247,6 +3281,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},
@@ -3334,6 +3369,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "headers": {},
       "requestTimeout": 10000,
     },
+    "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
       "openLinks": {},

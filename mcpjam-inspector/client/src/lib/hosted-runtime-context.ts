@@ -3,6 +3,15 @@ export type HostedRuntimeContext = {
   selectedServerIds?: string[];
   oauthTokens?: Record<string, string>;
   /**
+   * Saved host being previewed (Playground / host-bound direct chat). Absent
+   * for non-host direct chat and for published-chatbox sessions (which carry
+   * `chatboxId` instead). Forwarded as `hostId` on direct-session request
+   * bodies so the server re-resolves the host's authoritative runtime config
+   * (incl. harness/computer); also part of the session scope so switching the
+   * previewed host forks the chat session.
+   */
+  hostId?: string;
+  /**
    * Resolved chatbox identity (post-redeem). Threaded into every
    * chatbox-aware request body and cache key.
    */

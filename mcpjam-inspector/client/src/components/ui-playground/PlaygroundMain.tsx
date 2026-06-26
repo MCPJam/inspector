@@ -756,6 +756,10 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
+      // Forward the previewed host id so the server re-resolves its
+      // authoritative runtime config (harness/computer) for this direct
+      // session, and so switching hosts forks the chat session.
+      ...(previewedHostId ? { hostId: previewedHostId } : {}),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
