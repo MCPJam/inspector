@@ -384,6 +384,15 @@ export function ToolsTab({
     });
   }, []);
 
+  // Clicking the sidebar's "Tools" tab returns to the tool list (the tool
+  // menu): deselect any open tool, the same as the back arrow does.
+  const handleChangeTab = (tab: "tools" | "saved") => {
+    setActiveTab(tab);
+    if (tab === "tools") {
+      setSelectedTool("");
+    }
+  };
+
   const fetchTools = async (reset = false) => {
     if (!serverName) {
       logger.warn("Cannot fetch tools: no serverId available");
@@ -754,7 +763,7 @@ export function ToolsTab({
   const sidebarContent = (
     <ToolsSidebar
       activeTab={activeTab}
-      onChangeTab={setActiveTab}
+      onChangeTab={handleChangeTab}
       tools={tools}
       toolQuality={toolQualityByName}
       toolNames={toolNames}
