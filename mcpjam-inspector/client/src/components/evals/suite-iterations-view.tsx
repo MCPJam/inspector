@@ -33,6 +33,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { ScheduleEditor } from "./schedule-editor";
 import { EvalExportModal } from "./eval-export-modal";
+import { ExportTracesModal } from "./export-traces-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
@@ -356,7 +357,7 @@ export function SuiteIterationsView({
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
         .length,
-    [draftDefaultPredicates],
+    [draftDefaultPredicates]
   );
   // Description editor is hidden in the current pass — handlers and draft
   // state were removed; re-add together when the About section returns.
@@ -364,6 +365,18 @@ export function SuiteIterationsView({
     scope: "suite" | "test-case";
     cases: EvalExportCaseInput[];
   } | null>(null);
+  const [tracesExportOpen, setTracesExportOpen] = useState(false);
+  // chatSessionIds for the currently-selected run (unified-trace iterations
+  // only; legacy `blob`-only iterations have no chatSessions row to export).
+  const runChatSessionIds = useMemo(
+    () =>
+      selectedRunId
+        ? allIterations
+            .filter((it) => it.suiteRunId === selectedRunId && it.chatSessionId)
+            .map((it) => it.chatSessionId as string)
+        : [],
+    [allIterations, selectedRunId]
+  );
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
@@ -763,11 +776,13 @@ export function SuiteIterationsView({
 
   // One factory so the overview branch and the folded-in run-detail branch
   // share the exact same SuiteDashboard prop wiring.
-  const renderUnifiedDashboard = (extra: {
-    selectedRunId?: string | null;
-    runDetailPane?: React.ReactNode;
-    onExitRun?: () => void;
-  } = {}) => (
+  const renderUnifiedDashboard = (
+    extra: {
+      selectedRunId?: string | null;
+      runDetailPane?: React.ReactNode;
+      onExitRun?: () => void;
+    } = {}
+  ) => (
     <SuiteDashboard
       suite={suite}
       cases={cases}
@@ -813,60 +828,54 @@ export function SuiteIterationsView({
     />
   );
 
-  const runDetailView =
-    selectedRunDetails ? (
-      <RunDetailView
-        selectedRunDetails={selectedRunDetails}
-        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-        currentSuiteJudgeConfig={suite.judgeConfig ?? null}
-        source={suite.source}
-        runDetailSortBy={effectiveRunDetailSortBy}
-        onSortChange={effectiveRunDetailSortChange}
-        serverNames={suite.environment?.servers || []}
-        selectedIterationId={selectedIterationId}
-        onSelectIteration={handleSelectIteration}
-        selectedTestCaseId={selectedRunTestCaseId}
-        onSelectTestCase={handleSelectTestCase}
-        hostNamesById={hostNamesById}
-        compareBaseRun={previousCompletedRunForSelectedRun}
-        onCompareWithRun={(baseRunId) =>
-          handleCompareRuns(baseRunId, selectedRunDetails._id)
-        }
-        onSelectRun={(runId) => navigation.toRunDetail(suite._id, runId)}
-        kpiPlacement={
-          showSuiteHeader && viewMode === "run-detail" && !foldRunDetail
-            ? "header"
-            : "body"
-        }
-        hideReplayLineage
-        hideRecentRuns={foldRunDetail}
-        hideKpiStrip={foldRunDetail}
-        hideAccuracyHero={foldRunDetail}
-        caseTableSlot={runMatrixPane}
-        omitIterationList={omitRunIterationList}
-        onOpenRunInsights={
-          !omitRunIterationList && route.type === "run-detail"
-            ? () =>
-                navigation.toRunDetail(
-                  route.suiteId,
-                  route.runId,
-                  undefined,
-                  { insightsFocus: true }
-                )
-            : undefined
-        }
-        runInsightsSelected={
-          !omitRunIterationList &&
-          route.type === "run-detail" &&
-          Boolean(
-            route.insightsFocus && !route.iteration && !route.testCaseId
-          )
-        }
-        onEditTestCase={onEditTestCase}
-        alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-        runTrendData={runTrendData}
-      />
-    ) : null;
+  const runDetailView = selectedRunDetails ? (
+    <RunDetailView
+      selectedRunDetails={selectedRunDetails}
+      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      currentSuiteJudgeConfig={suite.judgeConfig ?? null}
+      source={suite.source}
+      runDetailSortBy={effectiveRunDetailSortBy}
+      onSortChange={effectiveRunDetailSortChange}
+      serverNames={suite.environment?.servers || []}
+      selectedIterationId={selectedIterationId}
+      onSelectIteration={handleSelectIteration}
+      selectedTestCaseId={selectedRunTestCaseId}
+      onSelectTestCase={handleSelectTestCase}
+      hostNamesById={hostNamesById}
+      compareBaseRun={previousCompletedRunForSelectedRun}
+      onCompareWithRun={(baseRunId) =>
+        handleCompareRuns(baseRunId, selectedRunDetails._id)
+      }
+      onSelectRun={(runId) => navigation.toRunDetail(suite._id, runId)}
+      kpiPlacement={
+        showSuiteHeader && viewMode === "run-detail" && !foldRunDetail
+          ? "header"
+          : "body"
+      }
+      hideReplayLineage
+      hideRecentRuns={foldRunDetail}
+      hideKpiStrip={foldRunDetail}
+      hideAccuracyHero={foldRunDetail}
+      caseTableSlot={runMatrixPane}
+      omitIterationList={omitRunIterationList}
+      onOpenRunInsights={
+        !omitRunIterationList && route.type === "run-detail"
+          ? () =>
+              navigation.toRunDetail(route.suiteId, route.runId, undefined, {
+                insightsFocus: true,
+              })
+          : undefined
+      }
+      runInsightsSelected={
+        !omitRunIterationList &&
+        route.type === "run-detail" &&
+        Boolean(route.insightsFocus && !route.iteration && !route.testCaseId)
+      }
+      onEditTestCase={onEditTestCase}
+      alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+      runTrendData={runTrendData}
+    />
+  ) : null;
 
   // Keep the run-group rail mounted when opening a run — only the right pane
   // swaps. Wrapping overview ↔ run-detail in AnimatePresence faded the whole
@@ -906,6 +915,9 @@ export function SuiteIterationsView({
             testCases={cases}
             onSetupCi={onSetupCi}
             onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
+            onExportTraces={
+              projectId ? () => setTracesExportOpen(true) : undefined
+            }
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
@@ -1034,7 +1046,7 @@ export function SuiteIterationsView({
                         runDetailPane: runDetailView,
                         onExitRun: handleBackToOverview,
                       }
-                    : {},
+                    : {}
                 )}
               </div>
             ) : viewMode === "overview" ? (
@@ -1388,7 +1400,7 @@ export function SuiteIterationsView({
                     }
                   />
                 }
-                >
+              >
                 {suiteScenarioMigrationCount > 0 ? (
                   <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-400">
                     {suiteScenarioMigrationCount} scenario check
@@ -1494,6 +1506,12 @@ export function SuiteIterationsView({
         suite={suite}
         cases={exportState?.cases ?? []}
         serverEntries={appState.servers}
+      />
+      <ExportTracesModal
+        open={tracesExportOpen}
+        onOpenChange={setTracesExportOpen}
+        projectId={projectId}
+        runChatSessionIds={runChatSessionIds}
       />
     </div>
   );

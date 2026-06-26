@@ -5,7 +5,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { Loader2, RotateCw, X } from "lucide-react";
+import { Download, Loader2, RotateCw, X } from "lucide-react";
 import type { EvalSuite, EvalSuiteRun } from "./types";
 
 /** Replay / rerun / cancel controls for a run detail view (SuiteHeader row or CI sidebar). */
@@ -23,6 +23,7 @@ export function RunDetailPlaygroundActions({
   missingServers,
   showCloseButton = false,
   onBackToOverview,
+  onExportTraces,
   className,
 }: {
   suite: EvalSuite;
@@ -38,6 +39,8 @@ export function RunDetailPlaygroundActions({
   missingServers: string[];
   showCloseButton?: boolean;
   onBackToOverview?: () => void;
+  /** Opens the OTLP trace-export modal. Omitted ⇒ no Export button. */
+  onExportTraces?: () => void;
   className?: string;
 }) {
   const isCancelling = cancellingRunId === selectedRun._id;
@@ -61,15 +64,15 @@ export function RunDetailPlaygroundActions({
       ? "Replaying..."
       : "Running..."
     : isReplayAction
-      ? "Replay this run"
-      : "Rerun";
+    ? "Replay this run"
+    : "Rerun";
   const runActionTooltip = isReplayAction
     ? "Replay this CI run in the playground"
     : !hasServersConfigured
-      ? "No MCP servers are configured for this suite"
-      : missingServers.length > 0
-        ? "Connect and run."
-        : "Run all cases";
+    ? "No MCP servers are configured for this suite"
+    : missingServers.length > 0
+    ? "Connect and run."
+    : "Run all cases";
 
   return (
     <div
@@ -126,6 +129,23 @@ export function RunDetailPlaygroundActions({
             </span>
           </TooltipTrigger>
           <TooltipContent>{runActionTooltip}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      {onExportTraces ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onExportTraces()}
+              className="gap-2"
+              data-testid="run-detail-export-traces"
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Export traces as OTLP JSON</TooltipContent>
         </Tooltip>
       ) : null}
       {showCloseButton && onBackToOverview ? (

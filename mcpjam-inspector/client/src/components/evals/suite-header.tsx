@@ -90,6 +90,8 @@ interface SuiteHeaderProps {
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
+  /** Run-detail: opens the OTLP trace-export modal. Omitted ⇒ no Export button. */
+  onExportTraces?: () => void;
   /**
    * Playground: suite overview uses {@link SuiteDashboard} for both runs and cases, but the
    * URL can still be `?view=runs`. When true, show manual case actions whenever we are in
@@ -157,6 +159,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
+    onExportTraces,
     unifiedSuiteDashboard = false,
     casesSidebarHidden = false,
     onShowCasesSidebar,
@@ -281,8 +284,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning =
-    rerunningSuiteId === suite._id || latestRunIsInProgress;
+  const isRerunning = rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
@@ -359,6 +361,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               missingServers={missingServers}
               showCloseButton
               onBackToOverview={() => onViewModeChange("overview")}
+              onExportTraces={onExportTraces}
             />
           </div>
         );
@@ -405,7 +408,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             )}
           </div>
           {runDetailKpiStrip ? (
-            <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
+            <div className="min-w-0 flex-1 self-center">
+              {runDetailKpiStrip}
+            </div>
           ) : null}
           {!hideRunActions ? (
             <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
@@ -423,6 +428,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 missingServers={missingServers}
                 showCloseButton
                 onBackToOverview={() => onViewModeChange("overview")}
+                onExportTraces={onExportTraces}
               />
             </div>
           ) : null}
@@ -640,34 +646,33 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     Boolean(onOpenExportSuite) ||
     (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
 
-  const overviewSuiteNavButtons =
-    overviewHasSuiteNav ? (
-      <>
-        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onShowCasesSidebar}
-          >
-            <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Cases
-          </Button>
-        ) : null}
-        {onSetupCi && !readOnlyConfig ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onSetupCi}
-          >
-            <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Setup CI
-          </Button>
-        ) : null}
-      </>
-    ) : null;
+  const overviewSuiteNavButtons = overviewHasSuiteNav ? (
+    <>
+      {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onShowCasesSidebar}
+        >
+          <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Cases
+        </Button>
+      ) : null}
+      {onSetupCi && !readOnlyConfig ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onSetupCi}
+        >
+          <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Setup CI
+        </Button>
+      ) : null}
+    </>
+  ) : null;
 
   const overviewSettingsButton =
     !readOnlyConfig && !isEditMode ? (
@@ -684,7 +689,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 buildEvalsPath({
                   type: "suite-edit",
                   suiteId: suite._id,
-                }),
+                })
               )
             }
           >
@@ -742,9 +747,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               {isGeneratingTestCases
                 ? "Generating test cases…"
                 : !canGenerateTestCases
-                  ? (generateTestCasesDisabledReason ??
-                    "Configure suite servers before generating cases.")
-                  : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+                ? generateTestCasesDisabledReason ??
+                  "Configure suite servers before generating cases."
+                : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
             </TooltipContent>
           </Tooltip>
           <GenerateCasesConfigPopover
@@ -860,8 +865,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     ? "Replaying..."
                     : "Running..."
                   : replayableLatestRun
-                    ? "Replay latest run"
-                    : "Run"}
+                  ? "Replay latest run"
+                  : "Run"}
               </Button>
             </span>
           </TooltipTrigger>
@@ -871,12 +876,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 ? evalRunsDisabledReason
                 : "Replay the latest CI run"
               : evalRunsDisabledReason
-                ? evalRunsDisabledReason
-                : !hasServersConfigured
-                  ? "No MCP servers are configured for this suite"
-                  : missingServers.length > 0
-                    ? "Connect and run."
-                    : "Run all cases"}
+              ? evalRunsDisabledReason
+              : !hasServersConfigured
+              ? "No MCP servers are configured for this suite"
+              : missingServers.length > 0
+              ? "Connect and run."
+              : "Run all cases"}
           </TooltipContent>
         </Tooltip>
       ) : null}
