@@ -14,6 +14,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalStepResult,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -331,6 +332,38 @@ export class PlatformApiClient {
       )}/eval-runs/${encodeURIComponent(
         params.runId
       )}/iterations/${encodeURIComponent(params.iterationId)}/trace`,
+      {},
+      options
+    );
+  }
+
+  /** Cancel an in-flight run; returns the run in its (now cancelled) state. */
+  cancelEvalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRun> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /** One row per authored step (status + reason + evidence) for one iteration. */
+  getEvalRunSteps(
+    params: { projectId: string; runId: string; iterationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalStepResult>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(
+        params.runId
+      )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
       options
     );

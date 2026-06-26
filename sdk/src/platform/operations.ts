@@ -26,6 +26,7 @@ import type {
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalIteration,
+  PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
@@ -840,16 +841,160 @@ export const runEvalSuiteOperation: PlatformOperation<
   },
 };
 
+const runEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  case: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The test case to run, by id or title, within the suite."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with."
+    ),
+});
+
+export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
+
+export type RunEvalCaseResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  case: { id: string; title: string | null };
+  servers: Array<{ id: string; name?: string }>;
+  runId: string;
+  status: string;
+};
+
+export const runEvalCaseOperation: PlatformOperation<
+  RunEvalCaseInput,
+  RunEvalCaseResult
+> = {
+  name: "run_eval_case",
+  title: "Run a single MCPJam eval case",
+  description:
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
+  readOnly: false,
+  inputSchema: runEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const testCase = await resolveCase(
+      client,
+      project,
+      suite,
+      input.case,
+      signal
+    );
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+    const created = await client.createEvalRun(
+      {
+        projectId: project.id,
+        body: {
+          suiteId: suite.id,
+          caseIds: [testCase.id],
+          ...(overrideServers
+            ? { serverIds: overrideServers.map((server) => server.id) }
+            : {}),
+        },
+      },
+      { signal }
+    );
+    const servers =
+      overrideServers?.map((server) => ({
+        id: server.id,
+        name: server.name,
+      })) ??
+      (created.servers ?? []).map((server) => ({
+        id: server.id,
+        ...(server.name ? { name: server.name } : {}),
+      }));
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      case: { id: testCase.id, title: testCase.title },
+      servers,
+      runId: created.runId,
+      status: created.status,
+    };
+  },
+};
+
+/**
+ * Authored test-step (`TestStep`) input — the unified test model that REPLACES
+ * the old `query` / `expectedToolCalls` / `promptTurns` / `caseType` /
+ * `probeConfig` authoring fields (see the inspector's `shared/steps.ts`).
+ *
+ * A case is an ordered `steps` array of:
+ *   - `prompt`   — a user message (model-driven turn);
+ *   - `toolCall` — a deterministic, model-free tool call (= old widget probe);
+ *   - `interact` — one pure widget action (click/type/key/scroll/wait);
+ *   - `assert`   — an assertion (a `Predicate` like `toolCalledWith` /
+ *                  `widgetRendered`, or a DOM `WidgetAssertion`).
+ *
+ * Typed permissively here (discriminated only on `kind` + the per-kind core
+ * fields); the backend `/api/v1` route validates authoritatively with the
+ * shared `stepsSchema`. Declared fully so the body is forwarded verbatim
+ * instead of having unknown keys stripped.
+ *
+ * BREAKING (Phase 2.5): this is a clean break from the old per-case authoring
+ * fields. No users existed for the old shape, so no compatibility layer.
+ */
+const stepInputSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("prompt"),
+        prompt: z.string(),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("toolCall"),
+        serverId: z.string().min(1).optional(),
+        serverName: z.string().min(1),
+        toolName: z.string().min(1),
+        arguments: z.record(z.string(), z.any()),
+        renderTimeoutMs: z.number().int().positive().optional(),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("interact"),
+        toolName: z.string().min(1),
+        action: z.record(z.string(), z.any()),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("assert"),
+        assertion: z.record(z.string(), z.any()),
+      })
+      .passthrough(),
+  ])
+  .describe("One authored test step (prompt | toolCall | interact | assert).");
+
 const evalCaseInput = z
   .object({
     title: z.string().trim().min(1).describe("Short label for the test case."),
-    query: z
-      .string()
-      .trim()
-      .optional()
-      .describe(
-        "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
-      ),
     runs: z
       .number()
       .int()
@@ -857,19 +1002,11 @@ const evalCaseInput = z
       .max(10)
       .optional()
       .describe("Iterations to run this case per eval run. Defaults to 1."),
-    expectedToolCalls: z
-      .array(
-        z.union([
-          z.string().trim().min(1),
-          z.object({
-            toolName: z.string().trim().min(1),
-            arguments: z.record(z.string(), z.any()).optional(),
-          }),
-        ])
-      )
-      .optional()
+    steps: z
+      .array(stepInputSchema)
+      .min(1)
       .describe(
-        "Tools the agent is expected to call. Either a tool name string or { toolName, arguments }. Defaults to none."
+        "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
       ),
     expectedOutput: z
       .string()
@@ -887,13 +1024,6 @@ const evalCaseInput = z
       .min(1)
       .optional()
       .describe("Optional scenario/context note for the case."),
-    // Advanced authoring fields. Typed permissively here and validated
-    // authoritatively by the backend route — but declared so they are forwarded
-    // verbatim instead of being stripped as unknown keys.
-    promptTurns: z
-      .array(z.record(z.string(), z.any()))
-      .optional()
-      .describe("Multi-turn prompt sequence for the case (advanced)."),
     advancedConfig: z
       .object({
         system: z.string().optional(),
@@ -913,18 +1043,6 @@ const evalCaseInput = z
       .record(z.string(), z.any())
       .optional()
       .describe("Per-case success-predicate gate (advanced)."),
-    caseType: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe('Case type: "prompt" (default) or "widget_probe".'),
-    probeConfig: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe(
-        "Widget-probe pinned tool call; required when caseType is widget_probe."
-      ),
     model: z
       .string()
       .trim()
@@ -939,20 +1057,6 @@ const evalCaseInput = z
       .describe(
         "Per-case provider override; defaults to the suite-level provider."
       ),
-  })
-  .superRefine((testCase, ctx) => {
-    // Prompt cases need a query; widget_probe cases run a pinned tool call and
-    // carry an empty query (the run schema normalizes to "").
-    if (
-      testCase.caseType !== "widget_probe" &&
-      (testCase.query === undefined || testCase.query.length === 0)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["query"],
-        message: "query is required for prompt cases",
-      });
-    }
   });
 
 const createEvalSuiteInput = z.object({
@@ -1016,7 +1120,7 @@ export const createEvalSuiteOperation: PlatformOperation<
   name: "create_eval_suite",
   title: "Create MCPJam eval suite",
   description:
-    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases (title, query, optional expected tool calls / expected output / negative-test). Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
   inputSchema: createEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -1101,50 +1205,26 @@ const publicCheckOverrideSchema = z
   })
   .describe("Per-case check override (how case checks combine with defaults).");
 
-const expectedToolCallSchema = z.object({
-  tool: z.string().trim().min(1),
-  arguments: z.record(z.string(), z.any()).optional(),
-});
-
 const caseModelSchema = z.object({
   model: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
-});
-
-const renderCheckSchema = z.object({
-  server: z.string().trim().min(1),
-  tool: z.string().trim().min(1),
-  arguments: z.record(z.string(), z.any()).optional(),
-  renderTimeoutMs: z.number().int().positive().optional(),
 });
 
 // Per-case editable fields, shared by create and update. All optional so a
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
-  kind: z
-    .enum(["prompt", "render-check"])
+  // The unified test-step model REPLACES the old kind / prompt / turns /
+  // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
+  // A `prompt` step is a model turn; a `toolCall` step is a deterministic
+  // (formerly render-check) call; `assert` steps hold the expectations.
+  steps: z
+    .array(stepInputSchema)
+    .min(1)
     .optional()
-    .describe("Case kind. Defaults to prompt."),
-  prompt: z
-    .string()
-    .trim()
-    .optional()
-    .describe("User prompt for a single-turn prompt case."),
-  turns: z
-    .array(
-      z.object({
-        prompt: z.string().trim().min(1),
-        expectedToolCalls: z.array(expectedToolCallSchema).optional(),
-        expectedOutput: z.string().trim().min(1).optional(),
-      })
-    )
-    .optional()
-    .describe("Multi-turn prompt sequence (alternative to prompt)."),
-  expectedToolCalls: z
-    .array(expectedToolCallSchema)
-    .optional()
-    .describe("Tools the agent is expected to call."),
+    .describe(
+      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided."
+    ),
   expectedOutput: z
     .string()
     .trim()
@@ -1171,9 +1251,6 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
-  renderCheck: renderCheckSchema
-    .optional()
-    .describe("Pinned tool call for a render-check case."),
 } as const;
 
 /** Build the public case body forwarded to the route (drops undefined keys). */
@@ -1494,7 +1571,7 @@ export const createEvalCaseOperation: PlatformOperation<
   name: "create_eval_case",
   title: "Create MCPJam eval case",
   description:
-    "Add one test case to an eval suite. A prompt case needs a prompt (or turns); a render-check case needs renderCheck. Positive cases must assert something: an expected tool call, expected output, or a check.",
+    "Add one test case to an eval suite. Provide ordered `steps`: a `prompt` step is a model turn, a `toolCall` step is a deterministic tool call, and `assert` steps hold the expectations (e.g. a `toolCalledWith` or `widgetRendered` predicate). Positive cases must include at least one `assert` step.",
   readOnly: false,
   inputSchema: createEvalCaseInput,
   async execute(input, { client, signal }) {
@@ -1531,7 +1608,7 @@ export const updateEvalCaseOperation: PlatformOperation<
   name: "update_eval_case",
   title: "Update MCPJam eval case",
   description:
-    "Edit an eval test case. Only the fields you pass change (prompt, turns, expected tool calls, expected output, iterations, models, match options, checks, render check).",
+    "Edit an eval test case. Only the fields you pass change (steps, expected output, iterations, models, match options, checks). Passing `steps` replaces the case's test-step sequence wholesale.",
   readOnly: false,
   inputSchema: updateEvalCaseInput,
   async execute(input, { client, signal }) {
@@ -1868,6 +1945,85 @@ export const getEvalIterationTraceOperation: PlatformOperation<
       runId: input.runId,
       iterationId: input.iterationId,
       trace,
+    };
+  },
+};
+
+export type CancelEvalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformEvalRun;
+};
+
+export const cancelEvalRunOperation: PlatformOperation<
+  EvalRunScopedInput,
+  CancelEvalRunResult
+> = {
+  name: "cancel_eval_run",
+  title: "Cancel MCPJam eval run",
+  description:
+    "Cancel an in-flight eval run. Marks the run and its pending/running iterations cancelled. No-op if already cancelled; errors if the run already finished.",
+  readOnly: false,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.cancelEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const evalRunStepsInput = evalRunScopedInput.extend({
+  iterationId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Iteration ID, as returned by list_eval_run_iterations."),
+});
+
+export type GetEvalRunStepsInput = z.infer<typeof evalRunStepsInput>;
+
+export type GetEvalRunStepsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  iterationId: string;
+  steps: PlatformEvalStepResult[];
+};
+
+export const getEvalRunStepsOperation: PlatformOperation<
+  GetEvalRunStepsInput,
+  GetEvalRunStepsResult
+> = {
+  name: "get_eval_run_steps",
+  title: "Get MCPJam eval iteration step results",
+  description:
+    "Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). The fastest way to see WHICH step failed and why.",
+  readOnly: true,
+  inputSchema: evalRunStepsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.getEvalRunSteps(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        iterationId: input.iterationId,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      iterationId: input.iterationId,
+      steps: page.items,
     };
   },
 };
@@ -2450,6 +2606,8 @@ export const deleteHostOperation: PlatformOperation<
       {
         projectId: project.id,
         hostId: host.id,
+        // The v1 delete contract is bodyless — the route rejects any field.
+        body: {},
       },
       { signal }
     );
