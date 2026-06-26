@@ -311,15 +311,25 @@ describe("evaluateAllHosts (real registry)", () => {
 });
 
 describe("evaluateHostCompat — server lane (protocol version)", () => {
-  it("flags a version difference as an info server-lane finding (never alarmist)", () => {
+  it("surfaces a version difference as an info finding but an 'unknown' verdict", () => {
     const r = evaluateHostCompat(
       reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
       profile({ supportedProtocolVersions: ["2025-11-25"] }),
     );
     const f = r.findings.find((x) => x.lane === "server");
+    // The finding itself stays non-alarmist (info), but the lane can't claim
+    // a confident "works" when the negotiated version isn't in the host's set.
     expect(f?.severity).toBe("info");
     expect(f?.title).toMatch(/Protocol version differs/);
-    // info doesn't downgrade — lane + top-level stay "works".
+    expect(r.lanes.server.verdict).toBe("unknown");
+    expect(r.verdict).toBe("unknown");
+  });
+
+  it("stays 'works' on a version match (no server-lane finding)", () => {
+    const r = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2025-11-25" } }),
+      profile({ supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }),
+    );
     expect(r.lanes.server.verdict).toBe("works");
     expect(r.verdict).toBe("works");
   });

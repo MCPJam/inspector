@@ -133,5 +133,10 @@ describe("ConformanceGate", () => {
     expect(mockRunProtocol).not.toHaveBeenCalled();
     // …but Apps conformance still runs.
     expect(mockRunApps).toHaveBeenCalledWith("stdio-server");
+    // …and a skipped (unsupported) protocol suite must NOT be counted as a
+    // pass: no blanket green "Passes spec checks" when protocol never ran.
+    expect(
+      screen.queryByText(/Passes spec checks/),
+    ).not.toBeInTheDocument();
   });
 });

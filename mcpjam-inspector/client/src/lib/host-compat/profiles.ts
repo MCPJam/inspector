@@ -132,8 +132,16 @@ const MARKET_HOSTS: readonly MarketHost[] = [
  * flag the registry CAN give us cleanly (the `window.openai` shim toggle),
  * so it stays derived; `rendersMcpApps` is the explicit CLI-aware fact.
  */
+// The profile array has no per-server input — it's a pure function of the
+// static market list + registry — so build it once. Every connected server's
+// memoized `useHostCompatReports` calls `evaluateAllHosts` on each tools/
+// widget/protocol change, which would otherwise rebuild this byte-identical
+// array (registry lookups + spreads) every time.
+let cachedProfiles: HostCompatProfile[] | null = null;
+
 export function buildHostCompatProfiles(): HostCompatProfile[] {
-  return MARKET_HOSTS.map((host) => {
+  if (cachedProfiles) return cachedProfiles;
+  cachedProfiles = MARKET_HOSTS.map((host) => {
     const rendersOpenAiApps = getCompatRuntimeForStyle(host.id).injected;
     const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
     return {
@@ -145,6 +153,7 @@ export function buildHostCompatProfiles(): HostCompatProfile[] {
         : undefined,
     };
   });
+  return cachedProfiles;
 }
 
 // Seeding a template builds a full HostConfigInputV2, so cache the

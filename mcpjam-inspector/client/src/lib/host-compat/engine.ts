@@ -293,9 +293,19 @@ export function evaluateHostCompat(
     requirements.unknownDimensions.length > 0,
     profile.provenance,
   );
-  // Server lane has no "unknown" state yet — we either find a mismatch or stay
-  // quiet (no protocol fact ⇒ nothing to flag).
-  const server = laneVerdict(findings, "server", false, profile.provenance);
+  // A server-lane finding (today: a protocol-version difference) means we
+  // can't confirm the host will accept this server — it MAY negotiate a shared
+  // version, but we only sampled one. Surface that as "unknown" rather than a
+  // confident green "works"; the finding itself stays `info` (non-alarmist) in
+  // the list. With no finding (version matches, or no live version), the lane
+  // is quiet → "works".
+  const serverHasFinding = findings.some((f) => f.lane === "server");
+  const server = laneVerdict(
+    findings,
+    "server",
+    serverHasFinding,
+    profile.provenance,
+  );
   const verdict =
     VERDICT_RANK[apps.verdict] >= VERDICT_RANK[server.verdict]
       ? apps.verdict

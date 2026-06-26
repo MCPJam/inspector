@@ -132,14 +132,18 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
     const o = outcomes[s];
     return o.status === "done" && !o.passed;
   });
+  // Green "passes" only when every suite actually ran AND passed. An
+  // `unsupported` suite (e.g. protocol over stdio) was never checked, so it
+  // must NOT count as a pass — otherwise the banner claims spec conformance we
+  // never verified. The unsupported suite still shows its own "not runnable
+  // here" row, so on stdio the user sees an honest partial result, not a
+  // blanket green.
   const allClean =
     hasRun &&
     !isRunning &&
     (["protocol", "apps"] as const).every((s) => {
       const o = outcomes[s];
-      return (
-        o.status === "unsupported" || (o.status === "done" && o.passed)
-      );
+      return o.status === "done" && o.passed;
     });
 
   return (

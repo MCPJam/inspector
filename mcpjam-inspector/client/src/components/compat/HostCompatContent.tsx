@@ -114,9 +114,16 @@ export function HostCompatContent({
   projectId,
   serverId,
   onClose,
+  source = "compat_detail_modal",
 }: {
   server: ServerWithName;
   toolsData?: ListToolsResultWithMetadata | null;
+  /**
+   * Analytics surface this report is rendered on — keeps the host-creation
+   * funnel honest (the standalone page must not tag its views/CTAs as modal).
+   * Defaults to the modal so existing callers are unchanged.
+   */
+  source?: "compat_detail_modal" | "compat_page";
   /** Convex project id — required to create a host. */
   projectId?: string | null;
   /** Project-server-ref id to attach to the new host (the modal resolves it
@@ -155,7 +162,7 @@ export function HostCompatContent({
     if (viewedServerRef.current === server.name) return;
     viewedServerRef.current = server.name;
     posthog.capture("host_compat_tab_viewed", {
-      ...standardEventProps("compat_detail_modal"),
+      ...standardEventProps(source),
       server_name: server.name,
       host_count: reports.length,
     });
@@ -175,7 +182,7 @@ export function HostCompatContent({
     const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
 
     posthog.capture("compat_cta_clicked", {
-      ...standardEventProps("compat_detail_modal"),
+      ...standardEventProps(source),
       template_id: templateId,
       host_label: report.hostLabel,
       verdict: report.verdict,

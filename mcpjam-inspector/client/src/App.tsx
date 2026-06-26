@@ -2613,8 +2613,12 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
       activeTab === "compatibility" &&
-      compatibilityEnabled !== true
+      compatibilityEnabled === false
     ) {
+      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
+      // `undefined`; redirecting then would strand a flagged-in user who
+      // cold-loads /compatibility (the redirect fires before the flag
+      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is

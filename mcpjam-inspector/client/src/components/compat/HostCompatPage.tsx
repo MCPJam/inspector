@@ -2,6 +2,7 @@ import { Boxes } from "lucide-react";
 import type { ServerWithName } from "@/state/app-types";
 import { useServerToolsData } from "@/lib/host-compat/use-host-compat";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * Standalone Compatibility destination — the full-page "does my server work on
@@ -26,16 +27,12 @@ export function HostCompatPage({
 
   if (!server) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-        <Boxes className="h-6 w-6 text-muted-foreground" />
-        <div className="text-sm font-medium text-foreground">
-          No server selected
-        </div>
-        <div className="max-w-xs text-xs text-muted-foreground">
-          Select a connected server above to check whether it works on each
-          host.
-        </div>
-      </div>
+      <EmptyState
+        icon={Boxes}
+        title="No server selected"
+        description="Select a connected server above to check whether it works on each host."
+        className="h-full"
+      />
     );
   }
 
@@ -55,6 +52,7 @@ export function HostCompatPage({
         server={server}
         toolsData={toolsData}
         projectId={projectId}
+        source="compat_page"
       />
     </div>
   );
