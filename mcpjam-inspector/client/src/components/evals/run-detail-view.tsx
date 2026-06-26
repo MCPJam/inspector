@@ -8,12 +8,8 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import {
-  formatRunId,
-} from "./helpers";
-import {
-  computeIterationPassed,
-} from "./pass-criteria";
+import { formatRunId } from "./helpers";
+import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
@@ -39,9 +35,7 @@ import { ArrowUpDown } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
-import {
-  caseListCardClassName,
-} from "./case-list-shared";
+import { caseListCardClassName } from "./case-list-shared";
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
@@ -153,6 +147,8 @@ interface RunDetailViewProps {
   hostNamesById?: Map<string, string | null>;
   /** Recent run pass rates for the accuracy sparkline in the insight rail. */
   runTrendData?: RunTrendPoint[];
+  /** Opens the OTLP trace-export modal for this run (rendered on the hero band). */
+  onExportTraces?: () => void;
   /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/ci-evals/...` instead of
@@ -262,11 +258,9 @@ export function RunIterationsSidebar({
 
   const groupedCaseCount = useMemo(
     () =>
-      groupRunIterationsByTestCase(
-        caseGroupsForSelectedRun,
-        runDetailSortBy,
-      ).length,
-    [caseGroupsForSelectedRun, runDetailSortBy],
+      groupRunIterationsByTestCase(caseGroupsForSelectedRun, runDetailSortBy)
+        .length,
+    [caseGroupsForSelectedRun, runDetailSortBy]
   );
 
   const sortHeaderControl = (
@@ -333,7 +327,7 @@ export function RunIterationsSidebar({
             flushChrome
               ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card"
               : caseListCardClassName,
-            "min-h-0 min-w-0 flex-1 overflow-hidden",
+            "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 dark:bg-muted/15">
@@ -385,6 +379,7 @@ export function RunDetailView({
   caseTableSlot,
   hideKpiStrip = false,
   hideAccuracyHero = false,
+  onExportTraces,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -487,7 +482,7 @@ export function RunDetailView({
   // side card. Null when nothing is graded, which skips badge rendering.
   const judgeByCaseKey = useMemo(
     () => buildJudgeCaseMap(goalCompletionResult),
-    [goalCompletionResult],
+    [goalCompletionResult]
   );
 
   // Run-level judge headline for the collapsed insight band (the per-case detail
@@ -500,7 +495,7 @@ export function RunDetailView({
     const deterministicByCaseKey = new Map<string, boolean | null>();
     for (const group of groupRunIterationsByTestCase(
       caseGroupsForSelectedRun,
-      "test",
+      "test"
     )) {
       const key = caseKeyForGroup(group);
       if (key) deterministicByCaseKey.set(key, deterministicCasePassed(group));
@@ -508,8 +503,8 @@ export function RunDetailView({
     const disagreements = cases.filter((c) =>
       judgeDisagreesWithVerdict(
         deterministicByCaseKey.get(c.caseKey) ?? null,
-        c.passed,
-      ),
+        c.passed
+      )
     ).length;
     return { meet, total: cases.length, disagreements };
   }, [goalCompletionResult, caseGroupsForSelectedRun]);
@@ -532,19 +527,20 @@ export function RunDetailView({
 
   const metricLabel = source === "sdk" ? "Pass rate" : "Accuracy";
 
-  const showAccuracyHero = !hideAccuracyHero && shouldShowRunAccuracyHero({
-    run: selectedRunDetails,
-    iterations: caseGroupsForSelectedRun,
-    runTrendData,
-  });
+  const showAccuracyHero =
+    !hideAccuracyHero &&
+    shouldShowRunAccuracyHero({
+      run: selectedRunDetails,
+      iterations: caseGroupsForSelectedRun,
+      runTrendData,
+    });
 
   const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const runClient = useMemo(() => {
     const hostId = selectedRunDetails.namedHostId;
     if (!hostId) return null;
-    const displayName =
-      hostNamesById?.get(hostId) ?? formatRunId(hostId);
+    const displayName = hostNamesById?.get(hostId) ?? formatRunId(hostId);
     return { hostId, displayName };
   }, [selectedRunDetails.namedHostId, hostNamesById]);
 
@@ -557,6 +553,7 @@ export function RunDetailView({
       metricLabel={metricLabel}
       badgeMetricLabel={badgeMetricLabel}
       includeRunIdentity
+      onExportTraces={onExportTraces}
       hideRecentRuns={hideRecentRuns}
       hideReplayLineage={hideReplayLineage}
       runClient={runClient}
@@ -572,7 +569,7 @@ export function RunDetailView({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
-          }),
+          })
         );
       }}
       className="mb-4"
@@ -595,7 +592,7 @@ export function RunDetailView({
         serverQuality: serverQualityResult ?? null,
         iterations: caseGroupsForSelectedRun,
       }).length,
-    [serverQualityResult, caseGroupsForSelectedRun],
+    [serverQualityResult, caseGroupsForSelectedRun]
   );
 
   const bandPassRatePercent = useMemo(() => {
@@ -613,7 +610,9 @@ export function RunDetailView({
     const metricWord = metricLabel.toLowerCase();
     const primary = (() => {
       if (triageFixCount > 0) {
-        return `${triageFixCount} suggested fix${triageFixCount === 1 ? "" : "es"}`;
+        return `${triageFixCount} suggested fix${
+          triageFixCount === 1 ? "" : "es"
+        }`;
       }
       if ((judgeHeadline?.disagreements ?? 0) > 0) {
         const n = judgeHeadline!.disagreements;
@@ -634,11 +633,11 @@ export function RunDetailView({
         secondaryParts.push(
           `${judgeHeadline.disagreements} judge disagreement${
             judgeHeadline.disagreements === 1 ? "" : "s"
-          }`,
+          }`
         );
       } else {
         secondaryParts.push(
-          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
         );
       }
     } else if (
@@ -647,7 +646,7 @@ export function RunDetailView({
       judgeHeadline.disagreements === 0
     ) {
       secondaryParts.push(
-        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
       );
     }
 
@@ -661,12 +660,7 @@ export function RunDetailView({
         ) : null}
       </>
     );
-  }, [
-    bandPassRatePercent,
-    judgeHeadline,
-    metricLabel,
-    triageFixCount,
-  ]);
+  }, [bandPassRatePercent, judgeHeadline, metricLabel, triageFixCount]);
 
   const insightBand = hasInsightContent ? (
     <RunInsightBand summary={insightBandSummary} severity={insightSeverity}>
@@ -688,10 +682,7 @@ export function RunDetailView({
       {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Host</span>
-          <HostChip
-            name={runClient.displayName}
-            hostId={runClient.hostId}
-          />
+          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
         </div>
       ) : null}
 
@@ -706,14 +697,11 @@ export function RunDetailView({
           </span>
         </p>
       ) : null}
-
     </>
   );
 
   const bodyKpiStrip =
-    !hideKpiStrip &&
-    kpiPlacement === "body" &&
-    runDashboardKpis.length > 0 ? (
+    !hideKpiStrip && kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
       <div className="mb-4 shrink-0">
         <RunDetailKpiStrip kpis={runDashboardKpis} />
       </div>
@@ -761,12 +749,9 @@ export function RunDetailView({
       className={cn(
         "relative flex min-h-0 w-full min-w-0 flex-1 flex-col",
         useTwoColumnLayout
-          ? cn(
-              "overflow-hidden",
-              embeddedInResultsSplit ? "p-0" : "p-4",
-            )
+          ? cn("overflow-hidden", embeddedInResultsSplit ? "p-0" : "p-4")
           : "overflow-y-auto p-4",
-        omitIterationList && "px-3 py-3",
+        omitIterationList && "px-3 py-3"
       )}
     >
       <div className="shrink-0">{runMetadataBlock}</div>
@@ -803,7 +788,7 @@ export function RunDetailView({
                 withHandle={!embeddedInResultsSplit}
                 className={cn(
                   embeddedInResultsSplit &&
-                    "w-px bg-border/60 after:w-0 [&>div]:hidden",
+                    "w-px bg-border/60 after:w-0 [&>div]:hidden"
                 )}
               />
               <ResizablePanel

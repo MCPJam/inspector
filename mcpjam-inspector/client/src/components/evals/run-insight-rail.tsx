@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime, formatRunId } from "./helpers";
 import {
@@ -33,7 +35,7 @@ const RUN_TREND_CHIP_LIMIT = 6;
 
 function runAccuracyCardContextLabel(
   point: RunTrendPoint & { runIndexLabel: string },
-  isCurrent: boolean,
+  isCurrent: boolean
 ): string {
   if (isCurrent) return "Current run";
   if (point.runNumber !== undefined) return `Suite run #${point.runNumber}`;
@@ -64,7 +66,7 @@ function RunAccuracyRunCard({
     "flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 shadow-none transition-colors",
     isCurrent &&
       "border-primary/50 bg-primary/[0.07] ring-1 ring-inset ring-primary/30",
-    canNavigate && "hover:border-border hover:bg-muted/40",
+    canNavigate && "hover:border-border hover:bg-muted/40"
   );
 
   const cardBody = (
@@ -91,7 +93,7 @@ function RunAccuracyRunCard({
         aria-label={`Open ${cardSummary}`}
         className={cn(
           cardClassName,
-          "text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         )}
         title={cardSummary}
       >
@@ -137,6 +139,7 @@ export function RunAccuracyHeroBand({
   hideReplayLineage = false,
   hideRecentRuns = false,
   runClient = null,
+  onExportTraces,
   className,
 }: {
   run: EvalSuiteRun;
@@ -152,6 +155,8 @@ export function RunAccuracyHeroBand({
   /** Pass/fail badge copy (e.g. "Accuracy" vs "Pass Rate"). */
   badgeMetricLabel?: string;
   onSelectRun?: (runId: string) => void;
+  /** Opens the OTLP trace-export modal for this run. Omitted ⇒ no Export button. */
+  onExportTraces?: () => void;
   /** Opens the deterministic diff against {@link compareBaseRun}. */
   onCompareWithRun?: (baseRunId: string) => void;
   /** Title, outcome badge, and operational stats (playground run detail). */
@@ -173,15 +178,15 @@ export function RunAccuracyHeroBand({
         selectedRunDetails: run,
         caseGroupsForSelectedRun: iterations,
       }),
-    [run, iterations],
+    [run, iterations]
   );
 
   const passRatePercent =
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-        ? normalizeRunPassRatePercent(run.summary.passRate)
-        : null;
+      ? normalizeRunPassRatePercent(run.summary.passRate)
+      : null;
 
   const trendChips = useMemo(() => {
     if (runTrendData.length < 2) return { points: [], hiddenCount: 0 };
@@ -229,6 +234,18 @@ export function RunAccuracyHeroBand({
           variant="compact"
           metricLabel={badgeMetricLabel}
         />
+        {onExportTraces ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportTraces}
+            className="ml-auto gap-1.5"
+            data-testid="run-detail-export-traces"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </Button>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground">
         <RunHeaderCompactStats
@@ -251,10 +268,7 @@ export function RunAccuracyHeroBand({
       {runClient || runServers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {runClient ? (
-            <HostChip
-              name={runClient.displayName}
-              hostId={runClient.hostId}
-            />
+            <HostChip name={runClient.displayName} hostId={runClient.hostId} />
           ) : null}
           {visibleServers.map((name) => (
             <Badge
@@ -293,7 +307,7 @@ export function RunAccuracyHeroBand({
     <div
       className={cn(
         "flex shrink-0 flex-col gap-1 sm:min-w-[9rem]",
-        includeRunIdentity && "sm:items-end sm:text-right",
+        includeRunIdentity && "sm:items-end sm:text-right"
       )}
     >
       <p className={runDetailSectionLabelClass}>{metricLabel}</p>
@@ -306,31 +320,32 @@ export function RunAccuracyHeroBand({
     </div>
   );
 
-  const recentRunsBlock = hasRecentRuns && !hideRecentRuns ? (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <p className={runDetailSectionLabelClass}>Recent runs</p>
-        {trendChips.hiddenCount > 0 ? (
-          <p className={runDetailSupportingClass}>
-            Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
-          </p>
-        ) : null}
+  const recentRunsBlock =
+    hasRecentRuns && !hideRecentRuns ? (
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <p className={runDetailSectionLabelClass}>Recent runs</p>
+          {trendChips.hiddenCount > 0 ? (
+            <p className={runDetailSupportingClass}>
+              Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
+            </p>
+          ) : null}
+        </div>
+        <div
+          className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
+          aria-label={`${metricLabel} across recent suite runs`}
+        >
+          {trendChips.points.map((point) => (
+            <RunAccuracyRunCard
+              key={point.runId}
+              point={point}
+              isCurrent={point.isCurrent}
+              onSelectRun={onSelectRun}
+            />
+          ))}
+        </div>
       </div>
-      <div
-        className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
-        aria-label={`${metricLabel} across recent suite runs`}
-      >
-        {trendChips.points.map((point) => (
-          <RunAccuracyRunCard
-            key={point.runId}
-            point={point}
-            isCurrent={point.isCurrent}
-            onSelectRun={onSelectRun}
-          />
-        ))}
-      </div>
-    </div>
-  ) : null;
+    ) : null;
 
   // With run identity: title/stats and recent runs share one row; accuracy on the right.
   if (includeRunIdentity) {
@@ -354,7 +369,7 @@ export function RunAccuracyHeroBand({
           "flex gap-4 sm:gap-6",
           hasRecentRuns && !hideRecentRuns
             ? "flex-col sm:flex-row sm:items-end"
-            : "flex-col",
+            : "flex-col"
         )}
       >
         {accuracyBlock}
@@ -380,8 +395,8 @@ export function shouldShowRunAccuracyHero({
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-        ? normalizeRunPassRatePercent(run.summary.passRate)
-        : null;
+      ? normalizeRunPassRatePercent(run.summary.passRate)
+      : null;
   return passRatePercent !== null;
 }
 
@@ -432,7 +447,7 @@ export function RunInsightRail({
       className={cn(
         "flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-y-contain",
         embedded ? "gap-0 divide-y divide-border/60" : "gap-3",
-        className,
+        className
       )}
     >
       {triageCard}

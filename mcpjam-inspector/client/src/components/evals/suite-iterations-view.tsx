@@ -832,6 +832,7 @@ export function SuiteIterationsView({
     <RunDetailView
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
       currentSuiteJudgeConfig={suite.judgeConfig ?? null}
       source={suite.source}
       runDetailSortBy={effectiveRunDetailSortBy}
@@ -915,9 +916,6 @@ export function SuiteIterationsView({
             testCases={cases}
             onSetupCi={onSetupCi}
             onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
-            onExportTraces={
-              projectId ? () => setTracesExportOpen(true) : undefined
-            }
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}

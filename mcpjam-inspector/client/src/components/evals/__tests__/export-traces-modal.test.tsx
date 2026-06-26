@@ -45,7 +45,7 @@ describe("ExportTracesModal", () => {
     await waitFor(() => expect(exportSession).toHaveBeenCalledTimes(1));
     expect(exportSession).toHaveBeenCalledWith({
       projectId: "proj_1",
-      chatSessionIds: ["cs_a", "cs_b"],
+      sessionIds: ["cs_a", "cs_b"],
       includeContent: false, // redacted by default
     });
     expect(exportProject).not.toHaveBeenCalled();

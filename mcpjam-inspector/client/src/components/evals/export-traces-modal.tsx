@@ -25,7 +25,7 @@ const MAX_PROJECT_PAGES = 1000;
 
 type ExportSessionTraces = (args: {
   projectId: string;
-  chatSessionIds: string[];
+  sessionIds: string[];
   includeContent: boolean;
 }) => Promise<{ resourceSpans: OtlpResourceSpans[] }>;
 
@@ -81,12 +81,13 @@ export function ExportTracesModal({
       if (effectiveScope === "run") {
         const res = await exportSessionTraces({
           projectId,
-          chatSessionIds: runChatSessionIds,
+          sessionIds: runChatSessionIds,
           includeContent,
         });
         resourceSpans = res.resourceSpans;
       } else {
         let cursor: string | null = null;
+        let done = false;
         for (let page = 0; page < MAX_PROJECT_PAGES; page++) {
           const result = await exportProjectTracesPage({
             projectId,
@@ -94,8 +95,17 @@ export function ExportTracesModal({
             cursor,
           });
           resourceSpans = resourceSpans.concat(result.resourceSpans);
-          if (result.isDone) break;
+          if (result.isDone) {
+            done = true;
+            break;
+          }
           cursor = result.nextCursor;
+        }
+        // Never hand the user a silently-partial trace file.
+        if (!done) {
+          throw new Error(
+            "Project is too large to export in one file. Export individual runs instead."
+          );
         }
       }
 
