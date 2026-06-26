@@ -156,6 +156,19 @@ When two or more host configurations are attached to a suite, a **By case / By h
 - **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
+#### Exporting traces
+
+Click **Export** at the top of the run detail page to download traces as OTLP JSON (OpenInference + MCP Apps conventions) for ingestion into Arize Phoenix, Datadog, or any OTLP-compatible backend.
+
+The export modal lets you choose:
+
+- **This run** — exports only the sessions recorded for the selected run. Disabled if the run has no recorded sessions.
+- **Whole project** — exports all traces across the project, paginated automatically.
+
+**Include content & artifacts** is off by default. Enable it to include prompts, outputs, tool arguments and results, and screenshots. Leave it off when traces may contain secrets.
+
+The file downloads as a timestamped `.json` file.
+
 #### Comparing two runs
 
 Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration.
