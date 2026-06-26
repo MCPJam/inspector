@@ -897,6 +897,19 @@ export async function createAuthorizedManager(
         auth.serverConfig.transportType === "http" &&
         auth.serverConfig.useXaa === true &&
         auth.serverConfig.useOAuth !== true;
+      // TEMP diagnostic (XAA connect debugging): log exactly what the backend
+      // returned for this server so we can see whether `useXaa` arrives and the
+      // issuer is threaded. Remove once the hosted XAA connect path is verified.
+      if (auth.serverConfig.transportType === "http") {
+        logger.info("[XAA debug] authorize flags", {
+          serverId,
+          useXaa: (auth.serverConfig as { useXaa?: unknown }).useXaa ?? null,
+          useOAuth: auth.serverConfig.useOAuth ?? null,
+          hasXaaIssuer: Boolean(options?.xaaIssuer),
+          willMint: useXaa,
+          serverConfigKeys: Object.keys(auth.serverConfig),
+        });
+      }
       if (useXaa) {
         if (!options?.xaaIssuer) {
           // Caller-contract violation: a `useXaa` server reached a manager
