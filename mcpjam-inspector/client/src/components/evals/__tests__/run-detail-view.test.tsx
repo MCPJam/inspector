@@ -158,12 +158,54 @@ describe("RunDetailView", () => {
         selectedIterationId={null}
         onSelectIteration={() => {}}
         omitIterationList
-      />,
+      />
     );
 
     const root = container.firstElementChild;
     expect(root).toHaveClass("overflow-y-auto");
     expect(root).not.toHaveClass("overflow-hidden");
+  });
+
+  it("renders the Export action even when the accuracy hero is hidden (folded run detail)", async () => {
+    const onExportTraces = vi.fn();
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        // The main EvalsTab path is folded: hides KPI strip + accuracy hero.
+        hideKpiStrip
+        hideAccuracyHero
+        onExportTraces={onExportTraces}
+      />
+    );
+
+    const exportButton = screen.getByTestId("run-detail-export-traces");
+    expect(exportButton).toBeInTheDocument();
+    await userEvent.click(exportButton);
+    expect(onExportTraces).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits the Export action when no handler is provided", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideAccuracyHero
+      />
+    );
+    expect(
+      screen.queryByTestId("run-detail-export-traces")
+    ).not.toBeInTheDocument();
   });
 
   it("places body KPI strip below the run hero band and above the resizable group", () => {
@@ -187,7 +229,7 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
     const kpiStrip = screen.getByText("Passed").closest(".mb-4");
@@ -205,14 +247,14 @@ describe("RunDetailView", () => {
     const panelGroup = screen.getByTestId("run-detail-resizable-group");
     expect(
       runHeading.compareDocumentPosition(panelGroup) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
 
     expect(
-      screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" }),
+      screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Tokens by test (p50 / p95)" }),
+      screen.queryByRole("heading", { name: "Tokens by test (p50 / p95)" })
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
@@ -227,10 +269,12 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
-    expect(screen.queryByText(/1 passed · 0 failed · 100%/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/1 passed · 0 failed · 100%/)
+    ).not.toBeInTheDocument();
   });
 
   it("keeps run-level KPIs visible with the iteration list in a resizable two-column layout", () => {
@@ -254,7 +298,7 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByText("Passed")).toBeInTheDocument();
@@ -262,10 +306,12 @@ describe("RunDetailView", () => {
     expect(screen.getByText("P50")).toBeInTheDocument();
     expect(screen.getByText("Fail")).toBeInTheDocument();
     expect(
-      screen.getByTestId("run-detail-resizable-group"),
+      screen.getByTestId("run-detail-resizable-group")
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("run-detail-resizable-panel")).toHaveLength(2);
-    expect(screen.getByTestId("run-detail-resizable-handle")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("run-detail-resizable-handle")
+    ).toBeInTheDocument();
   });
 
   it("uses flush split chrome when folded into the suite results surface", () => {
@@ -291,7 +337,7 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
         hideKpiStrip
         hideAccuracyHero
-      />,
+      />
     );
 
     const root = container.firstElementChild;
@@ -312,7 +358,7 @@ describe("RunDetailView", () => {
         hideKpiStrip
         hideAccuracyHero
         hostNamesById={new Map([["host-copilot", "Copilot"]])}
-      />,
+      />
     );
 
     expect(screen.queryByText("Host")).not.toBeInTheDocument();
@@ -332,7 +378,7 @@ describe("RunDetailView", () => {
         hideAccuracyHero
         omitIterationList
         hostNamesById={new Map([["host-copilot", "Copilot"]])}
-      />,
+      />
     );
 
     expect(screen.getByText("Host")).toBeInTheDocument();
@@ -353,7 +399,8 @@ describe("RunDetailView", () => {
                 testCaseId: "tc-1",
                 title: "t",
                 status: "new_failure",
-                summary: "Only shown in test editor or case detail, not run list",
+                summary:
+                  "Only shown in test editor or case detail, not run list",
               },
             ],
           },
@@ -377,10 +424,10 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId="iter-case"
         onSelectIteration={() => {}}
-      />,
+      />
     );
     expect(
-      screen.queryByTestId("run-case-insight-trace-caption"),
+      screen.queryByTestId("run-case-insight-trace-caption")
     ).not.toBeInTheDocument();
   });
 
@@ -397,17 +444,17 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
         runForOverview={run}
         onOpenRunInsights={() => {}}
-      />,
+      />
     );
 
     expect(
       screen.getByRole("button", {
         name: /Overview — show in main panel — 86%/,
-      }),
+      })
     ).toBeInTheDocument();
     expect(screen.getByText("86%")).toBeInTheDocument();
     expect(
-      screen.queryByText(/6 passed · 1 failed · 86%/),
+      screen.queryByText(/6 passed · 1 failed · 86%/)
     ).not.toBeInTheDocument();
   });
 
@@ -422,14 +469,14 @@ describe("RunDetailView", () => {
         onSortChange={onSortChange}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Sort iterations: Test" }),
+      screen.getByRole("button", { name: "Sort iterations: Test" })
     );
     await user.click(
-      await screen.findByRole("menuitemradio", { name: "Result" }),
+      await screen.findByRole("menuitemradio", { name: "Result" })
     );
 
     expect(onSortChange).toHaveBeenCalledWith("result");
@@ -445,7 +492,7 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
     expect(screen.getByText("Case")).toBeInTheDocument();
     expect(screen.getByText("P50")).toBeInTheDocument();
@@ -464,16 +511,16 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
     expect(
       screen.queryByRole("button", {
         name: /Overview — show in main panel/,
-      }),
+      })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Sort iterations: Test" }),
+      screen.getByRole("button", { name: "Sort iterations: Test" })
     ).toBeInTheDocument();
   });
 
@@ -487,13 +534,13 @@ describe("RunDetailView", () => {
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
-      />,
+      />
     );
 
     expect(
       screen.getByRole("button", {
         name: "View Test A: 1 of 1 passed",
-      }),
+      })
     ).toBeInTheDocument();
   });
 });
