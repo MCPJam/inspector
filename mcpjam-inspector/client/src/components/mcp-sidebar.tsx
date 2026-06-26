@@ -48,7 +48,6 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
@@ -870,9 +869,6 @@ export function MCPSidebar({
               onUpgradeClick={handleTrialUpgradeClick}
               className="mt-1"
             />
-          ) : null}
-          {!user && !authResolving ? (
-            <SidebarCreditUsage className="px-1" includeGuests />
           ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
