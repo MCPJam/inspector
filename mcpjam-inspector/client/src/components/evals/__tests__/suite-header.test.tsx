@@ -113,6 +113,22 @@ describe("SuiteHeader", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps suite overview chrome when run identity is omitted and run actions are hidden", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        hideRunActions
+        showTestCaseCtas
+        omitRunDetailIdentity
+      />
+    );
+
+    expect(screen.getByText("Asana MCP Evals")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /Run run-1/i })
+    ).not.toBeInTheDocument();
+  });
+
   it("hides compact run stats when the KPI strip is shown", () => {
     renderWithProviders(
       <SuiteHeader
@@ -333,27 +349,20 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
-  it("shows Stop in the playground header for an active suite run", async () => {
+  it("keeps Run all disabled while the latest suite run is still running", async () => {
     const user = userEvent.setup();
-    const onCancelRun = vi.fn();
-    const activeRun = {
-      ...baseRun,
-      _id: "run-active",
-      status: "running" as const,
-      completedAt: null,
-    };
+    const onRerun = vi.fn();
 
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        runs={[activeRun]}
-        onCancelRun={onCancelRun}
+        onRerun={onRerun}
+        runs={[{ ...baseRun, status: "running", completedAt: undefined }]}
         runsViewMode="runs"
         hideRunActions
         unifiedSuiteDashboard
-        readOnlyConfig={false}
         onCreateTestCase={vi.fn()}
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
@@ -367,14 +376,32 @@ describe("SuiteHeader", () => {
       />
     );
 
-    expect(
-      screen.queryByRole("button", {
-        name: /Run all cases in this suite/i,
-      })
-    ).not.toBeInTheDocument();
+    const runAll = screen.getByRole("button", {
+      name: /Run all cases in this suite/i,
+    });
+    expect(runAll).toBeDisabled();
+    await user.click(runAll);
+    expect(onRerun).not.toHaveBeenCalled();
+  });
 
-    await user.click(screen.getByRole("button", { name: "Stop suite run" }));
-    expect(onCancelRun).toHaveBeenCalledWith("run-active");
+  it("keeps overview toolbar controls in one horizontal row", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+      />
+    );
+
+    const header = screen.getByTestId("suite-overview-header");
+    expect(header).toHaveClass("flex");
+    expect(header.querySelector(".flex-nowrap")).toBeTruthy();
   });
 
   it("forwards iterationOverride on Run all even without a match-options override", async () => {

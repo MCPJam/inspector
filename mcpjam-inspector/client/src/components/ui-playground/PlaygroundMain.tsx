@@ -35,12 +35,11 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
-import LoadingScreen from "@/components/LoadingScreen";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
@@ -157,6 +156,10 @@ import {
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import {
+  shouldAutoRunPreview,
+  shouldRunPreview,
+} from "./preview-autorun";
+import {
   chatHistoryAction,
   getChatHistoryDetail,
   type ChatHistorySession,
@@ -173,6 +176,12 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
+import {
+  isToolPart,
+  isDynamicTool,
+  getToolInfo,
+} from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
@@ -316,6 +325,55 @@ interface PlaygroundMainProps {
    */
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /**
+   * Suppress the "This is your playground for MCP" welcome hero in the empty
+   * state (the composer still shows). Used by the embedded eval preview, where
+   * that onboarding copy doesn't belong.
+   */
+  hideWelcomeHero?: boolean;
+  /**
+   * Hide the playground client-context chrome (Compare, locale, host caps, …)
+   * in the center header. Used by the embedded eval preview — those controls
+   * belong in Playground, not while authoring a case. Trace / Chat / Raw tabs
+   * may still show when supported.
+   */
+  hideCenterHeaderChrome?: boolean;
+  /**
+   * When set, auto-send this prompt once on mount (after session bootstrap +
+   * server readiness), fired a single time while the thread is still empty.
+   * Used by the eval preview to "run on open" when the case renders a widget.
+   */
+  autoRunInput?: string;
+  /**
+   * Increment to re-run the case in the live preview from outside (eval Quick
+   * Run). Each new value resets the thread and re-sends the case prompt
+   * (`initialInput`) fresh, once the session is ready.
+   */
+  runPreviewRequest?: number;
+  /**
+   * Fires whenever the live chat's messages change. Used by the eval preview to
+   * capture the conversation (prompts + observed tool calls) back into the case
+   * spec. Pass a STABLE callback (useCallback) — it's an effect dependency.
+   */
+  onMessagesChange?: (messages: UIMessage[]) => void;
+  /**
+   * Fires when the live chat's streaming state changes. The eval preview uses
+   * the true→false edge to detect that a Quick Run finished. Pass a STABLE
+   * callback (useCallback) — it's an effect dependency.
+   */
+  onStreamingChange?: (streaming: boolean) => void;
+  /**
+   * Silences the post-stream "this chat changed elsewhere" detach toast. The
+   * eval preview is an ephemeral sandbox whose own Quick Run / widget replay
+   * mutates the session, so that alarm is self-inflicted noise there.
+   */
+  suppressHistoryConflictToast?: boolean;
+  /**
+   * Tier-3 recorder (eval preview only). Forwarded to the single-pane Thread so
+   * the armed widget records interaction steps. `resolvePromptIndex` is injected
+   * here from the live messages (toolCallId → owning user-turn ordinal).
+   */
+  recorder?: RecorderProps;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -404,6 +462,14 @@ export function PlaygroundMain({
   onFirstMessageSent,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
+  hideWelcomeHero = false,
+  hideCenterHeaderChrome = false,
+  autoRunInput,
+  runPreviewRequest,
+  onMessagesChange,
+  onStreamingChange,
+  suppressHistoryConflictToast,
+  recorder,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -1429,7 +1495,13 @@ export function PlaygroundMain({
       setRequireToolApproval(handoffExec.requireToolApproval);
     }
 
-    composer.setInput("");
+    // Only clear the composer when the handoff actually seeds a conversation
+    // (the "Continue in chat" flow). The eval live preview hands off an
+    // EMPTY-message config-only handoff with the case prompt prefilled via
+    // `initialInput`; clearing here would wipe that prefill.
+    if (evalChatHandoff.messages.length > 0) {
+      composer.setInput("");
+    }
     onEvalChatHandoffConsumed?.(evalChatHandoff.id);
   }, [
     availableModels,
@@ -1699,8 +1771,11 @@ export function PlaygroundMain({
     return { senderUserId: id };
   }, [showSenderAvatars, currentUserForSender?._id]);
 
+  const suppressHistoryConflictToastRef = useRef(suppressHistoryConflictToast);
+  suppressHistoryConflictToastRef.current = suppressHistoryConflictToast;
+
   const detachHistorySession = useCallback(
-    (toastMessage: string) => {
+    (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
@@ -1711,7 +1786,13 @@ export function PlaygroundMain({
           toolRenderOverrides: restoredToolRenderOverrides,
         });
       }
-      toast.error(toastMessage);
+      // The eval preview is an ephemeral sandbox: its own Quick Run / replay
+      // mutates the session (e.g. a replayed "Add to cart" click fires a tool
+      // call), so a "changed elsewhere" alarm there is self-inflicted noise. The
+      // detach still happens; we just skip the user-facing toast.
+      if (!opts?.silent) {
+        toast.error(toastMessage);
+      }
     },
     [
       cancelPendingHistorySelection,
@@ -2165,6 +2246,7 @@ export function PlaygroundMain({
         ) {
           detachHistorySession(
             "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+            { silent: suppressHistoryConflictToastRef.current },
           );
         }
       })().catch((error) => {
@@ -2469,6 +2551,63 @@ export function PlaygroundMain({
     ]
   );
 
+  // Auto-run: when `autoRunInput` is set (eval preview "run on open"), send it
+  // once after the session has bootstrapped and while the thread is still
+  // empty. `handleSendFollowUp` ensures the server is connected first. The ref
+  // makes it fire exactly once per mount even as deps change.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    const handoffPending =
+      !!evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
+    if (
+      !shouldAutoRunPreview({
+        autoRunInput,
+        alreadyRan: autoRanRef.current,
+        isSessionBootstrapComplete,
+        isThreadEmpty,
+        isStreaming,
+        handoffPending,
+      })
+    ) {
+      return;
+    }
+    autoRanRef.current = true;
+    handleSendFollowUp(autoRunInput as string);
+    // The prompt was just auto-sent, so clear it out of the composer. The
+    // composer is otherwise seeded with the same `initialInput` (so it mirrors
+    // the eval editor's left-pane prompt); leaving the sent text behind would
+    // both look stale and invite an accidental duplicate send. The mirror only
+    // re-seeds when `initialInput` itself changes, so this clear sticks.
+    composer.setInput("");
+  }, [
+    autoRunInput,
+    composer,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    isThreadEmpty,
+    isStreaming,
+    handleSendFollowUp,
+  ]);
+
+  // Surface the live conversation to embedders (eval preview captures it back
+  // into the case spec). Effect-driven so it tracks streaming updates too.
+  useEffect(() => {
+    onMessagesChange?.(messages);
+  }, [messages, onMessagesChange]);
+
+  // Surface "is the run busy" to embedders. The eval preview uses the
+  // true→false edge to know a Quick Run finished and grade/replay the result.
+  // It must stay true across the WHOLE agent loop — including client-side tool
+  // execution, when `isStreaming` briefly drops between the model's segments —
+  // or the preview would finalize mid-loop (replay clicks while the model is
+  // still calling tools). `isStreaming || isExecuting` only goes false when the
+  // model AND any tool execution are both done.
+  const isRunBusy = isStreaming || !!isExecuting;
+  useEffect(() => {
+    onStreamingChange?.(isRunBusy);
+  }, [isRunBusy, onStreamingChange]);
+
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
   const handleModelContextUpdate = useCallback(
     (
@@ -2683,6 +2822,58 @@ export function PlaygroundMain({
     return map;
   }, [messages]);
 
+  const recorderPromptIndexSnapshotRef = useRef<{
+    key: string;
+    entries: Array<[string, number]>;
+  } | null>(null);
+
+  // Tier-3 recorder: map each assistant tool call's toolCallId → the ordinal of
+  // the user turn that produced it, so part-switch can attribute a recorded
+  // widget step to the right turn in the live (span-less) preview. Streaming
+  // text changes `messages` often; keep the snapshot identity stable unless the
+  // actual toolCallId → promptIndex mapping changes.
+  const recorderPromptIndexSnapshot = useMemo(() => {
+    if (!recorder) {
+      const previous = recorderPromptIndexSnapshotRef.current;
+      if (previous?.key === "") return previous;
+      const next = { key: "", entries: [] };
+      recorderPromptIndexSnapshotRef.current = next;
+      return next;
+    }
+    const entries: Array<[string, number]> = [];
+    let userOrdinal = -1;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        userOrdinal += 1;
+        continue;
+      }
+      if (msg.role !== "assistant") continue;
+      for (const part of msg.parts ?? []) {
+        if (!isToolPart(part) && !isDynamicTool(part)) continue;
+        const info = getToolInfo(part as never);
+        if (info.toolCallId && userOrdinal >= 0) {
+          entries.push([info.toolCallId, userOrdinal]);
+        }
+      }
+    }
+    const key = JSON.stringify(entries);
+    const previous = recorderPromptIndexSnapshotRef.current;
+    if (previous?.key === key) return previous;
+    const next = { key, entries };
+    recorderPromptIndexSnapshotRef.current = next;
+    return next;
+  }, [recorder, messages]);
+
+  const recorderWithResolver = useMemo<RecorderProps | undefined>(() => {
+    if (!recorder) return undefined;
+    const toolCallPromptIndex = new Map(recorderPromptIndexSnapshot.entries);
+    return {
+      ...recorder,
+      resolvePromptIndex: (toolCallId: string) =>
+        toolCallPromptIndex.get(toolCallId),
+    };
+  }, [recorder, recorderPromptIndexSnapshot]);
+
   // Placeholder: Chat tab strings for either compare grid; playground
   // default for true single-pane.
   let placeholder = showPostConnectGuide
@@ -2703,8 +2894,6 @@ export function PlaygroundMain({
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
   const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
-  const shouldShowFirstRunLoadingScreen =
-    isAuthLoading && initialInputTypewriter && Boolean(initialInput);
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
       location: "app_builder_tab",
@@ -2714,74 +2903,133 @@ export function PlaygroundMain({
     signUp();
   };
 
-  // Submit handler
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // Submit handler — shared by the composer form and eval Quick Run.
+  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
     const hasContent =
       composer.input.trim() ||
       mcpPromptResults.length > 0 ||
       fileAttachments.length > 0;
-    if (hasContent && !sendBlocked) {
-      if (!(await ensureSelectedServerReadyForChat())) {
-        return;
-      }
+    if (!hasContent || sendBlocked) {
+      return false;
+    }
+    if (!(await ensureSelectedServerReadyForChat())) {
+      return false;
+    }
 
-      if (
-        !isCompareMode &&
-        displayMode === "fullscreen" &&
-        isWidgetFullscreen
-      ) {
-        setIsFullscreenChatOpen(true);
-      }
+    if (
+      !isCompareMode &&
+      displayMode === "fullscreen" &&
+      isWidgetFullscreen
+    ) {
+      setIsFullscreenChatOpen(true);
+    }
 
-      // Convert file attachments to FileUIPart[] format for the AI SDK
-      const files =
-        fileAttachments.length > 0
-          ? await attachmentsToFileUIParts(fileAttachments)
-          : undefined;
+    const files =
+      fileAttachments.length > 0
+        ? await attachmentsToFileUIParts(fileAttachments)
+        : undefined;
 
-      // Multi-host and multi-model both broadcast to per-card chat
-      // sessions; the hidden parent `sendMessage` is exclusively for
-      // true single-pane (one card, one root session). Pre-fix, host
-      // compare fell through the `else` branch and fired BOTH
-      // queueBroadcastRequest AND sendMessage, producing a duplicate
-      // hidden run plus a broken transcript-handoff baseline.
-      if (isCompareMode) {
-        queueBroadcastRequest({
+    if (isCompareMode) {
+      queueBroadcastRequest({
+        text: composer.input,
+        files,
+        prependMessages: [],
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
+    } else {
+      queueBroadcastRequest(
+        {
           text: composer.input,
           files,
           prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
-        setModelContextQueue([]);
-      } else {
-        queueBroadcastRequest(
-          {
-            text: composer.input,
-            files,
-            prependMessages: [],
-          },
-          { single_model_send: true }
-        );
-        sendMessage({
-          text: composer.input,
-          files,
-          metadata: outgoingSenderMetadata,
-          widgetModelContext: modelContextQueue,
-        });
-        setModelContextQueue([]); // Clear after sending
-      }
-
-      composer.setInput("");
-      setMcpPromptResults([]);
-      // Revoke object URLs and clear file attachments
-      revokeFileAttachmentUrls(fileAttachments);
-      setFileAttachments([]);
-
-      // Notify onboarding that the first message was sent
-      onFirstMessageSent?.();
+        },
+        { single_model_send: true }
+      );
+      sendMessage({
+        text: composer.input,
+        files,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     }
+
+    composer.setInput("");
+    setMcpPromptResults([]);
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
+    onFirstMessageSent?.();
+    return true;
+  }, [
+    composer,
+    mcpPromptResults.length,
+    fileAttachments,
+    sendBlocked,
+    ensureSelectedServerReadyForChat,
+    isCompareMode,
+    displayMode,
+    isWidgetFullscreen,
+    queueBroadcastRequest,
+    modelContextQueue,
+    sendMessage,
+    outgoingSenderMetadata,
+    onFirstMessageSent,
+  ]);
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await performComposerSubmit();
   };
+
+  // Eval Quick Run: re-run the case in the live preview. Two phases so the send
+  // never races the reset's `setMessages`:
+  //   1. On a new `runPreviewRequest` nonce, reset the thread and mark a pending
+  //      run. (If streaming or not yet bootstrapped, the gate defers — the nonce
+  //      is left unconsumed so the effect re-fires when those clear.)
+  //   2. Once the reset has flushed (thread empty, not streaming), send the
+  //      current case prompt (`initialInput`) fresh — NOT the composer content,
+  //      so an empty composer or a just-cleared one still re-runs.
+  const lastRunPreviewRequestRef = useRef(0);
+  const [quickRunPending, setQuickRunPending] = useState(false);
+  useEffect(() => {
+    const handoffPending =
+      !!evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
+    if (
+      !shouldRunPreview({
+        runPreviewRequest,
+        alreadyHandledRequest: lastRunPreviewRequestRef.current,
+        isSessionBootstrapComplete,
+        isStreaming,
+        handoffPending,
+      })
+    ) {
+      return;
+    }
+    lastRunPreviewRequestRef.current = runPreviewRequest!;
+    handleResetAllChats();
+    setQuickRunPending(true);
+  }, [
+    runPreviewRequest,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    isStreaming,
+    handleResetAllChats,
+  ]);
+  useEffect(() => {
+    if (!quickRunPending) return;
+    if (!isThreadEmpty || isStreaming) return;
+    const text = (initialInput ?? "").trim();
+    setQuickRunPending(false);
+    if (text) handleSendFollowUp(text);
+  }, [
+    quickRunPending,
+    isThreadEmpty,
+    isStreaming,
+    initialInput,
+    handleSendFollowUp,
+  ]);
 
   const errorMessage = formatErrorMessage(error);
 
@@ -2989,7 +3237,7 @@ export function PlaygroundMain({
                     )}
                     <PostConnectGuide />
                   </div>
-                ) : (
+                ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
                       <img
@@ -3099,6 +3347,7 @@ export function PlaygroundMain({
                 }
                 showSenderAvatars={showSenderAvatars}
                 resolveSenderAvatar={resolveSenderAvatar}
+                recorder={recorderWithResolver}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -3190,11 +3439,6 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
-      {shouldShowFirstRunLoadingScreen && (
-        <div className="fixed inset-0 z-[100] bg-background">
-          <LoadingScreen />
-        </div>
-      )}
     <div
       className={cn(
         "relative h-full flex flex-col overflow-hidden",
@@ -3212,8 +3456,8 @@ export function PlaygroundMain({
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
         </div>
       )}
-      {/* Center header strip — hidden during onboarding */}
-      {!showPostConnectGuide && (
+      {/* Center header strip — hidden during onboarding and embedded eval preview */}
+      {!showPostConnectGuide && !hideCenterHeaderChrome && (
         <PlaygroundCenterHeaderBar
           showTraceTabs={showTraceViewTabs}
           mode={activeTraceViewMode}
@@ -3322,18 +3566,6 @@ export function PlaygroundMain({
               <MultiModelStartersEmptyLayout
                 isAuthLoading={isAuthLoading}
                 showStarterPrompts={showMultiModelStarterPrompts}
-                logoSlot={
-                  <img
-                    src={
-                      effectiveThreadTheme === "dark"
-                        ? "/mcp_jam_dark.png"
-                        : "/mcp_jam_light.png"
-                    }
-                    alt="MCPJam"
-                    draggable={false}
-                    className="h-10 w-auto mx-auto"
-                  />
-                }
                 authPrimarySlot={
                   isAuthLoading ? (
                     <div className="text-center space-y-4">

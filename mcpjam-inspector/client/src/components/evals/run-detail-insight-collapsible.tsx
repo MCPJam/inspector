@@ -18,7 +18,7 @@ import {
 } from "./insight-highlight-chrome";
 
 /**
- * Same interaction pattern as {@link SuiteInsightsCollapsible} for run-level AI narratives.
+ * Collapsible wrapper for run-level AI narratives in the run detail pane.
  */
 export function RunDetailInsightCollapsible({
   title,

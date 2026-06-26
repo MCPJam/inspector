@@ -90,6 +90,15 @@ interface ThreadProps {
    */
   showSenderAvatars?: TranscriptThreadProps["showSenderAvatars"];
   resolveSenderAvatar?: TranscriptThreadProps["resolveSenderAvatar"];
+  /** Tier 3 recorder bundle, forwarded to TranscriptThread (default off). */
+  recorder?: TranscriptThreadProps["recorder"];
+  /**
+   * Frozen-replay override for `appToolInvocations`. When set (eval Chat tab),
+   * these reconstructed-from-trace invocations are rendered instead of the live
+   * host-bridge state — a completed run can't re-fire the bridge. Leave
+   * `undefined` on the live Playground/chat path so behavior is byte-identical.
+   */
+  appToolInvocationsOverride?: AppToolInvocation[];
 }
 
 function getWidgetOwnershipIds(toolCallId: string, displayWidgetId?: string) {
@@ -154,6 +163,8 @@ export function Thread({
   renderUserMessageActions,
   showSenderAvatars,
   resolveSenderAvatar,
+  recorder,
+  appToolInvocationsOverride,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -330,7 +341,7 @@ export function Thread({
           toolServerMap={toolServerMap}
           onWidgetStateChange={onWidgetStateChange}
           onModelContextUpdate={onModelContextUpdate}
-          appToolInvocations={appToolInvocations}
+          appToolInvocations={appToolInvocationsOverride ?? appToolInvocations}
           onAppToolInvocationChange={handleAppToolInvocationChange}
           pipWidgetId={pipWidgetId}
           fullscreenWidgetId={fullscreenWidgetId}
@@ -362,6 +373,7 @@ export function Thread({
           renderUserMessageActions={renderUserMessageActions}
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
+          recorder={recorder}
         />
         <InspectorWidgetHostProvider>
           <WidgetSurfaceHost chatSessionId={chatSessionId} />

@@ -320,7 +320,7 @@ export interface UseChatSessionReturn {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
-  ) => void;
+  ) => Promise<void>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -2176,7 +2176,11 @@ export function useChatSession(
       }
     ) => {
       skipNextForkDetectionRef.current = true;
-      void queueSessionHydration({
+      // Return the hydration promise so callers can chain work that must run
+      // AFTER the seeded messages are applied (e.g. the eval handoff sending a
+      // widget's `ui/message` follow-up so the model replies to the seeded
+      // conversation). Existing callers ignore the return value.
+      const hydrationPromise = queueSessionHydration({
         sessionId: generateId(),
         messages,
         resumedVersion: null,
@@ -2184,6 +2188,7 @@ export function useChatSession(
         persistedSnapshotToolCallIds: [],
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
+      return hydrationPromise;
     },
     [queueSessionHydration]
   );

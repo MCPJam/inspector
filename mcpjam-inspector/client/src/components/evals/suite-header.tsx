@@ -21,7 +21,6 @@ import {
   Plus,
   RotateCw,
   Settings,
-  Square,
   Sparkles,
   X,
 } from "lucide-react";
@@ -42,7 +41,7 @@ import {
   SuiteAggregate,
 } from "./types";
 import { useMutation } from "convex/react";
-import { toast } from "@/lib/toast";
+import { toast } from "sonner";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { GenerateCasesConfigPopover } from "./generate-cases-config-popover";
@@ -57,7 +56,6 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { HostListItem } from "@/hooks/useClients";
@@ -288,53 +286,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
-  const activeSuiteRun =
-    latestRunForMetadata &&
-    (latestRunForMetadata.status === "running" ||
-      latestRunForMetadata.status === "pending")
-      ? latestRunForMetadata
-      : null;
-  const isCancellingActiveSuiteRun =
-    activeSuiteRun != null && cancellingRunId === activeSuiteRun._id;
-
-  const suiteStopCta =
-    activeSuiteRun && !readOnlyConfig ? (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => onCancelRun(activeSuiteRun._id)}
-              disabled={isCancellingActiveSuiteRun}
-              aria-label="Stop suite run"
-              aria-busy={isCancellingActiveSuiteRun}
-            >
-              {isCancellingActiveSuiteRun ? (
-                <Loader2
-                  className="h-3.5 w-3.5 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : (
-                <Square className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              )}
-              {isCancellingActiveSuiteRun ? "Stopping..." : "Stop"}
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent
-          variant="muted"
-          side="bottom"
-          className="max-w-[16rem]"
-        >
-          Stop the current suite run
-        </TooltipContent>
-      </Tooltip>
-    ) : null;
-
-  const isMobile = useIsMobile();
 
   if (isEditMode) {
     // Settings sheet header — matches the body's max-w-2xl column so the
@@ -389,72 +340,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     const badgeMetricLabel = suite.source === "sdk" ? "Pass Rate" : "Accuracy";
 
     if (omitRunDetailIdentity) {
-      return hideRunActions ? null : (
-        <div className="mb-4 flex min-w-0 justify-end">
-          <RunDetailPlaygroundActions
-            suite={suite}
-            selectedRun={selectedRunDetails}
-            readOnlyConfig={readOnlyConfig}
-            onReplayRun={onReplayRun}
-            onRerun={onRerun}
-            onCancelRun={onCancelRun}
-            rerunningSuiteId={rerunningSuiteId}
-            replayingRunId={replayingRunId}
-            cancellingRunId={cancellingRunId}
-            hasServersConfigured={hasServersConfigured}
-            missingServers={missingServers}
-            showCloseButton
-            onBackToOverview={() => onViewModeChange("overview")}
-          />
-        </div>
-      );
-    }
-
-    return (
-      <div
-        className={cn(
-          "mb-4 flex min-w-0",
-          runDetailKpiStrip
-            ? "flex-nowrap items-center gap-3"
-            : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
-        )}
-      >
-        <div
-          className={cn(
-            "flex min-w-0 flex-col gap-1",
-            runDetailKpiStrip ? "shrink-0" : "flex-1"
-          )}
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 className="text-lg font-semibold tracking-tight">
-              Run {formatRunId(selectedRunDetails._id)}
-            </h2>
-            <PassCriteriaBadge
-              run={selectedRunDetails}
-              variant="compact"
-              metricLabel={badgeMetricLabel}
-            />
-            {selectedRunDetails.replayedFromRunId ? (
-              <span
-                className="text-xs text-muted-foreground"
-                title={selectedRunDetails.replayedFromRunId}
-              >
-                Replay of{" "}
-                <span className="font-mono text-foreground/80">
-                  Run {formatRunId(selectedRunDetails.replayedFromRunId)}
-                </span>
-              </span>
-            ) : null}
-          </div>
-          {runDetailKpiStrip ? null : (
-            <RunHeaderCompactStats run={selectedRunDetails} />
-          )}
-        </div>
-        {runDetailKpiStrip ? (
-          <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
-        ) : null}
-        {!hideRunActions ? (
-          <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
+      if (hideRunActions) {
+        // Playground: suite chrome stays pinned; run identity lives in the body.
+      } else {
+        return (
+          <div className="mb-4 flex min-w-0 justify-end">
             <RunDetailPlaygroundActions
               suite={suite}
               selectedRun={selectedRunDetails}
@@ -471,9 +361,74 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               onBackToOverview={() => onViewModeChange("overview")}
             />
           </div>
-        ) : null}
-      </div>
-    );
+        );
+      }
+    } else {
+      return (
+        <div
+          className={cn(
+            "mb-4 flex min-w-0",
+            runDetailKpiStrip
+              ? "flex-nowrap items-center gap-3"
+              : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+          )}
+        >
+          <div
+            className={cn(
+              "flex min-w-0 flex-col gap-1",
+              runDetailKpiStrip ? "shrink-0" : "flex-1"
+            )}
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <h2 className="text-lg font-semibold tracking-tight">
+                Run {formatRunId(selectedRunDetails._id)}
+              </h2>
+              <PassCriteriaBadge
+                run={selectedRunDetails}
+                variant="compact"
+                metricLabel={badgeMetricLabel}
+              />
+              {selectedRunDetails.replayedFromRunId ? (
+                <span
+                  className="text-xs text-muted-foreground"
+                  title={selectedRunDetails.replayedFromRunId}
+                >
+                  Replay of{" "}
+                  <span className="font-mono text-foreground/80">
+                    Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+            {runDetailKpiStrip ? null : (
+              <RunHeaderCompactStats run={selectedRunDetails} />
+            )}
+          </div>
+          {runDetailKpiStrip ? (
+            <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
+          ) : null}
+          {!hideRunActions ? (
+            <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
+              <RunDetailPlaygroundActions
+                suite={suite}
+                selectedRun={selectedRunDetails}
+                readOnlyConfig={readOnlyConfig}
+                onReplayRun={onReplayRun}
+                onRerun={onRerun}
+                onCancelRun={onCancelRun}
+                rerunningSuiteId={rerunningSuiteId}
+                replayingRunId={replayingRunId}
+                cancellingRunId={cancellingRunId}
+                hasServersConfigured={hasServersConfigured}
+                missingServers={missingServers}
+                showCloseButton
+                onBackToOverview={() => onViewModeChange("overview")}
+              />
+            </div>
+          ) : null}
+        </div>
+      );
+    }
   }
 
   if (viewMode === "test-detail" || viewMode === "test-edit") {
@@ -500,14 +455,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
       ? (() => {
-          if (suiteStopCta) {
-            return suiteStopCta;
-          }
-
           const testCaseCount = testCases?.length ?? 0;
           const isRunAllDisabled = Boolean(
             isRerunning ||
-              activeSuiteRun ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
@@ -520,8 +470,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
-            : activeSuiteRun
-            ? "A suite run is already in progress."
             : isRerunning || replayingRunId != null
             ? "A suite or replay is already in progress."
             : runningTestCaseId != null
@@ -690,17 +638,257 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (showTestCaseCtas && Boolean(onCreateTestCase));
   const overviewHasExportOrRun =
     Boolean(onOpenExportSuite) ||
-    (!hideRunActions &&
-      (Boolean(activeSuiteRun) || replayableLatestRun || !readOnlyConfig));
+    (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
+
+  const overviewSuiteNavButtons =
+    overviewHasSuiteNav ? (
+      <>
+        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={onShowCasesSidebar}
+          >
+            <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Cases
+          </Button>
+        ) : null}
+        {onSetupCi && !readOnlyConfig ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={onSetupCi}
+          >
+            <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Setup CI
+          </Button>
+        ) : null}
+      </>
+    ) : null;
+
+  const overviewSettingsButton =
+    !readOnlyConfig && !isEditMode ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 p-0"
+            aria-label="Suite settings"
+            onClick={() =>
+              navigateApp(
+                buildEvalsPath({
+                  type: "suite-edit",
+                  suiteId: suite._id,
+                }),
+              )
+            }
+          >
+            <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          className="px-2 py-1 text-[11px]"
+        >
+          Suite settings — description, validators, judges
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
+
+  const overviewCaseToolsCluster = overviewHasCaseTools ? (
+    <div className="flex shrink-0 flex-nowrap items-center gap-2 border-l border-border/40 pl-3">
+      {overviewRunAllCta}
+      {showTestCaseCtas && onGenerateTestCases ? (
+        <div className="inline-flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-r-none"
+                  onClick={onGenerateTestCases}
+                  disabled={!canGenerateTestCases || isGeneratingTestCases}
+                  aria-busy={isGeneratingTestCases}
+                >
+                  {isGeneratingTestCases ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 shrink-0 animate-spin"
+                      aria-hidden
+                    />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  Generate
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent
+              variant="muted"
+              side="bottom"
+              align="start"
+              sideOffset={8}
+              className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
+            >
+              {isGeneratingTestCases
+                ? "Generating test cases…"
+                : !canGenerateTestCases
+                  ? (generateTestCasesDisabledReason ??
+                    "Configure suite servers before generating cases.")
+                  : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+            </TooltipContent>
+          </Tooltip>
+          <GenerateCasesConfigPopover
+            suiteId={suite._id}
+            onGenerate={onGenerateTestCases}
+            disabled={!canGenerateTestCases}
+            isGenerating={isGeneratingTestCases}
+            disabledReason={generateTestCasesDisabledReason}
+          />
+        </div>
+      ) : null}
+      {showTestCaseCtas && onCreateTestCase ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onCreateTestCase}
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          New case
+        </Button>
+      ) : null}
+    </div>
+  ) : null;
+
+  const overviewExportRunCluster = overviewHasExportOrRun ? (
+    <div className="flex shrink-0 flex-nowrap items-center gap-2">
+      {onOpenExportSuite ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onOpenExportSuite}
+        >
+          <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Setup SDK
+        </Button>
+      ) : null}
+
+      {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 text-muted-foreground"
+                disabled={Boolean(isRerunning || evalRunsDisabledReason)}
+                onClick={() => onRerun(suite, { refreshSnapshot: true })}
+              >
+                <RotateCw
+                  className={`h-3.5 w-3.5 shrink-0 ${
+                    isRerunning ? "animate-spin" : ""
+                  }`}
+                  aria-hidden
+                />
+                Update snapshot
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent
+            variant="muted"
+            side="bottom"
+            className="max-w-[16rem]"
+          >
+            {evalRunsDisabledReason ??
+              "Re-saves the suite's current server list as the frozen execution snapshot and starts a run."}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+
+      {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() =>
+                  replayableLatestRun
+                    ? onReplayRun?.(suite, replayableLatestRun)
+                    : onRerun(suite, {
+                        ...(runMatchOptionsOverride
+                          ? { matchOptionsOverride: runMatchOptionsOverride }
+                          : {}),
+                        ...(iterationOverride !== undefined
+                          ? { iterationOverride }
+                          : {}),
+                      })
+                }
+                disabled={
+                  replayableLatestRun
+                    ? isReplayingLatestRun ||
+                      !onReplayRun ||
+                      Boolean(evalRunsDisabledReason)
+                    : !canTriggerLiveRun ||
+                      isRerunning ||
+                      Boolean(evalRunsDisabledReason)
+                }
+              >
+                <RotateCw
+                  className={`h-3.5 w-3.5 shrink-0 ${
+                    (replayableLatestRun ? isReplayingLatestRun : isRerunning)
+                      ? "animate-spin"
+                      : ""
+                  }`}
+                  aria-hidden
+                />
+                {(replayableLatestRun ? isReplayingLatestRun : isRerunning)
+                  ? replayableLatestRun
+                    ? "Replaying..."
+                    : "Running..."
+                  : replayableLatestRun
+                    ? "Replay latest run"
+                    : "Run"}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {replayableLatestRun
+              ? evalRunsDisabledReason
+                ? evalRunsDisabledReason
+                : "Replay the latest CI run"
+              : evalRunsDisabledReason
+                ? evalRunsDisabledReason
+                : !hasServersConfigured
+                  ? "No MCP servers are configured for this suite"
+                  : missingServers.length > 0
+                    ? "Connect and run."
+                    : "Run all cases"}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div
-      className={cn(
-        "mb-4 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2",
-        "md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-x-5 md:gap-y-2"
-      )}
+      data-testid="suite-overview-header"
+      className="mb-4 flex min-w-0 items-center gap-x-3"
     >
-      <div className="row-start-1 col-start-1 min-w-0 overflow-hidden">
+      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%] md:max-w-none md:flex-1">
         <div className="flex min-w-0 items-center gap-3">
           {isEditingName ? (
             <input
@@ -739,292 +927,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           ) : null}
         </div>
       </div>
-      {isMobile ? (
-        <div className="row-start-2 col-span-2 min-w-0">
-          {suiteOverviewHostBar}
+      <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex w-max min-w-full flex-nowrap items-center justify-end gap-x-3">
+          <div className="shrink-0">{suiteOverviewHostBar}</div>
+          {overviewSuiteNavButtons}
+          {overviewSettingsButton}
+          {overviewCaseToolsCluster}
+          {overviewExportRunCluster}
         </div>
-      ) : null}
-      <div className="row-start-1 col-start-2 flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
-        {!isMobile ? (
-          <div className="min-w-0 max-w-full shrink">
-            {suiteOverviewHostBar}
-          </div>
-        ) : null}
-        {overviewHasSuiteNav ? (
-          <div className="flex items-center gap-2">
-            {casesSidebarHidden &&
-            onShowCasesSidebar &&
-            runsViewMode === "runs" ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={onShowCasesSidebar}
-              >
-                <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                Cases
-              </Button>
-            ) : null}
-            {onSetupCi && !readOnlyConfig ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={onSetupCi}
-              >
-                <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                Setup CI
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Gear into the suite-edit page (description / pass-fail /
-            validators / judges). Rendered in its OWN block — NOT inside
-            `overviewHasSuiteNav` — because that predicate only fires when
-            the cases-sidebar toggle or Setup CI is shown. Without its own
-            block the gear was invisible on every standard suite-overview
-            (the case the goal-completion CTA explicitly points at).
-            The route + handler plumbing existed since the suite-edit view
-            shipped but no UI surface invoked it — existing suites were
-            only reachable via the URL bar. Hidden in edit mode (would be
-            a self-link) and when the suite is read-only. */}
-        {!readOnlyConfig && !isEditMode ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 w-8 p-0"
-                aria-label="Suite settings"
-                onClick={() =>
-                  navigateApp(
-                    buildEvalsPath({
-                      type: "suite-edit",
-                      suiteId: suite._id,
-                    })
-                  )
-                }
-              >
-                <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent
-              variant="muted"
-              side="bottom"
-              align="end"
-              sideOffset={6}
-              className="px-2 py-1 text-[11px]"
-            >
-              Suite settings — description, validators, judges
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        {overviewHasCaseTools ? (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-l border-border/40 pl-3">
-            {overviewRunAllCta}
-            {showTestCaseCtas && onGenerateTestCases ? (
-              <div className="inline-flex items-center">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 gap-1.5 rounded-r-none"
-                        onClick={onGenerateTestCases}
-                        disabled={
-                          !canGenerateTestCases || isGeneratingTestCases
-                        }
-                        aria-busy={isGeneratingTestCases}
-                      >
-                        {isGeneratingTestCases ? (
-                          <Loader2
-                            className="h-3.5 w-3.5 shrink-0 animate-spin"
-                            aria-hidden
-                          />
-                        ) : (
-                          <Sparkles
-                            className="h-3.5 w-3.5 shrink-0"
-                            aria-hidden
-                          />
-                        )}
-                        Generate
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    variant="muted"
-                    side="bottom"
-                    align="start"
-                    sideOffset={8}
-                    className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-                  >
-                    {isGeneratingTestCases
-                      ? "Generating test cases…"
-                      : !canGenerateTestCases
-                      ? generateTestCasesDisabledReason ??
-                        "Configure suite servers before generating cases."
-                      : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
-                  </TooltipContent>
-                </Tooltip>
-                <GenerateCasesConfigPopover
-                  suiteId={suite._id}
-                  onGenerate={onGenerateTestCases}
-                  disabled={!canGenerateTestCases}
-                  isGenerating={isGeneratingTestCases}
-                  disabledReason={generateTestCasesDisabledReason}
-                />
-              </div>
-            ) : null}
-            {showTestCaseCtas && onCreateTestCase ? (
-              // One case type now. A render check is just a case whose turn is
-              // toggled to "Render check" inside the editor — no separate entry.
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={onCreateTestCase}
-              >
-                <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                New case
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {overviewHasExportOrRun ? (
-          <div className="flex items-center gap-2">
-            {onOpenExportSuite ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={onOpenExportSuite}
-              >
-                <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                Setup SDK
-              </Button>
-            ) : null}
-
-            {suiteStopCta}
-
-            {!activeSuiteRun &&
-            !hideRunActions &&
-            !readOnlyConfig &&
-            hasServersConfigured ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 gap-1.5 text-muted-foreground"
-                      disabled={Boolean(isRerunning || evalRunsDisabledReason)}
-                      onClick={() => onRerun(suite, { refreshSnapshot: true })}
-                    >
-                      <RotateCw
-                        className={`h-3.5 w-3.5 shrink-0 ${
-                          isRerunning ? "animate-spin" : ""
-                        }`}
-                        aria-hidden
-                      />
-                      Update snapshot
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  side="bottom"
-                  className="max-w-[16rem]"
-                >
-                  {evalRunsDisabledReason ??
-                    "Re-saves the suite's current server list as the frozen execution snapshot and starts a run."}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-
-            {!activeSuiteRun &&
-            !hideRunActions &&
-            (replayableLatestRun || !readOnlyConfig) ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5"
-                      onClick={() =>
-                        replayableLatestRun
-                          ? onReplayRun?.(suite, replayableLatestRun)
-                          : onRerun(suite, {
-                              ...(runMatchOptionsOverride
-                                ? {
-                                    matchOptionsOverride:
-                                      runMatchOptionsOverride,
-                                  }
-                                : {}),
-                              ...(iterationOverride !== undefined
-                                ? { iterationOverride }
-                                : {}),
-                            })
-                      }
-                      disabled={
-                        replayableLatestRun
-                          ? isReplayingLatestRun ||
-                            !onReplayRun ||
-                            Boolean(evalRunsDisabledReason)
-                          : !canTriggerLiveRun ||
-                            isRerunning ||
-                            Boolean(evalRunsDisabledReason)
-                      }
-                    >
-                      <RotateCw
-                        className={`h-3.5 w-3.5 shrink-0 ${
-                          (
-                            replayableLatestRun
-                              ? isReplayingLatestRun
-                              : isRerunning
-                          )
-                            ? "animate-spin"
-                            : ""
-                        }`}
-                        aria-hidden
-                      />
-                      {(
-                        replayableLatestRun ? isReplayingLatestRun : isRerunning
-                      )
-                        ? replayableLatestRun
-                          ? "Replaying..."
-                          : "Running..."
-                        : replayableLatestRun
-                        ? "Replay latest run"
-                        : "Run"}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {replayableLatestRun
-                    ? evalRunsDisabledReason
-                      ? evalRunsDisabledReason
-                      : "Replay the latest CI run"
-                    : evalRunsDisabledReason
-                    ? evalRunsDisabledReason
-                    : !hasServersConfigured
-                    ? "No MCP servers are configured for this suite"
-                    : missingServers.length > 0
-                    ? "Connect and run."
-                    : "Run all cases"}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     </div>
   );

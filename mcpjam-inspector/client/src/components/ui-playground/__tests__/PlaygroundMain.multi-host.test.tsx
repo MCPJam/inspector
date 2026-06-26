@@ -33,7 +33,10 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockMultiModelPlaygroundCard = vi.fn();
 
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
+  // breaks the whole suite; the explicit stubs below stay as overrides.
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ArrowDown: () => <span />,
   ArrowUp: () => <span />,
   Braces: () => <span />,

@@ -370,20 +370,23 @@ describe("adaptTraceToUiMessages", () => {
     ]);
     expect(result.sourceMessageIndexToFocusUiMessageId[0]).toBe("trace-user-0");
 
+    // Tool-bearing messages are re-keyed to `trace-tool-<toolCallId>` by the
+    // inspector adapter; the source-index lookups are remapped to match so
+    // "Reveal in Chat" resolves a live id. Non-tool messages keep their id.
     expect(result.sourceMessageIndexToUiMessageIds[1]).toEqual([
-      "trace-assistant-1",
+      "trace-tool-call-1",
     ]);
     expect(result.sourceMessageIndexToFocusUiMessageId[1]).toBe(
-      "trace-assistant-1",
+      "trace-tool-call-1",
     );
     expect(result.sourceMessageIndexToFocusUiMessageId[2]).toBe(
-      "trace-assistant-1",
+      "trace-tool-call-1",
     );
     expect(result.sourceMessageIndexToFocusUiMessageId[3]).toBe(
       "trace-assistant-3",
     );
     expect(result.sourceMessageIndexToFocusUiMessageId[4]).toBe(
-      "trace-assistant-orphan-4-0",
+      "trace-tool-orphan-1",
     );
   });
 

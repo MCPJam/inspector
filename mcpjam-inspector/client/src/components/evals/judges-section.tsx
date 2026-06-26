@@ -65,11 +65,36 @@ export function JudgesSection({
   const gc = value?.goalCompletion;
   // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
   // `enabled: false` flips the toggle off, matching what the resolver
-  // does at run time. Cost stays gated by `autoRun: false` + the explicit
-  // Run judge click on the run-detail card.
+  // does at run time.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
   const autoRun = gc?.autoRun === true;
+
+  // The bare (suite settings sheet) surface presents ONE switch that means
+  // what a developer reads it to mean: "grade every run automatically." So it
+  // binds to `enabled && autoRun` and writes both together — turning it on
+  // makes new runs grade on completion (via the backend snapshot auto-run
+  // gate), with no per-run click. The panel chrome keeps the two as separate
+  // advanced knobs. `sectionOn` drives both the switch and the model-row
+  // visibility so they never disagree.
+  const sectionOn = isBare ? enabled && autoRun : enabled;
+  const handleMainToggle = (checked: boolean) => {
+    if (isBare) {
+      // ON → enable + auto-grade every run. OFF → fully off (no auto, no
+      // manual). The nuanced "enabled but manual-only" state stays reachable
+      // from the panel chrome's separate toggles.
+      update(
+        checked
+          ? { enabled: true, autoRun: true }
+          : { enabled: false, autoRun: undefined },
+      );
+      return;
+    }
+    // Persist EXPLICIT true/false. `undefined` means "inherit the default"
+    // (enabled: true), so writing `enabled: undefined` here would silently
+    // re-enable a suite the user just disabled.
+    update({ enabled: checked });
+  };
 
   const modelOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -106,7 +131,8 @@ export function JudgesSection({
             // repeat the section header. In `panel` chrome there's no outer
             // label, so we keep the sub-heading + description.
             <p className="text-[12px] text-muted-foreground">
-              Grade each case&apos;s final answer against its objective.
+              Grade every run automatically against each case&apos;s
+              objective. Uses credits.
             </p>
           ) : (
             <>
@@ -120,19 +146,17 @@ export function JudgesSection({
           )}
         </div>
         <Switch
-          checked={enabled}
-          onCheckedChange={(checked: boolean) =>
-            // Persist EXPLICIT true/false. `undefined` means "inherit the
-            // default" — which is `enabled: true` — so writing
-            // `enabled: undefined` here would silently re-enable a suite
-            // the user just disabled.
-            update({ enabled: checked })
+          checked={sectionOn}
+          onCheckedChange={handleMainToggle}
+          aria-label={
+            isBare
+              ? "Auto-grade every run with LLM as Judge"
+              : "Enable LLM as Judge for this suite"
           }
-          aria-label="Enable LLM as Judge for this suite"
         />
       </div>
 
-      {enabled ? (
+      {sectionOn ? (
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 pt-1">
           <Label
             htmlFor="suite-goal-judge-model"
@@ -213,7 +237,7 @@ export function JudgesSection({
       <div className="space-y-3 rounded-md border border-border/30 bg-background/60 p-3">
         {body}
 
-        {enabled ? (
+        {sectionOn ? (
           <p className="text-[11px] text-muted-foreground/70">
             Runs grade against this config. Individual runs can apply a one-off
             override from the run detail page — overridden runs show a banner

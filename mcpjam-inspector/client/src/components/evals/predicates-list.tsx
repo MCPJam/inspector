@@ -1,5 +1,35 @@
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
+import type { EvalTraceWidgetRenderObservationView } from "@/shared/eval-trace";
+import { RenderObservationCard } from "./browser-artifacts-view";
 import type { EvalIteration } from "./types";
+
+/**
+ * Predicate types that assert against per-widget render observations. Their rows
+ * get the matching render card(s) inline as evidence — the same data the
+ * evaluator graded on (status / latency / console errors), so the verdict and
+ * its proof live together. See `sdk/src/predicates/evaluate.ts`.
+ */
+const WIDGET_RENDER_PREDICATE_TYPES = new Set<Predicate["type"]>([
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+]);
+
+/**
+ * Render observations a widget predicate row should show as evidence: scoped to
+ * the predicate's `toolName` when set (mirrors the evaluator's `renderScope`),
+ * otherwise every observation. Empty for non-widget predicates.
+ */
+function evidenceObservations(
+  predicate: Predicate,
+  observations: EvalTraceWidgetRenderObservationView[],
+): EvalTraceWidgetRenderObservationView[] {
+  if (!WIDGET_RENDER_PREDICATE_TYPES.has(predicate.type)) return [];
+  const toolName = (predicate as { toolName?: string }).toolName;
+  return toolName
+    ? observations.filter((o) => o.toolName === toolName)
+    : observations;
+}
 
 /**
  * Read the persisted predicate verdicts off `iteration.metadata.predicates`,
@@ -58,11 +88,48 @@ function parseTurnScope(
  * issued"`). The reason string is the load-bearing diagnostic — it tells you
  * *why* the gate decided as it did and is the property a CI gate hinges on.
  */
-export function PredicatesList({ predicates }: { predicates: PredicateResult[] }) {
+export function PredicatesList({
+  predicates,
+  observations = [],
+}: {
+  predicates: PredicateResult[];
+  /**
+   * Per-widget render observations from the iteration trace blob. Widget-render
+   * predicate rows (e.g. `widgetRendered`) show the matching card(s) as inline
+   * evidence. Optional/absent until the blob loads → rows render without it.
+   */
+  observations?: EvalTraceWidgetRenderObservationView[];
+}) {
   if (predicates.length === 0) return null;
   const failed = predicates.filter((r) => !r.passed).length;
   const passed = predicates.length - failed;
   const allPassed = failed === 0;
+  const caseLevel = predicates.filter((r) => !r.scope);
+  const stepScoped = predicates.filter((r) => r.scope?.kind === "turn");
+
+  const renderGroup = (
+    title: string,
+    rows: PredicateResult[],
+    keyPrefix: string,
+  ) =>
+    rows.length === 0
+      ? null
+      : (
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-medium text-muted-foreground">
+              {title}
+            </div>
+            <ul className="space-y-1.5">
+              {rows.map((row, i) => (
+                <PredicateRow
+                  key={`${keyPrefix}-${i}`}
+                  row={row}
+                  observations={observations}
+                />
+              ))}
+            </ul>
+          </div>
+        );
 
   return (
     <div
@@ -87,16 +154,20 @@ export function PredicatesList({ predicates }: { predicates: PredicateResult[] }
         </div>
       </div>
 
-      <ul className="space-y-1.5">
-        {predicates.map((row, i) => (
-          <PredicateRow key={i} row={row} />
-        ))}
-      </ul>
+      {renderGroup("Global gates", caseLevel, "case")}
+      {renderGroup("Step checks", stepScoped, "step")}
     </div>
   );
 }
 
-function PredicateRow({ row }: { row: PredicateResult }) {
+function PredicateRow({
+  row,
+  observations,
+}: {
+  row: PredicateResult;
+  observations: EvalTraceWidgetRenderObservationView[];
+}) {
+  const evidence = evidenceObservations(row.predicate, observations);
   return (
     <li
       className={`rounded border p-2 ${
@@ -132,6 +203,26 @@ function PredicateRow({ row }: { row: PredicateResult }) {
           >
             {row.reason}
           </div>
+          {evidence.length > 0 ? (
+            <details
+              className="mt-1.5"
+              data-testid="predicate-render-evidence"
+            >
+              <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+                {evidence.length === 1
+                  ? "Rendered widget"
+                  : `${evidence.length} rendered widgets`}
+              </summary>
+              <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+                {evidence.map((obs) => (
+                  <RenderObservationCard
+                    key={`${obs.toolCallId}-${obs.ts}`}
+                    observation={obs}
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       </div>
     </li>

@@ -344,6 +344,11 @@ function openChatTab() {
   fireEvent.click(screen.getByTitle("Chat view"));
 }
 
+// TraceViewer now defaults to the Chat tab; timeline-focused tests open Trace first.
+function openTraceTab() {
+  fireEvent.click(screen.getByTitle("Trace"));
+}
+
 async function getTraceWaterfallRegion() {
   return screen.findByRole("region", {
     name: /Trace timeline/i,
@@ -501,13 +506,14 @@ describe("TraceViewer", () => {
       .forEach((node) => node.remove());
   });
 
-  it("defaults to Trace tab", async () => {
+  it("defaults to Chat tab", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
-    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByTestId("trace-viewer-chat")).toBeInTheDocument();
   });
 
   it("timeline shows no data when no spans and zero estimated duration", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={0} />);
+    openTraceTab();
     expect(
       await screen.findByText("No timing data recorded for this iteration."),
     ).toBeInTheDocument();
@@ -515,6 +521,7 @@ describe("TraceViewer", () => {
 
   it("switching Trace, Chat, and Raw works", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     openChatTab();
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
@@ -553,6 +560,7 @@ describe("TraceViewer", () => {
 
   it("leaves Raw on Escape", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("trace-viewer-raw-json")).toBeInTheDocument();
@@ -565,6 +573,7 @@ describe("TraceViewer", () => {
 
   it("leaves Chat on Escape", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     openChatTab();
     expect(screen.getByTestId("trace-viewer-chat")).toBeInTheDocument();
@@ -665,6 +674,7 @@ describe("TraceViewer", () => {
 
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     expect(
       screen.queryByTestId("trace-viewer-tools-tab"),
@@ -690,6 +700,7 @@ describe("TraceViewer", () => {
         estimatedDurationMs={99_999}
       />,
     );
+    openTraceTab();
     expect(
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
@@ -715,6 +726,7 @@ describe("TraceViewer", () => {
         traceInsight={<span>Insight caption text</span>}
       />,
     );
+    openTraceTab();
     expect(
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
@@ -724,6 +736,7 @@ describe("TraceViewer", () => {
 
   it("renders prompt-grouped waterfall rows with detail pane", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
 
     // Prompt rows show user message as primary label, with "Prompt N" in subtitle
     expect(
@@ -757,6 +770,7 @@ describe("TraceViewer", () => {
   it("filters the waterfall to tool rows while preserving step context", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
 
     expect(await screen.findByText("Generation error")).toBeInTheDocument();
 
@@ -778,6 +792,7 @@ describe("TraceViewer", () => {
   it("does not render a reset button in the recorded trace toolbar", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
 
     expect(await screen.findByText("Generation error")).toBeInTheDocument();
     await user.click(
@@ -795,6 +810,7 @@ describe("TraceViewer", () => {
 
   it("selects waterfall rows with arrow keys on the timeline region", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
     const region = await getTraceWaterfallRegion();
     await within(region).findByRole("button", { name: /Tool · read_docs/i });
     region.focus();
@@ -819,6 +835,7 @@ describe("TraceViewer", () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,
     );
+    openTraceTab();
 
     vi.useFakeTimers();
     installTimerBackedAnimationFrame();
@@ -876,6 +893,7 @@ describe("TraceViewer", () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,
     );
+    openTraceTab();
 
     const waterfall = await getTraceWaterfallRegion();
     vi.useFakeTimers();
@@ -909,6 +927,7 @@ describe("TraceViewer", () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,
     );
+    openTraceTab();
 
     const waterfall = await getTraceWaterfallRegion();
     vi.useFakeTimers();
@@ -981,6 +1000,7 @@ describe("TraceViewer", () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,
     );
+    openTraceTab();
 
     const waterfall = await getTraceWaterfallRegion();
     vi.useFakeTimers();
@@ -1011,6 +1031,7 @@ describe("TraceViewer", () => {
 
   it("legacy trace without spans shows Estimated total only", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={250} />);
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     expect(
       await screen.findByText("Per-step timing was not recorded for this run."),
@@ -1028,6 +1049,7 @@ describe("TraceViewer", () => {
         estimatedDurationMs={40}
       />,
     );
+    openTraceTab();
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     expect(
       screen.queryByText(/Conversation detail is in the Chat tab/i),
@@ -1088,6 +1110,7 @@ describe("TraceViewer", () => {
         }}
       />,
     );
+    openTraceTab();
     expect(
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();

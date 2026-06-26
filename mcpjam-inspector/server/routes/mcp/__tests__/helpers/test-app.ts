@@ -9,6 +9,7 @@ import resources from "../../resources.js";
 import servers from "../../servers.js";
 import prompts from "../../prompts.js";
 import chatV2 from "../../chat-v2.js";
+import listTools from "../../list-tools.js";
 import widgetRender from "../../widget-render.js";
 import widgetSession from "../../widget-session.js";
 import { adapterHttp, managerHttp } from "../../http-adapters.js";
@@ -29,6 +30,7 @@ export type RouteConfig =
   | "servers"
   | "prompts"
   | "chat-v2"
+  | "list-tools"
   | "widget-render"
   | "widget-session"
   | "adapter-http"
@@ -41,6 +43,7 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   servers: { path: "/api/mcp/servers", handler: servers },
   prompts: { path: "/api/mcp/prompts", handler: prompts },
   "chat-v2": { path: "/api/mcp/chat-v2", handler: chatV2 },
+  "list-tools": { path: "/api/mcp/list-tools", handler: listTools },
   "widget-render": { path: "/api/mcp/widget-render", handler: widgetRender },
   "widget-session": { path: "/api/mcp/widget-session", handler: widgetSession },
   "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },

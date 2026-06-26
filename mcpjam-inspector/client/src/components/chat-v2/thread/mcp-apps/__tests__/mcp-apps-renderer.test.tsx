@@ -279,9 +279,7 @@ import { InspectorWidgetHostProvider } from "../use-widget-host";
 // boundary composes still reflects those overrides. `HostedRenderer` /
 // `HostedSurfaceHost` are drop-in stand-ins for `<MCPAppsRenderer>` /
 // `<WidgetSurfaceHost>` used throughout the assertions below.
-function HostedRenderer(
-  props: React.ComponentProps<typeof MCPAppsRenderer>,
-) {
+function HostedRenderer(props: React.ComponentProps<typeof MCPAppsRenderer>) {
   return (
     <InspectorWidgetHostProvider>
       <MCPAppsRenderer {...props} />
@@ -290,7 +288,7 @@ function HostedRenderer(
 }
 
 function HostedSurfaceHost(
-  props: React.ComponentProps<typeof WidgetSurfaceHost>,
+  props: React.ComponentProps<typeof WidgetSurfaceHost>
 ) {
   return (
     <InspectorWidgetHostProvider>
@@ -644,6 +642,45 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
   });
 
+  it("keeps an already-live persistent surface when a cached snapshot URL arrives", async () => {
+    const renderTree = (cachedWidgetHtmlUrl?: string) => (
+      <WidgetSurfaceHostProvider>
+        <HostedRenderer
+          {...baseProps}
+          {...(cachedWidgetHtmlUrl ? { cachedWidgetHtmlUrl } : {})}
+        />
+        <HostedSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    const { rerender } = render(renderTree());
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>live-widget</body></html>"
+      );
+    });
+
+    const liveHtml = sandboxedIframePropsRef.current?.html;
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(global.fetch).mockClear();
+    rerender(renderTree("blob:cached"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(sandboxedIframePropsRef.current?.html).toBe(liveHtml);
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
+  });
+
   it("mounts a fresh surface when the same row is re-keyed with a new tool call id", async () => {
     const sameOutput = { content: [{ type: "text" as const, text: "same" }] };
     const renderTree = (toolCallId: string) => (
@@ -750,9 +787,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
-        "function"
-      );
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
     });
     expect(
       screen.queryByRole("button", { name: "Open in test-server" })
@@ -769,9 +804,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     const button = screen.getByRole("button", { name: "Open in test-server" });
-    expect(screen.getAllByText("test-server").length).toBeGreaterThanOrEqual(
-      1
-    );
+    expect(screen.getAllByText("test-server").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("test-tool")).not.toBeInTheDocument();
     fireEvent.click(button);
     expect(openSpy).toHaveBeenCalledWith(
@@ -799,9 +832,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
-        "function"
-      );
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
     });
 
     act(() => {
@@ -840,9 +871,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
-        "function"
-      );
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
     });
 
     act(() => {
@@ -870,9 +899,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
-        "function"
-      );
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
     });
 
     act(() => {
@@ -1074,11 +1101,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // first allowed mode (inline), not fullscreen.
     render(
       <ChatboxHostStyleProvider value="copilot">
-        <HostedRenderer
-          {...baseProps}
-          displayMode="pip"
-          pipWidgetId="call-1"
-        />
+        <HostedRenderer {...baseProps} displayMode="pip" pipWidgetId="call-1" />
       </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
@@ -2334,9 +2357,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         })
     );
 
-    render(
-      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
-    );
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -2359,9 +2380,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("waits for the sandbox proxy before starting the bridge handshake", async () => {
     sandboxProxyBehaviorRef.current.autoReady = false;
 
-    render(
-      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
-    );
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 
     await vi.waitFor(() => {
       // Third arg is the persisted compat-runtime provenance for the
@@ -2403,9 +2422,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // flow through logWidgetDebug, appendLifecycle fans them out into the
     // store's lifecycle array. This is the runtime feed the Sandbox debug
     // panel reads — if it stops happening the panel silently goes blank.
-    render(
-      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
-    );
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 
     await vi.waitFor(() => {
       // setSandboxApplied is called with the resolved payload shape we
@@ -2691,9 +2708,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("sends tool output when widget becomes ready", async () => {
-    render(
-      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
-    );
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -2776,9 +2791,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("rejects invalid fileId in getFileDownloadUrl widget messages", async () => {
-    render(
-      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
-    );
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();

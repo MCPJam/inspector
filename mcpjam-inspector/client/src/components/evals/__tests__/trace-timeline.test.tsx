@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+} from "@/shared/eval-trace";
 import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
 
 const mockCapture = vi.fn();
@@ -1592,5 +1595,113 @@ describe("TraceTimeline detail pane", () => {
       .find((el) => el.textContent?.includes('User: "save checkpoint"'));
     expect(secondAfter).toBeTruthy();
     expect(secondAfter!).toHaveClass("trace-waterfall-row-selected");
+  });
+});
+
+describe("TraceTimeline interaction rows", () => {
+  const toolSpan: EvalTraceSpan = {
+    id: "tool-a",
+    name: "search-products",
+    category: "tool",
+    startMs: 100,
+    endMs: 220,
+    toolCallId: "tc-1",
+    toolName: "search-products",
+  };
+
+  function interaction(
+    over: Partial<EvalTraceBrowserInteractionStepView> = {},
+  ): EvalTraceBrowserInteractionStepView {
+    return {
+      toolCallId: "tc-1",
+      stepIndex: 0,
+      promptIndex: 0,
+      action: "left_click",
+      source: "scripted",
+      locatorLabel: 'button "Add to cart"',
+      elapsedMs: 12,
+      ts: 1,
+      ok: true,
+      ...over,
+    };
+  }
+
+  it("renders a synthetic interaction row nested under its tool span", () => {
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan]}
+        interactionSteps={[interaction()]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("Interact"));
+    expect(interactionRow).toBeTruthy();
+    expect(interactionRow!.textContent).toContain("Add to cart");
+  });
+
+  it("renders even when traceStartedAtMs is null (no NaN crash)", () => {
+    expect(() =>
+      render(
+        <TraceTimeline
+          recordedSpans={[toolSpan]}
+          interactionSteps={[interaction()]}
+          traceStartedAtMs={null}
+          transcriptMessages={[{ role: "user", content: "hi" }]}
+        />,
+      ),
+    ).not.toThrow();
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((el) => el.textContent?.includes("Interact")),
+    ).toBe(true);
+  });
+
+  it("renders each click once even when the tool span is double-emitted", () => {
+    // The recorded trace can carry two `tool` spans for one tool call (known
+    // span double-emit). The interaction must attach to the first only.
+    const dupTool: EvalTraceSpan = {
+      id: "tool-a2",
+      name: "search-products",
+      category: "tool",
+      startMs: 120,
+      endMs: 240,
+      toolCallId: "tc-1",
+      toolName: "search-products",
+    };
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan, dupTool]}
+        interactionSteps={[interaction()]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRows = screen
+      .getAllByTestId("trace-row")
+      .filter((el) => el.textContent?.includes("Interact"));
+    expect(interactionRows).toHaveLength(1);
+  });
+
+  it("shows the interaction verdict in the detail pane when selected", async () => {
+    const user = userEvent.setup();
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan]}
+        interactionSteps={[interaction({ ok: false })]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("Interact"));
+    await user.click(interactionRow!);
+
+    const detail = screen.getByTestId("trace-detail-pane");
+    expect(detail.textContent).toContain("Failed");
   });
 });

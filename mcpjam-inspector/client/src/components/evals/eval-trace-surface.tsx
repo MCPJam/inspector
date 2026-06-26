@@ -13,13 +13,22 @@ import {
 } from "./compare-playground-helpers";
 import { useEvalTraceBlob } from "./use-eval-trace-blob";
 import type { EvalCase, EvalIteration } from "./types";
-import { resolveDisplayExpectedToolCalls } from "@/shared/prompt-turns";
+import { resolveDisplayExpectedToolCalls, type TestStep } from "@/shared/steps";
+import type { EvalStepStatus } from "@/shared/eval-stream-events";
 
 interface EvalTraceSurfaceProps {
   iteration: EvalIteration | null;
   testCase: EvalCase | null;
-  mode: "timeline" | "chat" | "raw" | "tools" | "output";
+  mode: "timeline" | "chat" | "raw" | "tools" | "output" | "browser" | "steps";
   emptyMessage?: string;
+  /** Authored step list (enables the step-aligned "Steps" replay). */
+  steps?: TestStep[];
+  /** Live/persisted per-step verdict keyed by `TestStep.id` (Steps mode). */
+  stepStatusById?: Map<string, EvalStepStatus>;
+  /** Step hovered/selected in the left list — highlights the matching Steps row. */
+  syncedStepId?: string | null;
+  /** Fired on Steps-row hover/select (left↔right sync). */
+  onSyncStep?: (stepId: string | null) => void;
   /** When mode is controlled by tabs, Reveal in Chat needs this to switch to the chat tab. */
   onNavigateToChat?: () => void;
   /** Provisional live trace shown until the persisted blob finishes loading. */
@@ -72,6 +81,10 @@ export function EvalTraceSurface({
   iteration,
   testCase,
   mode,
+  steps,
+  stepStatusById,
+  syncedStepId,
+  onSyncStep,
   emptyMessage = "Run this test to inspect trace details.",
   onNavigateToChat,
   fallbackTrace = null,
@@ -94,11 +107,11 @@ export function EvalTraceSurface({
     onTraceLoaded,
     enabled: shouldOwnTraceBlob,
   });
-  const resolvedBlob = shouldOwnTraceBlob ? blob : (traceBlob ?? null);
+  const resolvedBlob = shouldOwnTraceBlob ? blob : traceBlob ?? null;
   const resolvedLoading = shouldOwnTraceBlob
     ? loading
-    : (traceBlobLoading ?? false);
-  const resolvedError = shouldOwnTraceBlob ? error : (traceBlobError ?? null);
+    : traceBlobLoading ?? false;
+  const resolvedError = shouldOwnTraceBlob ? error : traceBlobError ?? null;
 
   const traceModel = useMemo(() => {
     if (!iteration) return null;
@@ -178,11 +191,11 @@ export function EvalTraceSurface({
 
   const expectedToolCalls = resolveDisplayExpectedToolCalls(
     iteration.testCaseSnapshot,
-    testCase,
+    testCase
   );
   const actualToolCalls =
     resolvedBlob != null
-      ? (iteration.actualToolCalls ?? [])
+      ? iteration.actualToolCalls ?? []
       : fallbackActualToolCalls;
 
   return (
@@ -200,6 +213,10 @@ export function EvalTraceSurface({
           estimatedDurationMs={estimatedDurationMs}
           expectedToolCalls={expectedToolCalls}
           actualToolCalls={actualToolCalls}
+          steps={steps}
+          stepStatusById={stepStatusById}
+          syncedStepId={syncedStepId}
+          onSyncStep={onSyncStep}
           forcedViewMode={mode}
           hideToolbar
           fillContent

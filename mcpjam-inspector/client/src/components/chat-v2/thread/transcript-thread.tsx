@@ -263,6 +263,7 @@ export function TranscriptThread({
   renderUserMessageActions,
   showSenderAvatars = false,
   resolveSenderAvatar,
+  recorder,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -574,6 +575,7 @@ export function TranscriptThread({
               renderUserMessageActions={renderUserMessageActions}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
+              recorder={recorder}
             />
             {messageAppToolInvocations.length > 0 && (
               <div className="mt-3 space-y-2">

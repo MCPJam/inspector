@@ -107,4 +107,36 @@ describe("AiTriageCard", () => {
     expect(screen.queryByText(/Show \d+ more/)).not.toBeInTheDocument();
     expect(improveTitles()).toHaveLength(2);
   });
+
+  it("uses compact category labels and icon-only row copy buttons", () => {
+    renderCard(makeServerQuality([tool("export_to_excalidraw", "poor")]));
+
+    expect(screen.getByText("Tool")).toBeInTheDocument();
+    expect(screen.queryByText("TOOL DESCRIPTION")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Copy fix prompt: Improve export_to_excalidraw/i,
+      }),
+    ).toHaveClass("w-7");
+  });
+
+  it("drops nested card chrome when embedded in the run-detail split", () => {
+    render(
+      <AiTriageCard
+        run={baseRun}
+        iterations={[]}
+        serverQuality={makeServerQuality([tool("export_to_excalidraw", "poor")])}
+        pending={false}
+        requested={true}
+        failedGeneration={false}
+        error={null}
+        onRetry={vi.fn()}
+        embedded
+      />,
+    );
+
+    const section = screen.getByRole("heading", { name: "AI insights" }).closest("section");
+    expect(section).not.toHaveClass("rounded-lg");
+    expect(section).not.toHaveClass("border");
+  });
 });
