@@ -340,6 +340,11 @@ export const startSuiteRunWithRecorder = async ({
       serverName: string;
       projectServerId?: string;
     }>;
+    // Reproducible-env pin, forwarded from getRunReplayMetadata on a
+    // current-config replay so the replay keeps the source run's frozen
+    // computer environment (must be declared here or a reconstruction of this
+    // object would silently drop it before Convex).
+    computerEnvironmentId?: string;
   };
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
