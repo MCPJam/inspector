@@ -4,6 +4,7 @@ import { Hono } from "hono";
 const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
+  fetchHostRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   emitConstructorRpcLogMock,
@@ -15,6 +16,7 @@ const {
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
+  fetchHostRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
@@ -87,6 +89,10 @@ vi.mock("../../../utils/chat-ingestion.js", async () => {
   };
 });
 
+vi.mock("../../../utils/host-runtime-config.js", () => ({
+  fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
+}));
+
 vi.mock("../apps.js", () => ({
   default: new Hono(),
 }));
@@ -118,6 +124,12 @@ describe("web routes — chat-v2 hosted mode", () => {
       resolvedTemperature: 0.7,
     });
     emitConstructorRpcLogMock.mockReset();
+    // Default: host runtime-config resolves to a non-harness config so the
+    // host-bound (Playground) path routes straight through to the handler.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { selectedServerIds: ["server-1"] },
+    });
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
       await options.onConversationComplete?.(
@@ -232,6 +244,79 @@ describe("web routes — chat-v2 hosted mode", () => {
     // missing_field, which is the desired behavior for chatbox/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+  });
+
+  // PR3: host-bound direct session (Playground previewing a saved host).
+  it("a direct session with hostId fetches the authoritative host runtime-config and routes through", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        hostId: "host-1",
+        chatSessionId: "chat-host-1",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ hostId: "host-1" })
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "backend unreachable",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        hostId: "host-1",
+        chatSessionId: "chat-host-2",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+      },
+      token
+    );
+
+    expect(response.status).not.toBe(200);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
+    const { app, token } = createWebTestApp();
+
+    await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        hostId: "host-1",
+        chatSessionId: "chat-cb-1",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
   it("passes shared chatbox link context into the hosted model handler", async () => {

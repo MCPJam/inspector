@@ -1051,7 +1051,7 @@ type HostedSessionScope = {
 // `hostId` IS part of the scope: switching the previewed host in the Playground
 // (same project, no chatbox) resolves future turns against a different host —
 // so the transcript must fork rather than append host B's turns onto host A's.
-function areHostedSessionScopesEqual(
+export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
