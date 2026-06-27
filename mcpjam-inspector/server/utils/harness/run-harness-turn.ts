@@ -28,9 +28,17 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type FinishReason,
+  type ToolSet,
   type UIMessageChunk,
 } from "ai";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
+import {
+  emitTraceSnapshot,
+  getPromptIndex,
+  getPromptMessageStartIndex,
+  setToolSpanMessageRangesFromResults,
+  writeTraceEvent,
+} from "../live-chat-trace-stream.js";
 import { getHarnessAdapter } from "./registry.js";
 import { tunnelManager } from "../../services/tunnel-manager.js";
 import { logger } from "../logger.js";
@@ -40,6 +48,7 @@ import type {
 } from "../mcpjam-stream-handler.js";
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { createOffsetInterval } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
@@ -190,6 +199,7 @@ export async function runHarnessTurn(
     chatboxId,
     sourceType,
     harness,
+    builtInTools,
   } = options;
   // The harness adapter knows the Claude-specific bits (auth shape, native model
   // mapping, harness construction). runHarnessTurn stays harness-agnostic.
@@ -200,6 +210,11 @@ export async function runHarnessTurn(
   const messageHistory: ModelMessage[] = [...messages];
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
+  // Per-turn prompt index (user-message count − 1), computed from the inbound
+  // history like runChatEngineLoop's getPromptIndex. Hardcoding 0 collapses a
+  // multi-turn session: persisted traces rehydrate sorted by promptIndex, so
+  // every turn claiming 0 mislabels/merges them in the Trace tab.
+  const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
   // Internal liveness abort: the heartbeat fires this when the lease is
@@ -222,6 +237,34 @@ export async function runHarnessTurn(
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
+  // ── Live trace emission (parity with runChatEngineLoop's writeTraceEvent) ──
+  // The Trace tab is built entirely from `data-trace-event` SSE parts; the
+  // harness path must emit turn_start / trace_snapshot / turn_finish or the tab
+  // stays on its "Sample trace" placeholder forever. `traceTurnStarted` gates
+  // the error-path finish so a pre-stream failure can't emit a phantom turn.
+  // `stepStartedAt` clocks the synthetic per-step agent (llm) span — the span
+  // that renders the "Agent:" row and guarantees non-empty spans even for
+  // text-only turns (capturedSpans otherwise holds tool spans only).
+  // `toolSetForTrace` is the harness-side stand-in for an `ai` ToolSet (there
+  // is none — it drives the in-sandbox CLI via .mcp.json): a toolName→serverId
+  // map so emitTraceSnapshot can attach actualToolCalls.serverId.
+  // `traceBaseMs` is the zero-point for span offsets — set to STREAM start (after
+  // credential/claim/box-wake/connect), not `turnStartedAt` (function entry).
+  // Basing on function entry painted the per-turn setup latency as an empty gap
+  // before every turn's bar; the emulated engine clocks from stream start too,
+  // so this keeps the harness trace gapless and on parity. Setup time still
+  // shows in the [harness][timing] phase log.
+  let traceTurnStarted = false;
+  let traceBaseMs = turnStartedAt;
+  let stepStartedAt = turnStartedAt;
+  const toolSetForTrace: Record<string, { _serverId?: string }> = {};
+  const snapshotTurnContext = () => ({
+    turnId,
+    promptIndex,
+    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
+    turnSpans: capturedSpans,
+    ...(usage ? { turnUsage: usage } : {}),
+  });
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -413,10 +456,25 @@ export async function runHarnessTurn(
       // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
       // do zero inference). Returns the HarnessAgent boundary type directly.
       const harnessRuntime = harnessAdapter.createHarness({ modelId, auth });
+      // MCPJam's server-executed built-in tools (e.g. web_search). The harness
+      // forwards each as a tool spec to the runtime; when Claude Code calls one
+      // it pauses, the agent runs the tool's `execute()` HERE on MCPJam's
+      // server, and submits the result back. MCP-server tools are NOT included
+      // (they reach the runtime via `.mcp.json` and its own MCP client), so the
+      // model never sees a tool twice. Cast across the dual-`ai` boundary, same
+      // as the harness adapter above (structurally identical ToolSet types).
+      const hostExecutedTools = (builtInTools ?? {}) as Record<string, unknown>;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
         ...(systemPrompt ? { instructions: systemPrompt } : {}),
+        ...(Object.keys(hostExecutedTools).length
+          ? {
+              tools: hostExecutedTools as NonNullable<
+                ConstructorParameters<typeof HarnessAgent>[0]["tools"]
+              >,
+            }
+          : {}),
         permissionMode,
         onSandboxSession: async ({ session, sessionWorkDir }) => {
           // Write the host's MCP servers into the session workdir before
@@ -543,12 +601,50 @@ export async function runHarnessTurn(
         }> = [];
         const flushSegment = () => {
           if (assistantParts.length > 0) {
+            const assistantMsgIndex = messageHistory.length;
             messageHistory.push({
               role: "assistant",
               content: [...assistantParts],
             } as unknown as ModelMessage);
             assistantParts.length = 0;
+            // Synthetic agent span: renders the "Agent:" row (llm category) and
+            // guarantees non-empty trace spans even when the step produced only
+            // text. The harness can't observe genuine LLM latency/tokens, so the
+            // span is a wall-clock envelope; cumulative usage is attached once
+            // the final flush runs after `await res.text` settles it.
+            capturedSpans.push({
+              id: crypto.randomUUID(),
+              name: modelId,
+              category: "llm",
+              // Span times are turn-relative offsets (ms from traceBaseMs), not
+              // absolute epoch — the timeline treats endMs as an offset
+              // (getTraceSpansDurationMs = max(endMs)) and rebases turns end-to-end.
+              ...createOffsetInterval(traceBaseMs, stepStartedAt, Date.now()),
+              promptIndex,
+              stepIndex,
+              status: "ok",
+              messageStartIndex: assistantMsgIndex,
+              messageEndIndex: assistantMsgIndex,
+              modelId,
+              finishReason: turnFinishReason,
+              ...(usage
+                ? {
+                    ...(typeof usage.inputTokens === "number"
+                      ? { inputTokens: usage.inputTokens }
+                      : {}),
+                    ...(typeof usage.outputTokens === "number"
+                      ? { outputTokens: usage.outputTokens }
+                      : {}),
+                    ...(typeof usage.totalTokens === "number"
+                      ? { totalTokens: usage.totalTokens }
+                      : {}),
+                  }
+                : {}),
+            });
           }
+          const flushedToolCallIds = new Set(
+            pendingResults.map((tr) => tr.toolCallId),
+          );
           for (const tr of pendingResults) {
             messageHistory.push({
               role: "tool",
@@ -573,6 +669,16 @@ export async function runHarnessTurn(
             } as unknown as ModelMessage);
           }
           pendingResults.length = 0;
+          // Back-fill messageStartIndex/EndIndex on this step's tool spans now
+          // that their tool-result messages exist in messageHistory (trace ↔
+          // transcript correlation; parity with runChatEngineLoop).
+          setToolSpanMessageRangesFromResults(
+            capturedSpans,
+            messageHistory,
+            promptIndex,
+            stepIndex,
+            flushedToolCallIds,
+          );
         };
         // Step + tool-identity tracking. A "step" spans assistant content + its
         // tool results; the next assistant content after results begins the next
@@ -587,15 +693,36 @@ export async function runHarnessTurn(
         const finishStep = () => {
           onStepFinish?.({
             stepIndex,
-            promptIndex: 0,
+            promptIndex,
             // Usage is only known at the harness `finish`, so intermediate steps
             // carry what's settled (matches the engine's cumulative semantics).
             ...(usage ? { turnUsage: usage } : {}),
             settledWithError: false,
             turnSpans: [...capturedSpans],
           });
+          // Stream the cumulative spans + messages to the live Trace tab. This
+          // is the event that flips the tab off its "Sample trace" placeholder.
+          emitTraceSnapshot(
+            writer,
+            messageHistory,
+            toolSetForTrace as unknown as ToolSet,
+            snapshotTurnContext(),
+          );
           stepIndex += 1;
+          stepStartedAt = Date.now();
         };
+        // Emit turn_start here (not at function entry) so a pre-stream failure
+        // (credential/box/connect) never creates a phantom turn in the trace.
+        // Anchor the trace clock to stream start so setup latency isn't a gap.
+        traceBaseMs = Date.now();
+        writeTraceEvent(writer, {
+          type: "turn_start",
+          turnId,
+          promptIndex,
+          startedAtMs: traceBaseMs,
+        });
+        traceTurnStarted = true;
+        stepStartedAt = traceBaseMs;
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
@@ -667,6 +794,9 @@ export async function runHarnessTurn(
               ...(serverId ? { serverId } : {}),
               toolName,
             });
+            // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
+            // can resolve this tool's serverId (the harness has no `ai` ToolSet).
+            toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
             writer.write({
               type: "tool-input-available",
@@ -685,7 +815,7 @@ export async function runHarnessTurn(
               toolName,
               input,
               stepIndex,
-              promptIndex: 0,
+              promptIndex,
               serverId,
             });
             assistantParts.push({ type: "tool-call", toolCallId, toolName, input });
@@ -725,7 +855,7 @@ export async function runHarnessTurn(
               output,
               isError,
               stepIndex,
-              promptIndex: 0,
+              promptIndex,
               serverId: meta.serverId,
             });
             // Record a tool span for the turn trace (cumulative; snapshotted into
@@ -734,9 +864,13 @@ export async function runHarnessTurn(
               id: crypto.randomUUID(),
               name: meta.toolName,
               category: "tool",
-              startMs: toolStartMs.get(toolCallId) ?? Date.now(),
-              endMs: Date.now(),
-              promptIndex: 0,
+              // Turn-relative offsets (see the llm span above).
+              ...createOffsetInterval(
+                traceBaseMs,
+                toolStartMs.get(toolCallId) ?? Date.now(),
+                Date.now(),
+              ),
+              promptIndex,
               stepIndex,
               status: isError ? "error" : "ok",
               toolCallId,
@@ -792,6 +926,13 @@ export async function runHarnessTurn(
           type: "finish",
           finishReason: turnFinishReason,
           ...(usage ? { messageMetadata: usage } : {}),
+        });
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId,
+          promptIndex,
+          finishReason: turnFinishReason,
+          ...(usage ? { usage } : {}),
         });
         runSucceeded = true;
         const tStream = Date.now();
@@ -858,10 +999,27 @@ export async function runHarnessTurn(
       // Close any open text block so the UI stream stays balanced.
       if (textId !== undefined) writer.write({ type: "text-end", id: textId });
       writer.write({ type: "error", errorText });
+      // A mid-stream failure still gets a final snapshot + turn_finish so the
+      // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
+      // by traceTurnStarted so a pre-stream failure emits no phantom turn.
+      if (traceTurnStarted) {
+        emitTraceSnapshot(
+          writer,
+          messageHistory,
+          toolSetForTrace as unknown as ToolSet,
+          snapshotTurnContext(),
+        );
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId,
+          promptIndex,
+          ...(usage ? { usage } : {}),
+        });
+      }
       onEngineError?.({
         message: errorText,
         rawText: errorText,
-        promptIndex: 0,
+        promptIndex,
       });
     }
   };
@@ -870,8 +1028,10 @@ export async function runHarnessTurn(
     if (runSucceeded && !aborted) {
       const trace: PersistedTurnTrace = {
         turnId,
-        promptIndex: 0,
-        startedAt: turnStartedAt,
+        // Stream start (matches the span offset base) so rehydrated traces align
+        // with the live ones — see traceBaseMs.
+        startedAt: traceBaseMs,
+        promptIndex,
         endedAt: Date.now(),
         spans: [...capturedSpans],
         ...(usage ? { usage } : {}),
