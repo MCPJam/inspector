@@ -187,8 +187,11 @@ describe("EnvironmentsDrawer", () => {
       target: { value: "renamed" },
     });
     fireEvent.click(getByText("Share with project"));
-    await waitFor(() => expect(updateEnvironment).toHaveBeenCalled());
     await waitFor(() => expect(promote).toHaveBeenCalled());
+    // Order matters: the save must complete before the promote.
+    expect(updateEnvironment.mock.invocationCallOrder[0]).toBeLessThan(
+      promote.mock.invocationCallOrder[0]!
+    );
   });
 
   it("does not share when the pre-share save fails", async () => {
