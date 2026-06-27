@@ -336,7 +336,7 @@ export function ToolsTab({
       observer.unobserve(element);
       observer.disconnect();
     };
-  }, [filteredToolNames.length, activeTab, cursor, activeTab, fetchingTools]);
+  }, [filteredToolNames.length, activeTab, cursor, fetchingTools]);
 
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
@@ -383,6 +383,15 @@ export function ToolsTab({
       environment: detectEnvironment(),
     });
   }, []);
+
+  // Clicking the sidebar's "Tools" tab returns to the tool list (the tool
+  // menu): deselect any open tool, the same as the back arrow does.
+  const handleChangeTab = (tab: "tools" | "saved") => {
+    setActiveTab(tab);
+    if (tab === "tools") {
+      setSelectedTool("");
+    }
+  };
 
   const fetchTools = async (reset = false) => {
     if (!serverName) {
@@ -754,7 +763,7 @@ export function ToolsTab({
   const sidebarContent = (
     <ToolsSidebar
       activeTab={activeTab}
-      onChangeTab={setActiveTab}
+      onChangeTab={handleChangeTab}
       tools={tools}
       toolQuality={toolQualityByName}
       toolNames={toolNames}
