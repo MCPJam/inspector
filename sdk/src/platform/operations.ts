@@ -746,8 +746,11 @@ export const checkHostCompatibilityOperation: PlatformOperation<
         )) as ReadResourceResult
     );
 
+    // `toolsTruncated` makes the engine demote any `works` to `unknown` and add
+    // the explaining dimension — verdicts never read complete when they aren't.
     const { requirements, reports } = evaluateMarketHosts(toolsData, {
       widgetUsage,
+      toolsTruncated: truncated,
     });
 
     return {
@@ -760,12 +763,7 @@ export const checkHostCompatibilityOperation: PlatformOperation<
           requirements.widgets.dual.length,
         appOnly: requirements.appOnlyWidgets.length,
       },
-      unknownDimensions: truncated
-        ? [
-            ...requirements.unknownDimensions,
-            `tools pagination truncated at ${HOST_COMPAT_TOOLS_PAGE_CAP} pages — report may be incomplete`,
-          ]
-        : requirements.unknownDimensions,
+      unknownDimensions: requirements.unknownDimensions,
       hosts: reports.map((report) => ({
         hostId: report.hostId,
         hostLabel: report.hostLabel,
