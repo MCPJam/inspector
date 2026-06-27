@@ -55,15 +55,10 @@ export type CompatFindingCode =
   /** Server's negotiated protocol version isn't in the host's set (info). */
   | "protocol_version_mismatch";
 
-export type CompatFinding = {
+/** Fields common to every finding. The prose is default copy, not the contract. */
+type CompatFindingBase = {
   lane: CompatLane;
   severity: CompatFindingSeverity;
-  /** Stable machine key — the semantic contract; surfaces key off this. */
-  code: CompatFindingCode;
-  /** Tools this finding concerns, when tool-specific. */
-  tools?: string[];
-  /** The widget capability at issue, for `capability_unsupported`. */
-  capability?: WidgetCapabilityNeed;
   /** Default human copy — surfaces may re-render from the semantic fields. */
   title: string;
   detail: string;
@@ -75,6 +70,21 @@ export type CompatFinding = {
    */
   provenance: CompatProvenance;
 };
+
+/**
+ * A finding, discriminated by `code` so the per-code shape is encoded in the
+ * type system — a `capability_unsupported` finding always carries `capability`,
+ * a protocol mismatch never carries `tools`, etc. Surfaces narrow on `code`.
+ */
+export type CompatFinding =
+  | (CompatFindingBase & { code: "app_only_unrenderable"; tools: string[] })
+  | (CompatFindingBase & { code: "widget_text_fallback"; tools: string[] })
+  | (CompatFindingBase & {
+      code: "capability_unsupported";
+      capability: WidgetCapabilityNeed;
+      tools: string[];
+    })
+  | (CompatFindingBase & { code: "protocol_version_mismatch" });
 
 /** Per-lane rollup so a surface can show apps vs server verdicts independently. */
 export type CompatLaneVerdict = {

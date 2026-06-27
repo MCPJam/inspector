@@ -24,7 +24,10 @@ export enum HostCompatBridge {
 export function detectHostCompatBridgeFromMeta(
   toolMeta: Record<string, unknown> | undefined,
 ): HostCompatBridge | null {
-  const hasOpenAi = Boolean(toolMeta?.["openai/outputTemplate"]);
+  // Require a real template string — `Boolean({})` would otherwise bucket
+  // malformed metadata (e.g. `openai/outputTemplate: {}`) as a widget.
+  const template = toolMeta?.["openai/outputTemplate"];
+  const hasOpenAi = typeof template === "string" && template.length > 0;
   const hasMcpApps = Boolean(getToolUiResourceUri({ _meta: toolMeta }));
   if (hasOpenAi && hasMcpApps) return HostCompatBridge.OPENAI_SDK_AND_MCP_APPS;
   if (hasOpenAi) return HostCompatBridge.OPENAI_SDK;

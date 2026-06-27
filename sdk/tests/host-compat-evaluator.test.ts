@@ -76,6 +76,16 @@ describe("detectHostCompatBridgeFromMeta", () => {
     ).toBe(HostCompatBridge.OPENAI_SDK_AND_MCP_APPS);
     expect(detectHostCompatBridgeFromMeta({})).toBeNull();
   });
+
+  it("requires a real template string (not just truthy metadata)", () => {
+    // Malformed metadata must not classify as a widget.
+    expect(
+      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": {} }),
+    ).toBeNull();
+    expect(
+      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": "" }),
+    ).toBeNull();
+  });
 });
 
 describe("deriveServerRequirements", () => {
@@ -239,7 +249,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
       headless(),
     ).findings[0];
     expect(f.code).toBe("app_only_unrenderable");
-    expect(f.tools).toEqual(["w"]);
+    if (f.code === "app_only_unrenderable") expect(f.tools).toEqual(["w"]);
   });
 
   it("tags a text-fallback render failure", () => {
@@ -251,7 +261,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
       headless(),
     ).findings[0];
     expect(f.code).toBe("widget_text_fallback");
-    expect(f.tools).toEqual(["w"]);
+    if (f.code === "widget_text_fallback") expect(f.tools).toEqual(["w"]);
   });
 
   it("tags a capability gap with the capability key", () => {
@@ -263,24 +273,28 @@ describe("semantic finding contract (code / tools / capability)", () => {
       }),
       profile({ capabilities: { ...FULL_CAPS, message: false } }),
     ).findings.find((x) => x.code === "capability_unsupported");
-    expect(f?.capability).toBe("message");
-    expect(f?.tools).toEqual(["w"]);
+    expect(f).toBeDefined();
+    if (f?.code === "capability_unsupported") {
+      expect(f.capability).toBe("message");
+      expect(f.tools).toEqual(["w"]);
+    }
   });
 
   it("does not alias the shared widgetUsage array (defensive copy)", () => {
     const usage = { message: ["w"] };
-    const requirements = reqs({
-      widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
-      hasWidgets: true,
-      widgetUsage: usage,
-    });
     const f = evaluateHostCompat(
-      requirements,
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+        widgetUsage: usage,
+      }),
       profile({ capabilities: { ...FULL_CAPS, message: false } }),
     ).findings.find((x) => x.code === "capability_unsupported");
     // A surface sorting/mutating finding.tools must not touch widgetUsage.
-    expect(f?.tools).not.toBe(usage.message);
-    f?.tools?.push("mutated");
+    if (f?.code === "capability_unsupported") {
+      expect(f.tools).not.toBe(usage.message);
+      f.tools.push("mutated");
+    }
     expect(usage.message).toEqual(["w"]);
   });
 
