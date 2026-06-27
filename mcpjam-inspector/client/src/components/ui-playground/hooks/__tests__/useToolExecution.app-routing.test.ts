@@ -29,6 +29,11 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   executeToolApi: (...args: unknown[]) => mockExecuteToolApi(...args),
 }));
 
+const mockReadResource = vi.fn();
+vi.mock("@/lib/apis/mcp-resources-api", () => ({
+  readResource: (...args: unknown[]) => mockReadResource(...args),
+}));
+
 // --- Helpers ----------------------------------------------------------------
 
 function tool(name: string, extra?: Partial<AppToolDescriptor>): AppToolDescriptor {
@@ -82,6 +87,7 @@ beforeEach(() => {
     pendingControllers: new Map(),
   });
   mockExecuteToolApi.mockReset();
+  mockReadResource.mockReset();
 });
 
 afterEach(() => {
@@ -149,6 +155,84 @@ describe("useToolExecution app-tool routing", () => {
     expect(callTool).not.toHaveBeenCalled();
     expect(outcome?.ok).toBe(true);
     expect(result.current.pendingExecution?.toolMeta?._serverId).toBe("srv-1");
+  });
+
+  it("resolves linked image resources into model output for manual server tool runs", async () => {
+    const rawResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "example://linked-image.png",
+          name: "Linked PNG resource",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "completed",
+      result: rawResult,
+    });
+    mockReadResource.mockResolvedValueOnce({
+      content: {
+        contents: [
+          {
+            uri: "example://linked-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useToolExecution({
+        ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
+        modelVisibleMcpImageToolResults: true,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockReadResource).toHaveBeenCalledWith(
+      "srv-1",
+      "example://linked-image.png",
+    );
+    expect(result.current.pendingExecution?.result).toBe(rawResult);
+    expect(result.current.pendingExecution?.modelOutput).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("does not resolve linked image resources when model image output is disabled", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "completed",
+      result: {
+        content: [
+          {
+            type: "resource_link",
+            uri: "example://linked-image.png",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useToolExecution({
+        ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
+        modelVisibleMcpImageToolResults: false,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockReadResource).not.toHaveBeenCalled();
+    expect(result.current.pendingExecution?.modelOutput).toBeUndefined();
   });
 
   it("app tool dispatches via bridge.callTool with rawName, not the alias", async () => {

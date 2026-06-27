@@ -13,6 +13,11 @@ import {
   executeToolApi,
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
+import { readResource } from "@/lib/apis/mcp-resources-api";
+import {
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+} from "@mcpjam/sdk/browser";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
@@ -36,6 +41,7 @@ export interface PendingExecution {
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   toolMeta: Record<string, unknown> | undefined;
   toolCallId?: string;
 }
@@ -49,6 +55,7 @@ export interface UseToolExecutionOptions {
   setExecutionError: (error: string | null) => void;
   setToolOutput: (output: unknown) => void;
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
+  modelVisibleMcpImageToolResults?: boolean;
 }
 
 /**
@@ -146,6 +153,24 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
   return meta as ToolResponseMeta;
 }
 
+async function resolveModelOutputForToolResult(
+  result: unknown,
+  serverId: string | undefined,
+  modelVisibleMcpImageToolResults: boolean | undefined,
+): Promise<unknown | undefined> {
+  if (modelVisibleMcpImageToolResults === false) {
+    return undefined;
+  }
+
+  if (serverId) {
+    return mcpCallToolResultToModelOutputWithLinkedResources(result as never, {
+      readResource: ({ uri }) => readResource(serverId, uri),
+    });
+  }
+
+  return mcpCallToolResultToModelOutput(result as never);
+}
+
 export function useToolExecution({
   serverName,
   selectedTool,
@@ -155,6 +180,7 @@ export function useToolExecution({
   setExecutionError,
   setToolOutput,
   setToolResponseMetadata,
+  modelVisibleMcpImageToolResults,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
   const posthog = usePostHog();
 
@@ -174,6 +200,7 @@ export function useToolExecution({
       result: unknown,
       toolCallId?: string,
       serverId?: string,
+      modelOutput?: unknown,
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -197,6 +224,7 @@ export function useToolExecution({
         toolName: effectiveToolName,
         params,
         result,
+        ...(modelOutput ? { modelOutput } : {}),
         toolMeta: mergedMeta,
         ...(toolCallId ? { toolCallId } : {}),
       });
@@ -236,6 +264,7 @@ export function useToolExecution({
           setExecutionError,
           setIsExecuting,
           storeCompletedToolResult,
+          modelVisibleMcpImageToolResults,
         });
       }
 
@@ -305,12 +334,18 @@ export function useToolExecution({
         }
 
         const result = response.result;
+        const modelOutput = await resolveModelOutputForToolResult(
+          result,
+          effectiveServerName,
+          modelVisibleMcpImageToolResults,
+        );
         storeCompletedToolResult(
           effectiveToolName,
           params,
           result,
           undefined,
           effectiveServerName,
+          modelOutput,
         );
 
         // Log successful tool execution
@@ -364,6 +399,7 @@ export function useToolExecution({
       setExecutionError,
       setIsExecuting,
       storeCompletedToolResult,
+      modelVisibleMcpImageToolResults,
     ],
   );
 
@@ -375,7 +411,19 @@ export function useToolExecution({
       toolCallId,
     }: InjectToolResultOptions): Promise<CompletedToolInvocationResult> => {
       setExecutionError(null);
-      storeCompletedToolResult(toolName, parameters, result, toolCallId);
+      const modelOutput = await resolveModelOutputForToolResult(
+        result,
+        undefined,
+        modelVisibleMcpImageToolResults,
+      );
+      storeCompletedToolResult(
+        toolName,
+        parameters,
+        result,
+        toolCallId,
+        undefined,
+        modelOutput,
+      );
 
       return {
         ok: true,
@@ -385,7 +433,11 @@ export function useToolExecution({
         response: { status: "completed", result },
       };
     },
-    [setExecutionError, storeCompletedToolResult],
+    [
+      setExecutionError,
+      storeCompletedToolResult,
+      modelVisibleMcpImageToolResults,
+    ],
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
@@ -421,7 +473,9 @@ interface ExecuteAppToolArgs {
     result: unknown,
     toolCallId?: string,
     serverId?: string,
+    modelOutput?: unknown,
   ) => void;
+  modelVisibleMcpImageToolResults?: boolean;
 }
 
 /**
@@ -442,6 +496,7 @@ async function executeAppTool({
   setExecutionError,
   setIsExecuting,
   storeCompletedToolResult,
+  modelVisibleMcpImageToolResults,
 }: ExecuteAppToolArgs): Promise<ExecuteToolInvocationResult> {
   const registry = useAppToolsRegistry.getState();
   const entry = registry.resolve(alias);
@@ -494,6 +549,12 @@ async function executeAppTool({
       call.then(resolve, reject);
     });
 
+    const modelOutput = await resolveModelOutputForToolResult(
+      raw,
+      entry.instance.serverId,
+      modelVisibleMcpImageToolResults,
+    );
+
     // Store the full untouched CallToolResult — the playground inspector
     // should be able to see `structuredContent`/`_meta` the chat path
     // intentionally strips before handing back to the model.
@@ -503,6 +564,7 @@ async function executeAppTool({
       raw,
       undefined,
       entry.instance.serverId,
+      modelOutput,
     );
 
     recordAppToolInvocation(

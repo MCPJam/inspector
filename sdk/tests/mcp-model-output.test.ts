@@ -329,6 +329,33 @@ describe("mcpCallToolResultToModelOutput", () => {
     });
   });
 
+  it("accepts MCPJam resources/read route wrappers for linked image resources", async () => {
+    const readResource = vi.fn(async ({ uri }: { uri: string }) => ({
+      content: {
+        contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],
+      },
+    }));
+
+    await expect(
+      mcpCallToolResultToModelOutputWithLinkedResources(
+        {
+          content: [
+            {
+              type: "resource_link",
+              uri: "example://linked-image.png",
+              name: "Linked PNG resource",
+              mimeType: "image/png",
+            },
+          ],
+        } as unknown as CallToolResult,
+        { readResource }
+      )
+    ).resolves.toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
   it("preserves text and linked image resource order", async () => {
     const readResource = async ({ uri }: { uri: string }) => ({
       contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],

@@ -201,6 +201,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
+    modelVisibleMcpImageToolResults:
+      effectiveHostConfig?.modelVisibleMcpImageToolResults,
     onOnboardingChange: props.onOnboardingChange,
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across

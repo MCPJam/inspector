@@ -717,4 +717,96 @@ describe("mapMcpImageToolOutputs", () => {
       },
     ]);
   });
+
+  it("restores pre-resolved linked image output after UI-message conversion", async () => {
+    const readLinkedResource = vi.fn();
+
+    const mapped = await convertToMcpjamModelMessages(
+      [
+        {
+          id: "msg-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "text",
+              text: "Invoked `qa_return_linked_image_resource`",
+            },
+            {
+              type: "dynamic-tool",
+              toolCallId: "call-1",
+              toolName: "qa_return_linked_image_resource",
+              state: "output-available",
+              input: {},
+              output: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "aGVsbG8=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+            },
+            {
+              type: "data-result",
+              data: {
+                content: [
+                  {
+                    type: "resource_link",
+                    uri: "mcp://images/one",
+                    mimeType: "image/png",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ] as any,
+      {
+        modelVisibleMcpImageToolResults: true,
+        readLinkedResource,
+      }
+    );
+
+    expect(mapped).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Invoked `qa_return_linked_image_resource`",
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "qa_return_linked_image_resource",
+            input: {},
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_linked_image_resource",
+            output: {
+              type: "content",
+              value: [
+                {
+                  type: "media",
+                  data: "aGVsbG8=",
+                  mediaType: "image/png",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(readLinkedResource).not.toHaveBeenCalled();
+  });
 });

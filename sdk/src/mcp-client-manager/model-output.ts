@@ -216,14 +216,22 @@ function mapReadResourceImageContents(
   readResult: unknown,
   maxImageBytes: number
 ): McpModelOutputContentPart[] {
-  if (!isRecord(readResult) || !Array.isArray(readResult.contents)) {
+  const contents = isRecord(readResult)
+    ? Array.isArray(readResult.contents)
+      ? readResult.contents
+      : isRecord(readResult.content) && Array.isArray(readResult.content.contents)
+      ? readResult.content.contents
+      : undefined
+    : undefined;
+
+  if (!contents) {
     return [omissionMarker("resource link omitted: no image content returned")];
   }
 
   const parts: McpModelOutputContentPart[] = [];
   let sawImageContent = false;
 
-  for (const content of readResult.contents) {
+  for (const content of contents) {
     if (!isRecord(content) || !isImageMimeType(content.mimeType)) {
       continue;
     }

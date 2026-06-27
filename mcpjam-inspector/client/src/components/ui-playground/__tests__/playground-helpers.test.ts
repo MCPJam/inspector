@@ -396,6 +396,29 @@ describe("createDeterministicToolMessages", () => {
     expect((toolPart as any).output).toBe(result);
   });
 
+  it("uses modelOutput for the tool part while preserving raw result display", () => {
+    const rawResult = { hello: "raw" };
+    const modelOutput = {
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    };
+    const { messages } = createDeterministicToolMessages(
+      "fetch_image",
+      {},
+      rawResult,
+      undefined,
+      { modelOutput },
+    );
+
+    const toolPart = messages[1].parts[1] as DynamicToolUIPart;
+    expect((toolPart as any).output).toBe(modelOutput);
+    expect(messages[1].parts).toContainEqual({
+      type: "data-result",
+      data: rawResult,
+      autoHeight: true,
+    });
+  });
+
   it("preserves MCP server origin metadata on deterministic tool parts", () => {
     const { messages } = createDeterministicToolMessages(
       "qa_return_linked_image_resource",

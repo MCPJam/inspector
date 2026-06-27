@@ -74,6 +74,7 @@ export interface PlaygroundDeterministicExecutionRequest {
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   toolMeta: Record<string, unknown> | undefined;
   state?: "output-available" | "output-error";
   errorText?: string;
@@ -533,6 +534,7 @@ export function MultiModelPlaygroundCard({
           }
         : {
             toolCallId: deterministicExecutionRequest.toolCallId,
+            modelOutput: deterministicExecutionRequest.modelOutput,
           };
     const { messages: newMessages } = createDeterministicToolMessages(
       deterministicExecutionRequest.toolName,
@@ -593,6 +595,7 @@ export function MultiModelPlaygroundCard({
         toolName: deterministicExecutionRequest.toolName,
         params: deterministicExecutionRequest.params,
         result: deterministicExecutionRequest.result,
+        modelOutput: deterministicExecutionRequest.modelOutput,
         state:
           deterministicExecutionRequest.state === "output-error"
             ? "output-error"

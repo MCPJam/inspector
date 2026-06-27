@@ -16,6 +16,7 @@ export interface PreludeTraceExecution {
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   state: "output-available" | "output-error";
   errorText?: string;
 }
@@ -51,6 +52,10 @@ function toTraceToolResultOutput(
       type: "error-text",
       value: execution.errorText ?? "Tool execution failed",
     };
+  }
+
+  if (execution.modelOutput) {
+    return execution.modelOutput as LanguageModelV2ToolResultOutput;
   }
 
   const modelOutput = options.modelVisibleMcpImageToolResults

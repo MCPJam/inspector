@@ -98,6 +98,7 @@ export interface UsePlaygroundStateOptions {
   ensureServersReady?: (
     serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
+  modelVisibleMcpImageToolResults?: boolean;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   /**
    * Active multi-server selection. When non-empty, the Playground tools pane
@@ -278,6 +279,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
+    modelVisibleMcpImageToolResults: options.modelVisibleMcpImageToolResults,
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);

@@ -19,6 +19,8 @@ interface DeterministicToolOptions {
   errorText?: string;
   /** Optional fixed toolCallId for in-place updates */
   toolCallId?: string;
+  /** Optional model-facing output; raw result is still used for UI display. */
+  modelOutput?: unknown;
 }
 
 function readServerIdFromToolMeta(
@@ -50,6 +52,7 @@ export function createDeterministicToolMessages(
 
   const toolCallId = options?.toolCallId ?? `playground-${generateId()}`;
   const state = options?.state ?? "output-available";
+  const toolOutput = options?.modelOutput ?? result;
 
   // Get custom invoked message from tool metadata if available
   const invokedMessage = toolMeta?.["openai/toolInvocation/invoked"] as
@@ -83,7 +86,7 @@ export function createDeterministicToolMessages(
           toolName,
           state: "output-available",
           input: params,
-          output: result,
+          output: toolOutput,
           ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
         };
 

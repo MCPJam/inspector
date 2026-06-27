@@ -89,4 +89,39 @@ describe("buildPreludeTraceEnvelope", () => {
       },
     });
   });
+
+  it("uses pre-resolved model output for linked MCP image resources", () => {
+    const envelope = buildPreludeTraceEnvelope([
+      {
+        toolCallId: "playground-tool-1",
+        toolName: "qa_return_linked_image_resource",
+        params: {},
+        state: "output-available",
+        result: {
+          content: [
+            {
+              type: "resource_link",
+              uri: "example://linked-image.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+        modelOutput: {
+          type: "content",
+          value: [
+            { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+          ],
+        },
+      },
+    ]);
+
+    const toolMessage = envelope?.messages[2] as {
+      content: Array<{ output: unknown }>;
+    };
+
+    expect(toolMessage.content[0].output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
 });

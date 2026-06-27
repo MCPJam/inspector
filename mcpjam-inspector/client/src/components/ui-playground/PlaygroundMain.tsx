@@ -287,6 +287,7 @@ interface PlaygroundMainProps {
     toolName: string;
     params: Record<string, unknown>;
     result: unknown;
+    modelOutput?: unknown;
     toolMeta: Record<string, unknown> | undefined;
     state?: "output-available" | "output-error";
     errorText?: string;
@@ -2406,6 +2407,7 @@ export function PlaygroundMain({
         toolName: pendingExecution.toolName,
         params: pendingExecution.params,
         result: pendingExecution.result,
+        modelOutput: pendingExecution.modelOutput,
         toolMeta: pendingExecution.toolMeta,
         state: pendingExecution.state,
         errorText: pendingExecution.errorText,
@@ -2426,7 +2428,12 @@ export function PlaygroundMain({
             toolCallId: pendingExecution.toolCallId,
           }
         : pendingExecution.toolCallId
-        ? { toolCallId: pendingExecution.toolCallId }
+        ? {
+            toolCallId: pendingExecution.toolCallId,
+            modelOutput: pendingExecution.modelOutput,
+          }
+        : pendingExecution.modelOutput
+        ? { modelOutput: pendingExecution.modelOutput }
         : undefined;
     const { messages: newMessages, toolCallId } =
       createDeterministicToolMessages(
@@ -2472,6 +2479,7 @@ export function PlaygroundMain({
         toolName,
         params,
         result,
+        modelOutput: pendingExecution.modelOutput,
         state:
           pendingExecution.state === "output-error"
             ? "output-error"
