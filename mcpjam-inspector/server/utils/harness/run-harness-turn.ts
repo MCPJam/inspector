@@ -44,6 +44,13 @@ import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import { fetchHarnessModelCredential } from "./harness-model-credential.js";
 import {
+  claimHarnessSessionState,
+  commitHarnessSessionState,
+  heartbeatHarnessSessionState,
+  releaseHarnessSessionState,
+  type HarnessOwnerRef,
+} from "./harness-session-state.js";
+import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
   harnessServerKeyToName,
@@ -163,17 +170,35 @@ function toClaudeCodeModel(
   return undefined;
 }
 
-/**
- * [harness][spike] TEMP in-memory resume store — validates multi-turn
- * continuity on a SINGLE dev instance only. Production replacement is the
- * Convex `chatHarnessSessions` table + lease (see harness-session-continuity.md);
- * this map does NOT survive restarts or work across horizontally-scaled
- * instances. Keyed by chatSessionId for the spike.
- */
-const SPIKE_RESUME_STORE = new Map<
-  string,
-  { sessionId: string; resumeState: unknown; computerId: string }
->();
+/** Per-process id for lease attribution (logs/debugging). */
+const HARNESS_INSTANCE_ID = crypto.randomUUID();
+/** Lease TTL handed to Convex; heartbeats extend it while streaming. Real Claude
+ *  Code turns can exceed this, so it's the crash-recovery bound, not the normal
+ *  run bound (we heartbeat well within it). */
+const HARNESS_LEASE_TTL_MS = 5 * 60_000;
+const HARNESS_HEARTBEAT_MS = 90_000;
+
+/** Stable hash of the session-scoped runtime inputs. A change forces a fresh
+ *  harness session (a resumed Claude Code thread keeps the model/instructions/
+ *  tools it was created with, so changing them mid-session is unsafe). */
+function harnessRuntimeFingerprint(parts: {
+  modelId: string;
+  systemPrompt?: string;
+  selectedServers?: string[];
+  permissionMode: string;
+}): string {
+  const s = [
+    parts.systemPrompt ?? "",
+    (parts.selectedServers ?? []).slice().sort().join(","),
+    parts.permissionMode,
+  ].join("");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${parts.modelId}|${(h >>> 0).toString(16)}`;
+}
 
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
@@ -198,6 +223,8 @@ export async function runHarnessTurn(
     onLiveTextDelta,
     requireToolApproval,
     chatSessionId,
+    chatboxId,
+    sourceType,
   } = options;
 
   // The engine mutates a single messageHistory ref through the turn (parity
@@ -287,6 +314,82 @@ export async function runHarnessTurn(
         selectedServers ?? [],
       );
 
+      // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
+      // waking the box so a "turn already running" (409) doesn't provision it.
+      // Continuity needs a chat owner (chatSessionId + auth + a supported
+      // ownerType); eval/synthetic harness turns (streamSink "none", no
+      // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
+      const runtimeFingerprint = harnessRuntimeFingerprint({
+        modelId,
+        systemPrompt,
+        selectedServers: selectedServers ?? [],
+        permissionMode: "allow-all",
+      });
+      const ownerType: HarnessOwnerRef["ownerType"] | undefined =
+        sourceType === "chatbox"
+          ? "chatbox-chat"
+          : sourceType === "eval" || sourceType === "sandbox"
+            ? undefined
+            : "direct-chat";
+      let continuity:
+        | {
+            owner: HarnessOwnerRef;
+            leaseId: string;
+            stateVersion: number;
+            state: {
+              harnessSessionId: string;
+              resumeState: unknown;
+              computerId: string;
+            } | null;
+          }
+        | undefined;
+      if (
+        chatSessionId &&
+        projectId &&
+        authHeader &&
+        ownerType &&
+        (ownerType !== "chatbox-chat" || chatboxId)
+      ) {
+        const owner: HarnessOwnerRef = {
+          projectId,
+          ownerType,
+          chatSessionId,
+          ...(chatboxId ? { chatboxId } : {}),
+        };
+        const leaseId = crypto.randomUUID();
+        const claim = await claimHarnessSessionState({
+          owner,
+          runtimeFingerprint,
+          leaseId,
+          leasedBy: `${HARNESS_INSTANCE_ID}:${turnId}`,
+          leaseTtlMs: HARNESS_LEASE_TTL_MS,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!claim.ok) {
+          // 409 ⇒ another turn holds the lane: fail closed (don't run two
+          // turns on one Claude Code thread). Other failures ⇒ degrade to a
+          // fresh, non-persisted turn rather than breaking the harness on a
+          // transient Convex blip.
+          if (claim.status === 409) {
+            throw new Error(
+              "Another turn is already running for this chat — wait for it to finish.",
+            );
+          }
+          logger.warn(
+            "[harness] session-state claim failed; running without continuity",
+            { status: claim.status, error: claim.error },
+          );
+        } else {
+          continuity = {
+            owner,
+            leaseId,
+            stateVersion: claim.stateVersion,
+            state: claim.state,
+          };
+        }
+      }
+
       // 3. Resolve (and wake) the host's computer → sandbox id.
       const { computerId, sandboxId } = await resolveHarnessSandbox({
         bearer: authHeader,
@@ -337,41 +440,43 @@ export async function runHarnessTurn(
       // discovery above). The turn-level abortSignal/timeout (propagated into
       // agent.stream below) is the cost/runaway backstop.
       //
-      // [harness][spike] Resume-or-fresh: if we have a stored resume payload for
-      // this chat AND it was captured on THIS computer (the workdir lives there),
-      // reattach the Claude Code thread so prior turns carry over. Any
-      // resume failure falls back to a fresh session (lossy, logged).
-      const priorState =
-        chatSessionId != null
-          ? SPIKE_RESUME_STORE.get(chatSessionId)
+      // Resume-or-fresh: if the claimed lane has resume state captured on THIS
+      // computer (the workdir lives there), reattach the Claude Code thread so
+      // prior turns carry over. Any resume failure falls back fresh (lossy,
+      // logged). A computer mismatch (reset/reprovision) ⇒ fresh.
+      const resumable =
+        continuity?.state && continuity.state.computerId === computerId
+          ? continuity.state
           : undefined;
       let session: Awaited<ReturnType<typeof agent.createSession>>;
-      if (priorState && priorState.computerId === computerId) {
+      if (resumable) {
         try {
           session = await agent.createSession({
-            sessionId: priorState.sessionId,
-            resumeFrom: priorState.resumeState,
+            sessionId: resumable.harnessSessionId,
+            resumeFrom: resumable.resumeState,
           } as unknown as Parameters<typeof agent.createSession>[0]);
-          logger.info(
-            `[harness][spike] resumed session=${priorState.sessionId} chat=${chatSessionId}`,
-          );
         } catch (resumeErr) {
-          const e = resumeErr as Error;
-          logger.warn(
-            `[harness][spike] resume FAILED chat=${chatSessionId} name=${e?.name} msg=${e?.message} :: ${String(
-              (e?.stack ?? "").split("\n").slice(0, 4).join(" | "),
-            )}`,
-          );
-          if (chatSessionId != null) SPIKE_RESUME_STORE.delete(chatSessionId);
+          logger.warn("[harness] resume failed; starting fresh", {
+            error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
+          });
           session = await agent.createSession();
         }
       } else {
         session = await agent.createSession();
-        logger.info(
-          `[harness][spike] fresh session chat=${chatSessionId ?? "<none>"} (prior=${Boolean(
-            priorState,
-          )} computerMatch=${priorState ? priorState.computerId === computerId : false})`,
-        );
+      }
+
+      // Heartbeat the lease while we stream (turns can outlive the TTL).
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      if (continuity) {
+        const c = continuity;
+        heartbeatTimer = setInterval(() => {
+          void heartbeatHarnessSessionState({
+            owner: c.owner,
+            leaseId: c.leaseId,
+            leaseTtlMs: HARNESS_LEASE_TTL_MS,
+            bearer: authHeader,
+          });
+        }, HARNESS_HEARTBEAT_MS);
       }
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
@@ -663,29 +768,56 @@ export async function runHarnessTurn(
         });
         runSucceeded = true;
       } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
-          // [harness][spike] On a clean turn, STOP (not destroy) to get a resume
-          // payload and stash it for the next turn. stop() exits the in-sandbox
-          // bridge; MCPJam's E2B provider stop() is a no-op so the computer (and
-          // the workdir holding the Claude Code thread) stays alive. On
-          // abort/error, destroy and leave any prior stored state untouched.
-          if (runSucceeded && !aborted && chatSessionId != null) {
+          // On a clean turn with continuity: STOP (not destroy) to get a resume
+          // payload and commit it (releases the lease). stop() exits the
+          // in-sandbox bridge; MCPJam's E2B provider stop() is a no-op so the
+          // computer (and the workdir holding the Claude Code thread) stays
+          // alive. On abort/error: destroy + release the lease, leaving the
+          // prior committed state for the next turn to resume.
+          if (runSucceeded && !aborted && continuity) {
             const resumeState = await session.stop();
-            SPIKE_RESUME_STORE.set(chatSessionId, {
-              sessionId: session.sessionId,
+            const committed = await commitHarnessSessionState({
+              owner: continuity.owner,
+              leaseId: continuity.leaseId,
+              expectedStateVersion: continuity.stateVersion,
+              harnessSessionId: session.sessionId,
               resumeState,
               computerId,
+              runtimeFingerprint,
+              bearer: authHeader,
             });
-            logger.info(
-              `[harness][spike] stored resume state session=${session.sessionId} chat=${chatSessionId}`,
-            );
+            if (!committed) {
+              // Commit failed (lease lost / version conflict / transient). The
+              // resume payload couldn't be persisted; next turn cold-starts.
+              await releaseHarnessSessionState({
+                owner: continuity.owner,
+                leaseId: continuity.leaseId,
+                bearer: authHeader,
+              });
+            }
           } else {
             await session.destroy();
+            if (continuity) {
+              await releaseHarnessSessionState({
+                owner: continuity.owner,
+                leaseId: continuity.leaseId,
+                bearer: authHeader,
+              });
+            }
           }
         } catch (finalizeErr) {
           logger.warn("[harness] session finalize failed", {
             error: finalizeErr,
           });
+          if (continuity) {
+            await releaseHarnessSessionState({
+              owner: continuity.owner,
+              leaseId: continuity.leaseId,
+              bearer: authHeader,
+            }).catch(() => {});
+          }
         }
       }
     } catch (err) {
