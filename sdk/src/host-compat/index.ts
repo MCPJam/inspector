@@ -38,6 +38,11 @@ export {
   type WidgetUsage,
 } from "./widget-scan.js";
 export {
+  scanWidgetUsage,
+  type ReadResourceFn,
+  type ReadResourceResult,
+} from "./scan-widget-usage.js";
+export {
   detectHostCompatBridgeFromMeta,
   HostCompatBridge,
 } from "./ui-detection.js";
