@@ -64,6 +64,7 @@
               "inspector/playground",
               "inspector/views",
               "inspector/evals",
+              "inspector/compatibility",
               "inspector/host-templates"
             ]
           },
