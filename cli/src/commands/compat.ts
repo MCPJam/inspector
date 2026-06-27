@@ -93,8 +93,12 @@ export function registerCompatCommands(program: Command): void {
           return content as ReadResourceResult;
         });
 
+        // `toolsTruncated` makes the engine demote any `works` to `unknown` and
+        // record why — so the summary below (and each verdict) reflects the
+        // incomplete tool list, not just a top-level warning.
         const { requirements, reports } = evaluateMarketHosts(toolsData, {
           widgetUsage,
+          toolsTruncated: truncated,
         });
 
         const hostFilter = new Set(options.host as string[]);
@@ -122,12 +126,7 @@ export function registerCompatCommands(program: Command): void {
               requirements.widgets.dual.length,
             appOnly: requirements.appOnlyWidgets.length,
           },
-          unknownDimensions: truncated
-            ? [
-                ...requirements.unknownDimensions,
-                `tools pagination truncated at ${TOOLS_PAGE_CAP} pages — report may be incomplete`,
-              ]
-            : requirements.unknownDimensions,
+          unknownDimensions: requirements.unknownDimensions,
           summary,
           hosts,
         };
