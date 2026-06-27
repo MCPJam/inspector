@@ -1,0 +1,128 @@
+---
+title: "Host compatibility"
+description: "Check whether an MCP server's tools and widgets work on each AI host from the terminal"
+icon: "monitor-check"
+---
+
+The `compat` command connects directly to an MCP server and reports whether its tools and widgets work on each supported AI host — Claude, ChatGPT, Cursor, Copilot, Codex, Goose, and others — without requiring Inspector or a login.
+
+## Quick start
+
+```bash
+mcpjam compat --url https://your-server.com/mcp
+```
+
+For a local stdio server:
+
+```bash
+mcpjam compat --command node --args server.js --cwd /path/to/project
+```
+
+Filter to specific hosts:
+
+```bash
+mcpjam compat --url https://your-server.com/mcp --host claude --host chatgpt
+```
+
+## What it checks
+
+The command:
+
+1. Paginates `listTools` to collect every tool and its inline `_meta`.
+2. Reads each widget's `ui://` resource through the live connection and scans it for the host APIs it uses.
+3. Evaluates each supported AI host against the collected tool and widget data.
+
+Each host receives one of four verdicts:
+
+| Verdict | Meaning |
+|---------|---------|
+| `works` | No compatibility issues found. |
+| `degraded` | The server works but some capabilities are unsupported or fall back to text. |
+| `blocked` | A hard incompatibility prevents the server from functioning on this host. |
+| `unknown` | The check could not be completed (for example, the tool list was truncated). |
+
+When the tool list exceeds the pagination cap, all `works` verdicts are demoted to `unknown` and a `toolsTruncated` flag is recorded so the summary reflects the incomplete data rather than silently ignoring missing tools.
+
+## Example output
+
+```bash
+mcpjam compat --url https://your-server.com/mcp --format json
+```
+
+```json
+{
+  "target": "https://your-server.com/mcp",
+  "widgets": {
+    "total": 1,
+    "appOnly": 0
+  },
+  "unknownDimensions": [],
+  "summary": {
+    "works": 4,
+    "degraded": 6,
+    "blocked": 0,
+    "unknown": 0
+  },
+  "hosts": [
+    {
+      "hostId": "claude",
+      "hostLabel": "Claude",
+      "verdict": "works",
+      "provenance": "evaluated",
+      "findings": []
+    },
+    {
+      "hostId": "cursor",
+      "hostLabel": "Cursor",
+      "verdict": "degraded",
+      "provenance": "evaluated",
+      "findings": [
+        { "code": "capability_unsupported", "dimension": "message" }
+      ]
+    }
+  ]
+}
+```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Only report this host. Repeat for several. Default: all supported hosts. |
+
+Plus the [shared connection flags](#shared-connection-flags) and [retry options](#retry-options).
+
+If you pass an unknown `--host` id, the command fails immediately with the list of valid ids before connecting to the server.
+
+## Shared connection flags
+
+`compat` uses the same shared target flags as the rest of the CLI:
+
+| Flag | Description |
+|------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--command <command>` | Command for a stdio server |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+## Retry options
+
+| Flag | Description |
+|------|-------------|
+| `--retry <n>` | Number of retry attempts on transient failures |
+| `--retry-delay <ms>` | Delay between retries in milliseconds |
+
+## Related commands
+
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
+- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
+- [Command reference](/cli/reference) — every flag for every command
