@@ -10,17 +10,25 @@ import {
 } from "../src/lib/host-resolve.js";
 import { CliError } from "../src/lib/output.js";
 
-// Mock the duck-typed ToolMetadataSource the visibility helper reads:
-// getAllToolsMetadata(serverId) → name → the tool's `_meta` (with `.ui`).
-// Enforces the serverId so the server-scoped lookup stays tested.
-function mockManager(
-  metadata: Record<string, Record<string, unknown>>,
-  expectedServerId = "__cli__",
-): MCPClientManager {
+// Mock the manager surfaces the host helpers use, enforcing the serverId so the
+// server-scoped lookups stay tested:
+//  - getAllToolsMetadata(serverId) → name → the tool's `_meta` (applyHostVisibility)
+//  - listTools(serverId) → { tools: [{ name, _meta }] } (assertToolVisibleToHost,
+//    which lists tools itself — executeTool doesn't populate the metadata map).
+function mockManager(opts: {
+  metadata?: Record<string, Record<string, unknown>>;
+  tools?: Array<Record<string, unknown>>;
+  expectedServerId?: string;
+}): MCPClientManager {
+  const expected = opts.expectedServerId ?? "__cli__";
   return {
     getAllToolsMetadata: (serverId: string) => {
-      assert.equal(serverId, expectedServerId);
-      return metadata;
+      assert.equal(serverId, expected);
+      return opts.metadata ?? {};
+    },
+    listTools: async (serverId: string) => {
+      assert.equal(serverId, expected);
+      return { tools: opts.tools ?? [], nextCursor: undefined };
     },
   } as unknown as MCPClientManager;
 }
@@ -72,7 +80,9 @@ test("applyHostVisibility drops app-only tools for a visibility-respecting host"
     { name: "open_widget", ...appOnly },
     { name: "search", ...modelVisible },
   ];
-  const manager = mockManager({ open_widget: appOnly, search: modelVisible });
+  const manager = mockManager({
+    metadata: { open_widget: appOnly, search: modelVisible },
+  });
   const result = applyHostVisibility(
     tools,
     manager,
@@ -88,7 +98,7 @@ test("applyHostVisibility drops app-only tools for a visibility-respecting host"
 
 test("applyHostVisibility keeps app-only tools when the host opts out (cursor)", () => {
   const tools = [{ name: "open_widget", ...appOnly }];
-  const manager = mockManager({ open_widget: appOnly });
+  const manager = mockManager({ metadata: { open_widget: appOnly } });
   const result = applyHostVisibility(
     tools,
     manager,
@@ -99,12 +109,14 @@ test("applyHostVisibility keeps app-only tools when the host opts out (cursor)",
   assert.equal(result.tools.length, 1);
 });
 
-test("assertToolVisibleToHost rejects an app-only call as a visibility-respecting host", () => {
+test("assertToolVisibleToHost rejects an app-only call as a visibility-respecting host", async () => {
   const claude = resolveHostConnection("claude");
-  assert.throws(
+  // executeTool doesn't list tools, so the check must list them itself — the
+  // mock serves listTools, not a pre-populated metadata map.
+  await assert.rejects(
     () =>
       assertToolVisibleToHost(
-        mockManager({ open_widget: appOnly }),
+        mockManager({ tools: [{ name: "open_widget", _meta: appOnly }] }),
         "__cli__",
         "open_widget",
         claude,
@@ -112,18 +124,27 @@ test("assertToolVisibleToHost rejects an app-only call as a visibility-respectin
     CliError,
   );
   // A model-visible tool is allowed.
-  assert.doesNotThrow(() =>
+  await assert.doesNotReject(() =>
     assertToolVisibleToHost(
-      mockManager({ search: modelVisible }),
+      mockManager({ tools: [{ name: "search", _meta: modelVisible }] }),
       "__cli__",
       "search",
       claude,
     ),
   );
-  // The host opting out of visibility never rejects.
-  assert.doesNotThrow(() =>
+  // A tool not in the listed set is allowed (not a listed app-only tool).
+  await assert.doesNotReject(() =>
     assertToolVisibleToHost(
-      mockManager({ open_widget: appOnly }),
+      mockManager({ tools: [] }),
+      "__cli__",
+      "missing",
+      claude,
+    ),
+  );
+  // The host opting out of visibility never rejects.
+  await assert.doesNotReject(() =>
+    assertToolVisibleToHost(
+      mockManager({ tools: [{ name: "open_widget", _meta: appOnly }] }),
       "__cli__",
       "open_widget",
       resolveHostConnection("cursor"),

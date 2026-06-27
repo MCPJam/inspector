@@ -25,10 +25,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Derive a {@link HostConnectionProfile} from a seeded host config — exactly
- * what `seedHostTemplate(id)` returns, or a `Host.toJSON()` shape. Pure read,
- * no I/O. The handshake pins live under `mcpProfile.initialize`; the advertised
+ * Derive a {@link HostConnectionProfile} from a **seeded host config** — the
+ * internal `mcpProfile` shape that `seedHostTemplate(id)` returns. Pure read, no
+ * I/O. `clientInfo` + `supportedProtocolVersions` live under
+ * `mcpProfile.initialize`; the protocol-version pin lives at
+ * `mcpProfile.mcpProtocolVersion` (sibling of `initialize`); the advertised
  * capabilities and visibility policy live at the top level.
+ *
+ * (Not the public `Host.toJSON()` shape, which uses `mcp.protocolVersion` etc.)
  */
 export function hostConnectionProfile(
   hostConfig: Record<string, unknown>,
@@ -57,8 +61,8 @@ export function hostConnectionProfile(
     : undefined;
 
   const mcpProtocolVersion =
-    typeof initialize?.mcpProtocolVersion === "string"
-      ? initialize.mcpProtocolVersion
+    typeof mcpProfile?.mcpProtocolVersion === "string"
+      ? mcpProfile.mcpProtocolVersion
       : undefined;
 
   const clientCapabilities = isRecord(hostConfig.clientCapabilities)

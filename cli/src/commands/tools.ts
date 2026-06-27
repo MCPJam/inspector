@@ -304,9 +304,9 @@ export function registerToolsCommands(program: Command): void {
     try {
       result = await withEphemeralManager(
         config,
-        (manager, serverId) => {
+        async (manager, serverId) => {
           // As a host: an app-only tool isn't callable by that host's model.
-          if (host) assertToolVisibleToHost(manager, serverId, toolName, host);
+          if (host) await assertToolVisibleToHost(manager, serverId, toolName, host);
           return manager.executeTool(serverId, toolName, params);
         },
         {

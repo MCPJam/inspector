@@ -41,4 +41,20 @@ describe("hostConnectionProfile", () => {
   it("returns respectToolVisibility undefined for a config with no host fields", () => {
     expect(hostConnectionProfile({}).respectToolVisibility).toBeUndefined();
   });
+
+  it("reads the protocol-version pin from mcpProfile (sibling of initialize)", () => {
+    const p = hostConnectionProfile({
+      mcpProfile: {
+        mcpProtocolVersion: "2026-07-28",
+        initialize: { clientInfo: { name: "x" } },
+      },
+    });
+    expect(p.mcpProtocolVersion).toBe("2026-07-28");
+    // A value mistakenly placed under initialize must NOT be read.
+    expect(
+      hostConnectionProfile({
+        mcpProfile: { initialize: { mcpProtocolVersion: "2026-07-28" } },
+      }).mcpProtocolVersion,
+    ).toBeUndefined();
+  });
 });

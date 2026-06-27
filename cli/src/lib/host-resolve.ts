@@ -104,26 +104,45 @@ export function applyHostVisibility(
   return { tools: visible, toolsDroppedVisibility: signals.toolsDroppedVisibility };
 }
 
+// Bound the tools pagination so a pathological server can't loop forever.
+const TOOLS_PAGE_CAP = 50;
+
 /**
  * Reject calling an app-only tool when running as a host whose model can't see
  * it — `--host` simulates that host. (No-op when the host opts out of
- * visibility, or when the tool is model-visible.)
+ * visibility, or when the tool is model-visible / unlisted.)
+ *
+ * `executeTool` connects but does NOT list tools, so the manager's metadata map
+ * is empty here — we list the tools ourselves (across pages) and read the
+ * requested tool's inline `_meta` directly.
  */
-export function assertToolVisibleToHost(
+export async function assertToolVisibleToHost(
   manager: MCPClientManager,
   serverId: string,
   toolName: string,
   host: ResolvedHost,
-): void {
+): Promise<void> {
   if (host.policy.respectToolVisibility === false) return;
-  // getAllToolsMetadata returns name → the tool's `_meta` (with `.ui` at top
-  // level), which is exactly what isAppOnlyTool reads.
-  const meta = manager.getAllToolsMetadata(serverId)[toolName] as
-    | Record<string, unknown>
-    | undefined;
-  if (isAppOnlyTool(meta)) {
-    throw usageError(
-      `Tool "${toolName}" is app-only — not visible to host "${host.id}"'s model. Omit --host to call it as an operator.`,
+  let cursor: string | undefined;
+  for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
+    const result = await manager.listTools(
+      serverId,
+      cursor ? { cursor } : undefined,
     );
+    const tool = (result.tools ?? []).find(
+      (t) => (t as { name?: unknown }).name === toolName,
+    ) as { _meta?: Record<string, unknown> } | undefined;
+    if (tool) {
+      if (isAppOnlyTool(tool._meta)) {
+        throw usageError(
+          `Tool "${toolName}" is app-only — not visible to host "${host.id}"'s model. Omit --host to call it as an operator.`,
+        );
+      }
+      return; // found and model-visible
+    }
+    cursor = result.nextCursor;
+    if (!cursor) break;
   }
+  // Tool not among the listed tools → not a listed app-only tool; allow the
+  // call (the server may still expose it).
 }
