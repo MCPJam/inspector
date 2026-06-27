@@ -499,8 +499,11 @@ export function useServerForm(
   };
 
   const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 8) {
-      return "Client Secret must be at least 8 characters if provided";
+    // The OAuth spec only *recommends* an 8-character minimum; it does not
+    // mandate it, and some identity providers issue shorter secrets that users
+    // cannot control. Accept any provided (non-empty) value.
+    if (value && value.length < 1) {
+      return "Client Secret cannot be empty if provided";
     }
     return null;
   };
