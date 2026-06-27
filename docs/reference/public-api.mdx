@@ -226,6 +226,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `POST .../resources` | List the server's resources |
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
+| `POST .../check-host-compatibility` | Check whether the server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline); returns a per-host verdict (`works` / `degraded` / `blocked` / `unknown`) with specific findings |
 | `POST .../oauth/import-tokens` | Store OAuth tokens you obtained yourself; later calls inject + refresh them |
 
 **Eval runs** (`/projects/{projectId}/...`):
