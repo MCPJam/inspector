@@ -303,7 +303,12 @@ export async function runHarnessTurn(
       const session = await agent.createSession();
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
+        // `session` is REQUIRED — agent.stream() reads options.session in
+        // _startTurn (session.promptTurn); omitting it throws "Cannot read
+        // properties of undefined (reading 'promptTurn')". `_resolveTurnInput`
+        // accepts `messages` and uses the last role:"user" entry as the prompt.
         const res = await agent.stream({
+          session,
           messages,
           // Hand the harness the abort signal so a cancel propagates into the
           // in-sandbox run rather than only stopping our forwarding.
