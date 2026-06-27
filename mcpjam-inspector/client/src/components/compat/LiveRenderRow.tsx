@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { getCompatRuntimeForStyle } from "@/lib/client-styles/registry";
 import {
@@ -53,53 +53,54 @@ export function useLiveRenders(
   const [runningHostId, setRunningHostId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, LiveRenderOutcome>>({});
 
-  // Generation token: bumped on every server switch so an in-flight render from
-  // the previous server can't write its result/screenshot under the new one
-  // (Chromium renders take seconds — plenty of room to switch mid-flight).
+  /**
+   * The widget tool that will be rendered. The local render route renders MCP
+   * Apps resources (`_meta.ui.resourceUri`) only — it can't run an OpenAI-only
+   * widget (it would just return `no_ui_resource`, misleading "observed"
+   * evidence), so OpenAI-only tools are excluded. Dual tools carry a resourceUri
+   * too, so they render (with the host's `injectOpenAiCompat` shim when
+   * applicable). Host-agnostic: the host only changes the shim flag, not which
+   * tool renders. `undefined` ⇒ nothing renderable, so the caller hides "Run
+   * live".
+   */
+  const widgetTool = useMemo(() => {
+    const { mcpAppsOnly, dual } = requirements.widgets;
+    return [...mcpAppsOnly, ...dual][0];
+  }, [requirements.widgets]);
+
+  // Generation token: bumped when the server OR the rendered tool changes, so an
+  // in-flight render from a prior server/tool can't write its result/screenshot
+  // under the current one (Chromium renders take seconds). A `runningRef` mirrors
+  // the in-flight host so a fast double-click can't start parallel jobs before
+  // React re-disables the buttons.
   const genRef = useRef(0);
+  const runningRef = useRef<string | null>(null);
   useEffect(() => {
     genRef.current += 1;
+    runningRef.current = null;
     setResults({});
     setRunningHostId(null);
-  }, [serverName]);
+  }, [serverName, widgetTool]);
 
   const available = !isHostedMode() && requirements.hasWidgets;
 
-  /**
-   * The widget tool to render FOR A GIVEN HOST. An OpenAI-shim host can render
-   * any widget; a non-shim host can't run an OpenAI-only widget (no
-   * `window.openai`), so only its MCP-Apps / dual widgets are renderable.
-   * `undefined` ⇒ this host can't render any of the server's widgets (the
-   * static verdict already covers that), so the caller hides "Run live" rather
-   * than producing a misleading render failure.
-   */
-  const toolFor = useCallback(
-    (hostId: string): string | undefined => {
-      const { mcpAppsOnly, dual, openaiAppsOnly } = requirements.widgets;
-      const candidates = getCompatRuntimeForStyle(hostId).injected
-        ? [...mcpAppsOnly, ...dual, ...openaiAppsOnly]
-        : [...mcpAppsOnly, ...dual];
-      return candidates[0];
-    },
-    [requirements.widgets],
-  );
-
   const run = useCallback(
     async (report: HostCompatReport) => {
-      const tool = toolFor(report.hostId);
-      if (!tool) return;
+      if (!widgetTool) return;
+      if (runningRef.current !== null) return; // a render is already in flight
       const injectOpenAiCompat = getCompatRuntimeForStyle(
         report.hostId,
       ).injected;
       const gen = genRef.current;
+      runningRef.current = report.hostId;
       setRunningHostId(report.hostId);
       try {
         const result = await renderWidget({
           serverId: serverName,
-          toolName: tool,
+          toolName: widgetTool,
           injectOpenAiCompat,
         });
-        if (genRef.current !== gen) return; // server switched mid-render
+        if (genRef.current !== gen) return; // server/tool changed mid-render
         setResults((prev) => withResult(prev, report.hostId, { result }));
       } catch (err) {
         if (genRef.current !== gen) return;
@@ -109,13 +110,18 @@ export function useLiveRenders(
           }),
         );
       } finally {
-        if (genRef.current === gen) setRunningHostId(null);
+        // Only the still-current run clears the in-flight markers; a render
+        // abandoned by a server/tool switch leaves them to the reset effect.
+        if (genRef.current === gen) {
+          runningRef.current = null;
+          setRunningHostId(null);
+        }
       }
     },
-    [serverName, toolFor],
+    [serverName, widgetTool],
   );
 
-  return { available, runningHostId, results, run, toolFor };
+  return { available, runningHostId, results, run, widgetTool };
 }
 
 const STATUS_META: Record<WidgetRenderStatus, { label: string; tone: CompatTone }> =
@@ -142,7 +148,12 @@ export function LiveRenderRow({ outcome }: { outcome: LiveRenderOutcome }) {
   }
   const r = outcome.result;
   if (!r) return null;
-  const meta = STATUS_META[r.status];
+  // Resilient to status drift — a server shipping a new WidgetRenderStatus ahead
+  // of the client must not crash the row.
+  const meta = STATUS_META[r.status] ?? {
+    label: r.status,
+    tone: "neutral" as const,
+  };
   return (
     <div className="mt-2 space-y-1.5 pl-6 text-xs">
       <div className={`flex items-center gap-1.5 ${TONE_META[meta.tone].text}`}>

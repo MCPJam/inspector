@@ -12,9 +12,12 @@ export async function localPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await response.json();
+  // Guard the parse: an upstream error that returns HTML (proxy 502, gateway
+  // timeout page) would otherwise throw an opaque SyntaxError instead of the
+  // crafted status message.
+  const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
+    throw new Error(data?.error || `Request failed (${response.status})`);
   }
   return data as T;
 }

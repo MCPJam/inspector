@@ -127,14 +127,60 @@ describe("useLiveRenders", () => {
     expect(result.current.results.claude).toEqual({ error: "no chromium" });
   });
 
-  it("offers no tool for a non-shim host when only OpenAI widgets exist", () => {
+  it("offers no widget tool for OpenAI-only widgets (route renders MCP Apps only)", () => {
     const { result } = renderHook(() =>
       useLiveRenders("srv", reqs({ openaiAppsOnly: ["o1"] })),
     );
-    // claude has no window.openai shim → can't render an OpenAI-only widget.
-    expect(result.current.toolFor("claude")).toBeUndefined();
-    // chatgpt injects the shim → renderable.
-    expect(result.current.toolFor("chatgpt")).toBe("o1");
+    // The local render route renders `_meta.ui.resourceUri` only — an
+    // OpenAI-only widget would deterministically return no_ui_resource, so it's
+    // never offered for live render (even on a shim host).
+    expect(result.current.widgetTool).toBeUndefined();
+  });
+
+  it("picks an MCP Apps / dual tool, skipping OpenAI-only", () => {
+    const { result } = renderHook(() =>
+      useLiveRenders("srv", reqs({ openaiAppsOnly: ["o1"], dual: ["d1"] })),
+    );
+    expect(result.current.widgetTool).toBe("d1");
+  });
+
+  it("ignores a second run while one is in flight (no parallel Chromium jobs)", async () => {
+    let resolveRender!: (v: unknown) => void;
+    mockRenderWidget.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveRender = r;
+      }),
+    );
+    const { result } = renderHook(() =>
+      useLiveRenders("srv", reqs({ mcpAppsOnly: ["w1"] })),
+    );
+    act(() => {
+      void result.current.run(report("claude"));
+    });
+    // A fast second click before the first resolves must be a no-op.
+    act(() => {
+      void result.current.run(report("cursor"));
+    });
+    expect(mockRenderWidget).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveRender({ status: "rendered", elapsedMs: 1 });
+    });
+  });
+
+  it("clears results when the rendered tool changes (tools reloaded)", async () => {
+    mockRenderWidget.mockResolvedValue({ status: "rendered", elapsedMs: 1 });
+    const { result, rerender } = renderHook(
+      ({ r }: { r: ServerRequirements }) => useLiveRenders("srv", r),
+      { initialProps: { r: reqs({ mcpAppsOnly: ["w1"] }) } },
+    );
+    await act(async () => {
+      await result.current.run(report("claude"));
+    });
+    expect(result.current.results.claude).toBeDefined();
+
+    // Tools reload → a different representative widget tool → stale clears.
+    rerender({ r: reqs({ mcpAppsOnly: ["w2"] }) });
+    expect(result.current.results.claude).toBeUndefined();
   });
 
   it("keeps only the most recent render's screenshot", async () => {

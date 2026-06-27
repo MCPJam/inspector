@@ -279,7 +279,7 @@ export function HostCompatContent({
                 <div className="flex flex-shrink-0 items-center">
                   {live.available &&
                     report.rendersWidgets &&
-                    live.toolFor(report.hostId) && (
+                    live.widgetTool && (
                     <Button
                       size="sm"
                       variant="ghost"
