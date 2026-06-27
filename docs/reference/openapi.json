@@ -3005,16 +3005,16 @@
         "description": "Create an environment from a Dockerfile. The Dockerfile must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
         "required": ["name", "dockerfile"],
         "properties": {
-          "name": { "type": "string", "description": "Display name for the new environment." },
-          "dockerfile": { "type": "string", "description": "Dockerfile text." }
+          "name": { "type": "string", "minLength": 1, "description": "Display name for the new environment; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Dockerfile text." }
         }
       },
       "ComputerEnvironmentUpdateRequest": {
         "type": "object",
         "description": "Edit an environment. Provide at least one of `name` or `dockerfile`; only the fields you pass change.",
         "properties": {
-          "name": { "type": "string", "description": "New display name." },
-          "dockerfile": { "type": "string", "description": "Replacement Dockerfile text." }
+          "name": { "type": "string", "minLength": 1, "description": "New display name; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Replacement Dockerfile text." }
         },
         "anyOf": [{ "required": ["name"] }, { "required": ["dockerfile"] }]
       },
