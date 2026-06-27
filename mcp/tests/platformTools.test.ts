@@ -96,6 +96,8 @@ const PLAIN_TOOLS = [
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Host-compat check: agent-oriented per-host verdict payload, no widget view.
+  "check_host_compatibility",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -175,6 +177,7 @@ describe("platform tool registration", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "check_host_compatibility",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
