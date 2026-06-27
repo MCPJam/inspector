@@ -30,8 +30,8 @@ import {
   type FinishReason,
   type UIMessageChunk,
 } from "ai";
-import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import { getHarnessAdapter } from "./registry.js";
 import { tunnelManager } from "../../services/tunnel-manager.js";
 import { logger } from "../logger.js";
 import type {
@@ -42,7 +42,6 @@ import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
-import { fetchHarnessModelCredential } from "./harness-model-credential.js";
 import {
   claimHarnessSessionState,
   heartbeatHarnessSessionState,
@@ -82,33 +81,6 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
  * (this is the first step of the turn), so a misconfigured turn never provisions
  * a box.
  */
-async function resolveHarnessModelAuth(args: {
-  projectId: string;
-  modelId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{
-  gateway: { apiKey: string; baseUrl?: string };
-}> {
-  const result = await fetchHarnessModelCredential({
-    projectId: args.projectId,
-    modelId: args.modelId,
-    bearer: args.bearer,
-    ...(args.signal ? { signal: args.signal } : {}),
-  });
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
-  return {
-    gateway: {
-      apiKey: result.credential.apiKey,
-      ...(result.credential.baseUrl
-        ? { baseUrl: result.credential.baseUrl }
-        : {}),
-    },
-  };
-}
-
 /**
  * Build the harness `.mcp.json` from the selected servers' live configs.
  * Resolves each id via `mcpClientManager.getServerConfig` and, for stdio
@@ -154,20 +126,6 @@ function coerceToolInput(raw: unknown): unknown {
   } catch {
     return raw;
   }
-}
-
-/** Map a host model id (gateway `creator/model`, e.g. `anthropic/claude-haiku-4.5`)
- *  to a Claude Code CLI-native model alias. The CLI accepts `sonnet|opus|haiku`
- *  and resolves them to its current model; it does NOT understand the gateway
- *  `creator/model` form. Unknown ⇒ undefined (let the CLI use its default). */
-function toClaudeCodeModel(
-  modelId: string,
-): "haiku" | "sonnet" | "opus" | undefined {
-  const m = modelId.toLowerCase();
-  if (m.includes("haiku")) return "haiku";
-  if (m.includes("opus")) return "opus";
-  if (m.includes("sonnet")) return "sonnet";
-  return undefined;
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
@@ -231,7 +189,11 @@ export async function runHarnessTurn(
     chatSessionId,
     chatboxId,
     sourceType,
+    harness,
   } = options;
+  // The harness adapter knows the Claude-specific bits (auth shape, native model
+  // mapping, harness construction). runHarnessTurn stays harness-agnostic.
+  const harnessAdapter = getHarnessAdapter(harness ?? "claude-code");
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
@@ -307,7 +269,7 @@ export async function runHarnessTurn(
       // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
       // user's computer (and bumps its activity), so a misconfigured turn never
       // touches the box.
-      const auth = await resolveHarnessModelAuth({
+      const auth = await harnessAdapter.resolveAuth({
         projectId,
         modelId,
         bearer: authHeader,
@@ -433,22 +395,13 @@ export async function runHarnessTurn(
       // with full tool access (the agentic default).
       const permissionMode = "allow-all" as const;
 
-      // The Claude Code CLI wants a CLI-native model (alias `sonnet|opus|haiku`
-      // or a bare Anthropic id like `claude-sonnet-4-6`), NOT the gateway
-      // `creator/model` id (`anthropic/claude-haiku-4.5`). Passing the gateway
-      // id makes the in-sandbox CLI do zero inference (0 tokens, empty turn).
-      // Map our host modelId to the CLI alias; undefined ⇒ CLI default.
-      const claudeCodeModel = toClaudeCodeModel(modelId);
-      const harness = createClaudeCode({
-        ...(claudeCodeModel ? { model: claudeCodeModel } : {}),
-        auth,
-      });
+      // The adapter maps the host modelId to the harness's native model and
+      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
+      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
+      // do zero inference). Returns the HarnessAgent boundary type directly.
+      const harnessRuntime = harnessAdapter.createHarness({ modelId, auth });
       const agent = new HarnessAgent({
-        // Dual-`ai` boundary cast: createClaudeCode returns a HarnessV1 from its
-        // own (nested) @ai-sdk/harness copy, nominally distinct from this
-        // server's copy that HarnessAgent uses. Structurally identical; the
-        // drive below reads the resulting stream loosely.
-        harness: harness as unknown as HarnessAgentAdapter,
+        harness: harnessRuntime,
         sandbox,
         ...(systemPrompt ? { instructions: systemPrompt } : {}),
         permissionMode,
