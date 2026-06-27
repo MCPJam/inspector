@@ -12,11 +12,16 @@ import { CliError } from "../src/lib/output.js";
 
 // Mock the duck-typed ToolMetadataSource the visibility helper reads:
 // getAllToolsMetadata(serverId) → name → the tool's `_meta` (with `.ui`).
+// Enforces the serverId so the server-scoped lookup stays tested.
 function mockManager(
   metadata: Record<string, Record<string, unknown>>,
+  expectedServerId = "__cli__",
 ): MCPClientManager {
   return {
-    getAllToolsMetadata: () => metadata,
+    getAllToolsMetadata: (serverId: string) => {
+      assert.equal(serverId, expectedServerId);
+      return metadata;
+    },
   } as unknown as MCPClientManager;
 }
 

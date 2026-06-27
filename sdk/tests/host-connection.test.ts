@@ -32,10 +32,10 @@ describe("hostConnectionProfile", () => {
     expect(profileFor("cursor").respectToolVisibility).toBe(false);
   });
 
-  it("ChatGPT advertises its experimental visibility capability", () => {
-    const p = profileFor("chatgpt");
-    expect(p.clientCapabilities).toBeDefined();
-    expect(JSON.stringify(p.clientCapabilities)).toContain("openai");
+  it("ChatGPT advertises its experimental openai/visibility capability", () => {
+    const experimental = (profileFor("chatgpt").clientCapabilities
+      ?.experimental ?? {}) as Record<string, { enabled?: boolean }>;
+    expect(experimental["openai/visibility"]?.enabled).toBe(true);
   });
 
   it("returns respectToolVisibility undefined for a config with no host fields", () => {

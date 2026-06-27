@@ -19,7 +19,10 @@ import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
-import { listToolsWithMetadata } from "../lib/server-ops.js";
+import {
+  estimateTokensFromChars,
+  listToolsWithMetadata,
+} from "../lib/server-ops.js";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
   addHostOption,
@@ -109,6 +112,9 @@ export function registerToolsCommands(program: Command): void {
         });
         if (!host) return listed;
         // As a host: drop tools its model can't see (app-only) and report it.
+        // Scope the SIBLING metadata + token count to the visible set too, so
+        // `tools list --host` is consistently host-scoped (no app-only leak via
+        // toolsMetadata/tokenCount).
         const { tools: visibleTools, toolsDroppedVisibility } =
           applyHostVisibility(
             listed.tools as Array<Record<string, unknown>>,
@@ -116,9 +122,20 @@ export function registerToolsCommands(program: Command): void {
             serverId,
             host.policy,
           );
+        const visibleNames = new Set(
+          visibleTools.map((tool) => String(tool.name)),
+        );
         return {
           ...listed,
           tools: visibleTools,
+          toolsMetadata: Object.fromEntries(
+            Object.entries(listed.toolsMetadata).filter(([name]) =>
+              visibleNames.has(name),
+            ),
+          ),
+          ...(listed.tokenCount === undefined
+            ? {}
+            : { tokenCount: estimateTokensFromChars(JSON.stringify(visibleTools)) }),
           host: host.id,
           toolsDroppedVisibility,
         };
