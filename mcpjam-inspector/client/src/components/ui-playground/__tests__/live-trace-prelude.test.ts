@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildPreludeTraceEnvelope } from "../live-trace-prelude";
 
 describe("buildPreludeTraceEnvelope", () => {
@@ -65,7 +65,7 @@ describe("buildPreludeTraceEnvelope", () => {
     });
   });
 
-  it("keeps direct MCP image tool results as JSON by default", () => {
+  it("maps direct MCP image tool results by default", () => {
     const envelope = buildPreludeTraceEnvelope([
       {
         toolCallId: "playground-tool-1",
@@ -83,11 +83,79 @@ describe("buildPreludeTraceEnvelope", () => {
     };
 
     expect(toolMessage.content[0].output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("keeps direct MCP image tool results as JSON when disabled", () => {
+    const envelope = buildPreludeTraceEnvelope(
+      [
+        {
+          toolCallId: "playground-tool-1",
+          toolName: "qa_return_image_tool_result",
+          params: {},
+          state: "output-available",
+          result: {
+            content: [
+              { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+            ],
+          },
+        },
+      ],
+      { modelVisibleMcpImageToolResults: false },
+    );
+
+    const toolMessage = envelope?.messages[2] as {
+      content: Array<{ output: unknown }>;
+    };
+
+    expect(toolMessage.content[0].output).toEqual({
       type: "json",
       value: {
         content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
       },
     });
+  });
+
+  it("falls back to JSON if backup image conversion throws", async () => {
+    vi.resetModules();
+    vi.doMock("@mcpjam/sdk/browser", () => ({
+      mcpCallToolResultToModelOutput: () => {
+        throw new Error("converter failed");
+      },
+    }));
+
+    try {
+      const { buildPreludeTraceEnvelope: buildWithThrowingConverter } =
+        await import("../live-trace-prelude");
+      const rawResult = {
+        content: [
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+      };
+      const envelope = buildWithThrowingConverter([
+        {
+          toolCallId: "playground-tool-1",
+          toolName: "qa_return_image_tool_result",
+          params: {},
+          state: "output-available",
+          result: rawResult,
+        },
+      ]);
+
+      const toolMessage = envelope?.messages[2] as {
+        content: Array<{ output: unknown }>;
+      };
+
+      expect(toolMessage.content[0].output).toEqual({
+        type: "json",
+        value: rawResult,
+      });
+    } finally {
+      vi.doUnmock("@mcpjam/sdk/browser");
+      vi.resetModules();
+    }
   });
 
   it("uses pre-resolved model output for linked MCP image resources", () => {

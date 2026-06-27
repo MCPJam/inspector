@@ -43,6 +43,16 @@ function toTraceJsonValue(value: unknown): JSONValue {
   }
 }
 
+function toMcpImageModelOutput(result: unknown): LanguageModelV2ToolResultOutput | undefined {
+  try {
+    return mcpCallToolResultToModelOutput(
+      result as Parameters<typeof mcpCallToolResultToModelOutput>[0]
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function toTraceToolResultOutput(
   execution: PreludeTraceExecution,
   options: PreludeTraceOptions = {}
@@ -58,10 +68,8 @@ function toTraceToolResultOutput(
     return execution.modelOutput as LanguageModelV2ToolResultOutput;
   }
 
-  const modelOutput = options.modelVisibleMcpImageToolResults
-    ? mcpCallToolResultToModelOutput(
-        execution.result as Parameters<typeof mcpCallToolResultToModelOutput>[0]
-      )
+  const modelOutput = options.modelVisibleMcpImageToolResults !== false
+    ? toMcpImageModelOutput(execution.result)
     : undefined;
   if (modelOutput) {
     return modelOutput;

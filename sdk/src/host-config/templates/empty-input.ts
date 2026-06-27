@@ -115,8 +115,12 @@ export function emptyHostConfigInputV2(
       ? [...partial.optionalServerIds]
       : [],
     builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
-    modelVisibleMcpImageToolResults:
-      partial.modelVisibleMcpImageToolResults,
+    ...(partial.modelVisibleMcpImageToolResults !== undefined
+      ? {
+          modelVisibleMcpImageToolResults:
+            partial.modelVisibleMcpImageToolResults,
+        }
+      : {}),
     computer: partial.computer
       ? {
           kind: "personal",
