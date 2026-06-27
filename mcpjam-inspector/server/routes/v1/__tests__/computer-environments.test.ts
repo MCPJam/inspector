@@ -251,6 +251,24 @@ describe("v1 computer-environments routes", () => {
       expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+
+    // The most sensitive id-scoped paths (builds read + the build/promote/use
+    // writes) must all refuse a cross-project env at the guard, never reaching
+    // the underlying Convex call.
+    it.each([
+      ["GET", "/api/v1/projects/p1/computer-environments/env1/builds"],
+      ["POST", "/api/v1/projects/p1/computer-environments/env1/build"],
+      ["POST", "/api/v1/projects/p1/computer-environments/env1/promote"],
+      ["POST", "/api/v1/projects/p1/computer-environments/env1/use"],
+    ])(
+      "%s %s 404s a cross-project env and runs no mutation",
+      async (method, path) => {
+        mockQuery({ "computerEnvironments:getEnvironment": CROSS_PROJECT_ENV });
+        const res = await request(method, path);
+        expect(res.status).toBe(404);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe("POST create", () => {
@@ -276,6 +294,19 @@ describe("v1 computer-environments routes", () => {
         "POST",
         "/api/v1/projects/p1/computer-environments",
         { body: { name: "x", dockerfile: "" } }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown field — e.g. a `dockerFile` typo — (400, strict)", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/computer-environments",
+        { body: { name: "x", dockerFile: "FROM debian@sha256:x" } }
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(

@@ -26,7 +26,6 @@ import {
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
-import { synthesizeServerBody } from "./adapter.js";
 
 const environments = new Hono();
 
@@ -200,14 +199,41 @@ async function assertEmptyBody(c: Context) {
   }
 }
 
+/**
+ * Parse the request body as a JSON object (or `{}` when empty). Unlike
+ * `synthesizeServerBody`, it does NOT merge the path params in — so a strict
+ * schema sees only the caller's fields and rejects unknown keys. `projectId`
+ * comes from the path param at the call site, never the body.
+ */
+async function readJsonObjectBody(c: Context): Promise<Record<string, unknown>> {
+  const text = await c.req.text();
+  if (!text || !text.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid JSON body");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Request body must be a JSON object"
+    );
+  }
+  return parsed as Record<string, unknown>;
+}
+
 // ── Schemas ───────────────────────────────────────────────────────────────────
-const createEnvironmentSchema = z.object({
+// Strict: unknown keys are a 400, not silently dropped — so a public-API typo
+// like `dockerFile` fails loudly instead of creating an env with no Dockerfile.
+const createEnvironmentSchema = z.strictObject({
   name: z.string().trim().min(1),
   dockerfile: z.string().min(1),
 });
 
 const updateEnvironmentSchema = z
-  .object({
+  .strictObject({
     name: z.string().trim().min(1).optional(),
     dockerfile: z.string().min(1).optional(),
   })
@@ -239,7 +265,7 @@ environments.post("/projects/:projectId/computer-environments", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createEnvironmentSchema,
-    await synthesizeServerBody(c)
+    await readJsonObjectBody(c)
   );
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
@@ -275,7 +301,7 @@ environments.patch(
     const environmentId = c.req.param("environmentId");
     const body = parseWithSchema(
       updateEnvironmentSchema,
-      await synthesizeServerBody(c)
+      await readJsonObjectBody(c)
     );
     const token = await getConvexBearerForRequest(c);
     // Scope guard: env must belong to this project before we mutate by id.
