@@ -30,6 +30,8 @@ export default defineConfig({
     "src/public-api/index.ts",
     // Framework-free widget/app runtime building blocks (SEP-1865).
     "src/widget-runtime/index.ts",
+    // Shared host-compatibility verdict engine (UI / CLI / API / MCP).
+    "src/host-compat/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],
