@@ -405,7 +405,7 @@ function CompareSearchBar({
         onValueChange={onQueryChange}
         placeholder="Search capabilities, fields, descriptions…"
         aria-label="Search host config fields"
-        className="min-w-[240px] flex-1"
+        className="order-last w-full sm:order-none sm:w-auto sm:min-w-[240px] sm:flex-1"
       />
       {showCount && (
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
