@@ -124,7 +124,30 @@ function assertInstalledMcpClientVersion(installDir, expectedVersion) {
       encoding: "utf8",
     },
   );
-  const tree = JSON.parse(result.stdout || "{}");
+
+  if (result.error) {
+    throw new Error(
+      `npm ls ${expectedMcpClientPackage} failed to start: ${result.error.message}`,
+    );
+  }
+
+  if (result.status !== 0) {
+    throw new Error(
+      `npm ls ${expectedMcpClientPackage} failed with exit code ${result.status}:\n${
+        result.stderr || result.stdout || "<no output>"
+      }`,
+    );
+  }
+
+  let tree;
+  try {
+    tree = JSON.parse(result.stdout || "{}");
+  } catch (error) {
+    throw new Error(
+      `npm ls ${expectedMcpClientPackage} did not return valid JSON: ${error.message}`,
+    );
+  }
+
   const versions = collectDependencyVersions(tree, expectedMcpClientPackage);
 
   if (versions.length === 0) {
