@@ -264,6 +264,14 @@ export type HostCompatEvaluation = {
 export interface EvaluateAllHostsOptions {
   widgetUsage?: WidgetUsage;
   connectionFacts?: ConnectionFacts;
+  /**
+   * The tools list may be incomplete (e.g. pagination was capped before the
+   * server ran out of tools). When true, a confident `works` can't be
+   * justified — a later, unseen tool could declare a widget that breaks a host
+   * — so every host that would read `works` is demoted to `unknown`, and an
+   * unknown dimension records why.
+   */
+  toolsTruncated?: boolean;
 }
 
 /**
@@ -281,10 +289,27 @@ export function evaluateAllHosts(
     options?.widgetUsage,
     options?.connectionFacts,
   );
+  if (options?.toolsTruncated) {
+    requirements.unknownDimensions.push(
+      "tool list incomplete — pagination truncated, later tools/widgets not evaluated",
+    );
+  }
   return {
     requirements,
-    reports: profiles.map((profile) =>
-      evaluateHostCompat(requirements, profile),
-    ),
+    reports: profiles.map((profile) => {
+      const report = evaluateHostCompat(requirements, profile);
+      // Incomplete tool list → can't justify "works"; demote to unknown
+      // (apps lane + aggregate). Negative verdicts stand — a missing tool
+      // can't make a degraded/blocked host suddenly work.
+      if (!options?.toolsTruncated || report.verdict !== "works") return report;
+      return {
+        ...report,
+        verdict: "unknown" as const,
+        lanes: {
+          ...report.lanes,
+          apps: { ...report.lanes.apps, verdict: "unknown" as const },
+        },
+      };
+    }),
   };
 }

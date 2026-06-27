@@ -329,4 +329,38 @@ describe("evaluateAllHosts", () => {
       "degraded",
     );
   });
+
+  it("demotes works → unknown when the tools list is truncated", () => {
+    const profiles = [
+      profile({ id: "renders", label: "Renders", rendersMcpApps: true }),
+      profile({
+        id: "headless",
+        label: "Headless",
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+      }),
+    ];
+    const tools = toolsWith({ w: mcpAppsMeta() });
+
+    const complete = evaluateAllHosts(tools, profiles, { widgetUsage: {} });
+    expect(complete.reports.find((r) => r.hostId === "renders")?.verdict).toBe(
+      "works",
+    );
+
+    const { requirements, reports } = evaluateAllHosts(tools, profiles, {
+      widgetUsage: {},
+      toolsTruncated: true,
+    });
+    const renders = reports.find((r) => r.hostId === "renders");
+    expect(renders?.verdict).toBe("unknown"); // was works → demoted
+    expect(renders?.lanes.apps.verdict).toBe("unknown");
+    // A negative verdict stands — truncation can't make it pass.
+    expect(reports.find((r) => r.hostId === "headless")?.verdict).toBe(
+      "degraded",
+    );
+    expect(requirements.unknownDimensions.some((d) => /truncated/.test(d))).toBe(
+      true,
+    );
+  });
 });
