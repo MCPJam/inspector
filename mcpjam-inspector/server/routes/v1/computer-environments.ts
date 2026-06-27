@@ -17,7 +17,12 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  parseWithSchema,
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+} from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -110,6 +115,16 @@ function translateConvexWriteError(error: unknown): WebRouteError {
       ErrorCode.NOT_FOUND,
       "Environment or project not found, or you do not have access to it."
     );
+  }
+  // Infrastructure failures (timeouts, connection resets) are 5xx, not a 400
+  // validation error — defer to the shared runtime classifier (504/502/…) so
+  // a transient outage isn't reported to callers as bad input.
+  if (
+    /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(
+      message
+    )
+  ) {
+    return mapRuntimeError(error);
   }
   const cleaned = message
     .replace(/\[Request ID:[^\]]*\]\s*/g, "")

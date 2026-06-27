@@ -196,6 +196,20 @@ describe("v1 computer-environments routes", () => {
       );
     });
 
+    it("maps an infrastructure failure (timeout) to 5xx, not a 400 validation error", async () => {
+      convexQueryMock.mockRejectedValueOnce(
+        new Error("Request timed out after 30000ms")
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/computer-environments"
+      );
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      expect(((await res.json()) as { code?: string }).code).not.toBe(
+        "VALIDATION_ERROR"
+      );
+    });
+
     it("404s a missing environment", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": null });
       const res = await request(
