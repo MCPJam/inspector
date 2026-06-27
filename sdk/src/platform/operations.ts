@@ -715,6 +715,7 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     // Gather every tool (with its inline `_meta`) across all pages.
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
+    let truncated = false;
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
         { ...scope, body: cursor ? { cursor } : {} },
@@ -723,6 +724,9 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       rawTools.push(...result.items);
       cursor = result.nextCursor;
       if (!cursor) break;
+      // Hit the cap with tools still pending — don't pretend the report is
+      // complete (a later page could hold widgets that change a verdict).
+      if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;
     }
 
     const toolsData: HostCompatToolsInput = {
@@ -756,7 +760,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
           requirements.widgets.dual.length,
         appOnly: requirements.appOnlyWidgets.length,
       },
-      unknownDimensions: requirements.unknownDimensions,
+      unknownDimensions: truncated
+        ? [
+            ...requirements.unknownDimensions,
+            `tools pagination truncated at ${HOST_COMPAT_TOOLS_PAGE_CAP} pages — report may be incomplete`,
+          ]
+        : requirements.unknownDimensions,
       hosts: reports.map((report) => ({
         hostId: report.hostId,
         hostLabel: report.hostLabel,
