@@ -393,7 +393,7 @@ describe("ToolList", () => {
     expect(onSearchQueryChange).toHaveBeenCalledWith("read");
   });
 
-  // ── Harness built-in tools (display-only) ──
+  // ── Harness built-in tools (selectable, like server tools) ──
 
   const makeBuiltin = (key: string, name: string) => ({
     key,
@@ -414,6 +414,7 @@ describe("ToolList", () => {
         toolNames={[]}
         filteredToolNames={[]}
         builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
       />,
     );
 
@@ -439,8 +440,9 @@ describe("ToolList", () => {
     expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
   });
 
-  it("built-in rows are display-only: a click never selects/runs the tool", () => {
+  it("clicking a built-in row selects it via onSelectBuiltin (not onSelectTool)", () => {
     const onSelectTool = vi.fn();
+    const onSelectBuiltin = vi.fn();
     render(
       <ToolList
         {...defaultProps}
@@ -448,31 +450,13 @@ describe("ToolList", () => {
         filteredToolNames={[]}
         onSelectTool={onSelectTool}
         builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={onSelectBuiltin}
       />,
     );
 
-    const row = screen.getByRole("button", { name: /Bash/i });
-    fireEvent.click(row);
+    fireEvent.click(screen.getByRole("button", { name: /Bash/i }));
+    expect(onSelectBuiltin).toHaveBeenCalledWith("bash");
     expect(onSelectTool).not.toHaveBeenCalled();
-  });
-
-  it("clicking a built-in row toggles its input schema (aria-expanded + schema shown)", () => {
-    render(
-      <ToolList
-        {...defaultProps}
-        toolNames={[]}
-        filteredToolNames={[]}
-        builtinTools={[makeBuiltin("bash", "Bash")]}
-      />,
-    );
-
-    const row = screen.getByRole("button", { name: /Bash/i });
-    expect(row).toHaveAttribute("aria-expanded", "false");
-    expect(document.body.textContent).not.toContain('"command"');
-
-    fireEvent.click(row);
-    expect(row).toHaveAttribute("aria-expanded", "true");
-    expect(document.body.textContent).toContain("command");
   });
 
   it("filters built-in tools with the shared search box", () => {
@@ -483,6 +467,7 @@ describe("ToolList", () => {
         filteredToolNames={[]}
         searchQuery="grep"
         builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+        onSelectBuiltin={vi.fn()}
       />,
     );
 
@@ -490,7 +475,7 @@ describe("ToolList", () => {
     expect(screen.queryByText("Bash")).not.toBeInTheDocument();
   });
 
-  it("shows a 'built-in' source chip when harness tools are present", () => {
+  it("does not render a source filter chip bar", () => {
     render(
       <ToolList
         {...defaultProps}
@@ -498,8 +483,9 @@ describe("ToolList", () => {
         toolNames={["read_me"]}
         filteredToolNames={["read_me"]}
         builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: /built-in/i })).toBeInTheDocument();
+    expect(screen.queryByText("Source:")).not.toBeInTheDocument();
   });
 });
