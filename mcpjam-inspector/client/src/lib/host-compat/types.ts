@@ -74,6 +74,12 @@ export type HostCompatReport = {
   provenance: CompatProvenance;
   /** Per-lane verdicts (`apps`, `server`). */
   lanes: Record<CompatLane, CompatLaneVerdict>;
+  /**
+   * Whether this host renders widgets at all (MCP Apps or the OpenAI shim) —
+   * a CLI host (Codex) renders neither. Gates the "Run live render" affordance:
+   * there's nothing to observe for a host with no rendering surface.
+   */
+  rendersWidgets?: boolean;
   findings: CompatFinding[];
 };
 

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Info,
   Loader2,
+  MonitorPlay,
   Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -23,6 +24,10 @@ import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
 import { ConformanceGate } from "@/components/compat/ConformanceGate";
 import { VERDICT_META } from "@/components/compat/verdict-meta";
+import {
+  LiveRenderRow,
+  useLiveRenders,
+} from "@/components/compat/LiveRenderRow";
 import type {
   CompatFinding,
   CompatLane,
@@ -111,6 +116,9 @@ export function HostCompatContent({
     () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
     [toolsData, widgetUsage, protocolVersion]
   );
+
+  // Tier-2: render the server's widget live in each host's emulation.
+  const live = useLiveRenders(server.name, requirements);
 
   const posthog = usePostHog();
   const navigate = useNavigate();
@@ -269,6 +277,29 @@ export function HostCompatContent({
                 )}
 
                 <div className="flex flex-shrink-0 items-center">
+                  {live.available &&
+                    report.rendersWidgets &&
+                    live.widgetTool && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      disabled={live.runningHostId !== null}
+                      onClick={() => live.run(report)}
+                    >
+                      {live.runningHostId === report.hostId ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Rendering…
+                        </>
+                      ) : (
+                        <>
+                          <MonitorPlay className="h-3 w-3" />
+                          Run live
+                        </>
+                      )}
+                    </Button>
+                  )}
                   {canCreateHosts && isHostTemplateId(report.hostId) && (
                     <Button
                       size="sm"
@@ -292,6 +323,10 @@ export function HostCompatContent({
                   )}
                 </div>
               </div>
+
+              {live.results[report.hostId] && (
+                <LiveRenderRow outcome={live.results[report.hostId]} />
+              )}
 
               {hasFindings && isOpen && (
                 <div className="mt-2 space-y-2.5 pl-6">

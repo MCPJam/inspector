@@ -319,6 +319,7 @@ export function evaluateHostCompat(
     verdict,
     provenance: profile.provenance,
     lanes: { apps, server },
+    rendersWidgets: profile.rendersMcpApps || profile.rendersOpenAiApps,
     findings,
   };
 }
