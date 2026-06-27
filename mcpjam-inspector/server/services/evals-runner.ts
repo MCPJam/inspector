@@ -2418,24 +2418,17 @@ const runLocalIteration = async ({
         modelRuntime!.customProviders
       );
 
-      if (
-        toolChoice &&
-        typeof toolChoice === "object" &&
-        !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
-        // `computer` / `finish_widget` are merged into the tool map below, so a
-        // forced tool choice naming one of them is valid on computer-capable drivers.
-        !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
-      ) {
-        throw new Error(
-          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
-        );
-      }
-
       // Reproducible evals: boot a fresh ephemeral sandbox from the suite's
       // pinned image and expose it to the agent as a `bash` tool. The personal
       // computer stays banned; this is the per-iteration reproducible path. A
       // provision failure becomes a recorded failed iteration (we're in the
-      // try); the finally releases the box.
+      // try); the finally releases the box. Runs BEFORE the toolChoice check
+      // below so a forced `toolChoice: { toolName: "bash" }` on a pinned-env run
+      // sees `bash` in `prepared.allTools` instead of failing "not available".
+      //
+      // This whole block is under `caseNeedsModel` BY DESIGN: a model-free
+      // (pinned-only) iteration has no agent turn, so nothing would ever invoke
+      // the bash tool — provisioning a paid sandbox for it would be pure waste.
       const pinnedEnvironmentId = (
         environment as { computerEnvironmentId?: string } | undefined
       )?.computerEnvironmentId;
@@ -2454,6 +2447,19 @@ const runLocalIteration = async ({
         prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
           sandboxId: evalSandbox.value.sandboxId,
         });
+      }
+
+      if (
+        toolChoice &&
+        typeof toolChoice === "object" &&
+        !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
+        // `computer` / `finish_widget` are merged into the tool map below, so a
+        // forced tool choice naming one of them is valid on computer-capable drivers.
+        !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
+      ) {
+        throw new Error(
+          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+        );
       }
     }
 
