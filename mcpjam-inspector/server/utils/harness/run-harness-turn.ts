@@ -163,6 +163,18 @@ function toClaudeCodeModel(
   return undefined;
 }
 
+/**
+ * [harness][spike] TEMP in-memory resume store — validates multi-turn
+ * continuity on a SINGLE dev instance only. Production replacement is the
+ * Convex `chatHarnessSessions` table + lease (see harness-session-continuity.md);
+ * this map does NOT survive restarts or work across horizontally-scaled
+ * instances. Keyed by chatSessionId for the spike.
+ */
+const SPIKE_RESUME_STORE = new Map<
+  string,
+  { sessionId: string; resumeState: unknown; computerId: string }
+>();
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -185,6 +197,7 @@ export async function runHarnessTurn(
     onEngineError,
     onLiveTextDelta,
     requireToolApproval,
+    chatSessionId,
   } = options;
 
   // The engine mutates a single messageHistory ref through the turn (parity
@@ -275,7 +288,7 @@ export async function runHarnessTurn(
       );
 
       // 3. Resolve (and wake) the host's computer → sandbox id.
-      const { sandboxId } = await resolveHarnessSandbox({
+      const { computerId, sandboxId } = await resolveHarnessSandbox({
         bearer: authHeader,
         projectId,
         signal: abortSignal,
@@ -323,7 +336,41 @@ export async function runHarnessTurn(
       // and defeat the point of observing it (same rationale as progressive tool
       // discovery above). The turn-level abortSignal/timeout (propagated into
       // agent.stream below) is the cost/runaway backstop.
-      const session = await agent.createSession();
+      //
+      // [harness][spike] Resume-or-fresh: if we have a stored resume payload for
+      // this chat AND it was captured on THIS computer (the workdir lives there),
+      // reattach the Claude Code thread so prior turns carry over. Any
+      // resume failure falls back to a fresh session (lossy, logged).
+      const priorState =
+        chatSessionId != null
+          ? SPIKE_RESUME_STORE.get(chatSessionId)
+          : undefined;
+      let session: Awaited<ReturnType<typeof agent.createSession>>;
+      if (priorState && priorState.computerId === computerId) {
+        try {
+          session = await agent.createSession({
+            sessionId: priorState.sessionId,
+            resumeFrom: priorState.resumeState,
+          } as unknown as Parameters<typeof agent.createSession>[0]);
+          logger.info(
+            `[harness][spike] resumed session=${priorState.sessionId} chat=${chatSessionId}`,
+          );
+        } catch (resumeErr) {
+          logger.warn(
+            `[harness][spike] resume failed; starting fresh chat=${chatSessionId}`,
+            { error: resumeErr },
+          );
+          if (chatSessionId != null) SPIKE_RESUME_STORE.delete(chatSessionId);
+          session = await agent.createSession();
+        }
+      } else {
+        session = await agent.createSession();
+        logger.info(
+          `[harness][spike] fresh session chat=${chatSessionId ?? "<none>"} (prior=${Boolean(
+            priorState,
+          )} computerMatch=${priorState ? priorState.computerId === computerId : false})`,
+        );
+      }
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         // `session` is REQUIRED — agent.stream() reads options.session in
@@ -615,9 +662,28 @@ export async function runHarnessTurn(
         runSucceeded = true;
       } finally {
         try {
-          await session.destroy();
-        } catch (destroyErr) {
-          logger.warn("[harness] session.destroy failed", { error: destroyErr });
+          // [harness][spike] On a clean turn, STOP (not destroy) to get a resume
+          // payload and stash it for the next turn. stop() exits the in-sandbox
+          // bridge; MCPJam's E2B provider stop() is a no-op so the computer (and
+          // the workdir holding the Claude Code thread) stays alive. On
+          // abort/error, destroy and leave any prior stored state untouched.
+          if (runSucceeded && !aborted && chatSessionId != null) {
+            const resumeState = await session.stop();
+            SPIKE_RESUME_STORE.set(chatSessionId, {
+              sessionId: session.sessionId,
+              resumeState,
+              computerId,
+            });
+            logger.info(
+              `[harness][spike] stored resume state session=${session.sessionId} chat=${chatSessionId}`,
+            );
+          } else {
+            await session.destroy();
+          }
+        } catch (finalizeErr) {
+          logger.warn("[harness] session finalize failed", {
+            error: finalizeErr,
+          });
         }
       }
     } catch (err) {
