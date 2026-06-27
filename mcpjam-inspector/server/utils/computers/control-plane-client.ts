@@ -114,6 +114,57 @@ function bearerHeader(raw: string): Record<string, string> {
   };
 }
 
+export interface EvalSandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+}
+
+/**
+ * Provision a fresh ephemeral sandbox for one eval iteration, pinned to the
+ * run's frozen environment build (user-bearer auth). The body carries only the
+ * run/iteration ids — the control plane resolves the image from the run's
+ * configSnapshot, so this can never boot an arbitrary template.
+ */
+export async function provisionEvalSandbox(args: {
+  bearer: string;
+  runId: string;
+  iterationId?: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<EvalSandbox>> {
+  return postJson<EvalSandbox>(
+    "/evals/sandbox/provision",
+    bearerHeader(args.bearer),
+    {
+      runId: args.runId,
+      ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+    },
+    args.signal
+  );
+}
+
+/** Release an eval sandbox (shared-secret auth; idempotent). */
+export async function releaseEvalSandbox(args: {
+  sandboxRowId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const headers = secretHeaders();
+  if (!headers) return;
+  const result = await postJson(
+    "/evals/sandbox/release",
+    headers,
+    { sandboxRowId: args.sandboxRowId },
+    args.signal
+  );
+  if (!result.ok) {
+    // Best-effort: the GC cron reaps any box this misses by TTL.
+    logger.warn("[evals] failed to release sandbox", {
+      sandboxRowId: args.sandboxRowId,
+      status: result.status,
+      error: result.error,
+    });
+  }
+}
+
 /** Reserve/wake the acting user's computer (user-bearer auth). */
 export async function reserveComputer(args: {
   bearer: string;

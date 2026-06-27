@@ -27,6 +27,14 @@ import {
 } from "../utils/chat-helpers";
 import { resolveExecutionContext } from "../utils/host-execution-context";
 import { resolveHostTools } from "../utils/built-in-tools/registry.js";
+import {
+  buildEvalBashTool,
+  EVAL_BASH_TOOL_NAME,
+} from "../utils/built-in-tools/eval-bash.js";
+import {
+  provisionEvalSandbox,
+  releaseEvalSandbox,
+} from "../utils/computers/control-plane-client.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -1025,6 +1033,9 @@ type RunIterationBaseParams = {
    * its environment. Absent on quick-run paths that pre-resolve servers.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /** Run caller's Convex bearer — used to provision/release the reproducible
+   * eval sandbox when the suite pins a computerEnvironment. */
+  convexAuthToken: string;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1470,6 +1481,7 @@ const executeTestCase = async (params: {
         convexClient,
         runId,
         abortSignal,
+        convexAuthToken,
         ...(compareRunId ? { compareRunId } : {}),
         injectOpenAiCompat,
         hostPolicy,
@@ -1702,6 +1714,7 @@ const executeTestCase = async (params: {
       // `environment` resolves a pinned turn's server (local hybrids); harmless
       // for prompt-only cases.
       environment,
+      convexAuthToken,
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2112,6 +2125,7 @@ const runLocalIteration = async ({
   toolSignals,
   suiteHostConfig,
   environment,
+  convexAuthToken,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2354,6 +2368,12 @@ const runLocalIteration = async ({
       : {}),
   });
 
+  // Reproducible-evals sandbox: provisioned per-iteration inside the try (so a
+  // failure is a recorded failed iteration), released in the finally. Declared
+  // here so the finally always sees it.
+  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
+    null;
+
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
     // so prep failures become a recorded failed iteration. Like that runner,
@@ -2409,6 +2429,31 @@ const runLocalIteration = async ({
         throw new Error(
           `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
         );
+      }
+
+      // Reproducible evals: boot a fresh ephemeral sandbox from the suite's
+      // pinned image and expose it to the agent as a `bash` tool. The personal
+      // computer stays banned; this is the per-iteration reproducible path. A
+      // provision failure becomes a recorded failed iteration (we're in the
+      // try); the finally releases the box.
+      const pinnedEnvironmentId = (
+        environment as { computerEnvironmentId?: string } | undefined
+      )?.computerEnvironmentId;
+      if (pinnedEnvironmentId && runId !== null) {
+        evalSandbox = await provisionEvalSandbox({
+          bearer: convexAuthToken,
+          runId: String(runId),
+          ...(iterationId ? { iterationId: String(iterationId) } : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!evalSandbox.ok) {
+          throw new Error(
+            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
+          );
+        }
+        prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
+          sandboxId: evalSandbox.value.sandboxId,
+        });
       }
     }
 
@@ -2941,6 +2986,12 @@ const runLocalIteration = async ({
       iterationId: iterationId ?? undefined,
     };
   } finally {
+    // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
+    if (evalSandbox?.ok) {
+      await releaseEvalSandbox({
+        sandboxRowId: evalSandbox.value.sandboxRowId,
+      }).catch(() => {});
+    }
     // PR 9: tear down the harness (and its headless Chromium, if launched) on
     // success, failure, OR mid-stream abort. No-op when never constructed.
     await browser.dispose();
