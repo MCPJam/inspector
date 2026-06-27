@@ -52,6 +52,19 @@ export const textDeltaChunk = (id: string, delta: string): UIMessageChunk =>
 export const textEndChunk = (id: string): UIMessageChunk =>
   asChunk({ type: "text-end", id });
 
+// ── reasoning ────────────────────────────────────────────────────────────────
+// The emulated engine FORWARDS these from Convex; the harness builds them from
+// its translated `reasoning-*` fullStream parts. Same client renderer, so the
+// shapes must match (id + delta, like text).
+export const reasoningStartChunk = (id: string): UIMessageChunk =>
+  asChunk({ type: "reasoning-start", id });
+
+export const reasoningDeltaChunk = (id: string, delta: string): UIMessageChunk =>
+  asChunk({ type: "reasoning-delta", id, delta });
+
+export const reasoningEndChunk = (id: string): UIMessageChunk =>
+  asChunk({ type: "reasoning-end", id });
+
 // ── tools ────────────────────────────────────────────────────────────────────
 export const toolInputChunk = (a: {
   toolCallId: string;
@@ -130,6 +143,25 @@ export const emitTextDelta = (
 };
 export const emitTextEnd = (w: ChunkWriter, id: string): UIMessageChunk => {
   const c = textEndChunk(id);
+  w.write(c);
+  return c;
+};
+export const emitReasoningStart = (w: ChunkWriter, id: string): UIMessageChunk => {
+  const c = reasoningStartChunk(id);
+  w.write(c);
+  return c;
+};
+export const emitReasoningDelta = (
+  w: ChunkWriter,
+  id: string,
+  delta: string,
+): UIMessageChunk => {
+  const c = reasoningDeltaChunk(id, delta);
+  w.write(c);
+  return c;
+};
+export const emitReasoningEnd = (w: ChunkWriter, id: string): UIMessageChunk => {
+  const c = reasoningEndChunk(id);
   w.write(c);
   return c;
 };

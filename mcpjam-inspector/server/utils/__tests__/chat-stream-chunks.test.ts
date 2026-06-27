@@ -4,6 +4,9 @@ import {
   emitToolInput,
   emitToolOutput,
   errorChunk,
+  reasoningDeltaChunk,
+  reasoningEndChunk,
+  reasoningStartChunk,
   safelyInvoke,
   textDeltaChunk,
   textEndChunk,
@@ -29,6 +32,19 @@ describe("chat-stream-chunks builders — frozen shapes", () => {
       delta: "hi",
     });
     expect(textEndChunk("t1")).toEqual({ type: "text-end", id: "t1" });
+  });
+
+  it("reasoning chunks (mirror text-* shape; client renders identically)", () => {
+    expect(reasoningStartChunk("r1")).toEqual({
+      type: "reasoning-start",
+      id: "r1",
+    });
+    expect(reasoningDeltaChunk("r1", "thinking")).toEqual({
+      type: "reasoning-delta",
+      id: "r1",
+      delta: "thinking",
+    });
+    expect(reasoningEndChunk("r1")).toEqual({ type: "reasoning-end", id: "r1" });
   });
 
   it("tool-input: providerExecuted present only when true, else OMITTED", () => {
