@@ -57,6 +57,7 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import {
   ErrorCode,
@@ -273,7 +274,8 @@ export async function streamWebChatTurn(
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
-      turnTrace: PersistedTurnTrace
+      turnTrace: PersistedTurnTrace,
+      harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -341,6 +343,9 @@ export async function streamWebChatTurn(
             }
           : {}),
         turnTrace,
+        // §3: chat-backed harness resume-state commit, applied atomically with
+        // the transcript inside the ingest mutation.
+        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
       });
     };

@@ -45,10 +45,10 @@ import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import { fetchHarnessModelCredential } from "./harness-model-credential.js";
 import {
   claimHarnessSessionState,
-  commitHarnessSessionState,
   heartbeatHarnessSessionState,
   releaseHarnessSessionState,
   type HarnessOwnerRef,
+  type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
 import {
   buildHarnessMcpJson,
@@ -240,16 +240,30 @@ export async function runHarnessTurn(
   const turnId = crypto.randomUUID();
   let aborted = false;
   let runSucceeded = false;
+  // Internal liveness abort: the heartbeat fires this when the lease is
+  // DEFINITIVELY lost (stolen/expired) or when transient heartbeat failures
+  // span the lease TTL. Combined with the caller's abortSignal so either tears
+  // the turn down; declared at function scope so the catch can read it.
+  const livenessAbort = new AbortController();
+  const effectiveAbortSignal: AbortSignal = abortSignal
+    ? AbortSignal.any([abortSignal, livenessAbort.signal])
+    : livenessAbort.signal;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
   let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  // §3 atomic commit: built in executeEngine's finally (after session.stop()),
+  // consumed by onFinishEngine's onConversationComplete so the resume state
+  // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
+  // closure free the lane if the commit can't happen (stop/persist failure).
+  let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
+  let releaseHarnessLease: (() => Promise<void>) | undefined;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
-    if (abortSignal?.aborted) {
+    if (effectiveAbortSignal.aborted) {
       aborted = true;
       return;
     }
@@ -372,18 +386,23 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!claim.ok) {
-          // 409 ⇒ another turn holds the lane: fail closed (don't run two
-          // turns on one Claude Code thread). Other failures ⇒ degrade to a
-          // fresh, non-persisted turn rather than breaking the harness on a
-          // transient Convex blip.
+          // FAIL CLOSED for chat-backed owners (this block only runs for
+          // direct-chat/chatbox-chat). Never silently start a fresh,
+          // non-persisted Claude Code session when continuity can't be
+          // guaranteed — that would mislead the user into thinking they're in a
+          // continuous conversation.
           if (claim.status === 409) {
             throw new Error(
               "Another turn is already running for this chat — wait for it to finish.",
             );
           }
-          logger.warn(
-            "[harness] session-state claim failed; running without continuity",
-            { status: claim.status, error: claim.error },
+          logger.warn("[harness] session-state claim failed; failing closed", {
+            status: claim.status,
+            error: claim.error,
+          });
+          throw new Error(
+            "Couldn't start a Claude Code session — the continuity service is " +
+              "unavailable right now. Please try again in a moment.",
           );
         } else {
           continuity = {
@@ -392,6 +411,12 @@ export async function runHarnessTurn(
             stateVersion: claim.stateVersion,
             state: claim.state,
           };
+          releaseHarnessLease = () =>
+            releaseHarnessSessionState({
+              owner,
+              leaseId,
+              bearer: authHeader,
+            }).catch(() => {});
         }
       }
 
@@ -470,16 +495,44 @@ export async function runHarnessTurn(
         session = await agent.createSession();
       }
 
-      // Heartbeat the lease while we stream (turns can outlive the TTL).
+      // Heartbeat the lease while we stream (turns can outlive the TTL). The
+      // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
+      // lease loss, tolerates transient failures (network blips), and gives up
+      // only if those transients span the whole lease TTL ("lost liveness").
       let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
       if (continuity) {
         const c = continuity;
+        let firstRetryableAt = 0;
         heartbeatTimer = setInterval(() => {
           void heartbeatHarnessSessionState({
             owner: c.owner,
             leaseId: c.leaseId,
             leaseTtlMs: HARNESS_LEASE_TTL_MS,
             bearer: authHeader,
+          }).then((result) => {
+            if (result === "ok") {
+              firstRetryableAt = 0;
+              return;
+            }
+            if (result === "lost") {
+              logger.warn("[harness] lease lost — aborting turn", {
+                leaseId: c.leaseId,
+              });
+              livenessAbort.abort(new Error("harness lease lost"));
+              return;
+            }
+            // retryable: tolerate blips, but don't run blind forever
+            if (firstRetryableAt === 0) firstRetryableAt = Date.now();
+            const elapsedMs = Date.now() - firstRetryableAt;
+            logger.warn("[harness] heartbeat transient failure; will retry", {
+              elapsedMs,
+            });
+            if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
+              logger.warn(
+                "[harness] heartbeat lost liveness past TTL — aborting turn",
+              );
+              livenessAbort.abort(new Error("harness lost liveness"));
+            }
           });
         }, HARNESS_HEARTBEAT_MS);
       }
@@ -492,9 +545,10 @@ export async function runHarnessTurn(
         const res = await agent.stream({
           session,
           messages,
-          // Hand the harness the abort signal so a cancel propagates into the
-          // in-sandbox run rather than only stopping our forwarding.
-          ...(abortSignal ? { abortSignal } : {}),
+          // Hand the harness the combined abort signal so a user cancel OR a
+          // lost-lease liveness abort propagates into the in-sandbox run rather
+          // than only stopping our forwarding.
+          abortSignal: effectiveAbortSignal,
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
@@ -577,7 +631,7 @@ export async function runHarnessTurn(
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
-          if (abortSignal?.aborted) {
+          if (effectiveAbortSignal.aborted) {
             aborted = true;
             break;
           }
@@ -775,58 +829,48 @@ export async function runHarnessTurn(
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
-          // On a clean turn with continuity: STOP (not destroy) to get a resume
-          // payload and commit it (releases the lease). stop() exits the
-          // in-sandbox bridge; MCPJam's E2B provider stop() is a no-op so the
-          // computer (and the workdir holding the Claude Code thread) stays
-          // alive. On abort/error: destroy + release the lease, leaving the
-          // prior committed state for the next turn to resume.
+          // On a clean turn with continuity: STOP (not destroy) to get the
+          // resume payload, then BUILD the commit (don't send it here). The
+          // commit rides /ingest-chat atomically with the transcript in
+          // onFinishEngine so transcript + sidecar advance together. stop()
+          // exits the in-sandbox bridge; MCPJam's E2B provider stop() is a no-op
+          // so the computer (and the workdir holding the Claude Code thread)
+          // stays alive. On abort/error: destroy + release the lease.
           if (runSucceeded && !aborted && continuity) {
             const resumeState = await session.stop();
-            const committed = await commitHarnessSessionState({
-              owner: continuity.owner,
+            capturedHarnessCommit = {
+              ownerType: continuity.owner.ownerType as
+                | "direct-chat"
+                | "chatbox-chat",
+              chatSessionId: continuity.owner.chatSessionId as string,
+              ...(continuity.owner.chatboxId
+                ? { chatboxId: continuity.owner.chatboxId }
+                : {}),
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
+              harnessId: "claude-code",
               harnessSessionId: session.sessionId,
               resumeState,
               computerId,
               runtimeFingerprint,
-              bearer: authHeader,
-            });
-            if (!committed) {
-              // Commit failed (lease lost / version conflict / transient). The
-              // resume payload couldn't be persisted; next turn cold-starts.
-              await releaseHarnessSessionState({
-                owner: continuity.owner,
-                leaseId: continuity.leaseId,
-                bearer: authHeader,
-              });
-            }
+            };
           } else {
             await session.destroy();
-            if (continuity) {
-              await releaseHarnessSessionState({
-                owner: continuity.owner,
-                leaseId: continuity.leaseId,
-                bearer: authHeader,
-              });
-            }
+            if (continuity) await releaseHarnessLease?.();
           }
         } catch (finalizeErr) {
-          logger.warn("[harness] session finalize failed", {
-            error: finalizeErr,
-          });
-          if (continuity) {
-            await releaseHarnessSessionState({
-              owner: continuity.owner,
-              leaseId: continuity.leaseId,
-              bearer: authHeader,
-            }).catch(() => {});
-          }
+          logger.warn(
+            "[harness] session finalize failed; releasing lease, sidecar not committed",
+            { error: finalizeErr },
+          );
+          // stop()/destroy() threw → no resume payload to commit. Drop any
+          // half-built commit and free the lane so the next turn can claim.
+          capturedHarnessCommit = undefined;
+          await releaseHarnessLease?.();
         }
       }
     } catch (err) {
-      if (abortSignal?.aborted || isAbortError(err)) {
+      if (effectiveAbortSignal.aborted || isAbortError(err)) {
         aborted = true;
         return;
       }
@@ -856,10 +900,26 @@ export async function runHarnessTurn(
         modelId,
       };
       capturedTurnTrace = trace;
+      // §3: hand the resume-state commit to onConversationComplete so it rides
+      // /ingest-chat atomically with the transcript. On success the backend
+      // commit releases the lease; if persistence is absent or fails, the
+      // sidecar did NOT advance — release the lane best-effort.
+      let persistOk = false;
       try {
-        await onConversationComplete?.([...messageHistory], trace);
+        await onConversationComplete?.(
+          [...messageHistory],
+          trace,
+          capturedHarnessCommit,
+        );
+        persistOk = true;
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
+      }
+      if (
+        capturedHarnessCommit &&
+        (!onConversationComplete || !persistOk)
+      ) {
+        await releaseHarnessLease?.();
       }
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown

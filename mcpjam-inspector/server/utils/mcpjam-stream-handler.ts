@@ -26,6 +26,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
@@ -314,7 +315,10 @@ export interface MCPJamHandlerOptions {
   approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace
+    turnTrace: PersistedTurnTrace,
+    // §3: present only for chat-backed harness turns — the resume-state commit
+    // to apply atomically with the transcript via /ingest-chat.
+    harnessSessionCommit?: HarnessSessionCommitPayload
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {

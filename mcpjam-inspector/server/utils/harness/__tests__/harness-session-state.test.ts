@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
+  heartbeatHarnessSessionState,
   type HarnessOwnerRef,
 } from "../harness-session-state";
 
@@ -86,6 +87,47 @@ describe("claimHarnessSessionState", () => {
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.status).toBe(409);
+  });
+});
+
+describe("heartbeatHarnessSessionState — tri-state liveness", () => {
+  const args = { owner: OWNER, leaseId: "l", leaseTtlMs: 300000, bearer: "t" };
+
+  it("'ok' when the backend extends the lease", async () => {
+    mockFetch(() => Response.json({ ok: true, extended: true }));
+    expect(await heartbeatHarnessSessionState(args)).toBe("ok");
+  });
+
+  it("'lost' when the backend definitively reports the lease gone (extended:false)", async () => {
+    mockFetch(() => Response.json({ ok: true, extended: false }));
+    expect(await heartbeatHarnessSessionState(args)).toBe("lost");
+  });
+
+  it("'lost' on a definitive 4xx", async () => {
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ ok: false, error: "nope" }), {
+          status: 403,
+        })
+    );
+    expect(await heartbeatHarnessSessionState(args)).toBe("lost");
+  });
+
+  it("'retryable' on a transient 5xx (don't abort on a blip)", async () => {
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ ok: false, error: "boom" }), {
+          status: 500,
+        })
+    );
+    expect(await heartbeatHarnessSessionState(args)).toBe("retryable");
+  });
+
+  it("'retryable' on a network failure", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("ECONNRESET");
+    }) as unknown as typeof fetch;
+    expect(await heartbeatHarnessSessionState(args)).toBe("retryable");
   });
 });
 

@@ -29,6 +29,26 @@ export type HarnessResumePayload = {
   computerId: string;
 };
 
+/**
+ * The resume-state commit for a chat-backed harness turn, committed ATOMICALLY
+ * with the transcript through `/ingest-chat` (not the standalone endpoint) so
+ * the product transcript and the runtime sidecar advance together. Carries no
+ * `projectId`/`userId` — the ingest mutation supplies those from the resolved
+ * request identity (the same dimensions it keys the transcript on).
+ */
+export type HarnessSessionCommitPayload = {
+  ownerType: "direct-chat" | "chatbox-chat";
+  chatSessionId: string;
+  chatboxId?: string;
+  leaseId: string;
+  expectedStateVersion: number;
+  harnessId: "claude-code";
+  harnessSessionId: string;
+  resumeState: unknown;
+  computerId: string;
+  runtimeFingerprint: string;
+};
+
 export type HarnessClaimResult =
   | {
       ok: true;
@@ -127,20 +147,35 @@ export async function claimHarnessSessionState(args: {
   };
 }
 
-/** Best-effort heartbeat (extend the lease) / release / commit. These never
- *  throw — a lost heartbeat or failed release is logged, not fatal. */
+/**
+ * Heartbeat outcome (never throws):
+ *  - `ok`        — lease extended.
+ *  - `lost`      — backend DEFINITIVELY says the lease is gone or owned by
+ *                  another turn (200 with ok:false, or a 4xx). The caller must
+ *                  abort: continuing would mutate a stolen session.
+ *  - `retryable` — transient (network, timeout, 5xx, malformed body). The caller
+ *                  should log and retry on the next tick, NOT abort on a blip.
+ */
+export type HarnessHeartbeatResult = "ok" | "lost" | "retryable";
+
 export async function heartbeatHarnessSessionState(args: {
   owner: HarnessOwnerRef;
   leaseId: string;
   leaseTtlMs: number;
   bearer: string;
-}): Promise<boolean> {
+}): Promise<HarnessHeartbeatResult> {
   const res = await postSessionState("heartbeat", args.bearer, {
     ...args.owner,
     leaseId: args.leaseId,
     leaseTtlMs: args.leaseTtlMs,
   });
-  return res.ok && res.payload?.ok === true;
+  if (res.ok) {
+    // The request reached the endpoint; `extended` is the definitive answer.
+    return res.payload?.extended === true ? "ok" : "lost";
+  }
+  // postSessionState maps network failures + malformed bodies to status 502.
+  if (res.status >= 500) return "retryable";
+  return "lost"; // definitive 4xx (e.g. membership/lease rejection)
 }
 
 export async function releaseHarnessSessionState(args: {
