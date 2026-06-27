@@ -22,6 +22,7 @@ import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
 import { listToolsWithMetadata } from "../lib/server-ops.js";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
+  addHostOption,
   addRetryOptions,
   addSharedServerOptions,
   describeTarget,
@@ -33,6 +34,11 @@ import {
   type GlobalOptions,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
+import {
+  applyHostVisibility,
+  assertToolVisibleToHost,
+  resolveHostFromOptions,
+} from "../lib/host-resolve.js";
 import {
   normalizeCliError,
   setProcessExitCode,
@@ -70,17 +76,20 @@ export function registerToolsCommands(program: Command): void {
     .command("tools")
     .description("List and invoke MCP server tools");
 
-  addRetryOptions(
-    addSharedServerOptions(
-      tools
-        .command("list")
-        .description("List tools exposed by an MCP server")
-        .option("--cursor <cursor>", "Pagination cursor")
-        .option("--model-id <model>", "Model id used for token counting"),
+  addHostOption(
+    addRetryOptions(
+      addSharedServerOptions(
+        tools
+          .command("list")
+          .description("List tools exposed by an MCP server")
+          .option("--cursor <cursor>", "Pagination cursor")
+          .option("--model-id <model>", "Model id used for token counting"),
+      ),
     ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -92,16 +101,33 @@ export function registerToolsCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      (manager, serverId) =>
-        listToolsWithMetadata(manager, {
+      async (manager, serverId) => {
+        const listed = await listToolsWithMetadata(manager, {
           serverId,
           cursor: options.cursor,
           modelId: options.modelId,
-        }),
+        });
+        if (!host) return listed;
+        // As a host: drop tools its model can't see (app-only) and report it.
+        const { tools: visibleTools, toolsDroppedVisibility } =
+          applyHostVisibility(
+            listed.tools as Array<Record<string, unknown>>,
+            manager,
+            serverId,
+            host.policy,
+          );
+        return {
+          ...listed,
+          tools: visibleTools,
+          host: host.id,
+          toolsDroppedVisibility,
+        };
+      },
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 
@@ -111,7 +137,8 @@ export function registerToolsCommands(program: Command): void {
     );
   });
 
-  addSharedServerOptions(
+  addHostOption(
+    addSharedServerOptions(
     tools
       .command("call")
       .description("Call an MCP tool")
@@ -179,8 +206,10 @@ export function registerToolsCommands(program: Command): void {
       .option("--theme <theme>", 'Render theme: "light" or "dark" (with --ui)')
       .option("--locale <locale>", "Render locale (with --ui)")
       .option("--time-zone <iana>", "Render IANA timezone (with --ui)"),
+    ),
   ).action(async (options: ToolsCallOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const primaryCollector =
       globalOptions.rpc || options.debugOut
@@ -258,10 +287,15 @@ export function registerToolsCommands(program: Command): void {
     try {
       result = await withEphemeralManager(
         config,
-        (manager, serverId) => manager.executeTool(serverId, toolName, params),
+        (manager, serverId) => {
+          // As a host: an app-only tool isn't callable by that host's model.
+          if (host) assertToolVisibleToHost(manager, serverId, toolName, host);
+          return manager.executeTool(serverId, toolName, params);
+        },
         {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,
+          host: host?.connection,
         },
       );
     } catch (error) {

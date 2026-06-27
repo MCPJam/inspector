@@ -4,6 +4,7 @@ import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
+  addHostOption,
   addRetryOptions,
   addSharedServerOptions,
   describeTarget,
@@ -13,6 +14,7 @@ import {
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../lib/server-config.js";
+import { resolveHostFromOptions } from "../lib/host-resolve.js";
 import { writeResult } from "../lib/output.js";
 
 export function registerPromptCommands(program: Command): void {
@@ -20,16 +22,19 @@ export function registerPromptCommands(program: Command): void {
     .command("prompts")
     .description("List and fetch MCP prompts");
 
-  addRetryOptions(
+  addHostOption(
+    addRetryOptions(
     addSharedServerOptions(
       prompts
         .command("list")
         .description("List prompts exposed by an MCP server")
         .option("--cursor <cursor>", "Pagination cursor"),
     ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -47,6 +52,7 @@ export function registerPromptCommands(program: Command): void {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 
@@ -56,7 +62,8 @@ export function registerPromptCommands(program: Command): void {
     );
   });
 
-  addRetryOptions(
+  addHostOption(
+    addRetryOptions(
     addSharedServerOptions(
       prompts
         .command("get")
@@ -68,9 +75,11 @@ export function registerPromptCommands(program: Command): void {
           "Prompt arguments as JSON, @path, or - for stdin",
         ),
     ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -102,6 +111,7 @@ export function registerPromptCommands(program: Command): void {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 
