@@ -185,7 +185,9 @@ export function evaluateHostCompat(
             severity: check.severity,
             code: "capability_unsupported",
             capability: check.key,
-            tools,
+            // Copy: `tools` is the shared `widgetUsage[key]` array — don't let a
+            // finding alias (and let a surface mutate) the requirements object.
+            tools: [...tools],
             title: check.title,
             detail: `${formatToolNames(tools)} need \`${check.api}\`, which ${profile.label} doesn't support — ${check.consequence}.`,
             provenance: profile.provenance,

@@ -267,6 +267,23 @@ describe("semantic finding contract (code / tools / capability)", () => {
     expect(f?.tools).toEqual(["w"]);
   });
 
+  it("does not alias the shared widgetUsage array (defensive copy)", () => {
+    const usage = { message: ["w"] };
+    const requirements = reqs({
+      widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+      hasWidgets: true,
+      widgetUsage: usage,
+    });
+    const f = evaluateHostCompat(
+      requirements,
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+    ).findings.find((x) => x.code === "capability_unsupported");
+    // A surface sorting/mutating finding.tools must not touch widgetUsage.
+    expect(f?.tools).not.toBe(usage.message);
+    f?.tools?.push("mutated");
+    expect(usage.message).toEqual(["w"]);
+  });
+
   it("tags a protocol-version mismatch", () => {
     const f = evaluateHostCompat(
       reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
