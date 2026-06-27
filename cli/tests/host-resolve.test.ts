@@ -18,6 +18,7 @@ import { CliError } from "../src/lib/output.js";
 function mockManager(opts: {
   metadata?: Record<string, Record<string, unknown>>;
   tools?: Array<Record<string, unknown>>;
+  nextCursor?: string;
   expectedServerId?: string;
 }): MCPClientManager {
   const expected = opts.expectedServerId ?? "__cli__";
@@ -28,7 +29,7 @@ function mockManager(opts: {
     },
     listTools: async (serverId: string) => {
       assert.equal(serverId, expected);
-      return { tools: opts.tools ?? [], nextCursor: undefined };
+      return { tools: opts.tools ?? [], nextCursor: opts.nextCursor };
     },
   } as unknown as MCPClientManager;
 }
@@ -132,7 +133,7 @@ test("assertToolVisibleToHost rejects an app-only call as a visibility-respectin
       claude,
     ),
   );
-  // A tool not in the listed set is allowed (not a listed app-only tool).
+  // A tool not in a fully-paged list is allowed (genuinely unlisted).
   await assert.doesNotReject(() =>
     assertToolVisibleToHost(
       mockManager({ tools: [] }),
@@ -140,6 +141,21 @@ test("assertToolVisibleToHost rejects an app-only call as a visibility-respectin
       "missing",
       claude,
     ),
+  );
+  // Fail CLOSED: the list never drains (server keeps returning a cursor) and the
+  // tool hasn't appeared — can't confirm visibility, so reject.
+  await assert.rejects(
+    () =>
+      assertToolVisibleToHost(
+        mockManager({
+          tools: [{ name: "other", _meta: modelVisible }],
+          nextCursor: "more",
+        }),
+        "__cli__",
+        "open_widget",
+        claude,
+      ),
+    CliError,
   );
   // The host opting out of visibility never rejects.
   await assert.doesNotReject(() =>

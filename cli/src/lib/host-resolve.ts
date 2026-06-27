@@ -123,6 +123,7 @@ export async function assertToolVisibleToHost(
   host: ResolvedHost,
 ): Promise<void> {
   if (host.policy.respectToolVisibility === false) return;
+  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
     const result = await manager.listTools(
@@ -141,8 +142,15 @@ export async function assertToolVisibleToHost(
       return; // found and model-visible
     }
     cursor = result.nextCursor;
-    if (!cursor) break;
+    // Paged through the WHOLE list without finding it → genuinely unlisted;
+    // allow the call (the server may still expose it).
+    if (!cursor) return;
+    if (seenCursors.has(cursor)) break; // server looping on a cursor
+    seenCursors.add(cursor);
   }
-  // Tool not among the listed tools → not a listed app-only tool; allow the
-  // call (the server may still expose it).
+  // Couldn't page through the full tool list (page cap or cursor loop) and the
+  // tool hasn't appeared — can't confirm it's model-visible, so fail CLOSED.
+  throw usageError(
+    `Could not verify "${toolName}" is visible to host "${host.id}" — the server's tool list is too long to page through. Omit --host to call it as an operator.`,
+  );
 }
