@@ -264,6 +264,16 @@ export async function runHarnessTurn(
         );
       }
 
+      // Phase timing — log where a turn spends its wall-clock (credential /
+      // claim / box wake / session connect / model stream / finalize) so "takes
+      // forever" can be attributed instead of guessed.
+      const tStart = Date.now();
+      let tAuth = tStart;
+      let tClaim = tStart;
+      let tSandbox = tStart;
+      let tConnect = tStart;
+      let resumedSession = false;
+
       // 1. Resolve the model credential FIRST — fetched from Convex (the
       // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
       // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
@@ -275,6 +285,7 @@ export async function runHarnessTurn(
         bearer: authHeader,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
+      tAuth = Date.now();
 
       // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
       // harnessServerInputFromConfig throws e.g. for a local stdio server with
@@ -381,6 +392,7 @@ export async function runHarnessTurn(
             }).catch(() => {});
         }
       }
+      tClaim = Date.now();
 
       // 3. Resolve (and wake) the host's computer → sandbox id.
       const { computerId, sandboxId } = await resolveHarnessSandbox({
@@ -388,6 +400,7 @@ export async function runHarnessTurn(
         projectId,
         signal: abortSignal,
       });
+      tSandbox = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
@@ -438,6 +451,7 @@ export async function runHarnessTurn(
             sessionId: resumable.harnessSessionId,
             resumeFrom: resumable.resumeState,
           } as unknown as Parameters<typeof agent.createSession>[0]);
+          resumedSession = true;
         } catch (resumeErr) {
           logger.warn("[harness] resume failed; starting fresh", {
             error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
@@ -447,6 +461,7 @@ export async function runHarnessTurn(
       } else {
         session = await agent.createSession();
       }
+      tConnect = Date.now();
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
@@ -779,6 +794,16 @@ export async function runHarnessTurn(
           ...(usage ? { messageMetadata: usage } : {}),
         });
         runSucceeded = true;
+        const tStream = Date.now();
+        logger.info("[harness][timing] turn phases (ms)", {
+          credential: tAuth - tStart,
+          claim: tClaim - tAuth,
+          boxWake: tSandbox - tClaim,
+          sessionConnect: tConnect - tSandbox,
+          modelStream: tStream - tConnect,
+          total: tStream - tStart,
+          resumed: resumedSession,
+        });
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
