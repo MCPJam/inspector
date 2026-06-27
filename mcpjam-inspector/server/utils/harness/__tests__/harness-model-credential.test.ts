@@ -31,7 +31,7 @@ describe("fetchHarnessModelCredential", () => {
       seenInit = init;
       return Response.json({
         ok: true,
-        credential: { providerKey: "anthropic", apiKey: "sk-ant-1" },
+        credential: { providerKey: "gateway", apiKey: "gw-1" },
       });
     });
 
@@ -53,19 +53,19 @@ describe("fetchHarnessModelCredential", () => {
     });
     expect(result).toEqual({
       ok: true,
-      credential: { providerKey: "anthropic", apiKey: "sk-ant-1" },
+      credential: { providerKey: "gateway", apiKey: "gw-1" },
     });
   });
 
-  it("maps a 422 (no Anthropic key) to ok:false with the friendly error", async () => {
+  it("maps a 403 (harness not enabled) to ok:false with the friendly error", async () => {
     mockFetch(
       () =>
         new Response(
           JSON.stringify({
             ok: false,
-            error: "This project has no Anthropic API key configured.",
+            error: "The Claude Code harness is not enabled on this server.",
           }),
-          { status: 422 }
+          { status: 403 }
         )
     );
     const result = await fetchHarnessModelCredential({
@@ -75,8 +75,8 @@ describe("fetchHarnessModelCredential", () => {
     });
     expect(result).toEqual({
       ok: false,
-      status: 422,
-      error: "This project has no Anthropic API key configured.",
+      status: 403,
+      error: "The Claude Code harness is not enabled on this server.",
     });
   });
 

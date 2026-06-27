@@ -1,14 +1,16 @@
 /**
- * Resolve the model credential the Claude Code harness hands to the in-sandbox
- * CLI — from Convex, the way every other model key is handled (keys live in
- * Convex, never in the inspector env).
+ * Resolve the model credential the harness hands to the in-sandbox CLI — from
+ * Convex, the way every other model key is handled (keys live in Convex, never
+ * in the inspector env).
  *
- * The harness CLI makes its own Anthropic API calls inside the sandbox, so —
- * unlike the emulated `/stream` path — it needs a real credential. This fetches
- * the project org's BYOK **Anthropic** key (vault-decrypted server-side) via a
- * bearer-authed Convex endpoint, mirroring the host/chatbox runtime-config
- * clients. The endpoint enforces project membership; a project with no Anthropic
- * provider returns a clear 422 so the turn can fail closed.
+ * The CLI makes its own model calls inside the sandbox, so — unlike the emulated
+ * `/stream` path — it needs a real credential. This fetches the system **AI
+ * Gateway** key (the same key chat uses) via a bearer-authed Convex endpoint:
+ * one key serves Claude Code (Anthropic) and Codex (OpenAI), so MCPJam-provided
+ * harness works out of the box without per-org BYOK. The endpoint is
+ * enablement-gated, project-members only, rate-limited, and audited; failures
+ * (disabled / not-a-member / rate-limited / no key) return non-2xx so the turn
+ * fails closed.
  *
  * Backed by `convex/http.ts:/web/harness/model-credential` →
  * `internalResolveHarnessModelCredential`.
@@ -16,7 +18,7 @@
 import { logger } from "../logger.js";
 
 export type HarnessModelCredential = {
-  providerKey: "anthropic";
+  providerKey: "gateway";
   apiKey: string;
   baseUrl?: string;
 };

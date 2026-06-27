@@ -57,16 +57,23 @@ import {
 type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
 /**
- * Resolve the model credential the harness hands to the in-sandbox Claude Code
- * CLI — from Convex, like every other model key (keys live in Convex; the
- * inspector holds none by design). The CLI makes its own Anthropic calls inside
- * the sandbox, so it needs a real credential; we fetch the project org's BYOK
- * **Anthropic** key (vault-decrypted server-side) via the bearer-authed Convex
- * endpoint. The harness is Anthropic-only.
+ * Resolve the model credential the harness hands to the in-sandbox CLI — from
+ * Convex, like every other model key (keys live in Convex; the inspector holds
+ * none by design). The CLI makes its own model calls inside the sandbox, so it
+ * needs a real credential; we fetch the system **AI Gateway** key via the
+ * bearer-authed Convex endpoint and hand it to the adapter as `auth.gateway`.
+ * One key serves Claude Code (Anthropic) and Codex (OpenAI).
  *
- * Fails closed: a project with no Anthropic provider (or a non-Anthropic model)
- * throws here, BEFORE the computer is woken (this is the first step of the
- * turn), so a misconfigured turn never provisions a box.
+ * Per-request Gateway attribution tags (`providerOptions.gateway.user/tags`)
+ * are NOT plumbed: the harness adapter only forwards env vars to the CLI
+ * (AI_GATEWAY_API_KEY / *_BASE_URL), so it can't carry per-call tags. Issuance
+ * is instead audited + rate-limited server-side; full per-generation spend
+ * ingestion is a follow-up (see the harness plan).
+ *
+ * Fails closed: the endpoint rejects (harness disabled / not a member /
+ * rate-limited / no gateway key) ⇒ we throw here, BEFORE the computer is woken
+ * (this is the first step of the turn), so a misconfigured turn never provisions
+ * a box.
  */
 async function resolveHarnessModelAuth(args: {
   projectId: string;
@@ -74,7 +81,7 @@ async function resolveHarnessModelAuth(args: {
   bearer: string;
   signal?: AbortSignal;
 }): Promise<{
-  anthropic: { apiKey: string; baseUrl?: string };
+  gateway: { apiKey: string; baseUrl?: string };
 }> {
   const result = await fetchHarnessModelCredential({
     projectId: args.projectId,
@@ -86,7 +93,7 @@ async function resolveHarnessModelAuth(args: {
     throw new Error(result.error);
   }
   return {
-    anthropic: {
+    gateway: {
       apiKey: result.credential.apiKey,
       ...(result.credential.baseUrl
         ? { baseUrl: result.credential.baseUrl }
