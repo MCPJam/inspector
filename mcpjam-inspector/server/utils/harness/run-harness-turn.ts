@@ -795,15 +795,16 @@ export async function runHarnessTurn(
         });
         runSucceeded = true;
         const tStream = Date.now();
-        logger.info("[harness][timing] turn phases (ms)", {
-          credential: tAuth - tStart,
-          claim: tClaim - tAuth,
-          boxWake: tSandbox - tClaim,
-          sessionConnect: tConnect - tSandbox,
-          modelStream: tStream - tConnect,
-          total: tStream - tStart,
-          resumed: resumedSession,
-        });
+        // Values inlined into the message — this logger drops the 2nd arg.
+        logger.info(
+          `[harness][timing] credential=${tAuth - tStart}ms claim=${
+            tClaim - tAuth
+          }ms boxWake=${tSandbox - tClaim}ms sessionConnect=${
+            tConnect - tSandbox
+          }ms modelStream=${tStream - tConnect}ms total=${
+            tStream - tStart
+          }ms resumed=${resumedSession}`,
+        );
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
