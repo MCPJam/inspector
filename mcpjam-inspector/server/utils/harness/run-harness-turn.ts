@@ -40,6 +40,15 @@ import {
   writeTraceEvent,
 } from "../live-chat-trace-stream.js";
 import { getHarnessAdapter } from "./registry.js";
+import {
+  emitError,
+  emitFinish,
+  emitTextDelta,
+  emitTextEnd,
+  emitTextStart,
+  emitToolInput,
+  emitToolOutput,
+} from "../chat-stream-chunks.js";
 import { tunnelManager } from "../../services/tunnel-manager.js";
 import { logger } from "../logger.js";
 import type {
@@ -745,7 +754,7 @@ export async function runHarnessTurn(
             }
             if (textId === undefined) {
               textId = crypto.randomUUID();
-              writer.write({ type: "text-start", id: textId });
+              emitTextStart(writer, textId);
             }
             // Append to the open trailing text part, or start a new one, so
             // text keeps its order relative to tool-calls.
@@ -755,7 +764,7 @@ export async function runHarnessTurn(
             } else {
               assistantParts.push({ type: "text", text: delta });
             }
-            writer.write({ type: "text-delta", id: textId, delta });
+            emitTextDelta(writer, textId, delta);
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -767,7 +776,7 @@ export async function runHarnessTurn(
             // balanced (matches the emulated engine's flush-before-tool order);
             // later text opens a fresh block with a new id.
             if (textId !== undefined) {
-              writer.write({ type: "text-end", id: textId });
+              emitTextEnd(writer, textId);
               textId = undefined;
             }
             const toolCallId = String(
@@ -798,16 +807,14 @@ export async function runHarnessTurn(
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
-            writer.write({
-              type: "tool-input-available",
+            // providerExecuted:true — the harness runs ALL tools in-sandbox
+            // (Claude Code executes them itself). Without it the client treats
+            // these as client-side tools to fulfill and `sendAutomaticallyWhen`
+            // auto-continues, re-submitting the turn forever.
+            emitToolInput(writer, {
               toolCallId,
               toolName,
               input,
-              // The harness runs ALL tools in-sandbox (Claude Code executes
-              // them itself). Mark provider-executed so the client doesn't treat
-              // these as client-side tools to fulfill — otherwise
-              // `sendAutomaticallyWhen` auto-continues and the turn re-submits
-              // forever.
               providerExecuted: true,
             });
             await onToolCall?.({
@@ -842,11 +849,10 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId,
               );
-            writer.write({
-              type: "tool-output-available",
+            // Provider-executed (in-sandbox) — see tool-input-available above.
+            emitToolOutput(writer, {
               toolCallId,
               output,
-              // Provider-executed (in-sandbox) — see tool-input-available above.
               providerExecuted: true,
             });
             await onToolResult?.({
@@ -906,7 +912,7 @@ export async function runHarnessTurn(
         }
         // Close any open text block first so BOTH the cancelled and normal
         // paths leave a balanced UI stream.
-        if (textId !== undefined) writer.write({ type: "text-end", id: textId });
+        if (textId !== undefined) emitTextEnd(writer, textId);
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
@@ -922,10 +928,9 @@ export async function runHarnessTurn(
         flushSegment();
         // Final step settles now that usage is known from the finish part.
         finishStep();
-        writer.write({
-          type: "finish",
+        emitFinish(writer, {
           finishReason: turnFinishReason,
-          ...(usage ? { messageMetadata: usage } : {}),
+          messageMetadata: usage,
         });
         writeTraceEvent(writer, {
           type: "turn_finish",
@@ -997,8 +1002,8 @@ export async function runHarnessTurn(
       const errorText = err instanceof Error ? err.message : String(err);
       logger.error("[harness] turn failed", err);
       // Close any open text block so the UI stream stays balanced.
-      if (textId !== undefined) writer.write({ type: "text-end", id: textId });
-      writer.write({ type: "error", errorText });
+      if (textId !== undefined) emitTextEnd(writer, textId);
+      emitError(writer, errorText);
       // A mid-stream failure still gets a final snapshot + turn_finish so the
       // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
       // by traceTurnStarted so a pre-stream failure emits no phantom turn.
