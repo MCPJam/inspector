@@ -17,8 +17,10 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 
-type SourceFilter = "all" | "server" | "app";
+type SourceFilter = "all" | "server" | "app" | "builtin";
 
 interface AppEntry {
   alias: string;
@@ -38,6 +40,8 @@ interface ToolListProps {
   onSearchQueryChange: (q: string) => void;
   onSelectTool: (name: string) => void;
   onCollapseList: () => void;
+  /** Harness native built-in tools (display-only). Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
 }
 
 export function ToolList({
@@ -50,6 +54,7 @@ export function ToolList({
   onSearchQueryChange,
   onSelectTool,
   onCollapseList,
+  builtinTools = [],
 }: ToolListProps) {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
@@ -97,12 +102,28 @@ export function ToolList({
     );
   }, [appEntries, searchQuery]);
 
-  const showServer = sourceFilter !== "app";
-  const showApp = sourceFilter !== "server";
+  // Built-in (harness-native) tools filter against the same search box; the
+  // section component owns the actual filtering/visibility, so we only need a
+  // count here for the chips + empty-state.
+  const filteredBuiltinCount = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return builtinTools.length;
+    return builtinTools.filter((t) =>
+      `${t.name} ${t.commonName ?? ""} ${t.description ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    ).length;
+  }, [builtinTools, searchQuery]);
+
+  const showServer = sourceFilter === "all" || sourceFilter === "server";
+  const showApp = sourceFilter === "all" || sourceFilter === "app";
+  const showBuiltin = sourceFilter === "all" || sourceFilter === "builtin";
   const serverShown = showServer ? filteredToolNames.length : 0;
   const appShown = showApp ? filteredAppEntries.length : 0;
-  const totalShown = serverShown + appShown;
+  const builtinShown = showBuiltin ? filteredBuiltinCount : 0;
+  const totalShown = serverShown + appShown + builtinShown;
   const hasAppTools = appEntries.length > 0;
+  const hasBuiltinTools = builtinTools.length > 0;
 
   return (
     <div className="h-full flex flex-col">
@@ -115,18 +136,24 @@ export function ToolList({
         />
       </div>
 
-      {/* Source filter chips — only shown once an app has registered tools,
-          so the bar doesn't take up space for server-only setups. */}
-      {hasAppTools && (
+      {/* Source filter chips — only shown once an app OR a harness has
+          registered tools, so the bar doesn't take up space for plain
+          server-only setups. */}
+      {(hasAppTools || hasBuiltinTools) && (
         <div className="flex items-center gap-1 px-3 pb-1.5 flex-shrink-0">
           <span className="text-[10px] leading-4 text-muted-foreground mr-0.5">
             Source:
           </span>
           {(
             [
-              { key: "all", label: "all", count: filteredToolNames.length + filteredAppEntries.length },
+              { key: "all", label: "all", count: filteredToolNames.length + filteredAppEntries.length + filteredBuiltinCount },
               { key: "server", label: "server", count: filteredToolNames.length },
-              { key: "app", label: "app", count: filteredAppEntries.length },
+              ...(hasAppTools
+                ? [{ key: "app", label: "app", count: filteredAppEntries.length } as const]
+                : []),
+              ...(hasBuiltinTools
+                ? [{ key: "builtin", label: "built-in", count: filteredBuiltinCount } as const]
+                : []),
             ] as const
           ).map((chip) => {
             const active = sourceFilter === chip.key;
@@ -298,6 +325,12 @@ export function ToolList({
                   </button>
                 );
               })}
+            {showBuiltin && (
+              <HarnessBuiltinToolsSection
+                tools={builtinTools}
+                searchQuery={searchQuery}
+              />
+            )}
           </div>
         )}
       </div>

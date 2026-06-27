@@ -49,6 +49,7 @@ import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
@@ -158,6 +159,13 @@ interface TraceViewerProps {
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
    */
   rawRequestPayloadHistory?: TraceRawRequestPayloadHistory | null;
+  /**
+   * Harness native built-in tools — forwarded to Raw so a harness host's
+   * request is annotated (its `tools` are empty because the harness builds its
+   * own request in-sandbox). Only the playground passes this; undefined
+   * elsewhere. See {@link TraceRawView}.
+   */
+  harnessBuiltinTools?: HarnessBuiltinToolInfo[];
   /**
    * When true, Raw JSON uses `height: auto` and minimal wrappers so a parent
    * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
@@ -294,6 +302,7 @@ export function TraceViewer({
   onFullscreenChatStop,
   onFullscreenChange,
   rawRequestPayloadHistory = null,
+  harnessBuiltinTools,
   rawGrowWithContent = false,
   activeHost,
   hostStyle,
@@ -755,6 +764,7 @@ export function TraceViewer({
             <TraceRawView
               trace={trace}
               requestPayloadHistory={rawRequestPayloadHistory}
+              harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
             />
           </div>

@@ -105,6 +105,7 @@ import {
 } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
@@ -704,6 +705,9 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // Native built-in tools for the previewed harness (if any) — fed into the Raw
+  // tab so a harness host's empty `tools` is annotated rather than confusing.
+  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -3822,6 +3826,7 @@ export function PlaygroundMain({
                         entries: requestPayloadHistory,
                         hasUiMessages: !isThreadEmpty,
                       }}
+                      harnessBuiltinTools={harnessBuiltinTools}
                       rawEmptyTestId="playground-live-raw-pending"
                       timelineEmptyTestId="playground-live-trace-pending"
                       nonRawShellClassName="flex-1 min-h-0 overflow-hidden px-4 py-4"

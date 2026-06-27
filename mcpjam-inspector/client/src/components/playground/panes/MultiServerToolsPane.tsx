@@ -38,6 +38,8 @@ import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeade
 import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
+import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import {
   detectUIType,
   getToolVisibility,
@@ -48,6 +50,8 @@ import { cn } from "@/lib/utils";
 
 interface InnerProps {
   activeServerNames: string[];
+  /** Harness native built-in tools (display-only). Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
 }
 
 interface Selection {
@@ -55,7 +59,10 @@ interface Selection {
   toolName: string;
 }
 
-export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
+export function MultiServerToolsPaneInner({
+  activeServerNames,
+  builtinTools = [],
+}: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
   const reconnectingServerNames = useMemo(
@@ -219,6 +226,7 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
             reconnecting={reconnectingServerNames.length > 0}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            builtinTools={builtinTools}
             selected={selected}
             onToggleSelected={(entry) => {
               if (
@@ -254,6 +262,7 @@ interface FlatToolListProps {
   reconnecting: boolean;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
+  builtinTools: HarnessBuiltinToolInfo[];
   selected: Selection | null;
   onToggleSelected: (entry: Selection) => void;
 }
@@ -266,9 +275,13 @@ function FlatToolList({
   reconnecting,
   searchQuery,
   onSearchQueryChange,
+  builtinTools,
   selected,
   onToggleSelected,
 }: FlatToolListProps) {
+  // A harness host has native built-in tools even with zero MCP-server tools,
+  // so the "no tools" empty state must account for them.
+  const hasBuiltin = builtinTools.length > 0;
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 flex-shrink-0">
@@ -280,14 +293,14 @@ function FlatToolList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {loading && entries.length === 0 ? (
+        {loading && entries.length === 0 && !hasBuiltin ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
             <p className="text-xs text-muted-foreground">
               {reconnecting ? "Reconnecting..." : "Loading tools..."}
             </p>
           </div>
-        ) : entries.length === 0 ? (
+        ) : entries.length === 0 && !hasBuiltin ? (
           <div className="text-center py-8 px-4">
             <p className="text-xs text-muted-foreground">
               {totalCount === 0
@@ -403,6 +416,10 @@ function FlatToolList({
             })}
           </div>
         )}
+        <HarnessBuiltinToolsSection
+          tools={builtinTools}
+          searchQuery={searchQuery}
+        />
       </div>
     </div>
   );

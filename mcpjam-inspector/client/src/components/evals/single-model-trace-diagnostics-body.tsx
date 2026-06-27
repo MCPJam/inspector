@@ -22,6 +22,7 @@ type ForwardedTraceViewerProps = Pick<
   | "onDisplayModeChange"
   | "onFullscreenChange"
   | "rawRequestPayloadHistory"
+  | "harnessBuiltinTools"
 >;
 
 export interface SingleModelTraceDiagnosticsBodyProps

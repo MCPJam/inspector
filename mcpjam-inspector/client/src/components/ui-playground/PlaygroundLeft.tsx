@@ -21,6 +21,7 @@ import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { LoggerView } from "../logger-view";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
@@ -61,6 +62,8 @@ interface PlaygroundLeftProps {
    * `false` because the logger lives in the right rail.
    */
   showLogger?: boolean;
+  /** Harness native built-in tools (display-only). Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
 }
 
 export function PlaygroundLeft({
@@ -83,6 +86,7 @@ export function PlaygroundLeft({
   onDeleteRequest,
   onClose,
   showLogger = true,
+  builtinTools = [],
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -173,6 +177,7 @@ export function PlaygroundLeft({
           onSearchQueryChange={setSearchQuery}
           onSelectTool={handleToolListSelect}
           onCollapseList={() => setIsListExpanded(false)}
+          builtinTools={builtinTools}
         />
       ) : (
         <ToolParametersView

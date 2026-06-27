@@ -20,6 +20,7 @@ import resources from "./resources.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
 import hosts from "./hosts.js";
+import harness from "./harness.js";
 import evalIngest from "./eval-ingest.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
@@ -47,6 +48,10 @@ v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 type GuestRule = { pattern: RegExp; methods?: readonly string[] };
 
 const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
+  // Harness built-in tool catalog: static published-package metadata (no
+  // project/user data), read by the first-party UI to show a harness host's
+  // native tools. Safe for guests (local mode + share-link previews); GET-only.
+  { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
   { pattern: /^\/projects$/ },
   { pattern: /^\/projects\/[^/]+\/servers$/ },
@@ -125,6 +130,7 @@ v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", hosts);
+v1.route("/", harness);
 v1.route("/", evalIngest);
 v1.route("/", oauth);
 v1.route("/", catalog);

@@ -59,6 +59,25 @@
     }
   ],
   "paths": {
+    "/harness/{harnessId}/builtin-tools": {
+      "get": {
+        "operationId": "listHarnessBuiltinTools",
+        "tags": ["Harness"],
+        "summary": "List a harness's native built-in tools",
+        "description": "The native tools an agent harness (e.g. `claude-code`) runs INSIDE its sandbox — Bash, Read, Edit, Glob, Grep, WebSearch, and the like. Display-only: these execute via the harness's own agent loop and are NOT callable through MCPJam. Static published-package metadata; no project scope.",
+        "parameters": [{ "name": "harnessId", "in": "path", "required": true, "schema": { "type": "string", "enum": ["claude-code"] }, "description": "The harness id." }],
+        "responses": {
+          "200": {
+            "description": "The harness's built-in tools.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "type": "object", "required": ["key", "name"], "properties": { "key": { "type": "string" }, "name": { "type": "string" }, "commonName": { "type": "string" }, "toolUseKind": { "type": "string" }, "description": { "type": "string" }, "inputSchema": { "type": "object", "additionalProperties": true } } } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
     "/projects/{projectId}/hosts": {
       "get": {
         "operationId": "listHosts",

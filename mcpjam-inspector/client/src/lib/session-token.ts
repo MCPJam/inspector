@@ -293,6 +293,13 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 // crosses to a foreign origin.
 const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/web/",
+  // The first-party UI calling its own public harness endpoint
+  // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
+  // `/api/v1/*` is bearer-gated (bearerAuthMiddleware reads `Authorization`),
+  // and the UI doesn't otherwise call the public API, so this is the only v1
+  // path that needs the user's bearer attached. Scoped to `/harness/` — not all
+  // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
+  "/api/v1/harness/",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",

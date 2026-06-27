@@ -392,4 +392,114 @@ describe("ToolList", () => {
 
     expect(onSearchQueryChange).toHaveBeenCalledWith("read");
   });
+
+  // ── Harness built-in tools (display-only) ──
+
+  const makeBuiltin = (key: string, name: string) => ({
+    key,
+    name,
+    description: `${name} description`,
+    toolUseKind: "bash",
+    inputSchema: {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    } as Record<string, unknown>,
+  });
+
+  it("renders the built-in section instead of 'No tools found' for a harness host with no server tools", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+      />,
+    );
+
+    expect(screen.getByText("Built-in tools")).toBeInTheDocument();
+    expect(screen.getByText("runs in sandbox")).toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "No tools found. Try refreshing and make sure the server is running.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the built-in section for an emulated host (no built-in tools)", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={["read_me"]}
+      />,
+    );
+    expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
+  });
+
+  it("built-in rows are display-only: a click never selects/runs the tool", () => {
+    const onSelectTool = vi.fn();
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        onSelectTool={onSelectTool}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: /Bash/i });
+    fireEvent.click(row);
+    expect(onSelectTool).not.toHaveBeenCalled();
+  });
+
+  it("clicking a built-in row toggles its input schema (aria-expanded + schema shown)", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: /Bash/i });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    expect(document.body.textContent).not.toContain('"command"');
+
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(document.body.textContent).toContain("command");
+  });
+
+  it("filters built-in tools with the shared search box", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        searchQuery="grep"
+        builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+      />,
+    );
+
+    expect(screen.getByText("Grep")).toBeInTheDocument();
+    expect(screen.queryByText("Bash")).not.toBeInTheDocument();
+  });
+
+  it("shows a 'built-in' source chip when harness tools are present", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={["read_me"]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /built-in/i })).toBeInTheDocument();
+  });
 });
