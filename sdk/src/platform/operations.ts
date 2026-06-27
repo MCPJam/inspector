@@ -10,6 +10,15 @@ import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import { HOST_TEMPLATE_IDS } from "../host-config/templates/index.js";
 import {
+  evaluateMarketHosts,
+  scanWidgetUsage,
+  type CompatFinding,
+  type CompatProvenance,
+  type CompatVerdict,
+  type HostCompatToolsInput,
+  type ReadResourceResult,
+} from "../host-compat/index.js";
+import {
   buildShowServersPayload,
   projectResolutionError,
   resolveProject,
@@ -660,6 +669,107 @@ export const readServerResourceOperation: PlatformOperation<
       project: toSelectedProjectInfo(project),
       server: toServerInfo(server),
       result,
+    };
+  },
+};
+
+// ── Host compatibility ───────────────────────────────────────────────
+
+export type HostCompatibilityVerdict = {
+  hostId: string;
+  hostLabel: string;
+  /** Worst-wins aggregate across the apps + server lanes. */
+  verdict: CompatVerdict;
+  /** Weakest source backing this host's facts. */
+  provenance: CompatProvenance;
+  /** Machine-readable findings (each carries a stable `code`). */
+  findings: CompatFinding[];
+};
+
+export type CheckHostCompatibilityResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  /** What the server demands, summarized. */
+  widgets: { total: number; appOnly: number };
+  /** Dimensions that couldn't be analyzed (e.g. unreadable widget HTML). */
+  unknownDimensions: string[];
+  hosts: HostCompatibilityVerdict[];
+};
+
+// Bound the tools pagination so a pathological server can't loop forever.
+const HOST_COMPAT_TOOLS_PAGE_CAP = 50;
+
+export const checkHostCompatibilityOperation: PlatformOperation<
+  ServerScopedInput,
+  CheckHostCompatibilityResult
+> = {
+  name: "check_host_compatibility",
+  title: "Check MCP host compatibility",
+  description:
+    "Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). Returns a per-host verdict (works / degraded / blocked / unknown) with the specific findings — e.g. a widget a host can't render, or a host API a widget needs that the host lacks.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(client, project, input.server, signal);
+    const scope = { projectId: project.id, serverId: server.id };
+
+    // Gather every tool (with its inline `_meta`) across all pages.
+    const rawTools: Array<Record<string, unknown>> = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
+      const result = await client.listServerTools(
+        { ...scope, body: cursor ? { cursor } : {} },
+        { signal }
+      );
+      rawTools.push(...result.items);
+      cursor = result.nextCursor;
+      if (!cursor) break;
+    }
+
+    const toolsData: HostCompatToolsInput = {
+      tools: rawTools.map((tool) => ({
+        name: String(tool.name),
+        _meta: tool._meta as Record<string, unknown> | undefined,
+      })),
+    };
+
+    // Apps lane: read each widget's resource through the platform and scan it.
+    const widgetUsage = await scanWidgetUsage(
+      toolsData,
+      async (uri) =>
+        (await client.readServerResource(
+          { ...scope, body: { uri } },
+          { signal }
+        )) as ReadResourceResult
+    );
+
+    const { requirements, reports } = evaluateMarketHosts(toolsData, {
+      widgetUsage,
+    });
+
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      widgets: {
+        total:
+          requirements.widgets.mcpAppsOnly.length +
+          requirements.widgets.openaiAppsOnly.length +
+          requirements.widgets.dual.length,
+        appOnly: requirements.appOnlyWidgets.length,
+      },
+      unknownDimensions: requirements.unknownDimensions,
+      hosts: reports.map((report) => ({
+        hostId: report.hostId,
+        hostLabel: report.hostLabel,
+        verdict: report.verdict,
+        provenance: report.provenance,
+        findings: report.findings,
+      })),
     };
   },
 };
