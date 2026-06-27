@@ -356,9 +356,11 @@ export async function runHarnessTurn(
             `[harness][spike] resumed session=${priorState.sessionId} chat=${chatSessionId}`,
           );
         } catch (resumeErr) {
+          const e = resumeErr as Error;
           logger.warn(
-            `[harness][spike] resume failed; starting fresh chat=${chatSessionId}`,
-            { error: resumeErr },
+            `[harness][spike] resume FAILED chat=${chatSessionId} name=${e?.name} msg=${e?.message} :: ${String(
+              (e?.stack ?? "").split("\n").slice(0, 4).join(" | "),
+            )}`,
           );
           if (chatSessionId != null) SPIKE_RESUME_STORE.delete(chatSessionId);
           session = await agent.createSession();
