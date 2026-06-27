@@ -82,33 +82,54 @@ function supportedProtocolVersionsFor(
   return protocolVersionCache.get(id);
 }
 
-let cachedProfiles: HostCompatProfile[] | null = null;
+let cachedProfiles: readonly HostCompatProfile[] | null = null;
+
+/** Fresh copy of a profile (incl. its nested arrays) so callers can't mutate
+ * the cache or the shared capability-matrix constants. */
+function cloneProfile(p: HostCompatProfile): HostCompatProfile {
+  return {
+    ...p,
+    supportedProtocolVersions: p.supportedProtocolVersions
+      ? [...p.supportedProtocolVersions]
+      : undefined,
+    capabilities: p.capabilities
+      ? {
+          ...p.capabilities,
+          availableDisplayModes: p.capabilities.availableDisplayModes
+            ? [...p.capabilities.availableDisplayModes]
+            : undefined,
+        }
+      : undefined,
+  };
+}
 
 /**
  * Build the market-host compat profiles — the default host catalog. Joins the
  * market-host facts with `rendersOpenAiApps` (the SDK's OpenAI-compat preset),
  * the host template's advertised protocol versions, and the capability matrix
  * (only when the host renders widgets at all — a headless host leaves it
- * undefined). Static, so built once.
+ * undefined). The build runs once (cached); each call returns fresh copies so a
+ * caller sorting the array or tweaking a profile can't change later evaluations.
  */
 export function buildMarketHostProfiles(): HostCompatProfile[] {
-  if (cachedProfiles) return cachedProfiles;
-  cachedProfiles = MARKET_HOSTS.map((host) => {
-    const rendersOpenAiApps = compatPresetForHostStyle(host.id) === true;
-    const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
-    return {
-      id: host.id,
-      label: host.label,
-      provenance: host.provenance,
-      rendersMcpApps: host.rendersMcpApps,
-      rendersOpenAiApps,
-      supportedProtocolVersions: supportedProtocolVersionsFor(host.id),
-      capabilities: rendersWidgets
-        ? (MATRIX_BY_ID[host.id] ?? MCP_APPS_NO_CLAIMS)
-        : undefined,
-    };
-  });
-  return cachedProfiles;
+  if (!cachedProfiles) {
+    cachedProfiles = MARKET_HOSTS.map((host) => {
+      const rendersOpenAiApps = compatPresetForHostStyle(host.id) === true;
+      const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
+      return {
+        id: host.id,
+        label: host.label,
+        provenance: host.provenance,
+        rendersMcpApps: host.rendersMcpApps,
+        rendersOpenAiApps,
+        supportedProtocolVersions: supportedProtocolVersionsFor(host.id),
+        capabilities: rendersWidgets
+          ? (MATRIX_BY_ID[host.id] ?? MCP_APPS_NO_CLAIMS)
+          : undefined,
+      };
+    });
+  }
+  return cachedProfiles.map(cloneProfile);
 }
 
 /**

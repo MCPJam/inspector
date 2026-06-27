@@ -59,6 +59,30 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("codex")?.capabilities).toBeUndefined();
     expect(profileFor("perplexity")?.capabilities).toBeUndefined();
   });
+
+  it("returns fresh copies — mutating one call doesn't affect the next", () => {
+    const a = buildMarketHostProfiles();
+    a.sort((x, y) => x.id.localeCompare(y.id));
+    const claudeA = a.find((p) => p.id === "claude")!;
+    claudeA.capabilities!.message = false;
+    claudeA.supportedProtocolVersions?.push("mutated");
+
+    const b = buildMarketHostProfiles();
+    // Order + nested state of a second call are unaffected by the mutation.
+    expect(b.map((p) => p.id)).toEqual([
+      "claude",
+      "chatgpt",
+      "mistral",
+      "goose",
+      "cursor",
+      "copilot",
+      "codex",
+      "n8n",
+      "perplexity",
+      "cline",
+    ]);
+    expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
+  });
 });
 
 describe("evaluateMarketHosts (real catalog verdicts)", () => {
