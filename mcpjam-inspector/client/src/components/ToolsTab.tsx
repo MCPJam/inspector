@@ -336,7 +336,7 @@ export function ToolsTab({
       observer.unobserve(element);
       observer.disconnect();
     };
-  }, [filteredToolNames.length, activeTab, cursor, activeTab, fetchingTools]);
+  }, [filteredToolNames.length, activeTab, cursor, fetchingTools]);
 
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
