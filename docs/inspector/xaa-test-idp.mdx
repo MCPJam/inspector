@@ -26,7 +26,7 @@ Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the
 2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's **issuer URL** as the trusted identity issuer. The issuer is the trust anchor; use the JWKS URL only when the server explicitly asks for the key-set endpoint.
 3. Set the ID-JAG `aud` claim to your authorization server's own issuer.
 4. Set the ID-JAG `resource` claim to your MCP server's resource identifier.
-5. Register MCPJam as a client at your authorization server using the client ID from your XAA target configuration.
+5. Register MCPJam as a client at your authorization server using the Client ID you set in Configure Target — the `client_id` the ID-JAG carries and your server must accept.
 
 Once trust is established, run the flow from the XAA Flow tab. The sequence diagram shows each step — SSO, token exchange, JWT-bearer, and the authenticated MCP request — with every token decoded inline.
 
@@ -38,7 +38,9 @@ Once trust is established, run the flow from the XAA Flow tab. The sequence diag
 
 ## Local mode
 
-If you're running the inspector locally, the endpoint URLs point at your own machine. Your authorization server can only reach them if it can route to that machine — expose the inspector through a public tunnel first.
+<Warning>
+  These are local URLs. Your authorization server can only fetch them if it can reach this machine — a cloud-hosted Okta or Auth0 tenant cannot reach `localhost`. Expose the inspector with a public tunnel (e.g. ngrok) first.
+</Warning>
 
 ## Next steps
 

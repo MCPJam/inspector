@@ -15,6 +15,9 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 - **Visual Sequence Diagram** - Four-actor swimlanes showing Agent, IdP, MCP Server, and Authorization Server interactions
 - **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
 - **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
+- **Phase Rail** - A compact five-phase progress indicator (Discovery → SSO → ID-JAG → Access token → MCP call) in the header so you always know where you are in the flow
+- **Clickable Run Chips** - Per-step segments labelled by phase and index (e.g. `2.1`). Click any completed step to jump directly to its card in the step logger; hover to see the step name
+- **Negative Test Scorecard** - Fire deliberately broken assertions at your authorization server to verify it rejects them correctly
 
 ## Getting Started
 
@@ -77,6 +80,38 @@ The XAA flow sequence diagram shows four actors:
 - **Authorization Server** - The OAuth 2.0 authorization server that issues access tokens
 
 Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
+
+## Negative Test Scorecard
+
+After a successful happy-path run, the **Negative Test Scorecard** lets you verify that your authorization server correctly rejects deliberately broken assertions. The scorecard fires 11 tampered ID-JAGs at your server — one per test mode — and reports whether each was rejected as expected.
+
+### Reading the results
+
+Each row shows:
+
+- **Outcome pill** — `Rejected as expected · HTTP 400` (green), `Accepted — security risk · HTTP 200` (red), or `Timed out` (grey)
+- **Description** — plain-language explanation of what the test checks
+- **Sent vs. expected diff** — the exact claim or header that was tampered with, showing what was sent and what a valid assertion would carry
+
+### Test modes
+
+| Mode | What is tampered |
+| --- | --- |
+| Bad Signature | Signed with a throwaway key instead of the published JWKS key |
+| Wrong Audience | `aud` set to a different authorization server issuer |
+| Expired | `exp` backdated so the token is already expired |
+| Missing Claims | `sub` and `resource` omitted |
+| Invalid `typ` Header | `typ` set to `JWT` instead of `oauth-id-jag+jwt` |
+| Wrong Issuer | `iss` set to an untrusted issuer |
+| Resource Mismatch | `resource` set to a different MCP server identifier |
+| Client ID Mismatch | `client_id` set to a different OAuth client |
+| Unknown `kid` | `kid` references a key not in your JWKS |
+| Unknown Subject | `sub` set to an unmapped user identifier |
+| Scope Denial | High-privilege scopes the mock user shouldn't receive |
+
+### Running before a passing flow
+
+The scorecard requires a successful happy-path run first. If you own the authorization server and are building it with TDD, check **I'm building this auth server** to run the tests before a passing flow completes.
 
 ## Next Steps
 
