@@ -70,13 +70,17 @@ function env(over: Partial<EnvironmentView> = {}): EnvironmentView {
   };
 }
 
-function renderDrawer(attachedEnvironmentId: string | null = null) {
+function renderDrawer(
+  attachedEnvironmentId: string | null = null,
+  canAttach = true
+) {
   return render(
     <EnvironmentsDrawer
       open
       onOpenChange={() => {}}
       projectId="p1"
       attachedEnvironmentId={attachedEnvironmentId}
+      canAttach={canAttach}
     />
   );
 }
@@ -164,6 +168,40 @@ describe("EnvironmentsDrawer", () => {
     fireEvent.click(getByText("Build"));
     await waitFor(() => expect(updateEnvironment).toHaveBeenCalled());
     expect(startBuild).not.toHaveBeenCalled();
+  });
+
+  it("disables 'Use on computer' while the computer is mid-provision (canAttach=false)", () => {
+    mockEnvironments = [env()]; // ready build
+    const { getByText } = renderDrawer(null, false);
+    fireEvent.click(getByText("ml-toolkit"));
+    expect(
+      (getByText("Use on computer") as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it("saves unsaved edits before sharing to the project", async () => {
+    mockEnvironments = [env()];
+    const { getByText, getByDisplayValue } = renderDrawer();
+    fireEvent.click(getByText("ml-toolkit"));
+    fireEvent.change(getByDisplayValue("ml-toolkit"), {
+      target: { value: "renamed" },
+    });
+    fireEvent.click(getByText("Share with project"));
+    await waitFor(() => expect(updateEnvironment).toHaveBeenCalled());
+    await waitFor(() => expect(promote).toHaveBeenCalled());
+  });
+
+  it("does not share when the pre-share save fails", async () => {
+    updateEnvironment.mockRejectedValueOnce(new Error("save failed"));
+    mockEnvironments = [env()];
+    const { getByText, getByDisplayValue } = renderDrawer();
+    fireEvent.click(getByText("ml-toolkit"));
+    fireEvent.change(getByDisplayValue("ml-toolkit"), {
+      target: { value: "renamed" },
+    });
+    fireEvent.click(getByText("Share with project"));
+    await waitFor(() => expect(updateEnvironment).toHaveBeenCalled());
+    expect(promote).not.toHaveBeenCalled();
   });
 
   it("attaches a ready environment to the computer", async () => {

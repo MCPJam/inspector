@@ -161,8 +161,10 @@ export function ComputerView({
   }, [effectiveProjectId, resetComputer]);
 
   // Reset and image changes both rebuild the box, so only offer them when it's
-  // settled (not mid-provision).
+  // settled (not mid-provision). Attaching is also allowed when there's no
+  // computer yet (the backend provisions-with-pin on first use).
   const canReset = isReady || liveStatus === "hibernating";
+  const canAttach = liveStatus === null || canReset;
 
   if (!isAuthenticated) {
     return <Empty>Sign in to use a personal computer for this project.</Empty>;
@@ -416,6 +418,7 @@ export function ComputerView({
           onOpenChange={setEnvDrawerOpen}
           projectId={effectiveProjectId}
           attachedEnvironmentId={attachedEnvironmentId}
+          canAttach={canAttach}
         />
       ) : null}
 

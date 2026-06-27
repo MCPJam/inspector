@@ -54,11 +54,15 @@ export function EnvironmentsDrawer({
   onOpenChange,
   projectId,
   attachedEnvironmentId,
+  canAttach,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   attachedEnvironmentId: string | null;
+  /** Whether the computer is in a state that can accept an image change
+   * (settled or not-yet-provisioned) — mirrors Reset's gating. */
+  canAttach: boolean;
 }) {
   const environments = useEnvironments(open ? projectId : null);
   const setComputerEnvironment = useSetComputerEnvironment();
@@ -105,7 +109,7 @@ export function EnvironmentsDrawer({
               setCreating(true);
             }}
             onUseBase={() => void detachToBase()}
-            attachToBaseDisabled={attachedEnvironmentId === null}
+            attachToBaseDisabled={attachedEnvironmentId === null || !canAttach}
           />
         ) : creating ? (
           <NewEnvironmentForm
@@ -123,6 +127,7 @@ export function EnvironmentsDrawer({
             env={selected}
             projectId={projectId}
             isAttached={attachedEnvironmentId === selected.environmentId}
+            canAttach={canAttach}
             onBack={() => setSelectedId(null)}
             onDeleted={() => setSelectedId(null)}
           />
@@ -305,12 +310,14 @@ function EnvironmentDetail({
   env,
   projectId,
   isAttached,
+  canAttach,
   onBack,
   onDeleted,
 }: {
   env: EnvironmentView;
   projectId: string;
   isAttached: boolean;
+  canAttach: boolean;
   onBack: () => void;
   onDeleted: () => void;
 }) {
@@ -394,6 +401,9 @@ function EnvironmentDetail({
   };
 
   const onPromote = async () => {
+    // Persist unsaved edits first so the project gets what the editor shows,
+    // not the last-saved definition (mirrors Build's save-first behavior).
+    if (dirty && !(await save())) return;
     try {
       await promote({ environmentId: env.environmentId });
       toast.success("Shared with the project.");
@@ -470,9 +480,11 @@ function EnvironmentDetail({
           size="sm"
           variant="outline"
           onClick={() => void useOnComputer()}
-          disabled={!readyToAttach || attaching || isAttached}
+          disabled={!readyToAttach || attaching || isAttached || !canAttach}
           title={
-            readyToAttach
+            !canAttach
+              ? "Wait for the computer to be ready or asleep before changing its image"
+              : readyToAttach
               ? undefined
               : "Build the environment (and save changes) before using it"
           }
