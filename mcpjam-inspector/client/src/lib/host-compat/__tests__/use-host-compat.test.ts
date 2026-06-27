@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -28,6 +28,13 @@ const disconnected = (name: string): ServerWithName =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Always restore real timers, even if a fake-timer test throws before its own
+// cleanup — otherwise a later test runs under fake timers and hangs/flakes.
+// `useRealTimers()` is a safe no-op when real timers are already active.
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("useServerToolsData", () => {
@@ -75,6 +82,7 @@ describe("useServerToolsData", () => {
     // Flush the rejection + backoff timers for the two retries.
     await vi.runAllTimersAsync();
     expect(mockListTools).toHaveBeenCalledTimes(3); // TOOLS_FETCH_MAX_ATTEMPTS
-    vi.useRealTimers();
+    // Restoration is handled by afterEach, so an early throw above can't leave
+    // fake timers active for the next test.
   });
 });
