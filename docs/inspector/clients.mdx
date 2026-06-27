@@ -46,6 +46,22 @@ These settings control how the model interacts with tools during a chat session.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 
+### System tools
+
+The **Tools** tab of the Client focus panel lists the first-party built-in tools the host makes available to the model — for example, **Web Search**. The tab appears only when the deployment exposes at least one built-in tool.
+
+Each tool is shown as a toggle. Tools that require a personal computer (such as Bash) are shown in a blocked state until a computer is attached; the blocked row points you to the **Computer** tab to attach one first.
+
+### Personal computer
+
+The **Computer** tab lets you attach or detach a per-member cloud workstation (a persistent Linux sandbox) to the host. Attaching a computer is required before you can enable computer-backed tools like Bash in the Tools tab. Detaching automatically removes any computer-backed tool IDs from the host's tool selection.
+
+The Computer tab is shown when the `computers-enabled` feature is on, or when a computer is already attached (so an existing attachment always stays detachable even if the feature is later turned off).
+
+<Note>
+  Clicking the **Built-in tools** or **Computer** island on the host canvas opens the corresponding tab directly, so you can jump straight to the right editor from the visual diagram.
+</Note>
+
 ### MCP App settings (SEP-1865)
 
 When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
