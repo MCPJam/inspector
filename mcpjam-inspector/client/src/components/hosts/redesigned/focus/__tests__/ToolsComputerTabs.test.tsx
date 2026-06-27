@@ -28,6 +28,30 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: () => true,
 }));
+// Harness native built-in tools (read-only). Returns a list only for a harness
+// host (non-null harnessId), mirroring the real catalog hook.
+vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
+  useHarnessBuiltinToolCatalog: (harnessId: string | null) =>
+    harnessId
+      ? {
+          tools: [
+            {
+              key: "read",
+              name: "Read",
+              toolUseKind: "readonly",
+              description: "Read file contents",
+            },
+            {
+              key: "glob",
+              name: "Glob",
+              toolUseKind: "readonly",
+              description: "Find files by pattern",
+            },
+          ],
+          loading: false,
+        }
+      : { tools: [], loading: false },
+}));
 
 import { ToolsTab } from "../ToolsTab";
 import { ComputerTab } from "../ComputerTab";
@@ -56,6 +80,28 @@ describe("ToolsTab", () => {
     expect(
       screen.getByText(/attach it in the Computer tab/i),
     ).toBeInTheDocument();
+  });
+
+  it("lists the harness's native built-in tools (read-only) for a harness host", () => {
+    render(
+      <ToolsTab
+        draft={{ ...emptyHostConfigInputV2(), harness: "claude-code" }}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Built-in agent tools")).toBeInTheDocument();
+    expect(screen.getByText("Read")).toBeInTheDocument();
+    expect(screen.getByText("Glob")).toBeInTheDocument();
+    expect(screen.getByText("Read file contents")).toBeInTheDocument();
+    // Read-only: no switch/checkbox for these (unlike the System tools rows).
+    expect(screen.queryByRole("switch", { name: "Read" })).toBeNull();
+  });
+
+  it("hides the agent built-in tools block for a non-harness (emulated) host", () => {
+    render(
+      <ToolsTab draft={emptyHostConfigInputV2()} onDraftChange={vi.fn()} />,
+    );
+    expect(screen.queryByText("Built-in agent tools")).toBeNull();
   });
 });
 

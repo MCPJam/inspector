@@ -4,6 +4,7 @@ import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 
 interface ToolsTabProps {
   draft: HostConfigInputV2;
@@ -43,6 +44,12 @@ export function ToolsTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
+  // For a harness host (e.g. Claude Code), show the agent's NATIVE built-in
+  // tools (Bash, Read, Edit, …) — read-only: they're intrinsic to the runtime
+  // and run in its sandbox, so they aren't toggled here.
+  const { tools: harnessTools, loading: harnessLoading } =
+    useHarnessBuiltinToolCatalog(draft.harness ?? null);
+
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock
@@ -59,6 +66,43 @@ export function ToolsTab({
           onChange={(builtInToolIds) => update({ builtInToolIds })}
         />
       </FocusBlock>
+
+      {draft.harness && (
+        <FocusBlock
+          title="Built-in agent tools"
+          subtitle="Native tools the agent runs in its sandbox. Always available; not configurable here."
+        >
+          {harnessLoading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : harnessTools.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No built-in tools reported.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {harnessTools.map((tool) => (
+                <li key={tool.key}>
+                  <div className="flex items-center gap-1.5">
+                    <code className="text-xs font-mono font-medium">
+                      {tool.name}
+                    </code>
+                    {tool.toolUseKind && (
+                      <span className="font-mono text-[9px] rounded bg-accent px-1 py-[1px] text-accent-foreground">
+                        {tool.toolUseKind}
+                      </span>
+                    )}
+                  </div>
+                  {tool.description && (
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      {tool.description}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </FocusBlock>
+      )}
     </div>
   );
 }

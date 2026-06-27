@@ -24,28 +24,19 @@ export type HarnessBuiltinToolInfo = {
 const CACHE = new Map<string, HarnessBuiltinToolInfo[]>();
 
 /**
- * For the given previewed host, when it runs a harness (e.g. Claude Code),
- * fetches that harness's native built-in tools so the Tools panel / Raw tab can
- * show what the host can do. Returns an empty list for non-harness (emulated)
- * hosts or a null host.
- *
- * Takes the resolved `previewedHostId` from the caller (PlaygroundTab /
- * PlaygroundMain already compute it via `usePreviewedHostId` with the correct
- * `sharedProjectId ?? activeProjectId` key) rather than re-deriving it, so the
- * lookup can't drift from the rest of the playground.
+ * Fetch a harness's native built-in tool catalog by harness id (e.g.
+ * `"claude-code"`). Static published-package metadata, cached per id. Pass
+ * `null` for non-harness/emulated → empty list. Used directly by surfaces that
+ * already know the harness (the host editor's Tools tab), and indirectly by
+ * {@link useHarnessBuiltinTools}.
  *
  * REST over `authFetch` + local state (no `useQuery` — that's Convex here, not
  * React Query).
  */
-export function useHarnessBuiltinTools(hostId: string | null): {
-  harnessId: string | null;
+export function useHarnessBuiltinToolCatalog(harnessId: string | null): {
   tools: HarnessBuiltinToolInfo[];
   loading: boolean;
 } {
-  const { isAuthenticated } = useConvexAuth();
-  const { host } = useHost({ isAuthenticated, hostId });
-  const harnessId = host?.config?.harness ?? null;
-
   const [tools, setTools] = useState<HarnessBuiltinToolInfo[]>(() =>
     harnessId ? (CACHE.get(harnessId) ?? []) : [],
   );
@@ -78,8 +69,8 @@ export function useHarnessBuiltinTools(hostId: string | null): {
         if (!cancelled) setTools(items);
       })
       .catch(() => {
-        // Soft-fail: a harness host with an unreachable catalog just shows no
-        // built-in section rather than breaking the Tools panel.
+        // Soft-fail: an unreachable catalog just shows no built-in tools rather
+        // than breaking the surface.
         if (!cancelled) setTools([]);
       })
       .finally(() => {
@@ -91,5 +82,28 @@ export function useHarnessBuiltinTools(hostId: string | null): {
     };
   }, [harnessId]);
 
+  return { tools, loading };
+}
+
+/**
+ * For the given previewed host, when it runs a harness (e.g. Claude Code),
+ * fetches that harness's native built-in tools so the Tools panel / Raw tab can
+ * show what the host can do. Returns an empty list for non-harness (emulated)
+ * hosts or a null host.
+ *
+ * Takes the resolved `previewedHostId` from the caller (PlaygroundTab /
+ * PlaygroundMain already compute it via `usePreviewedHostId` with the correct
+ * `sharedProjectId ?? activeProjectId` key) rather than re-deriving it, so the
+ * lookup can't drift from the rest of the playground.
+ */
+export function useHarnessBuiltinTools(hostId: string | null): {
+  harnessId: string | null;
+  tools: HarnessBuiltinToolInfo[];
+  loading: boolean;
+} {
+  const { isAuthenticated } = useConvexAuth();
+  const { host } = useHost({ isAuthenticated, hostId });
+  const harnessId = host?.config?.harness ?? null;
+  const { tools, loading } = useHarnessBuiltinToolCatalog(harnessId);
   return { harnessId, tools, loading };
 }
