@@ -350,6 +350,24 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `compat` command
+
+### `compat`
+
+Check whether an MCP server's tools and widgets work on each supported AI host. Uses shared connection flags plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Only report this host id. Repeat for several. Default: all. |
+| `--retry <n>` | Number of retry attempts on transient failures |
+| `--retry-delay <ms>` | Delay between retries in milliseconds |
+
+Plus the shared connection flags from the `server` commands section above.
+
+If an unknown `--host` id is supplied, the command exits with code `2` and lists the valid ids before connecting.
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
