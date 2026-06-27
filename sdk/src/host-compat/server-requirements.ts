@@ -1,3 +1,4 @@
+import { isAppOnlyTool } from "../host-config/app-only-tool.js";
 import { detectUIType, UIType } from "./ui-detection.js";
 import type { WidgetUsage } from "./widget-scan.js";
 import type { ConnectionFacts, ServerRequirements } from "./types.js";
@@ -20,13 +21,6 @@ export interface HostCompatTool {
 export interface HostCompatToolsInput {
   tools: HostCompatTool[];
   toolsMetadata?: Record<string, Record<string, unknown>>;
-}
-
-/** A tool is app-only when its `_meta.ui.visibility` excludes `"model"`. */
-function isAppOnlyTool(meta: Record<string, unknown> | undefined): boolean {
-  const ui = meta?.ui as { visibility?: unknown } | undefined;
-  const visibility = ui?.visibility;
-  return Array.isArray(visibility) && !visibility.includes("model");
 }
 
 /**

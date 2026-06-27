@@ -105,6 +105,20 @@ describe("deriveServerRequirements", () => {
     expect(r.appOnlyWidgets).toEqual([]);
   });
 
+  it("uses the canonical app-only predicate: only exactly ['app'] is app-only", () => {
+    // Empty or multi-element visibility defaults to model-visible at runtime
+    // (SDK `isAppOnlyTool`), so it must NOT read as app-only here — otherwise an
+    // unrenderable widget gets a `blocked` verdict despite having text fallback.
+    const r = deriveServerRequirements(
+      toolsWith({
+        appOnly: mcpAppsMeta({ visibility: ["app"] }),
+        emptyVis: mcpAppsMeta({ visibility: [] }),
+        multiVis: mcpAppsMeta({ visibility: ["app", "extra"] }),
+      }),
+    );
+    expect(r.appOnlyWidgets).toEqual(["appOnly"]);
+  });
+
   it("distinguishes an unscanned widget server (unknown) from a clean scan ({})", () => {
     expect(
       deriveServerRequirements(
