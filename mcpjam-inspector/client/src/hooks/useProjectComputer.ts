@@ -25,6 +25,9 @@ export interface ComputerView {
   lastError?: string;
   provisionedAt?: number;
   lastActiveAt?: number;
+  /** The custom environment this computer boots from, if any (absent ⇒ base
+   * image). See `computerEnvironments` / the Image picker. */
+  environmentId?: string;
 }
 
 export interface TerminalTokenResult {

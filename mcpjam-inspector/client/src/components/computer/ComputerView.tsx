@@ -2,7 +2,7 @@ import { Component, useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
+import { Boxes, Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputersDataPlaneConfig,
@@ -12,6 +12,11 @@ import {
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
+import {
+  useEnvironments,
+  useResetComputer,
+} from "@/hooks/useComputerEnvironments";
+import { EnvironmentsDrawer } from "./EnvironmentsDrawer";
 import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
 import {
   getBillingErrorMessage,
@@ -46,6 +51,18 @@ export function ComputerView({
   const [starting, setStarting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const resetComputer = useResetComputer();
+  const environments = useEnvironments(effectiveProjectId);
+  const attachedEnvironmentId = status?.environmentId ?? null;
+  const attachedEnvName =
+    attachedEnvironmentId == null
+      ? null
+      : environments?.find((e) => e.environmentId === attachedEnvironmentId)
+          ?.name ?? null;
 
   // Where the terminal lives: this server (local data plane), a deployed
   // data plane (remote URL → cross-origin WS), or nowhere (honest empty
@@ -121,6 +138,26 @@ export function ComputerView({
       setConfirmingDelete(false);
     }
   }, [effectiveProjectId, deleteComputer]);
+
+  const onReset = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setResetting(true);
+    try {
+      const res = await resetComputer({ projectId: effectiveProjectId });
+      toast.success(
+        res.reset ? "Resetting your computer to its image…" : "Nothing to reset."
+      );
+    } catch (err) {
+      toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
+    } finally {
+      setResetting(false);
+      setConfirmingReset(false);
+    }
+  }, [effectiveProjectId, resetComputer]);
+
+  // Reset and image changes both rebuild the box, so only offer them when it's
+  // settled (not mid-provision).
+  const canReset = isReady || liveStatus === "hibernating";
 
   if (!isAuthenticated) {
     return <Empty>Sign in to use a personal computer for this project.</Empty>;
@@ -302,6 +339,80 @@ export function ComputerView({
         A personal Linux workstation for this project — files and installed
         tools persist between sessions; it sleeps when idle and wakes on use.
       </p>
+
+      {status !== undefined ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/10 px-3 py-2 text-sm">
+          <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <Boxes className="h-4 w-4 shrink-0" />
+            Image:
+            <span className="truncate font-medium text-foreground">
+              {attachedEnvName ?? "Base image"}
+            </span>
+            {attachedEnvName ? null : (
+              <span className="hidden sm:inline">Debian + Node + Python</span>
+            )}
+          </span>
+          <span className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEnvDrawerOpen(true)}
+            >
+              Change
+            </Button>
+            {hasComputer ? (
+              confirmingReset ? (
+                <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  Reset to the image? Installed files are wiped.
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => void onReset()}
+                    disabled={resetting}
+                  >
+                    {resetting ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    Reset
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmingReset(false)}
+                    disabled={resetting}
+                  >
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmingReset(true)}
+                  disabled={!canReset}
+                  title={
+                    canReset
+                      ? undefined
+                      : "Reset is available once the computer is ready or asleep"
+                  }
+                >
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  Reset
+                </Button>
+              )
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {effectiveProjectId ? (
+        <EnvironmentsDrawer
+          open={envDrawerOpen}
+          onOpenChange={setEnvDrawerOpen}
+          projectId={effectiveProjectId}
+          attachedEnvironmentId={attachedEnvironmentId}
+        />
+      ) : null}
 
       <UsageMeterBoundary>
         <ComputerUsageMeter projectId={projectId} />
