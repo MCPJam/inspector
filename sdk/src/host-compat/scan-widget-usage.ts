@@ -77,20 +77,19 @@ export async function scanWidgetUsage(
     acc[need] = Array.from(new Set([...(acc[need] ?? []), ...tools]));
   };
 
-  // Track whether ANY read succeeded — if all fail, return undefined (Unknown),
-  // never `{}` (which reads as a conclusive clean scan and lets a host "work").
-  const readResults = await Promise.all(
+  // A widget is "analyzed" only if its read RESOLVED WITH CONTENT — a resolved
+  // read that returned nothing was not scanned, so it must not count as clean.
+  const analyzed = await Promise.all(
     Array.from(toolsByUri.entries()).map(async ([uri, toolNames]) => {
       try {
         const result = await readResource(uri);
         const content = result?.contents?.[0];
-        if (content) {
-          const needs = new Set<WidgetCapabilityNeed>([
-            ...scanWidgetSource(htmlFromContent(content)),
-            ...scanWidgetMeta(content._meta),
-          ]);
-          for (const need of needs) add(need, toolNames);
-        }
+        if (!content) return false; // resolved, but nothing to scan
+        const needs = new Set<WidgetCapabilityNeed>([
+          ...scanWidgetSource(htmlFromContent(content)),
+          ...scanWidgetMeta(content._meta),
+        ]);
+        for (const need of needs) add(need, toolNames);
         return true;
       } catch {
         return false;
@@ -98,5 +97,8 @@ export async function scanWidgetUsage(
     }),
   );
 
-  return readResults.some(Boolean) ? acc : undefined;
+  // Conclusive only when EVERY widget was analyzed. If any couldn't be read,
+  // the capability picture is incomplete → undefined (Unknown), never a false
+  // `{}` clean scan that would let a host read as "works".
+  return analyzed.every(Boolean) ? acc : undefined;
 }

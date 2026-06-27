@@ -70,6 +70,30 @@ describe("scanWidgetUsage", () => {
     expect(usage).toBeUndefined();
   });
 
+  it("returns undefined when a read resolves with no content (not a clean {})", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [widgetTool("chart", "ui://chart")],
+    };
+    // Read resolves, but there's nothing to scan — must NOT read as clean.
+    expect(await scanWidgetUsage(tools, async () => ({}))).toBeUndefined();
+    expect(
+      await scanWidgetUsage(tools, async () => ({ contents: [] })),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when only some widgets could be analyzed", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [widgetTool("a", "ui://a"), widgetTool("b", "ui://b")],
+    };
+    // a reads cleanly; b can't be read → incomplete → Unknown, not partial.
+    const usage = await scanWidgetUsage(tools, async (uri) =>
+      uri === "ui://a"
+        ? htmlResource("<div/>")
+        : Promise.reject(new Error("unreadable")),
+    );
+    expect(usage).toBeUndefined();
+  });
+
   it("honors toolsMetadata over inline _meta when collecting URIs", async () => {
     const tools: HostCompatToolsInput = {
       tools: [{ name: "chart" }],
