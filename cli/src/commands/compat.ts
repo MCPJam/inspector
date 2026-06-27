@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { listTools, readResource } from "@mcpjam/sdk";
 import {
+  buildMarketHostProfiles,
   evaluateMarketHosts,
   scanWidgetUsage,
   type HostCompatToolsInput,
@@ -15,7 +16,11 @@ import {
   parseRetryPolicy,
   parseServerConfig,
 } from "../lib/server-config.js";
-import { writeResult } from "../lib/output.js";
+import { usageError, writeResult } from "../lib/output.js";
+
+// Cap pagination so a pathological server can't loop forever; flag truncation
+// rather than silently dropping later tools.
+const TOOLS_PAGE_CAP = 50;
 
 export function registerCompatCommands(program: Command): void {
   addRetryOptions(
@@ -35,6 +40,22 @@ export function registerCompatCommands(program: Command): void {
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+
+    // Validate --host up front (before connecting) so a typo fails fast with the
+    // valid ids, instead of silently returning an empty report.
+    const validHostIds = buildMarketHostProfiles().map((p) => p.id);
+    const requestedHosts = options.host as string[];
+    const unknownHosts = requestedHosts.filter(
+      (id) => !validHostIds.includes(id),
+    );
+    if (unknownHosts.length > 0) {
+      throw usageError(
+        `Unknown host id${unknownHosts.length === 1 ? "" : "s"}: ${unknownHosts.join(
+          ", ",
+        )}. Valid: ${validHostIds.join(", ")}`,
+      );
+    }
+
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -47,7 +68,8 @@ export function registerCompatCommands(program: Command): void {
         const tools: Array<{ name: string; _meta?: Record<string, unknown> }> =
           [];
         let cursor: string | undefined;
-        for (let page = 0; page < 50; page++) {
+        let truncated = false;
+        for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
           const result = await listTools(manager, { serverId, cursor });
           tools.push(
             ...(result.tools as Array<{
@@ -57,6 +79,8 @@ export function registerCompatCommands(program: Command): void {
           );
           cursor = result.nextCursor;
           if (!cursor) break;
+          // Cap hit with tools still pending — flag rather than drop them.
+          if (page === TOOLS_PAGE_CAP - 1) truncated = true;
         }
         const toolsData: HostCompatToolsInput = { tools };
 
@@ -98,7 +122,12 @@ export function registerCompatCommands(program: Command): void {
               requirements.widgets.dual.length,
             appOnly: requirements.appOnlyWidgets.length,
           },
-          unknownDimensions: requirements.unknownDimensions,
+          unknownDimensions: truncated
+            ? [
+                ...requirements.unknownDimensions,
+                `tools pagination truncated at ${TOOLS_PAGE_CAP} pages — report may be incomplete`,
+              ]
+            : requirements.unknownDimensions,
           summary,
           hosts,
         };
