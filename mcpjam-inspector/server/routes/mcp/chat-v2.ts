@@ -725,6 +725,9 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        // Server-executed built-ins forwarded separately so the harness path
+        // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
+        ...(builtInTools ? { builtInTools } : {}),
         projectId: body.projectId,
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId

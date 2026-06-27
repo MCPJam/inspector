@@ -466,6 +466,11 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
+    // so the harness path can hand MCPJam's server-executed built-ins
+    // (web_search) to HarnessAgent without the MCP-server tools, which the
+    // harness gets via .mcp.json.
+    ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: cleanupStream,

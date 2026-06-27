@@ -290,6 +290,16 @@ export interface MCPJamHandlerOptions {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  /**
+   * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
+   * of `tools`. The emulated engine reads them from `tools`; the harness path
+   * needs them SEPARATELY because the harness's MCP-server tools arrive via
+   * `.mcp.json` — only these host-executed tools are forwarded to
+   * `HarnessAgent({ tools })`, where the runtime calls them and the agent runs
+   * their `execute()` back on this server. Excludes appTools (no execute —
+   * browser-fulfilled) and skills (the harness has its own).
+   */
+  builtInTools?: ToolSet;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
