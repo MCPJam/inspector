@@ -152,6 +152,8 @@ export function evaluateHostCompat(
       findings.push({
         lane: "apps",
         severity: "blocker",
+        code: "app_only_unrenderable",
+        tools: blockedAppOnly,
         title: `${count} app-only tool${count === 1 ? "" : "s"} unusable`,
         detail: `${formatToolNames(blockedAppOnly)} ${count === 1 ? "is" : "are"} app-only (hidden from the model, no text fallback) and need${count === 1 ? "s" : ""} a UI ${profile.label} can't render — so ${count === 1 ? "it's" : "they're"} dead here.`,
         remediation,
@@ -163,6 +165,8 @@ export function evaluateHostCompat(
       findings.push({
         lane: "apps",
         severity: "degraded",
+        code: "widget_text_fallback",
+        tools: degradedFallback,
         title: `${count} widget${count === 1 ? "" : "s"} fall back to text`,
         detail: `${formatToolNames(degradedFallback)} declare${count === 1 ? "s" : ""} a UI ${profile.label} won't render — users get the plain-text result instead.`,
         remediation,
@@ -179,6 +183,11 @@ export function evaluateHostCompat(
           findings.push({
             lane: "apps",
             severity: check.severity,
+            code: "capability_unsupported",
+            capability: check.key,
+            // Copy: `tools` is the shared `widgetUsage[key]` array — don't let a
+            // finding alias (and let a surface mutate) the requirements object.
+            tools: [...tools],
             title: check.title,
             detail: `${formatToolNames(tools)} need \`${check.api}\`, which ${profile.label} doesn't support — ${check.consequence}.`,
             provenance: profile.provenance,
@@ -202,6 +211,7 @@ export function evaluateHostCompat(
     findings.push({
       lane: "server",
       severity: "info",
+      code: "protocol_version_mismatch",
       title: "Protocol version differs",
       detail: `This server negotiated MCP \`${serverVersion}\`; ${profile.label} advertises ${hostVersions
         .map((v) => `\`${v}\``)

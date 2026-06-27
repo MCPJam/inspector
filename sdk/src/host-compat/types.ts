@@ -10,7 +10,7 @@
  */
 
 import type { McpAppsCapabilities } from "../host-config/types.js";
-import type { WidgetUsage } from "./widget-scan.js";
+import type { WidgetCapabilityNeed, WidgetUsage } from "./widget-scan.js";
 
 export type CompatVerdict = "works" | "degraded" | "blocked" | "unknown";
 
@@ -41,9 +41,25 @@ export type ConnectionFacts = {
   protocolVersion?: string;
 };
 
-export type CompatFinding = {
+/**
+ * Stable machine key for a finding — the contract surfaces (CLI/API/MCP) filter
+ * and group on, instead of parsing prose. The prose fields are default copy.
+ */
+export type CompatFindingCode =
+  /** App-only widget the host can't render — no text fallback (blocker). */
+  | "app_only_unrenderable"
+  /** Widget the host can't render but has a text fallback (degraded). */
+  | "widget_text_fallback"
+  /** Widget uses a host capability the host lacks (degraded/info). */
+  | "capability_unsupported"
+  /** Server's negotiated protocol version isn't in the host's set (info). */
+  | "protocol_version_mismatch";
+
+/** Fields common to every finding. The prose is default copy, not the contract. */
+type CompatFindingBase = {
   lane: CompatLane;
   severity: CompatFindingSeverity;
+  /** Default human copy — surfaces may re-render from the semantic fields. */
   title: string;
   detail: string;
   remediation?: string;
@@ -54,6 +70,21 @@ export type CompatFinding = {
    */
   provenance: CompatProvenance;
 };
+
+/**
+ * A finding, discriminated by `code` so the per-code shape is encoded in the
+ * type system — a `capability_unsupported` finding always carries `capability`,
+ * a protocol mismatch never carries `tools`, etc. Surfaces narrow on `code`.
+ */
+export type CompatFinding =
+  | (CompatFindingBase & { code: "app_only_unrenderable"; tools: string[] })
+  | (CompatFindingBase & { code: "widget_text_fallback"; tools: string[] })
+  | (CompatFindingBase & {
+      code: "capability_unsupported";
+      capability: WidgetCapabilityNeed;
+      tools: string[];
+    })
+  | (CompatFindingBase & { code: "protocol_version_mismatch" });
 
 /** Per-lane rollup so a surface can show apps vs server verdicts independently. */
 export type CompatLaneVerdict = {
