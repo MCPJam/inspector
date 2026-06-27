@@ -1,0 +1,307 @@
+---
+title: "host-compat"
+description: "API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usage."
+icon: "book"
+---
+
+`@mcpjam/sdk/host-compat` is the shared host-compatibility engine. It answers "does this MCP server work on host X?" by joining a server's derived requirements against per-host capability profiles to produce `works` / `degraded` / `blocked` verdicts. The same engine powers the Inspector's [Compatibility destination](/inspector/compatibility), the CLI, and the public API.
+
+## Import
+
+```typescript
+import {
+  deriveServerRequirements,
+  evaluateHostCompat,
+  evaluateAllHosts,
+  scanWidgetSource,
+  scanWidgetMeta,
+  detectHostCompatBridgeFromMeta,
+  HostCompatBridge,
+} from "@mcpjam/sdk/host-compat";
+```
+
+---
+
+## deriveServerRequirements()
+
+Derives what a server demands of a host from its tools list, optional widget-usage scan, and optional connection facts.
+
+```typescript
+deriveServerRequirements(
+  toolsData?: HostCompatToolsInput | null,
+  widgetUsage?: WidgetUsage,
+  connectionFacts?: ConnectionFacts,
+): ServerRequirements
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolsData` | `HostCompatToolsInput \| null` | Tools list from `ListToolsResult`, plus optional per-tool `_meta` metadata. |
+| `widgetUsage` | `WidgetUsage` | Capability needs derived from scanning widget HTML (from `scanWidgetSource`). Pass `undefined` when HTML hasn't been fetched yet — the result will include an `unknownDimensions` entry. |
+| `connectionFacts` | `ConnectionFacts` | Protocol version negotiated at connect time. |
+
+### HostCompatToolsInput
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tools` | `HostCompatTool[]` | Array of tools. Each tool needs at minimum a `name` and optional `_meta`. |
+| `toolsMetadata` | `Record<string, Record<string, unknown>>` | Per-tool `_meta` map keyed by tool name. When present, wins over inline `tool._meta`. |
+
+### Returns: ServerRequirements
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `widgets.mcpAppsOnly` | `string[]` | Tool names that declare only an MCP Apps widget template. |
+| `widgets.openaiAppsOnly` | `string[]` | Tool names that declare only an OpenAI Apps SDK template. |
+| `widgets.dual` | `string[]` | Tool names that declare both templates. |
+| `appOnlyWidgets` | `string[]` | Widget tools with no text fallback (hidden from the model). |
+| `hasWidgets` | `boolean` | Whether any widget tools were found. |
+| `widgetUsage` | `WidgetUsage \| undefined` | The passed-in widget usage scan, if any. |
+| `connectionFacts` | `ConnectionFacts \| undefined` | The passed-in connection facts, if any. |
+| `unknownDimensions` | `string[]` | Dimensions that couldn't be determined (e.g. widget HTML not yet fetched). Non-empty means the verdict may be `unknown`. |
+
+### Example
+
+```typescript
+import { deriveServerRequirements } from "@mcpjam/sdk/host-compat";
+
+const tools = await manager.listTools("my-server");
+const requirements = deriveServerRequirements(
+  { tools: tools.tools },
+  undefined, // widgetUsage — not yet scanned
+  { protocolVersion: "2025-11-25" },
+);
+
+console.log(requirements.hasWidgets);          // true / false
+console.log(requirements.widgets.mcpAppsOnly); // ["draw_chart", ...]
+console.log(requirements.unknownDimensions);   // ["widget capabilities (widget HTML not analyzed)"]
+```
+
+---
+
+## evaluateHostCompat()
+
+Evaluates a server's requirements against a single host profile and returns a `HostCompatReport`.
+
+```typescript
+evaluateHostCompat(
+  requirements: ServerRequirements,
+  profile: HostCompatProfile,
+): HostCompatReport
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `requirements` | `ServerRequirements` | Output of `deriveServerRequirements`. |
+| `profile` | `HostCompatProfile` | A host capability profile describing what the host supports. |
+
+### Returns: HostCompatReport
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `hostId` | `string` | Profile identifier (e.g. `"claude"`, `"chatgpt"`). |
+| `hostLabel` | `string` | Human-readable host name. |
+| `verdict` | `CompatVerdict` | `"works"` \| `"degraded"` \| `"blocked"` \| `"unknown"` |
+| `provenance` | `CompatProvenance` | Confidence level of the overall report. |
+| `lanes.apps` | `CompatLaneVerdict` | Apps-lane verdict (widget rendering + capability gaps). |
+| `lanes.server` | `CompatLaneVerdict` | Server-lane verdict (protocol version compatibility). |
+| `findings` | `CompatFinding[]` | Individual findings, each with a lane, severity, title, detail, and optional remediation. |
+
+### CompatVerdict
+
+| Value | Meaning |
+|-------|---------|
+| `"works"` | No blockers or degraded findings. |
+| `"degraded"` | Functional but with capability gaps or text fallbacks. |
+| `"blocked"` | App-only tools are unusable on this host. |
+| `"unknown"` | A required dimension couldn't be determined. |
+
+---
+
+## evaluateAllHosts()
+
+Evaluates a server against multiple host profiles in one call.
+
+```typescript
+evaluateAllHosts(
+  toolsData: HostCompatToolsInput | null | undefined,
+  profiles: HostCompatProfile[],
+  options?: EvaluateAllHostsOptions,
+): HostCompatEvaluation
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolsData` | `HostCompatToolsInput \| null` | Tools list input. |
+| `profiles` | `HostCompatProfile[]` | Array of host profiles to evaluate against. |
+| `options.widgetUsage` | `WidgetUsage` | Widget capability scan results. |
+| `options.connectionFacts` | `ConnectionFacts` | Protocol version from connect time. |
+
+### Returns: HostCompatEvaluation
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `requirements` | `ServerRequirements` | Derived server requirements. |
+| `reports` | `HostCompatReport[]` | One report per profile, in the same order as `profiles`. |
+
+### Example
+
+```typescript
+import {
+  evaluateAllHosts,
+  type HostCompatProfile,
+} from "@mcpjam/sdk/host-compat";
+
+const claudeProfile: HostCompatProfile = {
+  id: "claude",
+  label: "Claude",
+  provenance: "probe",
+  rendersMcpApps: true,
+  rendersOpenAiApps: false,
+  supportedProtocolVersions: ["2025-11-25"],
+  capabilities: {
+    serverTools: true,
+    openLinks: true,
+    message: true,
+    // ...
+  },
+};
+
+const { requirements, reports } = evaluateAllHosts(
+  { tools: toolsList },
+  [claudeProfile],
+  { connectionFacts: { protocolVersion: "2025-11-25" } },
+);
+
+for (const report of reports) {
+  console.log(`${report.hostLabel}: ${report.verdict}`);
+  for (const finding of report.findings) {
+    console.log(`  [${finding.severity}] ${finding.title} — ${finding.detail}`);
+  }
+}
+```
+
+---
+
+## scanWidgetSource()
+
+Scans widget HTML source to detect which MCP Apps capabilities the widget uses.
+
+```typescript
+scanWidgetSource(html: string): WidgetUsage
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `html` | `string` | Raw HTML of the widget (fetched from the MCP resource URI). |
+
+### Returns: WidgetUsage
+
+A map from capability name to the list of tool names whose widgets use that capability. An empty object `{}` means the HTML was scanned and no capability usage was found — this is conclusive. `undefined` means the scan hasn't run yet.
+
+```typescript
+type WidgetUsage = Partial<Record<WidgetCapabilityNeed, string[]>>;
+
+type WidgetCapabilityNeed =
+  | "serverTools"
+  | "serverResources"
+  | "message"
+  | "updateModelContext"
+  | "openLinks"
+  | "downloadFile"
+  | "sandboxPermissions"
+  | "cspFrameDomains"
+  | "logging";
+```
+
+---
+
+## scanWidgetMeta()
+
+Scans a tool's `_meta` bag to detect widget bridge type and app-only status without fetching the HTML.
+
+```typescript
+scanWidgetMeta(meta: Record<string, unknown> | undefined): {
+  bridge: HostCompatBridge;
+  isAppOnly: boolean;
+}
+```
+
+---
+
+## detectHostCompatBridgeFromMeta()
+
+Detects which widget bridge protocol a tool uses from its `_meta` bag.
+
+```typescript
+detectHostCompatBridgeFromMeta(
+  meta: Record<string, unknown> | undefined,
+): HostCompatBridge
+```
+
+### HostCompatBridge
+
+```typescript
+enum HostCompatBridge {
+  NONE = "none",
+  MCP_APPS = "mcp-apps",
+  OPENAI_SDK = "openai-sdk",
+  OPENAI_SDK_AND_MCP_APPS = "openai-sdk-and-mcp-apps",
+}
+```
+
+| Value | Meaning |
+|-------|---------|
+| `NONE` | Tool has no widget template. |
+| `MCP_APPS` | Tool declares an MCP Apps widget (`_meta.ui.resourceUri`). |
+| `OPENAI_SDK` | Tool declares an OpenAI Apps SDK template (`openai/outputTemplate`). |
+| `OPENAI_SDK_AND_MCP_APPS` | Tool declares both templates. |
+
+---
+
+## Types
+
+### HostCompatProfile
+
+Describes a host's capabilities for evaluation purposes. Supply your own profiles or use the Inspector's built-in catalog.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Unique identifier (e.g. `"claude"`). |
+| `label` | `string` | Human-readable name. |
+| `provenance` | `CompatProvenance` | Confidence level of the profile data. |
+| `rendersMcpApps` | `boolean` | Whether the host renders MCP Apps widgets. |
+| `rendersOpenAiApps` | `boolean` | Whether the host renders OpenAI Apps SDK widgets. |
+| `supportedProtocolVersions` | `string[]` | MCP protocol versions the host advertises. |
+| `capabilities` | `Partial<Record<WidgetCapabilityNeed, boolean>>` | Which widget capabilities the host supports. |
+
+### CompatProvenance
+
+| Value | Meaning |
+|-------|---------|
+| `"probe"` | Captured from a real host via DevTools or the inspector. |
+| `"vendor-doc"` | Verified from vendor documentation. |
+| `"observed"` | Stamped by a live widget render run. |
+| `"assumed"` | Best-effort — unverified. |
+
+### ConnectionFacts
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `protocolVersion` | `string` | MCP protocol version negotiated at connect time (e.g. `"2025-11-25"`). |
+
+---
+
+## Related
+
+- [Compatibility destination](/inspector/compatibility) — the Inspector UI powered by this engine
+- [Apps Conformance SDK](/sdk/reference/apps-conformance) — dynamic conformance testing
+- [Protocol Conformance SDK](/sdk/reference/protocol-conformance) — MCP protocol checks
