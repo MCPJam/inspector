@@ -20,22 +20,39 @@ import {
 import type { Skill, SkillListItem, SkillFile } from "../../shared/skill-types";
 
 /**
- * Get all skills directories
+ * Get all skills directories.
+ *
+ * When `projectId` is provided, the shared project-skills cache is inserted
+ * between the global personal skills and the project-local skills, mirroring
+ * the precedence used by the REST routes. The shared cache is populated by
+ * `syncSharedProjectSkills` (services/project-skills-sync); this function
+ * only resolves the path.
  */
-function getSkillsDirs(): string[] {
+function getSkillsDirs(projectId?: string): string[] {
   const homeDir = os.homedir();
   const cwd = process.cwd();
 
-  return [
+  const dirs: string[] = [
     // Global skills
     path.join(homeDir, ".claude", "skills"), // Claude Desktop global skills
     path.join(homeDir, ".mcpjam", "skills"),
     path.join(homeDir, ".agents", "skills"),
-    // Project-local skills
+  ];
+
+  if (projectId && /^[A-Za-z0-9_-]+$/.test(projectId)) {
+    dirs.push(
+      path.join(homeDir, ".mcpjam", "projects", projectId, "skills"),
+    );
+  }
+
+  // Project-local skills
+  dirs.push(
     path.join(cwd, ".claude", "skills"), // Claude Desktop project skills
     path.join(cwd, ".mcpjam", "skills"),
     path.join(cwd, ".agents", "skills"),
-  ];
+  );
+
+  return dirs;
 }
 
 /**
@@ -64,8 +81,10 @@ async function directoryExists(dirPath: string): Promise<boolean> {
 /**
  * List all available skills (metadata only)
  */
-async function listSkillsMetadata(): Promise<SkillListItem[]> {
-  const skillsDirs = getSkillsDirs();
+async function listSkillsMetadata(
+  projectId?: string,
+): Promise<SkillListItem[]> {
+  const skillsDirs = getSkillsDirs(projectId);
   const skillsList: SkillListItem[] = [];
   const seenNames = new Set<string>();
 
@@ -107,8 +126,11 @@ async function listSkillsMetadata(): Promise<SkillListItem[]> {
 /**
  * Find skill directory by name
  */
-async function findSkillDirectory(name: string): Promise<string | null> {
-  const skillsDirs = getSkillsDirs();
+async function findSkillDirectory(
+  name: string,
+  projectId?: string,
+): Promise<string | null> {
+  const skillsDirs = getSkillsDirs(projectId);
 
   for (const skillsDir of skillsDirs) {
     if (!(await directoryExists(skillsDir))) {
@@ -142,8 +164,11 @@ async function findSkillDirectory(name: string): Promise<string | null> {
 /**
  * Get full skill content by name
  */
-async function getSkillContent(name: string): Promise<Skill | null> {
-  const skillDir = await findSkillDirectory(name);
+async function getSkillContent(
+  name: string,
+  projectId?: string,
+): Promise<Skill | null> {
+  const skillDir = await findSkillDirectory(name, projectId);
   if (!skillDir) return null;
 
   const skillFilePath = path.join(skillDir, "SKILL.md");
@@ -194,9 +219,13 @@ function flattenFiles(files: SkillFile[]): SkillFile[] {
 
 /**
  * Create skill tools for AI SDK
- * Returns tools that can be merged with MCP tools
+ * Returns tools that can be merged with MCP tools.
+ *
+ * Passing `projectId` extends the lookup to also include the shared project
+ * skills cache so the LLM can load skills published by other project members.
  */
-export function createSkillTools() {
+export function createSkillTools(opts?: { projectId?: string }) {
+  const projectId = opts?.projectId;
   return {
     loadSkill: tool({
       description:
@@ -215,7 +244,7 @@ export function createSkillTools() {
         }
 
         try {
-          const skill = await getSkillContent(name);
+          const skill = await getSkillContent(name, projectId);
           if (!skill) {
             return `Error: Skill "${name}" not found.`;
           }
@@ -223,7 +252,7 @@ export function createSkillTools() {
           let response = `# Skill: ${skill.name}\n\n${skill.content}`;
 
           // Add supporting files section if any exist
-          const skillDir = await findSkillDirectory(name);
+          const skillDir = await findSkillDirectory(name, projectId);
           if (skillDir) {
             const files = await listFilesRecursive(skillDir);
             const supportingFiles = flattenFiles(files).filter(
@@ -259,7 +288,7 @@ export function createSkillTools() {
         }
 
         try {
-          const skillDir = await findSkillDirectory(name);
+          const skillDir = await findSkillDirectory(name, projectId);
           if (!skillDir) {
             return `Error: Skill "${name}" not found.`;
           }
@@ -296,7 +325,7 @@ export function createSkillTools() {
         }
 
         try {
-          const skillDir = await findSkillDirectory(name);
+          const skillDir = await findSkillDirectory(name, projectId);
           if (!skillDir) {
             return `Error: Skill "${name}" not found.`;
           }
@@ -345,8 +374,10 @@ export function createSkillTools() {
 /**
  * Build the available skills section for the system prompt
  */
-export async function buildSkillsSystemPromptSection(): Promise<string> {
-  const skills = await listSkillsMetadata();
+export async function buildSkillsSystemPromptSection(
+  opts?: { projectId?: string },
+): Promise<string> {
+  const skills = await listSkillsMetadata(opts?.projectId);
 
   if (skills.length === 0) {
     return "";
@@ -368,8 +399,9 @@ export async function buildSkillsSystemPromptSection(): Promise<string> {
  * Get skill tools and system prompt section together
  * Only returns tools if there are skills available
  */
-export async function getSkillToolsAndPrompt() {
-  const skills = await listSkillsMetadata();
+export async function getSkillToolsAndPrompt(opts?: { projectId?: string }) {
+  const projectId = opts?.projectId;
+  const skills = await listSkillsMetadata(projectId);
 
   // Only add skill tools and prompt section if there are skills loaded
   if (skills.length === 0) {
@@ -379,7 +411,7 @@ export async function getSkillToolsAndPrompt() {
     };
   }
 
-  const tools = createSkillTools();
+  const tools = createSkillTools({ projectId });
 
   // Build prompt section from the already-fetched skills list
   let systemPromptSection = `\n\n## Available Skills\n\n`;
