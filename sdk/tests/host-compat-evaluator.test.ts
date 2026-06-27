@@ -3,8 +3,8 @@ import {
   deriveServerRequirements,
   evaluateAllHosts,
   evaluateHostCompat,
-  detectUIType,
-  UIType,
+  detectHostCompatBridgeFromMeta,
+  HostCompatBridge,
   type HostCompatProfile,
   type HostCompatToolsInput,
   type ServerRequirements,
@@ -63,14 +63,18 @@ const reqs = (over: Partial<ServerRequirements> = {}): ServerRequirements => ({
   ...over,
 });
 
-describe("detectUIType", () => {
+describe("detectHostCompatBridgeFromMeta", () => {
   it("classifies by _meta bridge declarations", () => {
-    expect(detectUIType(mcpAppsMeta())).toBe(UIType.MCP_APPS);
-    expect(detectUIType(openaiMeta)).toBe(UIType.OPENAI_SDK);
-    expect(detectUIType({ ...mcpAppsMeta(), ...openaiMeta })).toBe(
-      UIType.OPENAI_SDK_AND_MCP_APPS,
+    expect(detectHostCompatBridgeFromMeta(mcpAppsMeta())).toBe(
+      HostCompatBridge.MCP_APPS,
     );
-    expect(detectUIType({})).toBeNull();
+    expect(detectHostCompatBridgeFromMeta(openaiMeta)).toBe(
+      HostCompatBridge.OPENAI_SDK,
+    );
+    expect(
+      detectHostCompatBridgeFromMeta({ ...mcpAppsMeta(), ...openaiMeta }),
+    ).toBe(HostCompatBridge.OPENAI_SDK_AND_MCP_APPS);
+    expect(detectHostCompatBridgeFromMeta({})).toBeNull();
   });
 });
 
@@ -214,6 +218,61 @@ describe("evaluateHostCompat", () => {
   it("emits no logo fields (facts only)", () => {
     const report = evaluateHostCompat(reqs(), profile());
     expect("logoSrc" in report).toBe(false);
+  });
+});
+
+describe("semantic finding contract (code / tools / capability)", () => {
+  const headless = () =>
+    profile({
+      rendersMcpApps: false,
+      rendersOpenAiApps: false,
+      capabilities: undefined,
+    });
+
+  it("tags an app-only render failure", () => {
+    const f = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        appOnlyWidgets: ["w"],
+        hasWidgets: true,
+      }),
+      headless(),
+    ).findings[0];
+    expect(f.code).toBe("app_only_unrenderable");
+    expect(f.tools).toEqual(["w"]);
+  });
+
+  it("tags a text-fallback render failure", () => {
+    const f = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+      }),
+      headless(),
+    ).findings[0];
+    expect(f.code).toBe("widget_text_fallback");
+    expect(f.tools).toEqual(["w"]);
+  });
+
+  it("tags a capability gap with the capability key", () => {
+    const f = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+        widgetUsage: { message: ["w"] },
+      }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+    ).findings.find((x) => x.code === "capability_unsupported");
+    expect(f?.capability).toBe("message");
+    expect(f?.tools).toEqual(["w"]);
+  });
+
+  it("tags a protocol-version mismatch", () => {
+    const f = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
+      profile({ supportedProtocolVersions: ["2025-11-25"] }),
+    ).findings.find((x) => x.lane === "server");
+    expect(f?.code).toBe("protocol_version_mismatch");
   });
 });
 

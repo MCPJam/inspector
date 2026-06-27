@@ -10,7 +10,7 @@
  */
 
 import type { McpAppsCapabilities } from "../host-config/types.js";
-import type { WidgetUsage } from "./widget-scan.js";
+import type { WidgetCapabilityNeed, WidgetUsage } from "./widget-scan.js";
 
 export type CompatVerdict = "works" | "degraded" | "blocked" | "unknown";
 
@@ -41,9 +41,30 @@ export type ConnectionFacts = {
   protocolVersion?: string;
 };
 
+/**
+ * Stable machine key for a finding — the contract surfaces (CLI/API/MCP) filter
+ * and group on, instead of parsing prose. The prose fields are default copy.
+ */
+export type CompatFindingCode =
+  /** App-only widget the host can't render — no text fallback (blocker). */
+  | "app_only_unrenderable"
+  /** Widget the host can't render but has a text fallback (degraded). */
+  | "widget_text_fallback"
+  /** Widget uses a host capability the host lacks (degraded/info). */
+  | "capability_unsupported"
+  /** Server's negotiated protocol version isn't in the host's set (info). */
+  | "protocol_version_mismatch";
+
 export type CompatFinding = {
   lane: CompatLane;
   severity: CompatFindingSeverity;
+  /** Stable machine key — the semantic contract; surfaces key off this. */
+  code: CompatFindingCode;
+  /** Tools this finding concerns, when tool-specific. */
+  tools?: string[];
+  /** The widget capability at issue, for `capability_unsupported`. */
+  capability?: WidgetCapabilityNeed;
+  /** Default human copy — surfaces may re-render from the semantic fields. */
   title: string;
   detail: string;
   remediation?: string;

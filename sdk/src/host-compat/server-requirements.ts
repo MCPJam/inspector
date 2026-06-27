@@ -1,5 +1,8 @@
 import { isAppOnlyTool } from "../host-config/app-only-tool.js";
-import { detectUIType, UIType } from "./ui-detection.js";
+import {
+  detectHostCompatBridgeFromMeta,
+  HostCompatBridge,
+} from "./ui-detection.js";
 import type { WidgetUsage } from "./widget-scan.js";
 import type { ConnectionFacts, ServerRequirements } from "./types.js";
 
@@ -58,14 +61,14 @@ export function deriveServerRequirements(
       toolsData.toolsMetadata?.[tool.name] ??
       (tool._meta as Record<string, unknown> | undefined);
     let isWidget = true;
-    switch (detectUIType(meta, undefined)) {
-      case UIType.MCP_APPS:
+    switch (detectHostCompatBridgeFromMeta(meta)) {
+      case HostCompatBridge.MCP_APPS:
         mcpAppsOnly.push(tool.name);
         break;
-      case UIType.OPENAI_SDK:
+      case HostCompatBridge.OPENAI_SDK:
         openaiAppsOnly.push(tool.name);
         break;
-      case UIType.OPENAI_SDK_AND_MCP_APPS:
+      case HostCompatBridge.OPENAI_SDK_AND_MCP_APPS:
         dual.push(tool.name);
         break;
       default:

@@ -24,7 +24,10 @@ export {
   type WidgetCapabilityNeed,
   type WidgetUsage,
 } from "./widget-scan.js";
-export { detectUIType, UIType } from "./ui-detection.js";
+export {
+  detectHostCompatBridgeFromMeta,
+  HostCompatBridge,
+} from "./ui-detection.js";
 export type {
   CompatVerdict,
   CompatFindingSeverity,
@@ -32,6 +35,7 @@ export type {
   CompatProvenance,
   ConnectionFacts,
   CompatFinding,
+  CompatFindingCode,
   CompatLaneVerdict,
   HostCompatReport,
   ServerRequirements,

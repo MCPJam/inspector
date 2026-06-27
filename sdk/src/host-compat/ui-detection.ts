@@ -1,52 +1,33 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 /**
- * UI-type detection for widget-bearing tool calls — the classification the
- * compat engine uses to bucket a tool's widget (MCP Apps vs OpenAI Apps vs
- * both). Mirrors `@mcpjam/widget-react`'s `detectUIType` for the `_meta` path
- * (the engine never passes a tool *result*). Kept here so the engine has no
- * dependency on widget-react (which depends on `@mcpjam/sdk` — importing it
- * back would be a package cycle); widget-react can re-export from here.
+ * Narrow, host-compat-specific bridge detection from a tool's `_meta`.
+ *
+ * This is NOT canonical widget detection — it deliberately classifies only the
+ * `_meta`-declared bridge (MCP Apps `ui.resourceUri` and/or OpenAI Apps
+ * `openai/outputTemplate`), which is all the compat engine needs to bucket a
+ * tool. It does NOT scan tool *results* for inline `ui://` resources; the
+ * canonical detector that does lives in `@mcpjam/widget-react`. Named narrowly
+ * so it can't be mistaken for general detection.
  */
 
-export enum UIType {
+/** The widget bridge a tool declares in its `_meta`. */
+export enum HostCompatBridge {
+  /** MCP Apps only (`_meta.ui.resourceUri`). */
   MCP_APPS = "mcp-apps",
+  /** OpenAI Apps only (`openai/outputTemplate`). */
   OPENAI_SDK = "openai-sdk",
+  /** Declares both bridges. */
   OPENAI_SDK_AND_MCP_APPS = "openai-sdk-and-mcp-apps",
-  MCP_UI = "mcp-ui",
 }
 
-export function detectUIType(
+export function detectHostCompatBridgeFromMeta(
   toolMeta: Record<string, unknown> | undefined,
-  toolResult?: unknown,
-): UIType | null {
-  // 1. OpenAI SDK and MCP Apps: openai/outputTemplate AND ui.resourceUri
-  if (
-    toolMeta?.["openai/outputTemplate"] &&
-    getToolUiResourceUri({ _meta: toolMeta })
-  ) {
-    return UIType.OPENAI_SDK_AND_MCP_APPS;
-  }
-
-  // 2. OpenAI SDK: openai/outputTemplate
-  if (toolMeta?.["openai/outputTemplate"]) {
-    return UIType.OPENAI_SDK;
-  }
-
-  // 3. MCP Apps (SEP-1865): ui.resourceUri
-  if (getToolUiResourceUri({ _meta: toolMeta })) {
-    return UIType.MCP_APPS;
-  }
-
-  // 4. MCP-UI: inline ui:// resource in result. The full inspector/widget-react
-  //    detector also scans the result `content[]` via `@mcp-ui/client`'s
-  //    `isUIResource`; the compat engine only classifies by `_meta` (it passes
-  //    no result), so the lighter direct-uri check suffices here.
-  const directResource = (toolResult as { resource?: { uri?: string } })
-    ?.resource;
-  if (directResource?.uri?.startsWith("ui://")) {
-    return UIType.MCP_UI;
-  }
-
+): HostCompatBridge | null {
+  const hasOpenAi = Boolean(toolMeta?.["openai/outputTemplate"]);
+  const hasMcpApps = Boolean(getToolUiResourceUri({ _meta: toolMeta }));
+  if (hasOpenAi && hasMcpApps) return HostCompatBridge.OPENAI_SDK_AND_MCP_APPS;
+  if (hasOpenAi) return HostCompatBridge.OPENAI_SDK;
+  if (hasMcpApps) return HostCompatBridge.MCP_APPS;
   return null;
 }
