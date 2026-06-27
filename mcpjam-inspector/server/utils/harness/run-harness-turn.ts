@@ -405,16 +405,20 @@ export async function runHarnessTurn(
             break;
           }
           const type = part.type;
-          // [harness][debug] TEMP
+          // [harness][debug] TEMP — inline JSON in the message (logger drops the
+          // 2nd metadata arg in this console).
           {
             const pt = String(type ?? "<none>");
             dbgTypeCounts.set(pt, (dbgTypeCounts.get(pt) ?? 0) + 1);
             if (!dbgSeenType.has(pt)) {
               dbgSeenType.add(pt);
-              logger.info("[harness][debug] first part of type", {
-                type: pt,
-                keys: Object.keys(part),
-              });
+              let dump = "";
+              try {
+                dump = JSON.stringify(part).slice(0, 800);
+              } catch {
+                dump = `keys=${JSON.stringify(Object.keys(part))}`;
+              }
+              logger.info(`[harness][debug] first part type=${pt} :: ${dump}`);
             }
           }
           if (type === "text-delta" || type === "text") {
@@ -572,13 +576,11 @@ export async function runHarnessTurn(
           }
         }
         // [harness][debug] TEMP: what did the stream actually contain?
-        logger.info("[harness][debug] stream loop ended", {
-          partTypeCounts: Object.fromEntries(dbgTypeCounts),
-          assistantParts: assistantParts.length,
-          pendingResults: pendingResults.length,
-          stepIndex,
-          turnFinishReason,
-        });
+        logger.info(
+          `[harness][debug] loop ended counts=${JSON.stringify(
+            Object.fromEntries(dbgTypeCounts)
+          )} assistantParts=${assistantParts.length} pendingResults=${pendingResults.length} finishReason=${turnFinishReason}`
+        );
         // Close any open text block first so BOTH the cancelled and normal
         // paths leave a balanced UI stream.
         if (textId !== undefined) writer.write({ type: "text-end", id: textId });
@@ -592,9 +594,13 @@ export async function runHarnessTurn(
         // [harness][debug] TEMP: log the settled text length / any settle error.
         try {
           const settledText = await res.text;
-          logger.info("[harness][debug] res.text settled", {
-            textLength: typeof settledText === "string" ? settledText.length : -1,
-          });
+          logger.info(
+            `[harness][debug] res.text settled len=${
+              typeof settledText === "string" ? settledText.length : -1
+            } preview=${JSON.stringify(
+              typeof settledText === "string" ? settledText.slice(0, 200) : settledText
+            )}`
+          );
         } catch (settleErr) {
           logger.error("[harness][debug] res.text threw", settleErr);
           throw settleErr;
