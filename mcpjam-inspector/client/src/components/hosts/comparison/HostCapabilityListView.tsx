@@ -84,7 +84,9 @@ export function HostCapabilityListView({
     <div
       className="grid gap-4"
       style={{
-        gridTemplateColumns: `repeat(${subjects.length}, minmax(260px, 1fr))`,
+        // auto-fit + min(100%, …) → one full-width column on phones, packing to
+        // multiple columns as the viewport widens (collapses empty tracks).
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
       }}
     >
       {subjects.map((subject) => (
