@@ -519,6 +519,12 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
+              // The harness runs ALL tools in-sandbox (Claude Code executes
+              // them itself). Mark provider-executed so the client doesn't treat
+              // these as client-side tools to fulfill — otherwise
+              // `sendAutomaticallyWhen` auto-continues and the turn re-submits
+              // forever.
+              providerExecuted: true,
             });
             await onToolCall?.({
               toolCallId,
@@ -552,7 +558,13 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId,
               );
-            writer.write({ type: "tool-output-available", toolCallId, output });
+            writer.write({
+              type: "tool-output-available",
+              toolCallId,
+              output,
+              // Provider-executed (in-sandbox) — see tool-input-available above.
+              providerExecuted: true,
+            });
             await onToolResult?.({
               toolCallId,
               toolName: meta.toolName,
