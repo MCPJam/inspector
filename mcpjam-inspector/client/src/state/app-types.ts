@@ -79,6 +79,12 @@ export interface ServerWithName {
   useXaa?: boolean;
   /** Which IdP mints the XAA assertion. v1 only "mcpjam". */
   authServerMode?: "mcpjam" | "own";
+  /**
+   * Which identity provider mints the XAA assertion — orthogonal to
+   * `authServerMode`. "mcpjam" (default) self-mints; "external" runs legs 1+2
+   * against a real OIDC IdP. See `shared/xaa-grants.ts`.
+   */
+  idpMode?: "mcpjam" | "external";
   /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   xaaEmail?: string;

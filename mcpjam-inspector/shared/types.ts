@@ -896,6 +896,13 @@ export interface ServerFormData {
    * follow-up.
    */
   authServerMode?: "mcpjam" | "own";
+  /**
+   * Which identity provider mints the XAA assertion (orthogonal axis to
+   * `authServerMode`, which selects the resource's authorization server).
+   * "mcpjam" (default) self-mints via the built-in test IdP; "external" runs
+   * legs 1+2 against a real OIDC IdP. See `shared/xaa-grants.ts`.
+   */
+  idpMode?: "mcpjam" | "external";
   /** Optional simulated-identity override (subject) for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
