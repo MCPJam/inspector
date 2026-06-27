@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMarketHostProfiles,
   evaluateMarketHosts,
+  MCP_APPS_FULL,
   type HostCompatToolsInput,
 } from "../src/host-compat/index";
 
@@ -58,6 +59,25 @@ describe("buildMarketHostProfiles", () => {
     // Headless hosts render nothing → no matrix.
     expect(profileFor("codex")?.capabilities).toBeUndefined();
     expect(profileFor("perplexity")?.capabilities).toBeUndefined();
+  });
+
+  it("carries each host's advertised protocol versions (or none)", () => {
+    expect(profileFor("goose")?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+    ]);
+    expect(profileFor("codex")?.supportedProtocolVersions).toEqual([
+      "2025-06-18",
+    ]);
+    // Templates that don't pin a version → undefined (protocol check skipped).
+    expect(profileFor("claude")?.supportedProtocolVersions).toBeUndefined();
+  });
+
+  it("exports deeply frozen capability matrices (can't poison verdicts)", () => {
+    expect(Object.isFrozen(MCP_APPS_FULL)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_FULL.availableDisplayModes)).toBe(true);
+    expect(() => {
+      (MCP_APPS_FULL as { message?: boolean }).message = false;
+    }).toThrow();
   });
 
   it("returns fresh copies — mutating one call doesn't affect the next", () => {

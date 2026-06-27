@@ -1,9 +1,9 @@
 import type { McpAppsCapabilities } from "../host-config/types.js";
 import { compatPresetForHostStyle } from "../host-config/compat-runtime.js";
-import {
-  seedHostTemplate,
-  type HostTemplateId,
-} from "../host-config/templates/seed-host-template.js";
+// Type-only — keeps the market-host ids checked against real host templates
+// without pulling the (heavy) template-seeding machinery into this entry's
+// bundle. Protocol versions are stored directly below (see MARKET_HOSTS).
+import type { HostTemplateId } from "../host-config/templates/seed-host-template.js";
 import {
   MCP_APPS_FULL,
   MCP_APPS_CHATGPT,
@@ -39,19 +39,27 @@ type MarketHost = {
   label: string;
   provenance: CompatProvenance;
   rendersMcpApps: boolean;
+  /**
+   * MCP base-protocol versions this host advertises. Mirrors the host
+   * template's `mcpProfile.initialize.supportedProtocolVersions` — stored
+   * directly so this catalog doesn't import the template-seeding machinery.
+   * Omitted when the template doesn't pin a version (the server-lane protocol
+   * check is then skipped). Keep in sync if a template's versions change.
+   */
+  supportedProtocolVersions?: string[];
 };
 
 const MARKET_HOSTS: readonly MarketHost[] = [
   { id: "claude", label: "Claude", provenance: "assumed", rendersMcpApps: true },
   { id: "chatgpt", label: "ChatGPT", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "mistral", label: "Mistral", provenance: "probe", rendersMcpApps: true },
-  { id: "goose", label: "Goose", provenance: "probe", rendersMcpApps: true },
+  { id: "mistral", label: "Mistral", provenance: "probe", rendersMcpApps: true, supportedProtocolVersions: ["2025-11-25"] },
+  { id: "goose", label: "Goose", provenance: "probe", rendersMcpApps: true, supportedProtocolVersions: ["2025-03-26"] },
   { id: "cursor", label: "Cursor", provenance: "probe", rendersMcpApps: true },
   { id: "copilot", label: "Copilot", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "codex", label: "Codex", provenance: "assumed", rendersMcpApps: false },
-  { id: "n8n", label: "n8n", provenance: "probe", rendersMcpApps: false },
-  { id: "perplexity", label: "Perplexity", provenance: "probe", rendersMcpApps: false },
-  { id: "cline", label: "Cline", provenance: "probe", rendersMcpApps: false },
+  { id: "codex", label: "Codex", provenance: "assumed", rendersMcpApps: false, supportedProtocolVersions: ["2025-06-18"] },
+  { id: "n8n", label: "n8n", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-11-25"] },
+  { id: "perplexity", label: "Perplexity", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-06-18"] },
+  { id: "cline", label: "Cline", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-11-25"] },
 ];
 
 /** Per-host MCP Apps capability matrix (only the rendering hosts need one). */
@@ -63,24 +71,6 @@ const MATRIX_BY_ID: Partial<Record<HostTemplateId, McpAppsCapabilities>> = {
   cursor: MCP_APPS_CURSOR,
   copilot: MCP_APPS_COPILOT,
 };
-
-// Seeding a template builds a full config, so cache the protocol-version read
-// per id (templates are static).
-const protocolVersionCache = new Map<HostTemplateId, string[] | undefined>();
-function supportedProtocolVersionsFor(
-  id: HostTemplateId,
-): string[] | undefined {
-  if (!protocolVersionCache.has(id)) {
-    const seeded = seedHostTemplate(id);
-    // `SeededHostConfigInput` types `initialize` loosely; the runtime value
-    // carries `supportedProtocolVersions` (the templates set it).
-    const initialize = seeded.mcpProfile?.initialize as
-      | { supportedProtocolVersions?: string[] }
-      | undefined;
-    protocolVersionCache.set(id, initialize?.supportedProtocolVersions);
-  }
-  return protocolVersionCache.get(id);
-}
 
 let cachedProfiles: readonly HostCompatProfile[] | null = null;
 
@@ -122,7 +112,7 @@ export function buildMarketHostProfiles(): HostCompatProfile[] {
         provenance: host.provenance,
         rendersMcpApps: host.rendersMcpApps,
         rendersOpenAiApps,
-        supportedProtocolVersions: supportedProtocolVersionsFor(host.id),
+        supportedProtocolVersions: host.supportedProtocolVersions,
         capabilities: rendersWidgets
           ? (MATRIX_BY_ID[host.id] ?? MCP_APPS_NO_CLAIMS)
           : undefined,

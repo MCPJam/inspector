@@ -10,10 +10,20 @@ import type { McpAppsCapabilities } from "../host-config/types.js";
  * treat as starting points. The compat engine reads only the boolean capability
  * dimensions (serverTools, message, …); display-mode / behavior keys are carried
  * for fidelity but don't affect verdicts.
+ *
+ * Exported deeply frozen: `buildMarketHostProfiles` reads these module-level
+ * constants, so a consumer mutating one (they're shared) would otherwise poison
+ * verdicts process-wide. Callers needing to edit one should copy it first.
  */
+function frozen(matrix: McpAppsCapabilities): McpAppsCapabilities {
+  if (Array.isArray(matrix.availableDisplayModes)) {
+    Object.freeze(matrix.availableDisplayModes);
+  }
+  return Object.freeze(matrix);
+}
 
 /** Full surface — every dimension on. Claude's baseline. */
-export const MCP_APPS_FULL: McpAppsCapabilities = {
+export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline", "fullscreen", "pip"],
   toolInputPartial: true,
   toolCancelled: true,
@@ -33,17 +43,17 @@ export const MCP_APPS_FULL: McpAppsCapabilities = {
   downloadFile: true,
   requestTeardown: true,
   widgetDisplayModeRequests: "accept",
-};
+});
 
 /** ChatGPT — full minus serverResources + logging. */
-export const MCP_APPS_CHATGPT: McpAppsCapabilities = {
+export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   serverResources: false,
   logging: false,
-};
+});
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
-export const MCP_APPS_MISTRAL: McpAppsCapabilities = {
+export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline", "fullscreen"],
   toolCancelled: false,
@@ -54,17 +64,17 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = {
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
-};
+});
 
 /** Cursor 3.4.17 probe — full minus updateModelContext + message. */
-export const MCP_APPS_CURSOR: McpAppsCapabilities = {
+export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   updateModelContext: false,
   message: false,
-};
+});
 
 /** Goose Desktop 1.38.0 capture — only openLinks (+ toolInfo) advertised. */
-export const MCP_APPS_GOOSE: McpAppsCapabilities = {
+export const MCP_APPS_GOOSE: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline", "fullscreen", "pip"],
   toolInputPartial: false,
   toolCancelled: false,
@@ -84,10 +94,10 @@ export const MCP_APPS_GOOSE: McpAppsCapabilities = {
   downloadFile: false,
   requestTeardown: false,
   widgetDisplayModeRequests: "accept",
-};
+});
 
 /** Microsoft 365 Copilot — published component-bridge table. */
-export const MCP_APPS_COPILOT: McpAppsCapabilities = {
+export const MCP_APPS_COPILOT: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline", "fullscreen"],
   toolInputPartial: false,
   toolCancelled: false,
@@ -107,10 +117,10 @@ export const MCP_APPS_COPILOT: McpAppsCapabilities = {
   downloadFile: false,
   requestTeardown: false,
   widgetDisplayModeRequests: "accept",
-};
+});
 
 /** Spec-default "no claims" — every advertise key off. Fallback baseline. */
-export const MCP_APPS_NO_CLAIMS: McpAppsCapabilities = {
+export const MCP_APPS_NO_CLAIMS: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline"],
   toolInputPartial: false,
   toolCancelled: false,
@@ -130,4 +140,4 @@ export const MCP_APPS_NO_CLAIMS: McpAppsCapabilities = {
   downloadFile: false,
   requestTeardown: false,
   widgetDisplayModeRequests: "accept",
-};
+});
