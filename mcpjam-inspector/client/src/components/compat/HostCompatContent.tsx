@@ -21,10 +21,12 @@ import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
+import { ConformanceGate } from "@/components/compat/ConformanceGate";
+import { VERDICT_META } from "@/components/compat/verdict-meta";
 import type {
   CompatFinding,
+  CompatLane,
   CompatProvenance,
-  CompatVerdict,
   HostCompatReport,
 } from "@/lib/host-compat/types";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -49,35 +51,8 @@ const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
 const isHostTemplateId = (id: string): id is HostTemplateId =>
   COMPAT_TEMPLATE_LABEL.has(id);
 
-/** Lightweight verdict styling: a colored dot + colored label, no pill —
- * keeps each host row to a single quiet line. */
-const VERDICT_META: Record<
-  CompatVerdict,
-  { label: string; dot: string; text: string }
-> = {
-  works: {
-    label: "Works",
-    dot: "bg-emerald-500",
-    text: "text-emerald-600 dark:text-emerald-400",
-  },
-  degraded: {
-    label: "Degraded",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-  },
-  blocked: {
-    label: "Blocked",
-    dot: "bg-red-500",
-    text: "text-red-600 dark:text-red-400",
-  },
-  unknown: {
-    label: "Unknown",
-    dot: "bg-muted-foreground/40",
-    text: "text-muted-foreground",
-  },
-};
-
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
+  observed: "Observed from a live run",
   "vendor-doc": "Verified from vendor docs",
   probe: "Probe-captured from a real host",
   assumed: "Best-effort preset — unverified",
@@ -92,6 +67,14 @@ const FINDING_ICON: Record<
   info: { Icon: Info, className: "text-muted-foreground" },
 };
 
+/** Findings split into two axes — see `CompatLane`. Apps first (where hosts
+ * most visibly differ), then Server (capability negotiation). */
+const LANE_ORDER = ["apps", "server"] as const;
+const LANE_LABEL: Record<CompatLane, string> = {
+  apps: "Apps",
+  server: "Server",
+};
+
 /**
  * Per-host compatibility report for the server detail modal's
  * Compatibility tab. Prototype of the L0 static report in
@@ -103,9 +86,16 @@ export function HostCompatContent({
   projectId,
   serverId,
   onClose,
+  source = "compat_detail_modal",
 }: {
   server: ServerWithName;
   toolsData?: ListToolsResultWithMetadata | null;
+  /**
+   * Analytics surface this report is rendered on — keeps the host-creation
+   * funnel honest (the standalone page must not tag its views/CTAs as modal).
+   * Defaults to the modal so existing callers are unchanged.
+   */
+  source?: "compat_detail_modal" | "compat_page";
   /** Convex project id — required to create a host. */
   projectId?: string | null;
   /** Project-server-ref id to attach to the new host (the modal resolves it
@@ -116,9 +106,10 @@ export function HostCompatContent({
   onClose?: () => void;
 }) {
   const widgetUsage = useWidgetUsage(server.name, toolsData);
+  const protocolVersion = server.initializationInfo?.protocolVersion;
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage]
+    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
+    [toolsData, widgetUsage, protocolVersion]
   );
 
   const posthog = usePostHog();
@@ -143,7 +134,7 @@ export function HostCompatContent({
     if (viewedServerRef.current === server.name) return;
     viewedServerRef.current = server.name;
     posthog.capture("host_compat_tab_viewed", {
-      ...standardEventProps("compat_detail_modal"),
+      ...standardEventProps(source),
       server_name: server.name,
       host_count: reports.length,
     });
@@ -163,7 +154,7 @@ export function HostCompatContent({
     const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
 
     posthog.capture("compat_cta_clicked", {
-      ...standardEventProps("compat_detail_modal"),
+      ...standardEventProps(source),
       template_id: templateId,
       host_label: report.hostLabel,
       verdict: report.verdict,
@@ -208,6 +199,8 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
+      <ConformanceGate server={server} />
+
       <p className="pb-1 text-[11px] text-muted-foreground">
         Static checks from connect-time data · best-effort host profiles
         {requirements.unknownDimensions.length > 0
@@ -301,33 +294,62 @@ export function HostCompatContent({
               </div>
 
               {hasFindings && isOpen && (
-                <ul className="mt-2 space-y-1.5 pl-6">
-                  {report.findings.map((finding, index) => {
-                    const icon = FINDING_ICON[finding.severity];
+                <div className="mt-2 space-y-2.5 pl-6">
+                  {LANE_ORDER.map((lane) => {
+                    const laneFindings = report.findings.filter(
+                      (f) => f.lane === lane
+                    );
+                    if (laneFindings.length === 0) return null;
+                    const laneDot = VERDICT_META[report.lanes[lane].verdict].dot;
                     return (
-                      <li key={index} className="flex gap-2 text-xs">
-                        <icon.Icon
-                          className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-foreground">
-                            {finding.title}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {" — "}
-                            {finding.detail}
-                          </span>
-                          {finding.remediation && (
-                            <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
-                              <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                              <span>{finding.remediation}</span>
-                            </div>
-                          )}
+                      <div key={lane}>
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <span
+                            className={`h-1 w-1 rounded-full ${laneDot}`}
+                          />
+                          {LANE_LABEL[lane]}
                         </div>
-                      </li>
+                        <ul className="space-y-1.5">
+                          {laneFindings.map((finding, index) => {
+                            const icon = FINDING_ICON[finding.severity];
+                            // Phase 1: a finding's provenance equals the host
+                            // baseline, so this badge stays hidden. It surfaces
+                            // when a Tier-2 live run stamps `observed`.
+                            const showProvenance =
+                              finding.provenance !== report.provenance;
+                            return (
+                              <li key={index} className="flex gap-2 text-xs">
+                                <icon.Icon
+                                  className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
+                                />
+                                <div className="min-w-0">
+                                  <span className="font-medium text-foreground">
+                                    {finding.title}
+                                  </span>
+                                  {showProvenance && (
+                                    <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      {finding.provenance}
+                                    </span>
+                                  )}
+                                  <span className="text-muted-foreground">
+                                    {" — "}
+                                    {finding.detail}
+                                  </span>
+                                  {finding.remediation && (
+                                    <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
+                                      <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                                      <span>{finding.remediation}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
                     );
                   })}
-                </ul>
+                </div>
               )}
             </div>
           );

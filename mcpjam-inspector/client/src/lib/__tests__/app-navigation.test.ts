@@ -24,6 +24,14 @@ describe("pathnameToActiveTab", () => {
     );
   });
 
+  it("resolves server-scoped tool destinations (not the servers fallback)", () => {
+    // Regression: a route registered in the router + routePaths but missing
+    // from KNOWN_APP_TAB_SEGMENTS resolves to "servers", so the shell's
+    // flag-redirect / auto-select / active-server-selector never fire.
+    expect(pathnameToActiveTab("/conformance")).toBe("conformance");
+    expect(pathnameToActiveTab("/compatibility")).toBe("compatibility");
+  });
+
   it("normalizes aliases", () => {
     expect(pathnameToActiveTab("/chat/thread-1")).toBe("playground");
   });

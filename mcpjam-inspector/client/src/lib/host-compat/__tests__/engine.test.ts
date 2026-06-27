@@ -5,7 +5,12 @@ import {
   evaluateHostCompat,
 } from "../engine";
 import { summarizeReports } from "@/components/compat/HostCompatStrip";
-import type { HostCompatProfile, ServerRequirements } from "../types";
+import type {
+  CompatVerdict,
+  HostCompatProfile,
+  HostCompatReport,
+  ServerRequirements,
+} from "../types";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles/types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
@@ -63,6 +68,21 @@ const reqs = (over: Partial<ServerRequirements> = {}): ServerRequirements => ({
   appOnlyWidgets: [],
   hasWidgets: false,
   unknownDimensions: [],
+  ...over,
+});
+
+// Minimal report fixture for verdict-rollup tests (only `verdict` is read).
+const report = (
+  over: Pick<HostCompatReport, "hostId" | "verdict"> & Partial<HostCompatReport>,
+): HostCompatReport => ({
+  hostLabel: over.hostId.toUpperCase(),
+  logoSrc: "",
+  provenance: "assumed",
+  lanes: {
+    apps: { verdict: over.verdict, provenance: "assumed" },
+    server: { verdict: "works" as CompatVerdict, provenance: "assumed" },
+  },
+  findings: [],
   ...over,
 });
 
@@ -290,21 +310,124 @@ describe("evaluateAllHosts (real registry)", () => {
   });
 });
 
+describe("evaluateHostCompat — server lane (protocol version)", () => {
+  it("surfaces a version difference as an info finding but an 'unknown' verdict", () => {
+    const r = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
+      profile({ supportedProtocolVersions: ["2025-11-25"] }),
+    );
+    const f = r.findings.find((x) => x.lane === "server");
+    // The finding itself stays non-alarmist (info), but the lane can't claim
+    // a confident "works" when the negotiated version isn't in the host's set.
+    expect(f?.severity).toBe("info");
+    expect(f?.title).toMatch(/Protocol version differs/);
+    expect(r.lanes.server.verdict).toBe("unknown");
+    expect(r.verdict).toBe("unknown");
+  });
+
+  it("stays 'works' on a version match (no server-lane finding)", () => {
+    const r = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2025-11-25" } }),
+      profile({ supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }),
+    );
+    expect(r.lanes.server.verdict).toBe("works");
+    expect(r.verdict).toBe("works");
+  });
+
+  it("no finding when the server's version is in the host's set", () => {
+    const r = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2025-11-25" } }),
+      profile({ supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }),
+    );
+    expect(r.findings.some((x) => x.lane === "server")).toBe(false);
+  });
+
+  it("skips the check when host versions are unknown", () => {
+    const r = evaluateHostCompat(
+      reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
+      profile({ supportedProtocolVersions: undefined }),
+    );
+    expect(r.findings.some((x) => x.lane === "server")).toBe(false);
+  });
+
+  it("skips the check when the server version is unknown (no live connection)", () => {
+    const r = evaluateHostCompat(
+      reqs(),
+      profile({ supportedProtocolVersions: ["2025-11-25"] }),
+    );
+    expect(r.findings.some((x) => x.lane === "server")).toBe(false);
+  });
+});
+
+describe("lane model + aggregation", () => {
+  it("stamps lane + provenance on every finding", () => {
+    const r = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+      }),
+      profile({
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+        provenance: "probe",
+      }),
+    );
+    expect(r.findings.length).toBeGreaterThan(0);
+    expect(r.findings.every((f) => f.lane === "apps")).toBe(true);
+    expect(r.findings.every((f) => f.provenance === "probe")).toBe(true);
+  });
+
+  it("top-level verdict is worst-wins across lanes (apps blocked beats server works)", () => {
+    const r = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        appOnlyWidgets: ["w"],
+        hasWidgets: true,
+        connectionFacts: { protocolVersion: "2025-11-25" },
+      }),
+      profile({
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+        supportedProtocolVersions: ["2025-11-25"],
+      }),
+    );
+    expect(r.lanes.apps.verdict).toBe("blocked");
+    expect(r.lanes.server.verdict).toBe("works");
+    expect(r.verdict).toBe("blocked");
+  });
+
+  it("lane provenance reflects the weakest finding source", () => {
+    const r = evaluateHostCompat(
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+      }),
+      profile({
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+        provenance: "vendor-doc",
+      }),
+    );
+    expect(r.lanes.apps.provenance).toBe("vendor-doc");
+  });
+});
+
 describe("summarizeReports", () => {
   it("rolls up definite verdicts", () => {
     expect(
       summarizeReports([
-        { hostId: "a", hostLabel: "A", logoSrc: "", verdict: "works", provenance: "assumed", findings: [] },
-        { hostId: "b", hostLabel: "B", logoSrc: "", verdict: "degraded", provenance: "assumed", findings: [] },
+        report({ hostId: "a", verdict: "works" }),
+        report({ hostId: "b", verdict: "degraded" }),
       ]),
     ).toBe("works in 1 · degraded in 1");
   });
 
   it("labels an all-unknown result as unknown, not 'checking…'", () => {
-    expect(
-      summarizeReports([
-        { hostId: "a", hostLabel: "A", logoSrc: "", verdict: "unknown", provenance: "assumed", findings: [] },
-      ]),
-    ).toBe("unknown in 1");
+    expect(summarizeReports([report({ hostId: "a", verdict: "unknown" })])).toBe(
+      "unknown in 1",
+    );
   });
 });

@@ -3037,14 +3037,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "uiInitialize": {
           "hostInfo": {
-            "name": "Slack",
+            "name": "Slackbot",
             "version": "1.0.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "name": "Slack MCP Client",
+          "name": "Slackbot MCP Client",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
@@ -3232,14 +3232,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "uiInitialize": {
           "hostInfo": {
-            "name": "Slack",
+            "name": "Slackbot",
             "version": "1.0.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "name": "Slack MCP Client",
+          "name": "Slackbot MCP Client",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [

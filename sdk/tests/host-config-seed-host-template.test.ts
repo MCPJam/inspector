@@ -142,7 +142,7 @@ describe("seedHostTemplate", () => {
       (config.hostContext as any).styles.variables["--color-text-primary"]
     ).toBe("#f8f8f8");
     expect(apps?.uiInitialize?.hostInfo).toEqual({
-      name: "Slack",
+      name: "Slackbot",
       version: "1.0.0",
     });
     expect(apps?.compatRuntime).toEqual({ openaiApps: false });

@@ -2,6 +2,8 @@ import {
   findHostStyle,
   getCompatRuntimeForStyle,
 } from "@/lib/client-styles/registry";
+import { getHostTemplateSupportedProtocolVersions } from "@/lib/client-templates";
+import type { HostTemplateId } from "@/lib/client-templates";
 import type { CompatProvenance, HostCompatProfile } from "./types";
 
 /**
@@ -28,7 +30,10 @@ import type { CompatProvenance, HostCompatProfile } from "./types";
  * assumed = best-effort preset, unverified.
  */
 type MarketHost = {
-  id: string;
+  // `HostTemplateId` (not `string`) so a market-host id that isn't a real host
+  // template is a compile error here, and `getHostTemplateSupportedProtocolVersions`
+  // can resolve it strictly without a cast.
+  id: HostTemplateId;
   label: string;
   logoSrc: string;
   logoSrcByTheme?: { light: string; dark: string };
@@ -127,16 +132,39 @@ const MARKET_HOSTS: readonly MarketHost[] = [
  * flag the registry CAN give us cleanly (the `window.openai` shim toggle),
  * so it stays derived; `rendersMcpApps` is the explicit CLI-aware fact.
  */
+// The profile array has no per-server input — it's a pure function of the
+// static market list + registry — so build it once. Every connected server's
+// memoized `useHostCompatReports` calls `evaluateAllHosts` on each tools/
+// widget/protocol change, which would otherwise rebuild this byte-identical
+// array (registry lookups + spreads) every time.
+let cachedProfiles: HostCompatProfile[] | null = null;
+
 export function buildHostCompatProfiles(): HostCompatProfile[] {
-  return MARKET_HOSTS.map((host) => {
+  if (cachedProfiles) return cachedProfiles;
+  cachedProfiles = MARKET_HOSTS.map((host) => {
     const rendersOpenAiApps = getCompatRuntimeForStyle(host.id).injected;
     const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
     return {
       ...host,
       rendersOpenAiApps,
+      supportedProtocolVersions: supportedProtocolVersionsFor(host.id),
       capabilities: rendersWidgets
         ? findHostStyle(host.id)?.mcp.mcpAppsCapabilities
         : undefined,
     };
   });
+  return cachedProfiles;
+}
+
+// Seeding a template builds a full HostConfigInputV2, so cache the
+// protocol-version read per id (templates are static for the session). Uses
+// the strict resolver — an unknown market-host id throws on first evaluation.
+const protocolVersionCache = new Map<HostTemplateId, string[] | undefined>();
+function supportedProtocolVersionsFor(
+  id: HostTemplateId,
+): string[] | undefined {
+  if (!protocolVersionCache.has(id)) {
+    protocolVersionCache.set(id, getHostTemplateSupportedProtocolVersions(id));
+  }
+  return protocolVersionCache.get(id);
 }

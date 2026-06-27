@@ -1130,22 +1130,22 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "slack",
-    label: "Slack",
+    label: "Slackbot",
     description:
-      "Slack MCP client. MCP Apps rendering, no OpenAI compatibility shim.",
+      "Slackbot MCP host. MCP Apps rendering, no OpenAI compatibility shim.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "slack",
-        // Slack's MCP client is model-provider agnostic toward the server.
+        // Slackbot's MCP host is model-provider agnostic toward the server.
         // Use MCPJam's smallest hosted model so simulated chats run before a
-        // user wires their own Slack-shaped model stack.
+        // user wires their own Slackbot-shaped model stack.
         modelId: "openai/gpt-5-nano",
         temperature: 0.7,
         requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
-      // Captured from Slack on 2026-06-24: the base MCP initialize path
+      // Captured from Slackbot on 2026-06-24: the base MCP initialize path
       // advertises only the MCP UI extension. Preserve that exact surface.
       base.clientCapabilities = {
         extensions: {
@@ -1155,7 +1155,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
       };
 
-      // Captured from Slack's `ui/initialize` response. No
+      // Captured from Slackbot's `ui/initialize` response. No
       // updateModelContext/message/downloadFile claims were present.
       base.hostCapabilitiesOverride = {
         openLinks: {},
@@ -1164,7 +1164,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         logging: {},
       };
 
-      // Per-resource environment context Slack exposes to MCP apps.
+      // Per-resource environment context Slackbot exposes to MCP apps.
       // `toolInfo` is omitted here because it is per-invocation and filled by
       // the renderer when the matrix enables it.
       base.hostContext = {
@@ -1186,11 +1186,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           supportedProtocolVersions: ["2025-06-18"],
-          clientInfo: { name: "Slack MCP Client", version: "1.0.0" },
+          clientInfo: { name: "Slackbot MCP Client", version: "1.0.0" },
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Slack", version: "1.0.0" },
+            hostInfo: { name: "Slackbot", version: "1.0.0" },
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
