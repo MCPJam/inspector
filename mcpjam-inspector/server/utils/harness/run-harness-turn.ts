@@ -293,12 +293,6 @@ export async function runHarnessTurn(
       // id makes the in-sandbox CLI do zero inference (0 tokens, empty turn).
       // Map our host modelId to the CLI alias; undefined ⇒ CLI default.
       const claudeCodeModel = toClaudeCodeModel(modelId);
-      // [harness][debug] TEMP
-      logger.info(
-        `[harness][debug] createClaudeCode model=${String(
-          claudeCodeModel
-        )} from=${modelId} authKind=${Object.keys(auth)[0]}`
-      );
       const harness = createClaudeCode({
         ...(claudeCodeModel ? { model: claudeCodeModel } : {}),
         auth,
@@ -421,11 +415,6 @@ export async function runHarnessTurn(
           });
           stepIndex += 1;
         };
-        // [harness][debug] TEMP: surface what the harness fullStream actually
-        // emits so we can align the part→UI-chunk mapping. Remove once verified.
-        const dbgTypeCounts = new Map<string, number>();
-        const dbgSeenType = new Set<string>();
-        logger.info("[harness][debug] stream loop starting");
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
@@ -434,22 +423,6 @@ export async function runHarnessTurn(
             break;
           }
           const type = part.type;
-          // [harness][debug] TEMP — inline JSON in the message (logger drops the
-          // 2nd metadata arg in this console).
-          {
-            const pt = String(type ?? "<none>");
-            dbgTypeCounts.set(pt, (dbgTypeCounts.get(pt) ?? 0) + 1);
-            if (!dbgSeenType.has(pt)) {
-              dbgSeenType.add(pt);
-              let dump = "";
-              try {
-                dump = JSON.stringify(part).slice(0, 800);
-              } catch {
-                dump = `keys=${JSON.stringify(Object.keys(part))}`;
-              }
-              logger.info(`[harness][debug] first part type=${pt} :: ${dump}`);
-            }
-          }
           if (type === "text-delta" || type === "text") {
             const delta = String(
               (part as { text?: unknown; delta?: unknown }).delta ??
@@ -616,12 +589,6 @@ export async function runHarnessTurn(
             }
           }
         }
-        // [harness][debug] TEMP: what did the stream actually contain?
-        logger.info(
-          `[harness][debug] loop ended counts=${JSON.stringify(
-            Object.fromEntries(dbgTypeCounts)
-          )} assistantParts=${assistantParts.length} pendingResults=${pendingResults.length} finishReason=${turnFinishReason}`
-        );
         // Close any open text block first so BOTH the cancelled and normal
         // paths leave a balanced UI stream.
         if (textId !== undefined) writer.write({ type: "text-end", id: textId });
@@ -632,20 +599,7 @@ export async function runHarnessTurn(
         if (aborted) return;
 
         // Settle usage/finish on res.
-        // [harness][debug] TEMP: log the settled text length / any settle error.
-        try {
-          const settledText = await res.text;
-          logger.info(
-            `[harness][debug] res.text settled len=${
-              typeof settledText === "string" ? settledText.length : -1
-            } preview=${JSON.stringify(
-              typeof settledText === "string" ? settledText.slice(0, 200) : settledText
-            )}`
-          );
-        } catch (settleErr) {
-          logger.error("[harness][debug] res.text threw", settleErr);
-          throw settleErr;
-        }
+        await res.text;
 
         // Flush the final step's assistant message + its tool results. Earlier
         // steps were flushed as new assistant content arrived after results, so
