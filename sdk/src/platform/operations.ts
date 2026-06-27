@@ -33,6 +33,12 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformComputerAttached,
+  PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentBuild,
+  PlatformEnvironmentBuildStarted,
+  PlatformEnvironmentDeleted,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -2609,6 +2615,383 @@ export const deleteHostOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
+      { signal }
+    );
+  },
+};
+
+// ── Computer environments ────────────────────────────────────────────────────
+
+const ENVIRONMENT_SELECTOR_DESCRIPTION = "Environment name or ID.";
+
+async function resolveEnvironment(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformEnvironment> {
+  const page = await client.listEnvironments(
+    { projectId: project.id },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Environment",
+    `project "${project.name}"`
+  );
+}
+
+const environmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z.string().trim().min(1).describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+
+export type ListEnvironmentsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformEnvironment[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listEnvironmentsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListEnvironmentsResult
+> = {
+  name: "list_computer_environments",
+  title: "List computer environments",
+  description:
+    "List the custom Computer environments (Dockerfile images) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listEnvironments(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+export const getEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironment
+> = {
+  name: "get_computer_environment",
+  title: "Show a computer environment",
+  description:
+    "Show one environment's Dockerfile, sharing, and latest build status.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.getEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+const createEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).describe("Display name for the new environment."),
+  dockerfile: z
+    .string()
+    .min(1)
+    .describe(
+      "Dockerfile text. Must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported."
+    ),
+});
+export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
+
+export const createEnvironmentOperation: PlatformOperation<
+  CreateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "create_computer_environment",
+  title: "Create a computer environment",
+  description:
+    "Create a custom Computer environment from a Dockerfile. Build it (build_computer_environment) before a computer can boot from it.",
+  readOnly: false,
+  inputSchema: createEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createEnvironment(
+      {
+        projectId: project.id,
+        body: { name: input.name, dockerfile: input.dockerfile },
+      },
+      { signal }
+    );
+  },
+};
+
+const updateEnvironmentInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    environment: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the environment."),
+    dockerfile: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Replacement Dockerfile text."),
+  })
+  .refine((value) => value.name !== undefined || value.dockerfile !== undefined, {
+    message: "Provide at least one of `name` or `dockerfile` to update.",
+  });
+export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
+
+export const updateEnvironmentOperation: PlatformOperation<
+  UpdateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "update_computer_environment",
+  title: "Update a computer environment",
+  description:
+    "Edit an environment's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
+  readOnly: false,
+  inputSchema: updateEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    const body: { name?: string; dockerfile?: string } = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.dockerfile !== undefined) body.dockerfile = input.dockerfile;
+    return client.updateEnvironment(
+      { projectId: project.id, environmentId: env.id, body },
+      { signal }
+    );
+  },
+};
+
+export const buildEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentBuildStarted
+> = {
+  name: "build_computer_environment",
+  title: "Build a computer environment",
+  description:
+    "Trigger a build of the environment's image. Async — poll list_computer_environment_builds for status.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.buildEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export type ListEnvironmentBuildsResult = {
+  project: SelectedProjectInfo;
+  environmentId: string;
+  items: PlatformEnvironmentBuild[];
+};
+
+export const listEnvironmentBuildsOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  ListEnvironmentBuildsResult
+> = {
+  name: "list_computer_environment_builds",
+  title: "List computer environment builds",
+  description:
+    "List an environment's builds (newest first) with their status and log preview.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    const page = await client.listEnvironmentBuilds(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      environmentId: env.id,
+      items: page.items,
+    };
+  },
+};
+
+export const promoteEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironment
+> = {
+  name: "promote_computer_environment",
+  title: "Share a computer environment with the project",
+  description:
+    "Promote a personal-draft environment to a project-shared one (requires project admin).",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.promoteEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export const useEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformComputerAttached
+> = {
+  name: "use_computer_environment",
+  title: "Use a computer environment",
+  description:
+    "Attach the environment to your computer, which rebuilds it from the pinned image (installed files are wiped). The environment must have a ready build.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.useEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export const resetComputerOperation: PlatformOperation<
+  ProjectScopedInput,
+  PlatformComputerReset
+> = {
+  name: "reset_computer",
+  title: "Reset your computer to its image",
+  description:
+    "Reset the caller's computer back to its current image, wiping mutable state.",
+  readOnly: false,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.resetComputer({ projectId: project.id }, { signal });
+  },
+};
+
+export const deleteEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentDeleted
+> = {
+  name: "delete_computer_environment",
+  title: "Delete a computer environment",
+  description:
+    "Permanently delete an environment. Computers booted from it fall back to the base image. This cannot be undone.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.deleteEnvironment(
+      { projectId: project.id, environmentId: env.id },
       { signal }
     );
   },

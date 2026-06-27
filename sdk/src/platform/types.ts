@@ -308,6 +308,60 @@ export interface PlatformHostDeleted {
   deleted: true;
 }
 
+// ── Computer environments ────────────────────────────────────────────────────
+
+export interface PlatformEnvironmentBuild {
+  id: string;
+  status: "queued" | "building" | "ready" | "failed";
+  provider: "e2b" | "stub";
+  e2bBuildId?: string;
+  baseImageDigests: string[];
+  logPreview?: string;
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+/** A project's custom Computer image (Dockerfile + its latest build). The list
+ * and detail routes return the same shape. */
+export interface PlatformEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  dockerfile: string;
+  contentHash: string;
+  sharing: "user" | "project";
+  isOwner: boolean;
+  currentBuild: PlatformEnvironmentBuild | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformEnvironmentDeleted {
+  id: string;
+  deleted: true;
+}
+
+/** `POST …/build` is async (202): the build runs in the background — poll the
+ * builds list for status. */
+export interface PlatformEnvironmentBuildStarted {
+  id: string;
+  buildId: string;
+  reused: boolean;
+}
+
+export interface PlatformComputerAttached {
+  environmentId: string;
+  computerId: string;
+  status: string;
+}
+
+export interface PlatformComputerReset {
+  projectId: string;
+  reset: boolean;
+}
+
 /** `200` response of `POST /eval-suites/{id}/cases/generate`. */
 export interface PlatformEvalCasesGenerated {
   /** The backend LLM that authored the cases — NOT the case execution model. */
