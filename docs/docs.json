@@ -109,6 +109,7 @@
               "cli/oauth-conformance",
               "cli/oauth-login",
               "cli/apps-conformance",
+              "cli/host-compatibility",
               "cli/tools-resources-prompts",
               "cli/ci",
               "cli/telemetry"
