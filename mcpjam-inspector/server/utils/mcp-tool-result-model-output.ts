@@ -131,7 +131,7 @@ function readReplayableImageModelOutput(output: unknown): unknown | undefined {
     return undefined;
   }
 
-  let sawImageMedia = false;
+  let sawImageCandidate = false;
   let sawOmissionMarker = false;
   const value: unknown[] = [];
 
@@ -157,19 +157,26 @@ function readReplayableImageModelOutput(output: unknown): unknown | undefined {
       ) {
         return undefined;
       }
-      sawImageMedia = true;
-      value.push({
-        type: partRecord.type,
-        data: partRecord.data,
-        mediaType: partRecord.mediaType,
-      });
+      const validated = mcpCallToolResultToModelOutput({
+        content: [
+          {
+            type: "image",
+            data: partRecord.data,
+            mimeType: partRecord.mediaType,
+          },
+        ],
+      } as never);
+      const validatedPart = validated?.value[0];
+      if (!validatedPart) return undefined;
+      sawImageCandidate = true;
+      value.push(validatedPart);
       continue;
     }
 
     return undefined;
   }
 
-  if (!sawImageMedia && !sawOmissionMarker) {
+  if (!sawImageCandidate && !sawOmissionMarker) {
     return undefined;
   }
 

@@ -68,10 +68,7 @@ import {
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
-import {
-  convertToMcpjamModelMessages,
-  createLinkedResourceServerIdResolver,
-} from "../../utils/mcp-tool-result-model-output.js";
+import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -485,33 +482,9 @@ chatV2.post("/", async (c) => {
       resolvedExecution.progressiveToolDiscovery;
     const modelVisibleMcpImageToolResults =
       resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
-    const selectedServerSet = new Set(
-      Array.isArray(selectedServers) ? selectedServers : []
-    );
     const inboundMcpToolResultModelOutputOptions = {
       modelVisibleMcpImageToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
-      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
-        serverIds: Array.isArray(selectedServers) ? selectedServers : [],
-        listTools: (serverId) => c.mcpClientManager.listTools(serverId),
-      }),
-      readLinkedResource: ({
-        serverId,
-        uri,
-        options,
-      }: {
-        serverId: string;
-        uri: string;
-        options?: { abortSignal?: AbortSignal };
-      }) => {
-        if (!selectedServerSet.has(serverId)) {
-          throw new Error("Linked MCP resource server is not selected");
-        }
-        const requestOptions = options?.abortSignal
-          ? { signal: options.abortSignal }
-          : undefined;
-        return mcpClientManager.readResource(serverId, { uri }, requestOptions);
-      },
     };
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The

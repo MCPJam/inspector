@@ -593,7 +593,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("resolves linked MCP image resources from browser-replayed history through the selected server", async () => {
+    it("does not resolve linked MCP image resources from browser-replayed history", async () => {
       const { streamText } = await import("ai");
       manager.listTools.mockResolvedValue({
         tools: [{ name: "qa_return_linked_image_resource" }],
@@ -687,12 +687,8 @@ describe("POST /api/mcp/chat-v2", () => {
         hostStyle: "claude",
       });
 
-      expect(manager.listTools).toHaveBeenCalledWith("qa-server");
-      expect(manager.readResource).toHaveBeenCalledWith(
-        "qa-server",
-        { uri: "example://linked-image.png" },
-        { signal: expect.any(AbortSignal) }
-      );
+      expect(manager.listTools).not.toHaveBeenCalled();
+      expect(manager.readResource).not.toHaveBeenCalled();
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: expect.arrayContaining([
@@ -702,14 +698,20 @@ describe("POST /api/mcp/chat-v2", () => {
                 expect.objectContaining({
                   type: "tool-result",
                   output: {
-                    type: "content",
-                    value: [
-                      {
-                        type: "media",
-                        data: "aGVsbG8=",
-                        mediaType: "image/png",
+                    type: "json",
+                    value: {
+                      type: "json",
+                      value: {
+                        content: [
+                          {
+                            mimeType: "image/png",
+                            name: "Linked PNG resource",
+                            type: "resource_link",
+                            uri: "example://linked-image.png",
+                          },
+                        ],
                       },
-                    ],
+                    },
                   },
                 }),
               ],

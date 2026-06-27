@@ -227,6 +227,39 @@ describe("mcpCallToolResultToModelOutput", () => {
     ]);
   });
 
+  it("validates large images in browser-like runtimes without spreading all bytes", () => {
+    const originalBuffer = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
+    const data = Buffer.from(new Uint8Array(256 * 1024)).toString("base64");
+    let output: ReturnType<typeof mcpCallToolResultToModelOutput>;
+
+    try {
+      Object.defineProperty(globalThis, "Buffer", {
+        configurable: true,
+        writable: true,
+        value: undefined,
+      });
+
+      expect(() => {
+        output = mcpCallToolResultToModelOutput({
+          content: [{ type: "image", data, mimeType: "image/png" }],
+        } as unknown as CallToolResult);
+      }).not.toThrow();
+    } finally {
+      if (originalBuffer) {
+        Object.defineProperty(globalThis, "Buffer", originalBuffer);
+      } else {
+        delete (globalThis as { Buffer?: unknown }).Buffer;
+      }
+    }
+
+    const part = output!.value[0];
+    expect(part).toEqual({
+      type: "media",
+      data,
+      mediaType: "image/png",
+    });
+  });
+
   it("falls back to text markers for ineligible embedded image resources", () => {
     const malformedBase64 = mcpCallToolResultToModelOutput({
       content: [

@@ -386,6 +386,48 @@ describe("mapMcpImageToolOutputs", () => {
     });
   });
 
+  it("validates replayed model-visible image output before restoring it", async () => {
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "json",
+              value: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "AAAA=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const mapped = await mapMcpImageToolOutputs(messages, {
+      modelVisibleMcpImageToolResults: true,
+    });
+
+    expect((mapped[0] as any).content[0].output).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[image omitted: invalid base64 data (image/png)]",
+        },
+      ],
+    });
+  });
+
   it("keeps unrelated content-shaped JSON tool outputs on the JSON path", async () => {
     const messages = [
       {

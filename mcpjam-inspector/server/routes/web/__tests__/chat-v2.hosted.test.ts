@@ -581,7 +581,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
   });
 
-  it("resolves linked image resources from browser-replayed history through the selected server", async () => {
+  it("does not resolve linked image resources from browser-replayed history", async () => {
     const { app, token } = createWebTestApp();
     managerListToolsMock.mockResolvedValue({
       tools: [{ name: "qa_return_linked_image_resource" }],
@@ -651,12 +651,8 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(managerListToolsMock).toHaveBeenCalledWith("server-1");
-    expect(managerReadResourceMock).toHaveBeenCalledWith(
-      "server-1",
-      { uri: "example://linked-image.png" },
-      { signal: expect.any(AbortSignal) }
-    );
+    expect(managerListToolsMock).not.toHaveBeenCalled();
+    expect(managerReadResourceMock).not.toHaveBeenCalled();
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         priorMessages: expect.arrayContaining([
@@ -666,14 +662,17 @@ describe("web routes — chat-v2 hosted mode", () => {
               expect.objectContaining({
                 type: "tool-result",
                 output: {
-                  type: "content",
-                  value: [
-                    {
-                      type: "media",
-                      data: "aGVsbG8=",
-                      mediaType: "image/png",
-                    },
-                  ],
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
                 },
               }),
             ],

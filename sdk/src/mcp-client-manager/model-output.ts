@@ -27,9 +27,24 @@ export type McpModelOutputWithLinkedResourcesOptions = McpModelOutputOptions & {
 };
 
 type ContentBlock = Record<string, unknown>;
+const BYTE_STRING_CHUNK_SIZE = 0x8000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += BYTE_STRING_CHUNK_SIZE) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(i, i + BYTE_STRING_CHUNK_SIZE)
+    );
+  }
+  return btoa(binary);
 }
 
 function estimateBase64DecodedBytes(data: string): {
@@ -56,10 +71,12 @@ function estimateBase64DecodedBytes(data: string): {
     return null;
   }
 
-  const recoded =
-    typeof Buffer !== "undefined"
-      ? Buffer.from(decoded).toString("base64")
-      : btoa(String.fromCharCode(...decoded));
+  let recoded: string;
+  try {
+    recoded = base64FromBytes(decoded);
+  } catch {
+    return null;
+  }
   if (recoded.replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
     return null;
   }

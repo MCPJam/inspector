@@ -64,10 +64,7 @@ import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-log
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import type { Harness } from "@mcpjam/sdk";
-import {
-  convertToMcpjamModelMessages,
-  createLinkedResourceServerIdResolver,
-} from "./mcp-tool-result-model-output.js";
+import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -205,7 +202,6 @@ export async function streamWebChatTurn(
   }
 
   const sessionStartedAt = Date.now();
-  const selectedServerSet = new Set(prepare.selectedServerIds);
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
   const modelMessages = await convertToMcpjamModelMessages(
@@ -213,19 +209,6 @@ export async function streamWebChatTurn(
     {
       modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
-      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
-        serverIds: prepare.selectedServerIds,
-        listTools: (serverId) => manager.listTools(serverId),
-      }),
-      readLinkedResource: ({ serverId, uri, options }) => {
-        if (!selectedServerSet.has(serverId)) {
-          throw new Error("Linked MCP resource server is not selected");
-        }
-        const requestOptions = options?.abortSignal
-          ? { signal: options.abortSignal }
-          : undefined;
-        return manager.readResource(serverId, { uri }, requestOptions);
-      },
     }
   );
 
