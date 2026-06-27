@@ -5,6 +5,10 @@ import {
   MCP_APPS_FULL,
   type HostCompatToolsInput,
 } from "../src/host-compat/index";
+import {
+  seedHostTemplate,
+  type HostTemplateId,
+} from "../src/host-config/templates/seed-host-template";
 
 const toolsWith = (
   toolsMetadata: Record<string, Record<string, unknown>>,
@@ -70,6 +74,23 @@ describe("buildMarketHostProfiles", () => {
     ]);
     // Templates that don't pin a version → undefined (protocol check skipped).
     expect(profileFor("claude")?.supportedProtocolVersions).toBeUndefined();
+  });
+
+  it("inlined protocol pins stay in sync with the host templates", () => {
+    // The catalog stores supportedProtocolVersions directly (so the runtime
+    // entry doesn't import the template machinery). This test IS the contract:
+    // it derives the same fact from the template source of truth and fails if
+    // the inlined pins drift — catching a template version bump that this file
+    // wouldn't otherwise notice.
+    for (const profile of buildMarketHostProfiles()) {
+      const seeded = seedHostTemplate(profile.id as HostTemplateId);
+      const initialize = seeded.mcpProfile?.initialize as
+        | { supportedProtocolVersions?: string[] }
+        | undefined;
+      expect(profile.supportedProtocolVersions).toEqual(
+        initialize?.supportedProtocolVersions,
+      );
+    }
   });
 
   it("exports deeply frozen capability matrices (can't poison verdicts)", () => {
