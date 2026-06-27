@@ -115,6 +115,34 @@ describe("EnvironmentsDrawer", () => {
     );
   });
 
+  it("lands on the new env's detail right after create, before the list refreshes", async () => {
+    createEnvironment.mockResolvedValueOnce(
+      env({ environmentId: "new1", name: "fresh", currentBuild: null })
+    );
+    mockEnvironments = []; // the reactive list hasn't picked up the new row yet
+    const { getByText, getByPlaceholderText } = renderDrawer();
+    fireEvent.click(getByText("New environment"));
+    fireEvent.change(getByPlaceholderText("Environment name"), {
+      target: { value: "fresh" },
+    });
+    fireEvent.click(getByText("Create"));
+    // The detail view (its Build button) shows even though `environments` is [].
+    await waitFor(() => expect(getByText("Build")).toBeTruthy());
+  });
+
+  it("trailing whitespace in the name doesn't count as an unsaved change", () => {
+    mockEnvironments = [env()]; // ready build, name "ml-toolkit"
+    const { getByText, getByDisplayValue } = renderDrawer();
+    fireEvent.click(getByText("ml-toolkit"));
+    fireEvent.change(getByDisplayValue("ml-toolkit"), {
+      target: { value: "ml-toolkit  " },
+    });
+    // dirty stays false (trimmed === env.name) → attach is not blocked by it.
+    expect((getByText("Use on computer") as HTMLButtonElement).disabled).toBe(
+      false
+    );
+  });
+
   it("disables 'Use on computer' until there is a ready build", () => {
     mockEnvironments = [env({ currentBuild: build({ status: "building" }) })];
     const { getByText } = renderDrawer();

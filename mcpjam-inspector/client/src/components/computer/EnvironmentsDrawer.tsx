@@ -64,10 +64,15 @@ export function EnvironmentsDrawer({
   const setComputerEnvironment = useSetComputerEnvironment();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // A just-created env, kept until the (reactive) list query includes it — so
+  // we land on its detail immediately instead of bouncing back to the list.
+  const [justCreated, setJustCreated] = useState<EnvironmentView | null>(null);
 
   const selected = useMemo(
-    () => environments?.find((e) => e.environmentId === selectedId) ?? null,
-    [environments, selectedId]
+    () =>
+      environments?.find((e) => e.environmentId === selectedId) ??
+      (justCreated?.environmentId === selectedId ? justCreated : null),
+    [environments, selectedId, justCreated]
   );
 
   // Detail / new-env editor lives below the list on mobile-narrow drawers.
@@ -108,6 +113,7 @@ export function EnvironmentsDrawer({
             onCancel={() => setCreating(false)}
             onCreated={(env) => {
               setCreating(false);
+              setJustCreated(env);
               setSelectedId(env.environmentId);
             }}
           />
@@ -331,7 +337,10 @@ function EnvironmentDetail({
 
   const build = env.currentBuild;
   const isShared = env.sharing === "project";
-  const dirty = name !== env.name || dockerfile !== env.dockerfile;
+  // Compare against the TRIMMED name (what the backend stores), so trailing
+  // whitespace never counts as a pending change and "dirty" clears after a save.
+  const trimmedName = name.trim();
+  const dirty = trimmedName !== env.name || dockerfile !== env.dockerfile;
   const readyToAttach = build?.status === "ready" && !dirty;
 
   const save = async (): Promise<boolean> => {
@@ -339,7 +348,7 @@ function EnvironmentDetail({
     try {
       await updateEnvironment({
         environmentId: env.environmentId,
-        ...(name !== env.name ? { name: name.trim() } : {}),
+        ...(trimmedName !== env.name ? { name: trimmedName } : {}),
         ...(dockerfile !== env.dockerfile ? { dockerfile } : {}),
       });
       toast.success("Saved.");
