@@ -15,6 +15,21 @@ export interface ReadResourceResult {
 /** Injected `resources/read` — browser, Node, CLI, and API each supply theirs. */
 export type ReadResourceFn = (uri: string) => Promise<ReadResourceResult>;
 
+/**
+ * The widget's readable resource URI — MCP Apps `_meta.ui.resourceUri`, else
+ * the OpenAI Apps `openai/outputTemplate`. Both are `ui://` resources read the
+ * same way; an OpenAI-only widget must still be scanned (skipping it would let
+ * `scanWidgetUsage` return a false "scanned clean").
+ */
+function widgetResourceUri(
+  meta: Record<string, unknown> | undefined,
+): string | undefined {
+  const mcpApps = getToolUiResourceUri({ _meta: meta });
+  if (mcpApps) return mcpApps;
+  const openai = meta?.["openai/outputTemplate"];
+  return typeof openai === "string" && openai.length > 0 ? openai : undefined;
+}
+
 function htmlFromContent(content: { text?: string; blob?: string }): string {
   if (typeof content.text === "string") return content.text;
   if (typeof content.blob === "string") {
@@ -52,7 +67,7 @@ export async function scanWidgetUsage(
     const meta =
       toolsData.toolsMetadata?.[tool.name] ??
       (tool._meta as Record<string, unknown> | undefined);
-    const uri = getToolUiResourceUri({ _meta: meta });
+    const uri = widgetResourceUri(meta);
     if (uri) toolsByUri.set(uri, [...(toolsByUri.get(uri) ?? []), tool.name]);
   }
   if (toolsByUri.size === 0) return {};

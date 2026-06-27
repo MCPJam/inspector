@@ -36,6 +36,18 @@ describe("scanWidgetUsage", () => {
     expect(usage).toEqual({ message: ["chart"] });
   });
 
+  it("scans an OpenAI-only widget (openai/outputTemplate, no ui.resourceUri)", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [{ name: "card", _meta: { "openai/outputTemplate": "ui://card" } }],
+    };
+    const readResource = vi.fn(async () =>
+      htmlResource("window.openai.sendFollowUpMessage()"),
+    );
+    const usage = await scanWidgetUsage(tools, readResource);
+    expect(readResource).toHaveBeenCalledWith("ui://card");
+    expect(usage).toEqual({ message: ["card"] });
+  });
+
   it("reads each shared URI once; all tools inherit its needs", async () => {
     const tools: HostCompatToolsInput = {
       tools: [widgetTool("a", "ui://w"), widgetTool("b", "ui://w")],
