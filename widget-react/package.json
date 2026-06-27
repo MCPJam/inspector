@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/widget-react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
   "license": "MIT",
   "type": "module",
@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.18.0",
+    "@mcpjam/sdk": "^1.26.0",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "lucide-react": "^0.525.0",

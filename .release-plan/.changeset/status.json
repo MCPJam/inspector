@@ -3,61 +3,62 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Support the TestStep eval model in the `eval` command and capture per-step eval screenshots.",
-      "id": "evals-steps-cli"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/inspector",
           "type": "minor"
-        }
-      ],
-      "summary": "Add the TestStep eval model: shared Steps contract, inspector server runtime, step authoring/replay UI, widget interaction recorder, and the eval dashboard with cross-host regression coverage. Also adds XAA support on the Connect page and pasted/dropped chat attachments.",
-      "id": "evals-steps-inspector"
-    },
-    {
-      "releases": [
+        },
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/widget-react",
+          "type": "patch"
         }
       ],
-      "summary": "Extend the platform client with Steps-aware eval operations and types, and update eval result mapping to cover the new TestStep model.",
-      "id": "evals-steps-sdk"
+      "summary": "Release the latest host compatibility, eval export, and dependency updates.\n\n- Add `@mcpjam/sdk/host-compat` for deriving server requirements, evaluating host compatibility, and scanning widget bridge usage.\n- Add the Inspector Compatibility destination with conformance gates, host matrices, live observed widget rendering, and caniuse.dev showcase support.\n- Add OTLP/OpenInference trace export from eval run detail pages.\n- Pin `@modelcontextprotocol/client` to the stable alpha version used by the workspace.",
+      "id": "release-rollup-2026-06-26"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.10.1",
-      "changesets": [
-        "evals-steps-cli"
-      ],
-      "newVersion": "3.11.0"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.19.0",
+      "oldVersion": "2.20.0",
       "changesets": [
-        "evals-steps-inspector"
+        "release-rollup-2026-06-26"
       ],
-      "newVersion": "2.20.0"
+      "newVersion": "2.21.0"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.24.0",
+      "oldVersion": "1.25.0",
       "changesets": [
-        "evals-steps-sdk"
+        "release-rollup-2026-06-26"
       ],
-      "newVersion": "1.25.0"
+      "newVersion": "1.26.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "3.11.0",
+      "changesets": [
+        "release-rollup-2026-06-26"
+      ],
+      "newVersion": "3.11.1"
+    },
+    {
+      "name": "@mcpjam/widget-react",
+      "type": "patch",
+      "oldVersion": "0.1.0",
+      "changesets": [
+        "release-rollup-2026-06-26"
+      ],
+      "newVersion": "0.1.1"
     },
     {
       "name": "@mcpjam/mcp",
