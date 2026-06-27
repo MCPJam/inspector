@@ -251,6 +251,11 @@ export function ServerDetailModal({
   const pendingReconnectRef = useRef<{
     target: McpProtocolVersion | undefined;
   } | null>(null);
+  // Id of the 1.5s reconnect fallback timer (set in
+  // `handleMcpProtocolVersionOverrideChange`). Tracked so it can be
+  // cleared on unmount — otherwise it can fire after the modal closes,
+  // calling `onReconnect` on a torn-down component.
+  const reconnectFallbackTimeoutRef = useRef<number | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
   useEffect(() => {
     const pending = pendingReconnectRef.current;
@@ -268,6 +273,19 @@ export function ServerDetailModal({
     server.name,
     pendingReconnectTick,
   ]);
+
+  // Clear the reconnect fallback timer on unmount so it can't fire after
+  // the modal closes — which would call `onReconnect` on a torn-down
+  // component (and reject in tests after the environment is torn down).
+  useEffect(
+    () => () => {
+      if (reconnectFallbackTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectFallbackTimeoutRef.current);
+        reconnectFallbackTimeoutRef.current = null;
+      }
+    },
+    []
+  );
 
   const handleMcpProtocolVersionOverrideChange = async (
     next: McpProtocolVersion | undefined
@@ -383,7 +401,8 @@ export function ServerDetailModal({
       // Fallback: if the reactive refetch is delayed (network blip,
       // backend slow), trigger reconnect after 1.5s anyway. The watcher
       // effect short-circuits if it already fired.
-      window.setTimeout(() => {
+      reconnectFallbackTimeoutRef.current = window.setTimeout(() => {
+        reconnectFallbackTimeoutRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
           void onReconnect(server.name, {
