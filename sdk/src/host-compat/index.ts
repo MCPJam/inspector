@@ -19,6 +19,19 @@ export {
   type EvaluateAllHostsOptions,
 } from "./evaluator.js";
 export {
+  buildMarketHostProfiles,
+  evaluateMarketHosts,
+} from "./market-hosts.js";
+export {
+  MCP_APPS_FULL,
+  MCP_APPS_CHATGPT,
+  MCP_APPS_MISTRAL,
+  MCP_APPS_CURSOR,
+  MCP_APPS_GOOSE,
+  MCP_APPS_COPILOT,
+  MCP_APPS_NO_CLAIMS,
+} from "./capabilities.js";
+export {
   scanWidgetSource,
   scanWidgetMeta,
   type WidgetCapabilityNeed,
