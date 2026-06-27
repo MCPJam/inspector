@@ -58,11 +58,16 @@ export function ComputerView({
   const resetComputer = useResetComputer();
   const environments = useEnvironments(effectiveProjectId);
   const attachedEnvironmentId = status?.environmentId ?? null;
-  const attachedEnvName =
-    attachedEnvironmentId == null
-      ? null
-      : environments?.find((e) => e.environmentId === attachedEnvironmentId)
-          ?.name ?? null;
+  const hasCustomImage = attachedEnvironmentId != null;
+  const attachedEnvName = hasCustomImage
+    ? environments?.find((e) => e.environmentId === attachedEnvironmentId)
+        ?.name ?? null
+    : null;
+  // A custom image is attached but its name hasn't resolved yet (list still
+  // loading, or it's not visible to this caller) — don't mislabel it as base.
+  const imageLabel = !hasCustomImage
+    ? "Base image"
+    : attachedEnvName ?? "Custom image";
 
   // Where the terminal lives: this server (local data plane), a deployed
   // data plane (remote URL → cross-origin WS), or nowhere (honest empty
@@ -346,9 +351,9 @@ export function ComputerView({
             <Boxes className="h-4 w-4 shrink-0" />
             Image:
             <span className="truncate font-medium text-foreground">
-              {attachedEnvName ?? "Base image"}
+              {imageLabel}
             </span>
-            {attachedEnvName ? null : (
+            {hasCustomImage ? null : (
               <span className="hidden sm:inline">Debian + Node + Python</span>
             )}
           </span>

@@ -124,6 +124,20 @@ describe("EnvironmentsDrawer", () => {
     ).toBe(true);
   });
 
+  it("does not start a build when the dirty save fails", async () => {
+    updateEnvironment.mockRejectedValueOnce(new Error("save failed"));
+    mockEnvironments = [env()];
+    const { getByText, getByDisplayValue } = renderDrawer();
+    fireEvent.click(getByText("ml-toolkit"));
+    // Rename to make the editor dirty so Build saves first.
+    fireEvent.change(getByDisplayValue("ml-toolkit"), {
+      target: { value: "renamed" },
+    });
+    fireEvent.click(getByText("Build"));
+    await waitFor(() => expect(updateEnvironment).toHaveBeenCalled());
+    expect(startBuild).not.toHaveBeenCalled();
+  });
+
   it("attaches a ready environment to the computer", async () => {
     mockEnvironments = [env()];
     const { getByText } = renderDrawer();

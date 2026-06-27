@@ -334,7 +334,7 @@ function EnvironmentDetail({
   const dirty = name !== env.name || dockerfile !== env.dockerfile;
   const readyToAttach = build?.status === "ready" && !dirty;
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true);
     try {
       await updateEnvironment({
@@ -343,17 +343,19 @@ function EnvironmentDetail({
         ...(dockerfile !== env.dockerfile ? { dockerfile } : {}),
       });
       toast.success("Saved.");
+      return true;
     } catch (err) {
       toast.error(errMessage(err, "Could not save."));
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
   const runBuild = async () => {
-    if (dirty) {
-      await save();
-    }
+    // Don't build the previously-persisted Dockerfile if saving the edits
+    // failed — that would forge an image the user didn't actually save.
+    if (dirty && !(await save())) return;
     setBuilding(true);
     try {
       const res = await startBuild({ environmentId: env.environmentId });

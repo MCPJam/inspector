@@ -258,6 +258,21 @@ describe("ComputerView image strip", () => {
     expect(getByText("Base image")).toBeTruthy();
   });
 
+  it("labels an attached env whose name hasn't resolved as a custom image, not base", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "envX",
+    };
+    mockEnvironments = []; // still loading / not visible to this caller
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("Custom image")).toBeTruthy();
+    expect(queryByText("Base image")).toBeNull();
+  });
+
   it("shows the attached environment's name", () => {
     mockStatus = {
       computerId: "c1",
