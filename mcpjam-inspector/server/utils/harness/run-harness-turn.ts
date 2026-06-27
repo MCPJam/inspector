@@ -179,16 +179,22 @@ const HARNESS_LEASE_TTL_MS = 5 * 60_000;
 const HARNESS_HEARTBEAT_MS = 90_000;
 
 /** Stable hash of the session-scoped runtime inputs. A change forces a fresh
- *  harness session (a resumed Claude Code thread keeps the model/instructions/
- *  tools it was created with, so changing them mid-session is unsafe). */
-function harnessRuntimeFingerprint(parts: {
+ *  harness session (a resumed Claude Code thread keeps the model/tools it was
+ *  created with, so changing those mid-session is unsafe).
+ *
+ *  Deliberately EXCLUDES the system prompt. The inspector hands us the per-turn
+ *  `effectiveEnhancedSystemPrompt`, which app/widget chats augment EVERY turn
+ *  with live widget model context (web-chat-turn buildWidgetModelContextSystem-
+ *  Prompt). Hashing it flipped the fingerprint each turn and cold-started every
+ *  app/widget conversation. A resumed thread keeps its original instructions
+ *  regardless, so the prompt isn't a safe fork trigger; model + server set are
+ *  the stable, resume-invalidating dimensions. */
+export function harnessRuntimeFingerprint(parts: {
   modelId: string;
-  systemPrompt?: string;
   selectedServers?: string[];
   permissionMode: string;
 }): string {
   const s = [
-    parts.systemPrompt ?? "",
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
   ].join("");
@@ -321,7 +327,6 @@ export async function runHarnessTurn(
       // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
       const runtimeFingerprint = harnessRuntimeFingerprint({
         modelId,
-        systemPrompt,
         selectedServers: selectedServers ?? [],
         permissionMode: "allow-all",
       });
