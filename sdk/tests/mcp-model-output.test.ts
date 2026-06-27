@@ -210,7 +210,20 @@ describe("mcpCallToolResultToModelOutput", () => {
       },
     ]);
     expect(oversized?.value).toEqual([
-      { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
+      { type: "text", text: "[image omitted: image/png exceeds 2 bytes limit]" },
+    ]);
+  });
+
+  it("rejects non-canonical malformed base64 image data", () => {
+    const malformed = mcpCallToolResultToModelOutput({
+      content: [{ type: "image", data: "AAAA=", mimeType: "image/png" }],
+    } as unknown as CallToolResult);
+
+    expect(malformed?.value).toEqual([
+      {
+        type: "text",
+        text: "[image omitted: invalid base64 data (image/png)]",
+      },
     ]);
   });
 
@@ -250,7 +263,7 @@ describe("mcpCallToolResultToModelOutput", () => {
       },
     ]);
     expect(oversized?.value).toEqual([
-      { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
+      { type: "text", text: "[image omitted: image/png exceeds 2 bytes limit]" },
     ]);
   });
 
@@ -436,7 +449,7 @@ describe("mcpCallToolResultToModelOutput", () => {
       value: [
         {
           type: "text",
-          text: "[image omitted: image/png exceeds 10 MB limit]",
+          text: "[image omitted: image/png exceeds 2 bytes limit]",
         },
       ],
     });

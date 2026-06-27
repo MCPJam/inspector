@@ -40,6 +40,29 @@ function estimateBase64DecodedBytes(data: string): {
   if (!normalized) return null;
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
   if (normalized.length % 4 === 1) return null;
+  if (normalized.includes("=") && !/^[A-Za-z0-9+/]+={1,2}$/.test(normalized)) {
+    return null;
+  }
+
+  const padded =
+    normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  let decoded: Uint8Array;
+  try {
+    decoded =
+      typeof Buffer !== "undefined"
+        ? Buffer.from(padded, "base64")
+        : Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+
+  const recoded =
+    typeof Buffer !== "undefined"
+      ? Buffer.from(decoded).toString("base64")
+      : btoa(String.fromCharCode(...decoded));
+  if (recoded.replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
+    return null;
+  }
 
   const padding = normalized.endsWith("==")
     ? 2
@@ -51,6 +74,12 @@ function estimateBase64DecodedBytes(data: string): {
     bytes: Math.floor((normalized.length * 3) / 4) - padding,
     normalized,
   };
+}
+
+function formatByteLimit(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  if (Number.isInteger(mib)) return `${mib} MB`;
+  return `${bytes} bytes`;
 }
 
 function omissionMarker(reason: string): McpModelOutputContentPart {
@@ -113,7 +142,9 @@ function mapImageData(
   }
 
   if (estimated.bytes > maxImageBytes) {
-    return omissionMarker(`image omitted: ${mimeType} exceeds 10 MB limit`);
+    return omissionMarker(
+      `image omitted: ${mimeType} exceeds ${formatByteLimit(maxImageBytes)} limit`
+    );
   }
 
   return {

@@ -593,8 +593,11 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("maps linked MCP image resource history to media content before streaming", async () => {
+    it("resolves linked MCP image resources from browser-replayed history through the selected server", async () => {
       const { streamText } = await import("ai");
+      manager.listTools.mockResolvedValue({
+        tools: [{ name: "qa_return_linked_image_resource" }],
+      });
       manager.getToolsForAiSdk.mockResolvedValue({
         qa_return_linked_image_resource: {
           description: "Returns a linked PNG image resource for example.",
@@ -605,9 +608,6 @@ describe("POST /api/mcp/chat-v2", () => {
           },
           execute: vi.fn(),
         },
-      });
-      manager.listTools.mockResolvedValue({
-        tools: [{ name: "qa_return_linked_image_resource" }],
       });
       manager.readResource.mockResolvedValue({
         contents: [
@@ -1251,6 +1251,7 @@ describe("POST /api/mcp/chat-v2", () => {
           systemPrompt: "you are a helpful assistant",
           temperature: 0.4,
           requireToolApproval: true,
+          modelVisibleMcpImageToolResults: false,
         });
 
         expect(res.status).toBe(200);
@@ -1297,9 +1298,14 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           temperature: 0.4,
           requireToolApproval: true,
-          modelVisibleMcpImageToolResults: true,
+          modelVisibleMcpImageToolResults: false,
           selectedServerIds: ["abc123serverid", "def456serverid"],
         });
+        expect(body.resumeConfig).toEqual(
+          expect.objectContaining({
+            modelVisibleMcpImageToolResults: false,
+          })
+        );
       } finally {
         global.fetch = originalFetch;
       }

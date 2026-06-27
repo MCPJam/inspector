@@ -7,6 +7,8 @@ const {
   fetchHostRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
+  managerListToolsMock,
+  managerReadResourceMock,
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
@@ -19,6 +21,8 @@ const {
   fetchHostRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
+  managerListToolsMock: vi.fn(),
+  managerReadResourceMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
   validateAppToolEntriesMock: vi.fn(() => []),
   AppToolValidationErrorMock: class AppToolValidationError extends Error {
@@ -56,6 +60,8 @@ vi.mock("@mcpjam/sdk", async () => {
       emitConstructorRpcLogMock(options?.rpcLogger);
       return {
         disconnectAllServers: disconnectAllServersMock,
+        listTools: managerListToolsMock,
+        readResource: managerReadResourceMock,
       };
     }),
   };
@@ -123,6 +129,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       enhancedSystemPrompt: "system",
       resolvedTemperature: 0.7,
     });
+    managerListToolsMock.mockResolvedValue({ tools: [] });
+    managerReadResourceMock.mockResolvedValue({ contents: [] });
     emitConstructorRpcLogMock.mockReset();
     // Default: host runtime-config resolves to a non-harness config so the
     // host-bound (Playground) path routes straight through to the handler.
@@ -566,6 +574,111 @@ describe("web routes — chat-v2 hosted mode", () => {
         hostConfig: expect.objectContaining({
           modelVisibleMcpImageToolResults: false,
         }),
+        resumeConfig: expect.objectContaining({
+          modelVisibleMcpImageToolResults: false,
+        }),
+      })
+    );
+  });
+
+  it("resolves linked image resources from browser-replayed history through the selected server", async () => {
+    const { app, token } = createWebTestApp();
+    managerListToolsMock.mockResolvedValue({
+      tools: [{ name: "qa_return_linked_image_resource" }],
+    });
+    managerReadResourceMock.mockResolvedValue({
+      contents: [
+        {
+          uri: "example://linked-image.png",
+          blob: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        modelVisibleMcpImageToolResults: true,
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          { role: "user", content: "what can you tell me about the image" },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(managerListToolsMock).toHaveBeenCalledWith("server-1");
+    expect(managerReadResourceMock).toHaveBeenCalledWith(
+      "server-1",
+      { uri: "example://linked-image.png" },
+      { signal: expect.any(AbortSignal) }
+    );
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priorMessages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            content: [
+              expect.objectContaining({
+                type: "tool-result",
+                output: {
+                  type: "content",
+                  value: [
+                    {
+                      type: "media",
+                      data: "aGVsbG8=",
+                      mediaType: "image/png",
+                    },
+                  ],
+                },
+              }),
+            ],
+          }),
+        ]),
       })
     );
   });

@@ -223,10 +223,6 @@ export async function mapMcpImageToolOutputs(
   messages: ModelMessage[],
   options: McpToolResultModelOutputOptions = {}
 ): Promise<ModelMessage[]> {
-  if (!options.modelVisibleMcpImageToolResults) {
-    return messages;
-  }
-
   const mappedMessages: ModelMessage[] = [];
   const serverIdByToolCallId = new Map<string, string>();
 
@@ -266,17 +262,22 @@ export async function mapMcpImageToolOutputs(
       }
 
       const rawOutputValue = unwrapJsonToolOutput(part.output);
+      const strippedPart = stripInternalProviderOptions(part);
       if (rawOutputValue == null || typeof rawOutputValue !== "object") {
-        const stripped = stripInternalProviderOptions(part);
-        if (stripped !== part) didChange = true;
-        content.push(stripped);
+        if (strippedPart !== part) didChange = true;
+        content.push(strippedPart);
+        continue;
+      }
+
+      if (!options.modelVisibleMcpImageToolResults) {
+        if (strippedPart !== part) didChange = true;
+        content.push(strippedPart);
         continue;
       }
 
       const replayedModelOutput =
         readReplayableImageModelOutput(rawOutputValue);
       if (replayedModelOutput) {
-        const strippedPart = stripInternalProviderOptions(part);
         didChange = true;
         content.push({
           ...(strippedPart as Record<string, unknown>),
@@ -302,7 +303,6 @@ export async function mapMcpImageToolOutputs(
         resolvedServerId,
         options
       );
-      const strippedPart = stripInternalProviderOptions(part);
       const modelOutput = readResource
         ? await mcpCallToolResultToModelOutputWithLinkedResources(
             rawOutputValue as any,

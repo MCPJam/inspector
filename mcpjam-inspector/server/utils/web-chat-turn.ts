@@ -205,6 +205,7 @@ export async function streamWebChatTurn(
   }
 
   const sessionStartedAt = Date.now();
+  const selectedServerSet = new Set(prepare.selectedServerIds);
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
   const modelMessages = await convertToMcpjamModelMessages(
@@ -212,16 +213,19 @@ export async function streamWebChatTurn(
     {
       modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
+      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
+        serverIds: prepare.selectedServerIds,
+        listTools: (serverId) => manager.listTools(serverId),
+      }),
       readLinkedResource: ({ serverId, uri, options }) => {
+        if (!selectedServerSet.has(serverId)) {
+          throw new Error("Linked MCP resource server is not selected");
+        }
         const requestOptions = options?.abortSignal
           ? { signal: options.abortSignal }
           : undefined;
         return manager.readResource(serverId, { uri }, requestOptions);
       },
-      resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
-        serverIds: prepare.selectedServerIds,
-        listTools: (serverId) => manager.listTools(serverId),
-      }),
     }
   );
 
@@ -356,6 +360,8 @@ export async function streamWebChatTurn(
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
+                modelVisibleMcpImageToolResults:
+                  prepare.modelVisibleMcpImageToolResults,
                 selectedServers:
                   Array.isArray(persist.selectedServerNames) &&
                   persist.selectedServerNames.length ===

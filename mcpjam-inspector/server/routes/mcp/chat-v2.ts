@@ -393,8 +393,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
-        modelVisibleMcpImageToolResults:
-          body.modelVisibleMcpImageToolResults,
+        modelVisibleMcpImageToolResults: body.modelVisibleMcpImageToolResults,
         hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
@@ -486,7 +485,10 @@ chatV2.post("/", async (c) => {
       resolvedExecution.progressiveToolDiscovery;
     const modelVisibleMcpImageToolResults =
       resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
-    const mcpToolResultModelOutputOptions = {
+    const selectedServerSet = new Set(
+      Array.isArray(selectedServers) ? selectedServers : []
+    );
+    const inboundMcpToolResultModelOutputOptions = {
       modelVisibleMcpImageToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
       resolveLinkedResourceServerId: createLinkedResourceServerIdResolver({
@@ -502,6 +504,9 @@ chatV2.post("/", async (c) => {
         uri: string;
         options?: { abortSignal?: AbortSignal };
       }) => {
+        if (!selectedServerSet.has(serverId)) {
+          throw new Error("Linked MCP resource server is not selected");
+        }
         const requestOptions = options?.abortSignal
           ? { signal: options.abortSignal }
           : undefined;
@@ -582,7 +587,7 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToMcpjamModelMessages(
       messages,
-      mcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions
     );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
@@ -766,7 +771,7 @@ chatV2.post("/", async (c) => {
 
       const modelMessages = await convertToMcpjamModelMessages(
         messages,
-        mcpToolResultModelOutputOptions
+        inboundMcpToolResultModelOutputOptions
       );
       const sessionStartedAt = Date.now();
 
@@ -829,6 +834,7 @@ chatV2.post("/", async (c) => {
                         temperature,
                         requireToolApproval,
                         respectToolVisibility,
+                        modelVisibleMcpImageToolResults,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -862,7 +868,7 @@ chatV2.post("/", async (c) => {
       const modelMessages = scrubMessages(
         await convertToMcpjamModelMessages(
           messages,
-          mcpToolResultModelOutputOptions
+          inboundMcpToolResultModelOutputOptions
         )
       );
       const sessionStartedAt = Date.now();
@@ -918,6 +924,7 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
+                      modelVisibleMcpImageToolResults,
                       selectedServers,
                     },
                     ...(directHostConfig
@@ -1016,7 +1023,7 @@ chatV2.post("/", async (c) => {
 
     const modelMessages = await convertToMcpjamModelMessages(
       messages,
-      mcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions
     );
 
     const streamStartedAt = Date.now();
@@ -1089,6 +1096,7 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
+                      modelVisibleMcpImageToolResults,
                       selectedServers,
                     },
                     ...(directHostConfig

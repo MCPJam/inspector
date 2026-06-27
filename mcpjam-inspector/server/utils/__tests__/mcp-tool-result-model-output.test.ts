@@ -58,9 +58,62 @@ describe("mapMcpImageToolOutputs", () => {
   });
 
   it("leaves direct MCP image tool outputs as JSON when disabled", async () => {
-    await expect(mapMcpImageToolOutputs(toolMessages)).resolves.toBe(
+    await expect(mapMcpImageToolOutputs(toolMessages)).resolves.toEqual(
       toolMessages
     );
+  });
+
+  it("strips internal MCPJam provider metadata even when image mapping is disabled", async () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            input: {},
+            providerOptions: {
+              mcpjam: { serverId: "srv-1" },
+              keepme: { value: true },
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "json",
+              value: imageResult,
+            },
+            providerOptions: {
+              mcpjam: { serverId: "srv-1" },
+              keepme: { value: true },
+            },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const mapped = await mapMcpImageToolOutputs(messages, {
+      modelVisibleMcpImageToolResults: false,
+    });
+
+    expect((mapped[0] as any).content[0].providerOptions).toEqual({
+      keepme: { value: true },
+    });
+    expect((mapped[1] as any).content[0].providerOptions).toEqual({
+      keepme: { value: true },
+    });
+    expect((mapped[1] as any).content[0].output).toEqual({
+      type: "json",
+      value: imageResult,
+    });
   });
 
   it("maps embedded MCP image resources to model-visible media output", async () => {
