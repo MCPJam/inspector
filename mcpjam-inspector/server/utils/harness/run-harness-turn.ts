@@ -149,6 +149,20 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
+/** Map a host model id (gateway `creator/model`, e.g. `anthropic/claude-haiku-4.5`)
+ *  to a Claude Code CLI-native model alias. The CLI accepts `sonnet|opus|haiku`
+ *  and resolves them to its current model; it does NOT understand the gateway
+ *  `creator/model` form. Unknown ⇒ undefined (let the CLI use its default). */
+function toClaudeCodeModel(
+  modelId: string,
+): "haiku" | "sonnet" | "opus" | undefined {
+  const m = modelId.toLowerCase();
+  if (m.includes("haiku")) return "haiku";
+  if (m.includes("opus")) return "opus";
+  if (m.includes("sonnet")) return "sonnet";
+  return undefined;
+}
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -273,7 +287,22 @@ export async function runHarnessTurn(
       // with full tool access (the agentic default).
       const permissionMode = "allow-all" as const;
 
-      const harness = createClaudeCode({ model: modelId, auth });
+      // The Claude Code CLI wants a CLI-native model (alias `sonnet|opus|haiku`
+      // or a bare Anthropic id like `claude-sonnet-4-6`), NOT the gateway
+      // `creator/model` id (`anthropic/claude-haiku-4.5`). Passing the gateway
+      // id makes the in-sandbox CLI do zero inference (0 tokens, empty turn).
+      // Map our host modelId to the CLI alias; undefined ⇒ CLI default.
+      const claudeCodeModel = toClaudeCodeModel(modelId);
+      // [harness][debug] TEMP
+      logger.info(
+        `[harness][debug] createClaudeCode model=${String(
+          claudeCodeModel
+        )} from=${modelId} authKind=${Object.keys(auth)[0]}`
+      );
+      const harness = createClaudeCode({
+        ...(claudeCodeModel ? { model: claudeCodeModel } : {}),
+        auth,
+      });
       const agent = new HarnessAgent({
         // Dual-`ai` boundary cast: createClaudeCode returns a HarnessV1 from its
         // own (nested) @ai-sdk/harness copy, nominally distinct from this
