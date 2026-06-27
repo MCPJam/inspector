@@ -153,6 +153,14 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
   return meta as ToolResponseMeta;
 }
 
+function resolveDirectModelOutputForToolResult(result: unknown): unknown | undefined {
+  try {
+    return mcpCallToolResultToModelOutput(result as never);
+  } catch {
+    return undefined;
+  }
+}
+
 async function resolveModelOutputForToolResult(
   result: unknown,
   serverId: string | undefined,
@@ -163,12 +171,30 @@ async function resolveModelOutputForToolResult(
   }
 
   if (serverId) {
-    return mcpCallToolResultToModelOutputWithLinkedResources(result as never, {
-      readResource: ({ uri }) => readResource(serverId, uri),
-    });
+    let linkedReadFailed = false;
+    try {
+      const modelOutput = await mcpCallToolResultToModelOutputWithLinkedResources(
+        result as never,
+        {
+          readResource: async ({ uri }) => {
+            try {
+              return await readResource(serverId, uri);
+            } catch (error) {
+              linkedReadFailed = true;
+              throw error;
+            }
+          },
+        },
+      );
+      return linkedReadFailed
+        ? resolveDirectModelOutputForToolResult(result)
+        : modelOutput;
+    } catch {
+      return resolveDirectModelOutputForToolResult(result);
+    }
   }
 
-  return mcpCallToolResultToModelOutput(result as never);
+  return resolveDirectModelOutputForToolResult(result);
 }
 
 export function useToolExecution({

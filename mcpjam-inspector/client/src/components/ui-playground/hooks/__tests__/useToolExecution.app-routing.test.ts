@@ -206,6 +206,40 @@ describe("useToolExecution app-tool routing", () => {
     });
   });
 
+  it("keeps manual server tool runs successful when linked image enrichment fails", async () => {
+    const rawResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "example://linked-image.png",
+          name: "Linked PNG resource",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "completed",
+      result: rawResult,
+    });
+    mockReadResource.mockRejectedValueOnce(new Error("read failed"));
+
+    const { result } = renderHook(() =>
+      useToolExecution({
+        ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
+        modelVisibleMcpImageToolResults: true,
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    await act(async () => {
+      outcome = await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(outcome?.ok).toBe(true);
+    expect(result.current.pendingExecution?.result).toBe(rawResult);
+    expect(result.current.pendingExecution?.modelOutput).toBeUndefined();
+  });
+
   it("does not resolve linked image resources when model image output is disabled", async () => {
     mockExecuteToolApi.mockResolvedValueOnce({
       status: "completed",
@@ -268,6 +302,43 @@ describe("useToolExecution app-tool routing", () => {
       // a synthetic `app_<hash>` label.
       expect(outcome.toolName).toBe("draw_chart");
     }
+  });
+
+  it("keeps app tool runs successful when linked image enrichment fails", async () => {
+    const rawResult = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "example://linked-image.png",
+          name: "Linked PNG resource",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const callTool = vi.fn().mockResolvedValue(rawResult);
+    await useAppToolsRegistry
+      .getState()
+      .registerInstance(
+        makeInstance("b-1", [tool("qa_return_linked_image_resource")], callTool),
+      );
+    const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+    mockReadResource.mockRejectedValueOnce(new Error("read failed"));
+
+    const { result } = renderHook(() =>
+      useToolExecution({
+        ...makeHookOptions({ selectedTool: alias }),
+        modelVisibleMcpImageToolResults: true,
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    await act(async () => {
+      outcome = await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(outcome?.ok).toBe(true);
+    expect(result.current.pendingExecution?.result).toBe(rawResult);
+    expect(result.current.pendingExecution?.modelOutput).toBeUndefined();
   });
 
   it("stale alias returns a clear error and never calls the MCP server", async () => {
