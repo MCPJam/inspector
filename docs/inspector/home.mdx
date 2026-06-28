@@ -82,6 +82,12 @@ The MCPJam Agent is a persistent chat panel that lets you ask questions about do
 - **Resize** — Drag the left edge of the panel to adjust its width. The minimum width is 360 px; the maximum is 50% of the viewport. Dragging below the minimum snaps the panel closed.
 - **Close** — Click the **✕** button in the panel header, or press the keyboard shortcut again.
 
+### Connected MCP servers
+
+The agent panel uses the same connected MCP servers that are active in your Playground and Chat sessions. When you have servers connected to your project, the agent can call their tools directly from the Home tab — no extra configuration needed.
+
+The agent uses whichever servers you have selected in the multi-server selector. If no servers are explicitly selected, it falls back to all currently connected servers. The panel shows a **Loading MCP servers…** message while it resolves your server connections on first load.
+
 ### Persistence
 
 The panel's open state, width, and active session are saved to your browser's local storage and restored on reload. Conversations persist server-side, so you can close and reopen the panel without losing your chat history.
