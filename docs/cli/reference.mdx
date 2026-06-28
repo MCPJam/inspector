@@ -105,6 +105,7 @@ When `--host` is set, the output includes a `host` field and a `toolsDroppedVisi
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
