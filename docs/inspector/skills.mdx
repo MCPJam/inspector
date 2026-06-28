@@ -23,7 +23,9 @@ tag: "NEW"
 
 ## Skill Directories
 
-MCPJam scans the following directories for skills. Each subdirectory is expected to contain a `SKILL.md` file. When duplicate skill names are found, the first match in search order wins.
+### Local skills
+
+When running locally, MCPJam scans the following directories for skills. Each subdirectory is expected to contain a `SKILL.md` file. When duplicate skill names are found, the first match in search order wins.
 
 **Global:**
 ```
@@ -42,6 +44,12 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 <Tip>
   If you have no skills installed, run `npx skills` to get started quickly.
 </Tip>
+
+### Cloud skills
+
+When the Computers feature is enabled, skills can also be stored on your project's **Computer** (a persistent E2B sandbox). Cloud skills are stored at `~/.claude/skills/` on the Computer, which is the same directory Claude Code scans natively inside the sandbox.
+
+In hosted mode, the Skills tab uses cloud skills exclusively. When running locally with Computers enabled, a **Local / Cloud** toggle appears in the Skills tab header so you can switch between your local filesystem and the Computer.
 
 ## Uploading Skills
 
