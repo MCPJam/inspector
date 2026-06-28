@@ -69,6 +69,10 @@ bunx @mcpjam/inspector@latest
 
 After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
 
+<Info>
+  **Widget rendering (Chromium):** On first startup, Inspector automatically downloads and installs the Playwright Chromium browser needed to render widgets. This happens in the background — you'll see download progress in the terminal. No manual `playwright install` step is required. Docker images already include Chromium and are unaffected.
+</Info>
+
 ### From your editor (VS Code, Cursor, Windsurf)
 
 There is no dedicated editor extension — and you don't need one. Open your editor's integrated terminal, run the same `npx @mcpjam/inspector@latest` command, and click the printed `localhost` link. The inspector runs alongside your dev server in any editor that has a terminal pane.
