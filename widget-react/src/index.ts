@@ -24,6 +24,7 @@ export {
   readToolResultObject,
   readToolResultMeta,
   readToolResultServerId,
+  toCallToolResult,
 } from "./tool-result-utils";
 // App-provided tools registry (SEP-1865) + tool-input streaming (3d-ii-b).
 export * from "./app-tools-registry";
