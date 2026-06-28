@@ -191,6 +191,7 @@ Uses shared connection flags, plus:
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--resource-uri <uri>` | URI of the resource to read |
 | `--uri <uri>` | Legacy alias for `--resource-uri` |
 
@@ -198,7 +199,12 @@ Plus shared connection flags.
 
 ### `resources templates`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ---
 
