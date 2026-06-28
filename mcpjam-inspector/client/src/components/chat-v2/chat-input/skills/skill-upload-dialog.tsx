@@ -248,13 +248,21 @@ export function SkillUploadDialog({
         <DialogHeader>
           <DialogTitle>Upload Skill</DialogTitle>
           <DialogDescription>
-            Upload a skill folder containing a SKILL.md file. The folder will be
-            saved to{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              {source?.kind === "cloud" ? "~/.claude/skills/" : "~/.mcpjam/skills/"}
-              {skillInfo?.name || "{name}"}/
-            </code>
-            {source?.kind === "cloud" ? " on your personal computer" : ""}
+            {source?.kind === "cloud" ? (
+              <>
+                Upload a skill folder containing a SKILL.md file. Cloud skills are{" "}
+                <strong>SKILL.md-only for now</strong> — folders with supporting
+                files are rejected (inline anything SKILL.md needs).
+              </>
+            ) : (
+              <>
+                Upload a skill folder containing a SKILL.md file. The folder will
+                be saved to{" "}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                  ~/.mcpjam/skills/{skillInfo?.name || "{name}"}/
+                </code>
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 

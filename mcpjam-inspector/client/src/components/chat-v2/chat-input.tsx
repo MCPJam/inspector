@@ -3,7 +3,10 @@ import {
   useState,
   useCallback,
   useLayoutEffect,
+  useMemo,
 } from "react";
+import { HOSTED_MODE } from "@/lib/config";
+import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -287,6 +290,17 @@ export function ChatInput({
   chatboxAttachableServers,
   onAttachChatboxServer,
 }: ChatInputProps) {
+  // Cloud skill source for the `/` picker: in hosted mode, list/load skills
+  // from the project's Convex/Computer source (Playground carries projectId via
+  // `clientSelector`). Local mode keeps the default (filesystem) path. Memoized
+  // so the popover's fetch effects don't re-run every render.
+  const skillsSource = useMemo<SkillsSource | undefined>(
+    () =>
+      HOSTED_MODE && clientSelector?.projectId
+        ? { kind: "cloud", projectId: clientSelector.projectId }
+        : undefined,
+    [clientSelector?.projectId],
+  );
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
@@ -585,6 +599,7 @@ export function ChatInput({
             <SkillResultCard
               key={`skill-${index}`}
               skillResult={skillResult}
+              skillsSource={skillsSource}
               onRemove={() => removeSkillResult(index)}
               onUpdate={(updatedSkill) => {
                 const newSkillResults = [...skillResults];
@@ -694,6 +709,7 @@ export function ChatInput({
             value={value}
             caretIndex={caretIndex}
             minimalMode={minimalMode}
+            skillsSource={skillsSource}
           />
 
           {minimalMode &&
