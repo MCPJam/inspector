@@ -325,10 +325,12 @@ describe("cloud-skills service", () => {
         { path: "blob.bin", bytes: big },
       ]),
     ).rejects.toMatchObject({ status: 400 });
-    expect(fs.files.has(`${CLAUDE_SKILLS}/big/SKILL.md`)).toBe(false);
+    // Rejected before withSandbox → nothing written/created.
+    expect([...fs.files.keys()].some((k) => k.includes("/big/"))).toBe(false);
+    expect([...fs.dirs].some((d) => d.includes("/big"))).toBe(false);
   });
 
-  it("rejects too many files", async () => {
+  it("rejects too many files without creating anything", async () => {
     const enc = (s: string) => new TextEncoder().encode(s);
     const many = Array.from({ length: 101 }, (_, i) => ({
       path: `f${i}.txt`,
@@ -341,6 +343,8 @@ describe("cloud-skills service", () => {
     await expect(
       uploadCloudSkillFolder(ctx, "many", many),
     ).rejects.toMatchObject({ status: 400 });
+    expect([...fs.files.keys()].some((k) => k.includes("/many"))).toBe(false);
+    expect([...fs.dirs].some((d) => d.includes("/many"))).toBe(false);
   });
 
   it("fails closed (503) when the data plane is not configured", async () => {

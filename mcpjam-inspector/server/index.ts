@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -336,20 +337,9 @@ app.use(
   })
 );
 
-app.use(
-  "/api/web/*",
-  bodyLimit({
-    maxSize: 1024 * 1024,
-    onError: (c) =>
-      c.json(
-        {
-          code: "VALIDATION_ERROR",
-          message: "Request body exceeds 1MB limit",
-        },
-        400
-      ),
-  })
-);
+// 1MB JSON cap for /api/web/*, with a multipart carve-out for the cloud-skills
+// folder upload (bounded by the service caps instead). See `webBodyLimit`.
+app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
 app.use("/api/*", requestLogContextMiddleware);

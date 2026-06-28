@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -210,21 +211,10 @@ export function createHonoApp() {
     }),
   );
 
-  // Hosted web APIs enforce a 1MB max JSON body.
-  app.use(
-    "/api/web/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
-  );
+  // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
+  // folder upload, which is multipart and bounded by the service caps. See
+  // `webBodyLimit`.
+  app.use("/api/web/*", webBodyLimit());
 
   // API Routes
   if (!HOSTED_MODE) {
