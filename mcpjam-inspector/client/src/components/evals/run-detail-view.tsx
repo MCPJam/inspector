@@ -418,13 +418,21 @@ export function RunDetailView({
   // friendly name best-effort; fall back to the snapshot's environmentId if the
   // environment was deleted since the run.
   const runComputerEnv = selectedRunDetails.configSnapshot?.computerEnvironment;
+  // Durable id keyed off the frozen pin, falling back to the snapshot's
+  // environment.computerEnvironmentId — so a run that recorded the id without
+  // the newer frozen object still shows an Environment row.
+  const runComputerEnvId =
+    runComputerEnv?.environmentId ??
+    selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
+    null;
   const runEnvironments = useEnvironments(
-    runComputerEnv ? selectedRunDetails.projectId ?? null : null
+    runComputerEnvId ? selectedRunDetails.projectId ?? null : null
   );
-  const runComputerEnvName = runComputerEnv
-    ? runEnvironments?.find(
-        (e) => e.environmentId === runComputerEnv.environmentId
-      )?.name ?? null
+  // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
+  // the only durable identifier once the environment is deleted).
+  const runComputerEnvLabel = runComputerEnvId
+    ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
+        ?.name ?? runComputerEnvId
     : null;
   const {
     result: goalCompletionResult,
@@ -699,23 +707,27 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      {runComputerEnv ? (
+      {runComputerEnvId ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Environment</span>
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
-            title={`Image ${runComputerEnv.e2bTemplateId}${
-              runComputerEnv.baseImageDigests[0]
-                ? ` · ${runComputerEnv.baseImageDigests[0]}`
-                : ""
-            } · ${runComputerEnv.provider}`}
+            title={
+              runComputerEnv
+                ? `Image ${runComputerEnv.e2bTemplateId}${
+                    runComputerEnv.baseImageDigests[0]
+                      ? ` · ${runComputerEnv.baseImageDigests[0]}`
+                      : ""
+                  } · ${runComputerEnv.provider}`
+                : undefined
+            }
           >
-            <span className="text-foreground">
-              {runComputerEnvName ?? formatRunId(runComputerEnv.environmentId)}
-            </span>
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {runComputerEnv.provider}
-            </span>
+            <span className="text-foreground">{runComputerEnvLabel}</span>
+            {runComputerEnv ? (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {runComputerEnv.provider}
+              </span>
+            ) : null}
           </span>
         </div>
       ) : null}
