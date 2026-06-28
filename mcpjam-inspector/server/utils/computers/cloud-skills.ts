@@ -9,8 +9,9 @@
  * `CloudSkillsError` carrying an HTTP-ish status.
  *
  * Reads never touch the Computer (no sandbox wake) — that's the whole point of
- * the Convex-source move. Materialization onto `~/.claude/skills` (for the
- * in-sandbox harness) lives in `materialize-skills.ts`.
+ * the Convex-source move. Delivery to the in-sandbox harness is separate: the
+ * harness `skills` param (see `harness/runtime-skills.ts`), with on-box cleanup
+ * in `harness/reconcile-skill-dirs.ts`.
  *
  * v1 is SKILL.md-only: a skill is `{name, description, content}`. Supporting
  * files are a v2 add (they'll need `_storage` blobs in the backend).
@@ -58,7 +59,7 @@ const CODE_STATUS: Record<string, number> = {
 
 /** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */
 function convexErrorData(
-  err: unknown,
+  err: unknown
 ): { code?: string; message?: string } | null {
   const data = (err as { data?: unknown })?.data;
   if (data && typeof data === "object") return data as { code?: string };
@@ -80,7 +81,7 @@ function mapConvexError(err: unknown): CloudSkillsError {
   if (data?.code && CODE_STATUS[data.code] !== undefined) {
     return new CloudSkillsError(
       data.message ?? "Skill request failed",
-      CODE_STATUS[data.code],
+      CODE_STATUS[data.code]
     );
   }
 
@@ -89,7 +90,7 @@ function mapConvexError(err: unknown): CloudSkillsError {
   let status = 500;
   if (
     /not authorized|requires project admin|owned by another|only the owner|requires project member/.test(
-      lower,
+      lower
     )
   ) {
     status = 403;
@@ -97,7 +98,7 @@ function mapConvexError(err: unknown): CloudSkillsError {
     status = 404;
   } else if (
     /already exists|already shared|already a personal|pick a different name|already have a skill/.test(
-      lower,
+      lower
     )
   ) {
     status = 409;
@@ -116,21 +117,21 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export function listCloudSkills(
-  ctx: CloudSkillsContext,
+  ctx: CloudSkillsContext
 ): Promise<CloudSkillListItem[]> {
   return run(() => convexListSkills(ctx.authHeader, ctx.projectId));
 }
 
 export function getCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string,
+  skillId: string
 ): Promise<CloudSkillDetail> {
   return run(() => convexGetSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
 export function getCloudSkillByName(
   ctx: CloudSkillsContext,
-  name: string,
+  name: string
 ): Promise<CloudSkillDetail | null> {
   return run(() => convexGetSkillByName(ctx.authHeader, ctx.projectId, name));
 }
@@ -142,10 +143,10 @@ export function createCloudSkill(
     description: string;
     content: string;
     sharing?: SkillSharing;
-  },
+  }
 ): Promise<CloudSkillDetail> {
   return run(() =>
-    convexCreateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data }),
+    convexCreateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
   );
 }
 
@@ -156,23 +157,23 @@ export function updateCloudSkill(
     name?: string;
     description?: string;
     content?: string;
-  },
+  }
 ): Promise<CloudSkillDetail> {
   return run(() =>
-    convexUpdateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data }),
+    convexUpdateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
   );
 }
 
 export function deleteCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string,
+  skillId: string
 ): Promise<{ deleted: true }> {
   return run(() => convexDeleteSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
 export function promoteCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string,
+  skillId: string
 ): Promise<CloudSkillDetail> {
   return run(() => convexPromoteSkill(ctx.authHeader, ctx.projectId, skillId));
 }

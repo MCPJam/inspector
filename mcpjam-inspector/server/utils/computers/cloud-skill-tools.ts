@@ -5,12 +5,12 @@
  *
  * Progressive disclosure: we advertise a cheap `listSkills` discovery tool plus
  * `loadSkill`; the model pulls a skill's full instructions only when a task
- * matches. v1 is SKILL.md-only (no supporting-file tools yet). These tools are
- * only wired when the host has a computer AND the actor is not a guest (see
- * `chat-v2-orchestration.ts` / the guest gate in `web/chat-v2.ts`).
+ * matches. v1 is SKILL.md-only (no supporting-file tools yet). When the tools are
+ * wired is decided by `shouldEnableCloudSkillTools` (see `web/chat-v2.ts`).
  */
 import { tool } from "ai";
 import { z } from "zod";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   CloudSkillsError,
   getCloudSkillByName,
@@ -19,6 +19,29 @@ import {
 } from "./cloud-skills.js";
 
 const NAME_RE = /^[a-z0-9-]+$/;
+
+/**
+ * Whether the emulated chat path should advertise the cloud skill tools.
+ *
+ * Cloud skills are a Convex-backed PROJECT resource (no computer required), so
+ * any signed-in member with a project gets them — EXCEPT when the turn will run
+ * the real Claude Code harness, which delivers skills via the adapter `skills`
+ * param instead (advertising the tools there would be a prompt/tool mismatch).
+ *
+ * The harness runs ONLY for a `harness:"claude-code"` host on an MCPJam-provided
+ * model; a BYOK model on that same host runs emulated — so gate on the actual
+ * engine (model), not host config alone.
+ */
+export function shouldEnableCloudSkillTools(args: {
+  isGuest: boolean;
+  harness: string | undefined;
+  modelId: string;
+  hasProjectId: boolean;
+}): boolean {
+  const willRunHarness =
+    args.harness === "claude-code" && isMCPJamProvidedModel(args.modelId);
+  return !args.isGuest && !willRunHarness && args.hasProjectId;
+}
 
 function errMessage(err: unknown): string {
   if (err instanceof CloudSkillsError) return err.message;
@@ -42,7 +65,9 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
             skills
               .map(
                 (s) =>
-                  `- **${s.name}** (${s.sharing === "project" ? "shared" : "personal"}): ${s.description}`,
+                  `- **${s.name}** (${
+                    s.sharing === "project" ? "shared" : "personal"
+                  }): ${s.description}`
               )
               .join("\n")
           );

@@ -60,7 +60,12 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
-import { materializeSkills } from "../computers/materialize-skills.js";
+import {
+  fetchRuntimeSkills,
+  skillsFingerprint,
+  claudeCodeSafeSkills,
+} from "./runtime-skills.js";
+import { reconcileSkillDirs } from "./reconcile-skill-dirs.js";
 import {
   claimHarnessSessionState,
   heartbeatHarnessSessionState,
@@ -108,7 +113,7 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
  */
 function buildMcpJsonFromManager(
   manager: MCPJamHandlerOptions["mcpClientManager"],
-  selectedServerIds: string[],
+  selectedServerIds: string[]
 ) {
   const inputs: HarnessMcpServerInput[] = [];
   for (const id of selectedServerIds) {
@@ -170,10 +175,15 @@ export function harnessRuntimeFingerprint(parts: {
   modelId: string;
   selectedServers?: string[];
   permissionMode: string;
+  /** Hash of the project's runtime skills. A change MUST invalidate resume so
+   *  the adapter re-writes skills on a fresh start (it skips writes on resume).
+   *  Omitted on a transient skills-fetch failure to preserve resumability. */
+  skillsHash?: string;
 }): string {
   const s = [
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
+    parts.skillsHash ?? "",
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -185,7 +195,7 @@ export function harnessRuntimeFingerprint(parts: {
 
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none",
+  streamSink: "ui" | "none"
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -235,7 +245,9 @@ export async function runHarnessTurn(
   const effectiveAbortSignal: AbortSignal = abortSignal
     ? AbortSignal.any([abortSignal, livenessAbort.signal])
     : livenessAbort.signal;
-  let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  let usage:
+    | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+    | undefined;
   let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
   // §3 atomic commit: built in executeEngine's finally (after session.stop()),
@@ -289,10 +301,14 @@ export async function runHarnessTurn(
 
     try {
       if (!projectId) {
-        throw new Error("harness turn requires a projectId to resolve the computer");
+        throw new Error(
+          "harness turn requires a projectId to resolve the computer"
+        );
       }
       if (!authHeader) {
-        throw new Error("harness turn requires an auth bearer to resolve the computer");
+        throw new Error(
+          "harness turn requires an auth bearer to resolve the computer"
+        );
       }
       // Interactive tool approval isn't bridged into the harness yet (no
       // tool-approval-request continuation handling), and the harness runs
@@ -313,7 +329,7 @@ export async function runHarnessTurn(
         throw new Error(
           "harness (Claude Code) turns don't support interactive tool approval " +
             "yet — turn off requireToolApproval on this host, or use the " +
-            "emulated engine, until approval continuation handling lands",
+            "emulated engine, until approval continuation handling lands"
         );
       }
 
@@ -357,7 +373,7 @@ export async function runHarnessTurn(
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
       const { mcpJson, keyToServerId } = buildMcpJsonFromManager(
         mcpClientManager,
-        selectedServers ?? [],
+        selectedServers ?? []
       );
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
@@ -365,17 +381,34 @@ export async function runHarnessTurn(
       // Continuity needs a chat owner (chatSessionId + auth + a supported
       // ownerType); eval/synthetic harness turns (streamSink "none", no
       // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
+      // Runtime skills (Convex source of truth) feed BOTH the harness `skills`
+      // param (the adapter writes them in-sandbox) and the fingerprint (a skill
+      // change must invalidate resume so the adapter re-writes them). TRI-STATE:
+      // a fetch FAILURE must never read as "zero skills" — leave skills untouched
+      // (no fingerprint contribution, no cleanup, no payload) so a transient blip
+      // can't wipe the box or needlessly churn the session. `skillsFingerprint`
+      // returns "" for an empty list, so an empty project and a failure both
+      // leave the fingerprint unchanged.
+      const skillsFetch =
+        projectId && authHeader
+          ? await fetchRuntimeSkills(authHeader, projectId)
+          : { ok: true as const, skills: [] };
+      const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
+      const skillsHash =
+        runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+
       const runtimeFingerprint = harnessRuntimeFingerprint({
         modelId,
         selectedServers: selectedServers ?? [],
         permissionMode: "allow-all",
+        skillsHash,
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
           ? "chatbox-chat"
           : sourceType === "eval" || sourceType === "sandbox"
-            ? undefined
-            : "direct-chat";
+          ? undefined
+          : "direct-chat";
       let continuity:
         | {
             owner: HarnessOwnerRef;
@@ -419,7 +452,7 @@ export async function runHarnessTurn(
           // continuous conversation.
           if (claim.status === 409) {
             throw new Error(
-              "Another turn is already running for this chat — wait for it to finish.",
+              "Another turn is already running for this chat — wait for it to finish."
             );
           }
           logger.warn("[harness] session-state claim failed; failing closed", {
@@ -428,14 +461,18 @@ export async function runHarnessTurn(
           });
           throw new Error(
             "Couldn't start a Claude Code session — the continuity service is " +
-              "unavailable right now. Please try again in a moment.",
+              "unavailable right now. Please try again in a moment."
           );
         } else {
           continuity = {
             owner,
             leaseId,
             stateVersion: claim.stateVersion,
-            state: claim.state,
+            // A runtime-fingerprint change (model / server set / SKILLS) MUST
+            // yield no resumable state, so the adapter re-writes skills on a
+            // fresh start (it skips writes on resume). Enforce here rather than
+            // trusting the endpoint to null `state` on mismatch.
+            state: claim.fingerprintChanged ? null : claim.state,
           };
           releaseHarnessLease = () =>
             releaseHarnessSessionState({
@@ -477,6 +514,19 @@ export async function runHarnessTurn(
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        // Deliver skills via the adapter's own param (host-agnostic: it writes
+        // them natively at the real $HOME). This is the Claude Code path
+        // (runHarnessTurn only runs for harness === "claude-code"), whose adapter
+        // interpolates `description` into YAML frontmatter RAW — so pre-encode
+        // descriptions safely here. Wire `toHarnessSkills` for other adapters if
+        // they're ever routed through this function.
+        ...(runtimeSkills && runtimeSkills.length
+          ? {
+              skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
+                ConstructorParameters<typeof HarnessAgent>[0]["skills"]
+              >,
+            }
+          : {}),
         ...(systemPrompt ? { instructions: systemPrompt } : {}),
         ...(Object.keys(hostExecutedTools).length
           ? {
@@ -493,16 +543,18 @@ export async function runHarnessTurn(
             path: `${sessionWorkDir}/.mcp.json`,
             content: serializeHarnessMcpJson(mcpJson),
           });
-          // Project the project's durable skills (Convex source of truth) onto
-          // ~/.claude/skills so Claude Code discovers them natively. The box FS
-          // is a cache (wiped by delete/reset/reprovision), so this reconciles
-          // every turn. Best-effort — never fails the turn.
-          await materializeSkills({
-            session,
-            projectId,
-            bearer: authHeader,
-            ...(abortSignal ? { signal: abortSignal } : {}),
-          }).catch(() => {});
+          // The adapter writes skill CONTENT (via the `skills` param above); this
+          // pass only removes managed dirs deleted/renamed in Convex (the adapter
+          // has no deletion semantics and the box persists). Skipped on a fetch
+          // failure (`runtimeSkills === null`) so a transient blip never deletes.
+          if (runtimeSkills !== null) {
+            await reconcileSkillDirs({
+              session,
+              skills: runtimeSkills,
+              skillsHash: skillsHash ?? "",
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            }).catch(() => {});
+          }
         },
       });
 
@@ -575,7 +627,7 @@ export async function runHarnessTurn(
             });
             if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
               logger.warn(
-                "[harness] heartbeat lost liveness past TTL — aborting turn",
+                "[harness] heartbeat lost liveness past TTL — aborting turn"
               );
               livenessAbort.abort(new Error("harness lost liveness"));
             }
@@ -663,7 +715,7 @@ export async function runHarnessTurn(
             });
           }
           const flushedToolCallIds = new Set(
-            pendingResults.map((tr) => tr.toolCallId),
+            pendingResults.map((tr) => tr.toolCallId)
           );
           for (const tr of pendingResults) {
             messageHistory.push({
@@ -697,7 +749,7 @@ export async function runHarnessTurn(
             messageHistory,
             promptIndex,
             stepIndex,
-            flushedToolCallIds,
+            flushedToolCallIds
           );
         };
         // Step + tool-identity tracking. A "step" spans assistant content + its
@@ -726,7 +778,7 @@ export async function runHarnessTurn(
             writer,
             messageHistory,
             toolSetForTrace as unknown as ToolSet,
-            snapshotTurnContext(),
+            snapshotTurnContext()
           );
           stepIndex += 1;
           stepStartedAt = Date.now();
@@ -755,7 +807,7 @@ export async function runHarnessTurn(
             const delta = String(
               (part as { text?: unknown; delta?: unknown }).delta ??
                 (part as { text?: unknown }).text ??
-                "",
+                ""
             );
             if (!delta) continue;
             // Assistant text after tool results begins the next step.
@@ -791,10 +843,11 @@ export async function runHarnessTurn(
               textId = undefined;
             }
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? crypto.randomUUID(),
+              (part as { toolCallId?: unknown }).toolCallId ??
+                crypto.randomUUID()
             );
             const rawToolName = String(
-              (part as { toolName?: unknown }).toolName ?? "tool",
+              (part as { toolName?: unknown }).toolName ?? "tool"
             );
             // Claude Code namespaces MCP tools as mcp__<server>__<tool>; map back
             // to { serverId, un-namespaced toolName } so the UI chunks, engine
@@ -803,12 +856,12 @@ export async function runHarnessTurn(
             // tools (Bash, Read, …) have no prefix → serverId stays undefined.
             const { serverId, toolName } = parseHarnessToolName(
               rawToolName,
-              keyToServerId,
+              keyToServerId
             );
             const input = coerceToolInput(
               (part as { input?: unknown }).input ??
                 (part as { args?: unknown }).args ??
-                {},
+                {}
             );
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
@@ -836,13 +889,18 @@ export async function runHarnessTurn(
               promptIndex,
               serverId,
             });
-            assistantParts.push({ type: "tool-call", toolCallId, toolName, input });
+            assistantParts.push({
+              type: "tool-call",
+              toolCallId,
+              toolName,
+              input,
+            });
           } else if (
             type === "tool-result" ||
             type === "tool-output-available"
           ) {
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
             const output =
               (part as { output?: unknown }).output ??
@@ -858,7 +916,7 @@ export async function runHarnessTurn(
               toolMeta.get(toolCallId) ??
               parseHarnessToolName(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
-                keyToServerId,
+                keyToServerId
               );
             // Provider-executed (in-sandbox) — see tool-input-available above.
             emitToolOutput(writer, {
@@ -885,7 +943,7 @@ export async function runHarnessTurn(
               ...createOffsetInterval(
                 traceBaseMs,
                 toolStartMs.get(toolCallId) ?? Date.now(),
-                Date.now(),
+                Date.now()
               ),
               promptIndex,
               stepIndex,
@@ -902,9 +960,11 @@ export async function runHarnessTurn(
             });
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
-            if (typeof fr === "string" && fr) turnFinishReason = fr as FinishReason;
-            const u = (part as { totalUsage?: unknown; usage?: unknown })
-              .totalUsage ?? (part as { usage?: unknown }).usage;
+            if (typeof fr === "string" && fr)
+              turnFinishReason = fr as FinishReason;
+            const u =
+              (part as { totalUsage?: unknown; usage?: unknown }).totalUsage ??
+              (part as { usage?: unknown }).usage;
             if (u && typeof u === "object") {
               const ur = u as Record<string, unknown>;
               usage = {
@@ -960,7 +1020,7 @@ export async function runHarnessTurn(
             tConnect - tSandbox
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`,
+          }ms resumed=${resumedSession}`
         );
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -997,7 +1057,7 @@ export async function runHarnessTurn(
         } catch (finalizeErr) {
           logger.warn(
             "[harness] session finalize failed; releasing lease, sidecar not committed",
-            { error: finalizeErr },
+            { error: finalizeErr }
           );
           // stop()/destroy() threw → no resume payload to commit. Drop any
           // half-built commit and free the lane so the next turn can claim.
@@ -1023,7 +1083,7 @@ export async function runHarnessTurn(
           writer,
           messageHistory,
           toolSetForTrace as unknown as ToolSet,
-          snapshotTurnContext(),
+          snapshotTurnContext()
         );
         writeTraceEvent(writer, {
           type: "turn_finish",
@@ -1064,16 +1124,13 @@ export async function runHarnessTurn(
         await onConversationComplete?.(
           [...messageHistory],
           trace,
-          capturedHarnessCommit,
+          capturedHarnessCommit
         );
         persistOk = true;
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
-      if (
-        capturedHarnessCommit &&
-        (!onConversationComplete || !persistOk)
-      ) {
+      if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
         await releaseHarnessLease?.();
       }
     }
@@ -1083,7 +1140,10 @@ export async function runHarnessTurn(
     try {
       await onStreamComplete?.();
     } catch (cleanupError) {
-      logger.error("[harness] error while running stream cleanup", cleanupError);
+      logger.error(
+        "[harness] error while running stream cleanup",
+        cleanupError
+      );
     }
   };
 

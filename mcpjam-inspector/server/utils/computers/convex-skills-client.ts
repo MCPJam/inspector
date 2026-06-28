@@ -39,12 +39,25 @@ export interface CloudSkillMaterializeItem {
   skillMd: string;
 }
 
+/**
+ * Raw fields for adapter-agnostic harness delivery (the `skills` param). The
+ * adapter builds its own frontmatter, so `description`/`content` are unescaped.
+ */
+export interface CloudSkillRuntimeItem {
+  skillId: string;
+  name: string;
+  description: string;
+  content: string;
+  aggregateHash: string;
+}
+
 /** Convex query/mutation names — kept in one place so a rename is one edit. */
 const FN = {
   list: "projectSkills:listSkills",
   get: "projectSkills:getSkill",
   getByName: "projectSkills:getSkillByName",
   forMaterialize: "projectSkills:listSkillsForMaterialize",
+  forRuntime: "projectSkills:listSkillsForRuntime",
   create: "projectSkills:createSkill",
   update: "projectSkills:updateSkill",
   del: "projectSkills:deleteSkill",
@@ -67,7 +80,7 @@ function makeClient(bearer: string): ConvexHttpClient {
 
 export async function convexListSkills(
   bearer: string,
-  projectId: string,
+  projectId: string
 ): Promise<CloudSkillListItem[]> {
   return await makeClient(bearer).query(FN.list as any, { projectId });
 }
@@ -75,7 +88,7 @@ export async function convexListSkills(
 export async function convexGetSkill(
   bearer: string,
   projectId: string,
-  skillId: string,
+  skillId: string
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).query(FN.get as any, { projectId, skillId });
 }
@@ -83,7 +96,7 @@ export async function convexGetSkill(
 export async function convexGetSkillByName(
   bearer: string,
   projectId: string,
-  name: string,
+  name: string
 ): Promise<CloudSkillDetail | null> {
   return await makeClient(bearer).query(FN.getByName as any, {
     projectId,
@@ -93,9 +106,18 @@ export async function convexGetSkillByName(
 
 export async function convexListSkillsForMaterialize(
   bearer: string,
-  projectId: string,
+  projectId: string
 ): Promise<CloudSkillMaterializeItem[]> {
-  return await makeClient(bearer).query(FN.forMaterialize as any, { projectId });
+  return await makeClient(bearer).query(FN.forMaterialize as any, {
+    projectId,
+  });
+}
+
+export async function convexListSkillsForRuntime(
+  bearer: string,
+  projectId: string
+): Promise<CloudSkillRuntimeItem[]> {
+  return await makeClient(bearer).query(FN.forRuntime as any, { projectId });
 }
 
 export async function convexCreateSkill(
@@ -106,7 +128,7 @@ export async function convexCreateSkill(
     description: string;
     content: string;
     sharing?: SkillSharing;
-  },
+  }
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).mutation(FN.create as any, args);
 }
@@ -119,7 +141,7 @@ export async function convexUpdateSkill(
     name?: string;
     description?: string;
     content?: string;
-  },
+  }
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).mutation(FN.update as any, args);
 }
@@ -127,15 +149,18 @@ export async function convexUpdateSkill(
 export async function convexDeleteSkill(
   bearer: string,
   projectId: string,
-  skillId: string,
+  skillId: string
 ): Promise<{ deleted: true }> {
-  return await makeClient(bearer).mutation(FN.del as any, { projectId, skillId });
+  return await makeClient(bearer).mutation(FN.del as any, {
+    projectId,
+    skillId,
+  });
 }
 
 export async function convexPromoteSkill(
   bearer: string,
   projectId: string,
-  skillId: string,
+  skillId: string
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).mutation(FN.promote as any, {
     projectId,

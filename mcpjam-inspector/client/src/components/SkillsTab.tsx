@@ -59,20 +59,29 @@ interface SkillsTabProps {
   computersEnabled?: boolean;
 }
 
-export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) {
+export function SkillsTab({
+  projectId,
+  computersEnabled,
+}: SkillsTabProps = {}) {
   const posthog = usePostHog();
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
   const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
   const [source, setSource] = useState<"local" | "cloud">(
-    HOSTED_MODE ? "cloud" : "local",
+    HOSTED_MODE ? "cloud" : "local"
   );
+  const isCloudMode = HOSTED_MODE || source === "cloud";
+  // Cloud skills are a project resource. Without a project id we must NOT fall
+  // back to the local FS API — in hosted mode those routes don't exist, so the
+  // page would silently list empty "local" skills and uploads/deletes would
+  // 404. Treat cloud-without-project as an explicit not-ready state instead.
+  const cloudNotReady = isCloudMode && !projectId;
   const skillsSource: SkillsSource = useMemo(
     () =>
-      source === "cloud" && projectId
+      isCloudMode && projectId
         ? { kind: "cloud", projectId }
         : { kind: "local" },
-    [source, projectId],
+    [isCloudMode, projectId]
   );
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
@@ -135,6 +144,15 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
   }, [selectedSkillName, selectedFilePath]);
 
   const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
+    // Never call the skills API in cloud mode without a project — see
+    // `cloudNotReady`. Show an empty, explicit state rather than a local fallback.
+    if (cloudNotReady) {
+      setSkills([]);
+      setSelectedSkillName("");
+      setSelectedSkill(null);
+      setFetchingSkills(false);
+      return;
+    }
     setFetchingSkills(true);
 
     try {
@@ -188,7 +206,7 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
         setLoadingFiles((prev) => ({ ...prev, [name]: false }));
       }
     },
-    [skillFiles, skillsSource],
+    [skillFiles, skillsSource]
   );
 
   const fetchFileContent = async (name: string, filePath: string) => {
@@ -338,7 +356,9 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                   disabled={fetchingSkills}
                 >
                   <RefreshCw
-                    className={`h-3 w-3 ${fetchingSkills ? "animate-spin" : ""} cursor-pointer`}
+                    className={`h-3 w-3 ${
+                      fetchingSkills ? "animate-spin" : ""
+                    } cursor-pointer`}
                   />
                 </Button>
               </div>
@@ -438,7 +458,9 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                           onClick={() =>
                             setDescriptionExpanded(!descriptionExpanded)
                           }
-                          className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${descriptionExpanded ? "" : "line-clamp-1"}`}
+                          className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${
+                            descriptionExpanded ? "" : "line-clamp-1"
+                          }`}
                         >
                           {selectedSkill.description}
                         </p>

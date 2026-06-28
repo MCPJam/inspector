@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -30,10 +31,7 @@ import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import {
-  resolveHostTools,
-  narrowHostComputer,
-} from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
@@ -166,11 +164,14 @@ chatV2.post("/", async (c) => {
           unknown
         >;
       } else {
-        logger.warn("[chat-v2] host runtime-config fetch failed; failing closed", {
-          hostId,
-          status: runtime.status,
-          error: runtime.error,
-        });
+        logger.warn(
+          "[chat-v2] host runtime-config fetch failed; failing closed",
+          {
+            hostId,
+            status: runtime.status,
+            error: runtime.error,
+          }
+        );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
@@ -243,12 +244,15 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId ?? null,
         auth: { bearerToken, chatboxId },
       });
-      logger.warn("[chat-v2] client model differs from host; using host model", {
-        chatboxId,
-        body: modelDefinition.id,
-        host: hostModelId,
-        provider: hostModel.provider,
-      });
+      logger.warn(
+        "[chat-v2] client model differs from host; using host model",
+        {
+          chatboxId,
+          body: modelDefinition.id,
+          host: hostModelId,
+          provider: hostModel.provider,
+        }
+      );
       modelDefinition = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
@@ -267,7 +271,9 @@ chatV2.post("/", async (c) => {
     // Code harness must fail closed with a clear message when the runtime isn't
     // available on this server — never silently degrade to the emulated engine.
     if (resolvedExecution.harness === "claude-code") {
-      const availability = checkHarnessRuntimeAvailable({ requireToolApproval });
+      const availability = checkHarnessRuntimeAvailable({
+        requireToolApproval,
+      });
       if (!availability.ok) {
         throw new WebRouteError(
           503,
@@ -306,20 +312,22 @@ chatV2.post("/", async (c) => {
     // computer-backed bash tool — a guest share-link/chatbox session must not
     // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
     // is called ("advertise == enforce").
-    // The claude-code harness gets skills via FS materialization
-    // (run-harness-turn → materializeSkills writes ~/.claude/skills, which
-    // Claude Code discovers natively). It does NOT receive the cloud skill
-    // tools, so advertising listSkills/loadSkill in its prompt would be a
-    // prompt/tool mismatch — suppress cloudSkills for the harness path. The
-    // non-harness streamText path is the one that actually wires these tools.
-    const hostComputer =
-      c.get("guestId") || resolvedExecution.harness === "claude-code"
-        ? null
-        : narrowHostComputer(
-            hostRuntimeConfig
-              ? (hostRuntimeConfig as { computer?: unknown }).computer
-              : undefined
-          );
+    // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
+    // the emulated chat path wires the listSkills/loadSkill tools for any
+    // signed-in member with a project. Gate only on:
+    //   - not a guest (a share-link/chatbox guest gets no skill tools), and
+    //   - the turn will NOT run the real Claude Code harness — which delivers
+    //     skills via the adapter `skills` param instead, so advertising the tools
+    //     here would be a prompt/tool mismatch.
+    // The harness runs ONLY for harness:"claude-code" hosts on an MCPJam model; a
+    // BYOK model on such a host still runs emulated (web-chat-turn), so gate on
+    // the actual engine (model), not host config alone.
+    const cloudSkillsEnabled = shouldEnableCloudSkillTools({
+      isGuest: Boolean(c.get("guestId")),
+      harness: resolvedExecution.harness,
+      modelId: String(modelDefinition.id),
+      hasProjectId: Boolean(hostedBody.projectId),
+    });
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -403,7 +411,7 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
-          ...(hostComputer
+          ...(cloudSkillsEnabled
             ? {
                 cloudSkills: {
                   authHeader: `Bearer ${bearerToken}`,

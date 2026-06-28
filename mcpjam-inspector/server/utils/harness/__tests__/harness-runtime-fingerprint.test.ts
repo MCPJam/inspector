@@ -24,13 +24,31 @@ describe("harnessRuntimeFingerprint", () => {
 
   it("changes when the model changes (fork)", () => {
     expect(harnessRuntimeFingerprint(base)).not.toBe(
-      harnessRuntimeFingerprint({ ...base, modelId: "anthropic/claude-haiku-4.5" })
+      harnessRuntimeFingerprint({
+        ...base,
+        modelId: "anthropic/claude-haiku-4.5",
+      })
     );
   });
 
   it("changes when the server set changes (fork)", () => {
     expect(harnessRuntimeFingerprint(base)).not.toBe(
       harnessRuntimeFingerprint({ ...base, selectedServers: ["srv-a"] })
+    );
+  });
+
+  it("changes when the skills hash changes (skill add/edit/delete forks)", () => {
+    expect(harnessRuntimeFingerprint(base)).not.toBe(
+      harnessRuntimeFingerprint({ ...base, skillsHash: "deadbeef" })
+    );
+  });
+
+  it("treats an omitted skillsHash the same as an empty one (no churn on fetch failure / empty project)", () => {
+    // On a transient skills-fetch failure we OMIT skillsHash; an empty project
+    // contributes "" — both must equal the legacy fingerprint so neither churns
+    // a resumable session.
+    expect(harnessRuntimeFingerprint(base)).toBe(
+      harnessRuntimeFingerprint({ ...base, skillsHash: "" })
     );
   });
 
