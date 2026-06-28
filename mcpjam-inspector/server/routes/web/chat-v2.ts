@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
@@ -267,18 +268,26 @@ chatV2.post("/", async (c) => {
     // server-resolved runtime config — never the request body — so a
     // tampered client can't attach a shell the host didn't authorize; the
     // resolver also skips computer-backed tools for guest actors.
-    // Harness preflight: a host-bound turn whose resolved host runs the Claude
-    // Code harness must fail closed with a clear message when the runtime isn't
-    // available on this server — never silently degrade to the emulated engine.
-    if (resolvedExecution.harness === "claude-code") {
+    // Harness preflight: a host-bound turn whose resolved host runs a harness
+    // (claude-code | codex) must fail closed with a clear message when the
+    // runtime isn't available on this server — never silently degrade to the
+    // emulated engine. Capability-driven (computer / approval / MCP / model
+    // eligibility), so a new harness gets the right gates for free.
+    if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
+        harnessId: resolvedExecution.harness,
         requireToolApproval,
+        hasSelectedMcpServers: selectedServerIds.length > 0,
+        modelEligible: isMCPJamProvidedModel(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
       });
       if (!availability.ok) {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the Claude Code harness, which isn't available: ${availability.reason}.`
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
         );
       }
     }

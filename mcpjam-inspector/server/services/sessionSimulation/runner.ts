@@ -1,6 +1,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
@@ -177,7 +177,7 @@ export interface RunSimulationOptions {
    * runtime; absent ⇒ emulated. Forward-compatible: only activates once the
    * backend runtime-config endpoint serves it.
    */
-  harness?: "claude-code";
+  harness?: Harness;
   /**
    * Optional hosted-chat access version. Forwarded into
    * `chatSessions:createWidgetSnapshot` so the optimistic-concurrency check
@@ -448,7 +448,7 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
-  harness?: "claude-code";
+  harness?: Harness;
   accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;

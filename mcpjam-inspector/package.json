@@ -108,6 +108,7 @@
     "@ai-sdk/google": "^3.0.20",
     "@ai-sdk/harness": "^1.0.0-canary.13",
     "@ai-sdk/harness-claude-code": "^1.0.0-canary.9",
+    "@ai-sdk/harness-codex": "^1.0.0-canary.9",
     "@ai-sdk/mistral": "^3.0.18",
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.156",

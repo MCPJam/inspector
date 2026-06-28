@@ -565,15 +565,19 @@ chatV2.post("/", async (c) => {
     }
 
     // Harness preflight: fail closed with a clear message when a host-resolved
-    // Claude Code harness can't run on this server (never silent-fallback).
-    if (resolvedExecution.harness === "claude-code") {
+    // harness (claude-code | codex) can't run on this server (never silent-
+    // fallback). Capability-driven (computer / approval / MCP / model eligibility).
+    if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
+        harnessId: resolvedExecution.harness,
         requireToolApproval: resolvedExecution.requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        modelEligible: isMcpJamProvidedModel,
       });
       if (!availability.ok) {
         return c.json(
           {
-            error: `This host runs the Claude Code harness, which isn't available: ${availability.reason}.`,
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
           503
         );

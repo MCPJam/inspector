@@ -37,6 +37,7 @@ import {
 } from "./mcpjam-stream-handler.js";
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import { logger } from "./logger.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -423,7 +424,7 @@ export async function runAssistantTurn(
     capturedTrace = turnTrace;
   });
 
-  // A host with `harness: "claude-code"` runs the real Claude Code runtime
+  // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // inside its computer; otherwise the emulated engine. Both satisfy the same
   // ChatEngineLoopResult contract, so everything downstream is identical.
   //
@@ -431,15 +432,32 @@ export async function runAssistantTurn(
   // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
   // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
   // would use the wrong credentials and mis-account spend, so for BYOK models we
-  // fall back to the emulated engine (which honors the org-BYOK path). This
-  // mirrors live web chat, where only the MCPJam-free branch forwards harness;
-  // eval/synthetic forward it unconditionally, so this is the authoritative gate.
-  const useHarness =
-    opts.harness === "claude-code" &&
-    isMCPJamProvidedModel(
-      String(opts.modelDefinition.id),
-      opts.modelDefinition.provider,
+  // fall back to the emulated engine (which honors the org-BYOK path).
+  //
+  // The interactive web path fails closed at the chat-v2 preflight when a harness
+  // host's model is ineligible. This gate is the authoritative one for
+  // eval/synthetic (which forward `harness` unconditionally and shouldn't hard-
+  // fail a batch): when a harness was requested but the model isn't eligible, we
+  // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
+  // traces rather than misread as "observed the real harness".
+  const harnessRequested = !!opts.harness;
+  const modelEligible = isMCPJamProvidedModel(
+    String(opts.modelDefinition.id),
+    opts.modelDefinition.provider,
+  );
+  const useHarness = harnessRequested && modelEligible;
+  if (harnessRequested && !modelEligible) {
+    logger.warn(
+      "[assistant-turn] harness requested but model ineligible — falling back " +
+        "to the emulated engine (surfaced, not silent)",
+      {
+        harness: opts.harness,
+        modelId: String(opts.modelDefinition.id),
+        provider: opts.modelDefinition.provider,
+        sourceType: opts.sourceType,
+      },
     );
+  }
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);

@@ -13,6 +13,7 @@
  * walks `chatbox → host → hostConfig` via `internalGetChatboxRuntimeConfig`.
  */
 
+import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger.js";
 
 export type ChatboxRuntimeConfig = {
@@ -38,7 +39,7 @@ export type ChatboxRuntimeConfig = {
   // Host harness selector from the pinned HostConfigV2 (mcpjam-backend serves
   // it on runtime-config). Optional so a backend that predates it returns the
   // field omitted → the synthetic runner stays on the emulated path.
-  harness?: "claude-code";
+  harness?: Harness;
   // Personal-computer attachment from the pinned HostConfigV2 (Project
   // Computers, mcpjam-backend PR #494). The RESOURCE only — capabilities
   // (e.g. "bash") ride builtInToolIds. The backend OMITS the field for

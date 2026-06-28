@@ -7,6 +7,7 @@
  * is injected server-side from the bearer. Backed by
  * `convex/http.ts:/web/harness/session-state/{claim,heartbeat,release,commit}`.
  */
+import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "../logger.js";
 
 export type HarnessOwnerType =
@@ -15,9 +16,14 @@ export type HarnessOwnerType =
   | "eval-case"
   | "swarm-worker";
 
-/** Owner-identifying fields sent on every session-state call. */
+/** Owner-identifying fields sent on every session-state call. Spread into the
+ *  claim/heartbeat/release/commit bodies, so `harnessId` (a lane-key dimension)
+ *  reaches all four — this is what keeps a Codex turn from resuming a Claude Code
+ *  lane (the backend keys by projectId, harnessId, ownerType, ownerKey). */
 export type HarnessOwnerRef = {
   projectId: string;
+  /** The harness running this turn — part of the lane key. */
+  harnessId: Harness;
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
   chatboxId?: string;
@@ -42,7 +48,7 @@ export type HarnessSessionCommitPayload = {
   chatboxId?: string;
   leaseId: string;
   expectedStateVersion: number;
-  harnessId: "claude-code";
+  harnessId: Harness;
   harnessSessionId: string;
   resumeState: unknown;
   computerId: string;

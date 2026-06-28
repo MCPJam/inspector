@@ -3066,10 +3066,12 @@ export async function runChatEngineLoop(
 export async function handleMCPJamFreeChatModel(
   options: MCPJamHandlerOptions
 ): Promise<Response> {
-  // A host with harness: "claude-code" runs the real Claude Code runtime via
-  // runHarnessTurn; otherwise the emulated engine. Both satisfy the same
-  // ChatEngineLoopResult contract (streamSink "ui" → a Response).
-  const result = await (options.harness === "claude-code"
+  // A host with a `harness` selected (claude-code | codex) runs the real runtime
+  // via runHarnessTurn; otherwise the emulated engine. `harness` is already a
+  // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
+  // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
+  // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
+  const result = await (options.harness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));
   if (!result.response) {
