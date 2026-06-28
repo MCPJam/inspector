@@ -10,6 +10,7 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_URL = process.env.CONVEX_HTTP_URL;
 const OWNER: HarnessOwnerRef = {
   projectId: "p1",
+  harnessId: "claude-code",
   ownerType: "direct-chat",
   chatSessionId: "c1",
 };
@@ -56,6 +57,9 @@ describe("claimHarnessSessionState", () => {
     );
     expect(body).toMatchObject({
       projectId: "p1",
+      // The harness id MUST be in the claim body — it's the lane-key dimension
+      // that stops a Codex turn from resuming a Claude Code sidecar.
+      harnessId: "claude-code",
       ownerType: "direct-chat",
       chatSessionId: "c1",
       leaseId: "lease-1",

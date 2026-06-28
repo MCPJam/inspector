@@ -60,6 +60,29 @@ const HARNESS_CONTROL_STATE: Record<
       note: "Claude Code does its own tool discovery.",
     },
   },
+  codex: {
+    // Permanent: the Codex CLI exposes no temperature knob to the host.
+    temperature: {
+      enforced: false,
+      note: "Codex runs its own loop and ignores temperature.",
+    },
+    // Codex can't pause for interactive tool approval (allow-all only).
+    requireToolApproval: {
+      enforced: false,
+      note: "Not enforced for the Codex harness yet.",
+    },
+    // Codex v1 doesn't attach MCP servers through MCPJam, so there's no
+    // visibility boundary to enforce.
+    respectToolVisibility: {
+      enforced: false,
+      note: "Not enforced for the Codex harness yet.",
+    },
+    // The real Codex owns its own tool discovery.
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "Codex does its own tool discovery.",
+    },
+  },
 };
 
 /**
