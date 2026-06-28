@@ -5,7 +5,9 @@ icon: "plus-square"
 tag: "NEW"
 ---
 
-MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, Codex, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize` — `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) or [Views](/inspector/views) behaves the way it would in production under that host.
+MCPJam ships built-in host presets for Claude, ChatGPT, Mistral (Le Chat), Cursor, Copilot, Codex, n8n, Perplexity, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize` — `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) or [Views](/inspector/views) behaves the way it would in production under that host.
+
+Presets fall into two categories: **MCP Apps hosts** that render widget iframes (Claude, ChatGPT, Mistral, Cursor, Copilot, MCPJam) and **headless/tools-only clients** that call tools but have no widget rendering surface (Codex, n8n, Perplexity). Headless presets are useful for verifying that your server degrades gracefully — returning plain text results — when the client doesn't support MCP Apps.
 
 If your host isn't in the list yet — or if Microsoft, Anthropic, OpenAI, etc. ship a new capability and the inspector hasn't caught up — adding a preset is a small, self-contained contribution. This page walks through it.
 
@@ -267,10 +269,11 @@ A non-exhaustive reference for the fields most often gotten wrong:
 </Warning>
 
 <Tip>
-  When mirroring a host that doesn't render widgets at all (e.g. Codex CLI),
-  replace `clientCapabilities` instead of spreading — a spread leaks the
-  SDK-default MCP UI extension back in and misrepresents the host as
-  UI-capable. See the Codex preset for the pattern.
+  When mirroring a host that doesn't render widgets at all (e.g. Codex CLI,
+  n8n MCP Client Tool, Perplexity), replace `clientCapabilities` instead of
+  spreading — a spread leaks the SDK-default MCP UI extension back in and
+  misrepresents the host as UI-capable. See the Codex, n8n, or Perplexity
+  presets for the pattern.
 </Tip>
 
 ## Open a PR
