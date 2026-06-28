@@ -32,7 +32,7 @@ Evals require a signed-in MCPJam account. As a guest you'll see a sign-in prompt
 Each case has four moving parts:
 
 - **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
+- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up." Each expanded turn also has its own **Checks** section for assertions scoped to that turn only (see [Per-turn checks](#per-turn-checks)).
 - **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
 - **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
 
@@ -57,6 +57,16 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **No tool errors** | No tool call returned an error. |
 | **Final message non-empty** | The model produced a final assistant message. |
 | **Token budget under N** | Total token usage stayed below the cap. |
+
+### Per-turn checks
+
+In addition to case-level checks, you can add checks scoped to a single turn. Expand any prompt turn in the case editor and use the **Checks** section that appears beneath it. These checks are evaluated against only that turn's slice of the transcript, not the full iteration.
+
+Per-turn checks are useful when you want to assert on an intermediate step — for example, "turn 2's response contains the word 'confirmed'" — without that assertion applying to every turn.
+
+<Note>
+  The **Add check** menu inside a turn only shows check kinds that can be scoped to a single turn. Check kinds that require the full iteration context are not available here.
+</Note>
 
 ### Argument matching
 
@@ -154,7 +164,7 @@ When two or more host configurations are attached to a suite, a **By case / By h
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
-- **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
+- **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each case-level predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no case-level predicates are configured. Per-turn check verdicts appear under their respective turn in the **Turn Breakdown** list instead.
 
 #### Comparing two runs
 
