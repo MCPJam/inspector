@@ -24,6 +24,7 @@ import {
   CloudSkillsError,
   listCloudSkills,
   getCloudSkill,
+  getCloudSkillByName,
   createCloudSkill,
   updateCloudSkill,
   deleteCloudSkill,
@@ -95,6 +96,26 @@ skills.post("/get", async (c) =>
     const skill = await run(async () =>
       getCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
     );
+    return { skill };
+  }),
+);
+
+skills.post("/get-by-name", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      projectOnly.extend({ name: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const skill = await run(async () =>
+      getCloudSkillByName(await ctxFrom(c, body.projectId), body.name),
+    );
+    if (!skill) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        `Skill '${body.name}' not found`,
+      );
+    }
     return { skill };
   }),
 );

@@ -16,6 +16,7 @@ import {
   Check,
   Code,
   Eye,
+  Globe,
 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -26,6 +27,7 @@ import {
   deleteSkill,
   listSkillFiles,
   readSkillFile,
+  promoteSkill,
   type SkillsSource,
 } from "@/lib/apis/mcp-skills-api";
 import { HOSTED_MODE } from "@/lib/config";
@@ -242,6 +244,24 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
     setIsUploadDialogOpen(false);
   };
 
+  // The list item for the selected skill carries cloud metadata (sharing/origin)
+  // that the detail `Skill` doesn't.
+  const selectedItem = skills.find((s) => s.name === selectedSkillName);
+
+  const handlePromote = async () => {
+    if (!projectId || !selectedItem) return;
+    try {
+      await promoteSkill(selectedItem.name, projectId);
+      posthog.capture("skill_promoted", {
+        ...standardEventProps("skills_tab"),
+        skill_name: selectedItem.name,
+      });
+      await fetchSkills();
+    } catch (err) {
+      console.error("Error promoting skill:", err);
+    }
+  };
+
   const handleSelectSkill = (name: string) => {
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
@@ -384,6 +404,18 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                       <span className="font-medium text-sm text-foreground truncate">
                         {selectedSkill.name}
                       </span>
+                      {selectedItem && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] uppercase tracking-wide flex-shrink-0"
+                        >
+                          {selectedItem.origin === "cloud"
+                            ? selectedItem.sharing === "project"
+                              ? "Shared"
+                              : "Personal"
+                            : "Local"}
+                        </Badge>
+                      )}
                       {selectedFilePath === "SKILL.md" ? (
                         <span
                           className="text-xs text-muted-foreground/60 font-mono truncate"
@@ -444,6 +476,18 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                         )}
                       </Button>
                     )}
+                    {selectedItem?.origin === "cloud" &&
+                      selectedItem.sharing === "user" && (
+                        <Button
+                          onClick={handlePromote}
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="Promote to project (share with all members)"
+                        >
+                          <Globe className="h-4 w-4" />
+                        </Button>
+                      )}
                     <Button
                       onClick={() => setSkillToDelete(selectedSkill.name)}
                       variant="ghost"
