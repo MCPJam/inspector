@@ -180,7 +180,12 @@ Treat the tool result and the Inspector render as separate outcomes. An exit cod
 
 ### `resources list`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ### `resources read`
 
