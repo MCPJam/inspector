@@ -49,17 +49,41 @@ export interface CloudSkillsContext {
 
 export type { CloudSkillDetail, CloudSkillListItem, SkillSharing };
 
+const CODE_STATUS: Record<string, number> = {
+  VALIDATION: 400,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+};
+
+/** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */
+function convexErrorData(
+  err: unknown,
+): { code?: string; message?: string } | null {
+  const data = (err as { data?: unknown })?.data;
+  if (data && typeof data === "object") return data as { code?: string };
+  return null;
+}
+
 /**
- * Map a Convex error to a CloudSkillsError with a best-effort HTTP status.
+ * Map a Convex error to a CloudSkillsError with an HTTP status.
  *
- * NOTE: the backend throws plain `Error`s (mirroring computerEnvironments), and
- * Convex redacts those messages in PRODUCTION — so in prod the status falls back
- * to 500/400 and the message is generic. The operation still fails closed
- * (security holds); richer surfaced messages would need backend `ConvexError`s
- * (tracked as a follow-up). In dev the messages pass through and map precisely.
+ * Primary path: the backend throws `ConvexError({ code, message })` for expected
+ * failures — `code` + `message` survive Convex's production redaction, so we map
+ * the code → status precisely (and surface the message). Fallback (a plain
+ * `Error` / unexpected fault): regex the message in dev, else opaque 500.
  */
 function mapConvexError(err: unknown): CloudSkillsError {
   if (err instanceof CloudSkillsError) return err;
+
+  const data = convexErrorData(err);
+  if (data?.code && CODE_STATUS[data.code] !== undefined) {
+    return new CloudSkillsError(
+      data.message ?? "Skill request failed",
+      CODE_STATUS[data.code],
+    );
+  }
+
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
   let status = 500;

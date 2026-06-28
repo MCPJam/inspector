@@ -104,6 +104,32 @@ describe("cloud-skills (Convex-sourced)", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  it("maps a ConvexError code → status (survives prod redaction)", async () => {
+    // ConvexError surfaces as an error with structured `.data` (not redacted).
+    const convexErr = Object.assign(new Error("[CONVEX] redacted"), {
+      data: { code: "FORBIDDEN", message: "requires project admin" },
+    });
+    vi.mocked(convexCreateSkill).mockRejectedValue(convexErr);
+    await expect(
+      createCloudSkill(ctx, {
+        name: "x",
+        description: "d",
+        content: "c",
+        sharing: "project",
+      }),
+    ).rejects.toMatchObject({ status: 403, message: "requires project admin" });
+  });
+
+  it("maps a VALIDATION ConvexError code → 400", async () => {
+    const convexErr = Object.assign(new Error("[CONVEX] redacted"), {
+      data: { code: "VALIDATION", message: "bad name" },
+    });
+    vi.mocked(convexCreateSkill).mockRejectedValue(convexErr);
+    await expect(
+      createCloudSkill(ctx, { name: "x", description: "d", content: "c" }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
   it("wraps unknown errors as CloudSkillsError 500", async () => {
     vi.mocked(convexCreateSkill).mockRejectedValue(new Error("kaboom"));
     await expect(

@@ -306,13 +306,20 @@ chatV2.post("/", async (c) => {
     // computer-backed bash tool — a guest share-link/chatbox session must not
     // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
     // is called ("advertise == enforce").
-    const hostComputer = c.get("guestId")
-      ? null
-      : narrowHostComputer(
-          hostRuntimeConfig
-            ? (hostRuntimeConfig as { computer?: unknown }).computer
-            : undefined
-        );
+    // The claude-code harness gets skills via FS materialization
+    // (run-harness-turn → materializeSkills writes ~/.claude/skills, which
+    // Claude Code discovers natively). It does NOT receive the cloud skill
+    // tools, so advertising listSkills/loadSkill in its prompt would be a
+    // prompt/tool mismatch — suppress cloudSkills for the harness path. The
+    // non-harness streamText path is the one that actually wires these tools.
+    const hostComputer =
+      c.get("guestId") || resolvedExecution.harness === "claude-code"
+        ? null
+        : narrowHostComputer(
+            hostRuntimeConfig
+              ? (hostRuntimeConfig as { computer?: unknown }).computer
+              : undefined
+          );
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
