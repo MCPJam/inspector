@@ -2,6 +2,8 @@ import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { compareRunsBySequence } from "./helpers";
@@ -380,6 +382,12 @@ export function SuiteIterationsView({
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
+  // Reproducible-evals env picker (gated by the computers feature flag). Only
+  // fetch the project's environments when the flag is on and we have a project.
+  const computersEnabled = useComputersEnabled();
+  const computerEnvironments = useEnvironments(
+    computersEnabled && projectId ? projectId : null
+  );
   // Hosts available to attach in the header's "+ Attach host" picker. The
   // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
@@ -1352,6 +1360,74 @@ export function SuiteIterationsView({
                   higher keeps its count; a per-run override still wins.
                 </p>
               </SettingsSection>
+
+              {/* ── Computer environment (reproducible evals) ──────────
+                  Gated behind the computers feature flag. Pins a built Docker
+                  environment so each eval iteration boots a fresh sandbox from
+                  the same image — comparable results across runs/edits. */}
+              {computersEnabled && projectId ? (
+                <SettingsSection
+                  label="Computer environment"
+                  layout="inline"
+                  inlineSlot={
+                    <select
+                      className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      value={suite.environment?.computerEnvironmentId ?? ""}
+                      aria-label="Reproducible computer environment for eval runs"
+                      onChange={async (e) => {
+                        const next = e.target.value || undefined;
+                        try {
+                          await updateSuite({
+                            suiteId: suite._id,
+                            environment: {
+                              servers: suite.environment?.servers ?? [],
+                              serverBindings: suite.environment?.serverBindings,
+                              ...(next ? { computerEnvironmentId: next } : {}),
+                            },
+                          });
+                          toast.success(
+                            next
+                              ? "Computer environment set"
+                              : "Computer environment cleared"
+                          );
+                        } catch (error) {
+                          toast.error(
+                            getBillingErrorMessage(
+                              error,
+                              "Failed to update suite"
+                            )
+                          );
+                          console.error(
+                            "Failed to update computer environment:",
+                            error
+                          );
+                        }
+                      }}
+                    >
+                      <option value="">None (default image)</option>
+                      {(computerEnvironments ?? []).map((env) => {
+                        const ready = env.currentBuild?.status === "ready";
+                        return (
+                          <option
+                            key={env.environmentId}
+                            value={env.environmentId}
+                          >
+                            {env.name}
+                            {ready ? "" : " (not built)"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  }
+                >
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Each eval iteration boots a fresh sandbox from this image
+                    and the agent gets a <span className="font-mono">bash</span>{" "}
+                    tool in it. Build the environment before running, or the run
+                    fails fast.
+                  </p>
+                </SettingsSection>
+              ) : null}
 
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection

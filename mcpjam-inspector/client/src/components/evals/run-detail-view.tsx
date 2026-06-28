@@ -48,6 +48,7 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
+import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -412,6 +413,27 @@ export function RunDetailView({
   const { availableModels } = useAvailableModels({
     projectId: selectedRunDetails.projectId ?? null,
   });
+
+  // The frozen reproducible-env pin this run launched from (if any). Resolve a
+  // friendly name best-effort; fall back to the snapshot's environmentId if the
+  // environment was deleted since the run.
+  const runComputerEnv = selectedRunDetails.configSnapshot?.computerEnvironment;
+  // Durable id keyed off the frozen pin, falling back to the snapshot's
+  // environment.computerEnvironmentId — so a run that recorded the id without
+  // the newer frozen object still shows an Environment row.
+  const runComputerEnvId =
+    runComputerEnv?.environmentId ??
+    selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
+    null;
+  const runEnvironments = useEnvironments(
+    runComputerEnvId ? selectedRunDetails.projectId ?? null : null
+  );
+  // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
+  // the only durable identifier once the environment is deleted).
+  const runComputerEnvLabel = runComputerEnvId
+    ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
+        ?.name ?? runComputerEnvId
+    : null;
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,
@@ -682,6 +704,31 @@ export function RunDetailView({
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Host</span>
           <HostChip name={runClient.displayName} hostId={runClient.hostId} />
+        </div>
+      ) : null}
+
+      {runComputerEnvId ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Environment</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+            title={
+              runComputerEnv
+                ? `Image ${runComputerEnv.e2bTemplateId}${
+                    runComputerEnv.baseImageDigests[0]
+                      ? ` · ${runComputerEnv.baseImageDigests[0]}`
+                      : ""
+                  } · ${runComputerEnv.provider}`
+                : undefined
+            }
+          >
+            <span className="text-foreground">{runComputerEnvLabel}</span>
+            {runComputerEnv ? (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {runComputerEnv.provider}
+              </span>
+            ) : null}
+          </span>
         </div>
       ) : null}
 
