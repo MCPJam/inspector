@@ -28,10 +28,27 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type FinishReason,
+  type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import {
+  emitTraceSnapshot,
+  getPromptIndex,
+  getPromptMessageStartIndex,
+  setToolSpanMessageRangesFromResults,
+  writeTraceEvent,
+} from "../live-chat-trace-stream.js";
+import { getHarnessAdapter } from "./registry.js";
+import {
+  emitError,
+  emitFinish,
+  emitTextDelta,
+  emitTextEnd,
+  emitTextStart,
+  emitToolInput,
+  emitToolOutput,
+} from "../chat-stream-chunks.js";
 import { tunnelManager } from "../../services/tunnel-manager.js";
 import { logger } from "../logger.js";
 import type {
@@ -40,8 +57,16 @@ import type {
 } from "../mcpjam-stream-handler.js";
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { createOffsetInterval } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import {
+  claimHarnessSessionState,
+  heartbeatHarnessSessionState,
+  releaseHarnessSessionState,
+  type HarnessOwnerRef,
+  type HarnessSessionCommitPayload,
+} from "./harness-session-state.js";
 import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
@@ -56,61 +81,24 @@ import {
 type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
 /**
- * Resolve the model credential the harness hands to the in-sandbox Claude Code
- * CLI. The inspector server holds no long-lived model key by design (keys live
- * in Convex), so this reads a deploy-configured credential.
+ * Resolve the model credential the harness hands to the in-sandbox CLI — from
+ * Convex, like every other model key (keys live in Convex; the inspector holds
+ * none by design). The CLI makes its own model calls inside the sandbox, so it
+ * needs a real credential; we fetch the system **AI Gateway** key via the
+ * bearer-authed Convex endpoint and hand it to the adapter as `auth.gateway`.
+ * One key serves Claude Code (Anthropic) and Codex (OpenAI).
  *
- * MVP seam: `AI_GATEWAY_API_KEY` (preferred) or `ANTHROPIC_API_KEY`. Production
- * hardening (per the plan): a short-lived, project-scoped AI-Gateway token
- * minted by Convex per turn — swap this function's body for that mint without
- * touching the rest of the turn.
+ * Per-request Gateway attribution tags (`providerOptions.gateway.user/tags`)
+ * are NOT plumbed: the harness adapter only forwards env vars to the CLI
+ * (AI_GATEWAY_API_KEY / *_BASE_URL), so it can't carry per-call tags. Issuance
+ * is instead audited + rate-limited server-side; full per-generation spend
+ * ingestion is a follow-up (see the harness plan).
+ *
+ * Fails closed: the endpoint rejects (harness disabled / not a member /
+ * rate-limited / no gateway key) ⇒ we throw here, BEFORE the computer is woken
+ * (this is the first step of the turn), so a misconfigured turn never provisions
+ * a box.
  */
-function resolveHarnessModelAuth():
-  | { gateway: { apiKey: string; baseUrl?: string } }
-  | { anthropic: { apiKey?: string; authToken?: string; baseUrl?: string } } {
-  // Fail closed: this hands a deploy-level model key to the in-sandbox Claude
-  // Code CLI (and the generated .mcp.json may carry per-server auth headers)
-  // inside a reused executable computer, which crosses the server-side trust
-  // boundary. Require an explicit operator opt-in until the per-turn
-  // Convex-minted token replaces it.
-  if (process.env.MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL !== "true") {
-    throw new Error(
-      "harness env credential path is disabled — set " +
-        "MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL=true to opt in (dev/owner only; " +
-        "production uses a per-turn scoped token minted by Convex)",
-    );
-  }
-  const gatewayKey = process.env.AI_GATEWAY_API_KEY?.trim();
-  if (gatewayKey) {
-    return {
-      gateway: {
-        apiKey: gatewayKey,
-        ...(process.env.AI_GATEWAY_BASE_URL
-          ? { baseUrl: process.env.AI_GATEWAY_BASE_URL }
-          : {}),
-      },
-    };
-  }
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
-  const anthropicToken = process.env.ANTHROPIC_AUTH_TOKEN?.trim();
-  if (anthropicKey || anthropicToken) {
-    return {
-      anthropic: {
-        ...(anthropicKey ? { apiKey: anthropicKey } : {}),
-        ...(anthropicToken ? { authToken: anthropicToken } : {}),
-        ...(process.env.ANTHROPIC_BASE_URL
-          ? { baseUrl: process.env.ANTHROPIC_BASE_URL }
-          : {}),
-      },
-    };
-  }
-  throw new Error(
-    "harness model credential not configured — set AI_GATEWAY_API_KEY or " +
-      "ANTHROPIC_API_KEY on the inspector server (production: per-turn scoped " +
-      "token minted by Convex)",
-  );
-}
-
 /**
  * Build the harness `.mcp.json` from the selected servers' live configs.
  * Resolves each id via `mcpClientManager.getServerConfig` and, for stdio
@@ -158,6 +146,42 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
+/** Per-process id for lease attribution (logs/debugging). */
+const HARNESS_INSTANCE_ID = crypto.randomUUID();
+/** Lease TTL handed to Convex; heartbeats extend it while streaming. Real Claude
+ *  Code turns can exceed this, so it's the crash-recovery bound, not the normal
+ *  run bound (we heartbeat well within it). */
+const HARNESS_LEASE_TTL_MS = 5 * 60_000;
+const HARNESS_HEARTBEAT_MS = 90_000;
+
+/** Stable hash of the session-scoped runtime inputs. A change forces a fresh
+ *  harness session (a resumed Claude Code thread keeps the model/tools it was
+ *  created with, so changing those mid-session is unsafe).
+ *
+ *  Deliberately EXCLUDES the system prompt. The inspector hands us the per-turn
+ *  `effectiveEnhancedSystemPrompt`, which app/widget chats augment EVERY turn
+ *  with live widget model context (web-chat-turn buildWidgetModelContextSystem-
+ *  Prompt). Hashing it flipped the fingerprint each turn and cold-started every
+ *  app/widget conversation. A resumed thread keeps its original instructions
+ *  regardless, so the prompt isn't a safe fork trigger; model + server set are
+ *  the stable, resume-invalidating dimensions. */
+export function harnessRuntimeFingerprint(parts: {
+  modelId: string;
+  selectedServers?: string[];
+  permissionMode: string;
+}): string {
+  const s = [
+    (parts.selectedServers ?? []).slice().sort().join(","),
+    parts.permissionMode,
+  ].join("");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${parts.modelId}|${(h >>> 0).toString(16)}`;
+}
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -180,25 +204,80 @@ export async function runHarnessTurn(
     onEngineError,
     onLiveTextDelta,
     requireToolApproval,
+    chatSessionId,
+    chatboxId,
+    sourceType,
+    harness,
+    builtInTools,
   } = options;
+  // The harness adapter knows the Claude-specific bits (auth shape, native model
+  // mapping, harness construction). runHarnessTurn stays harness-agnostic.
+  const harnessAdapter = getHarnessAdapter(harness ?? "claude-code");
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
   const messageHistory: ModelMessage[] = [...messages];
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
+  // Per-turn prompt index (user-message count − 1), computed from the inbound
+  // history like runChatEngineLoop's getPromptIndex. Hardcoding 0 collapses a
+  // multi-turn session: persisted traces rehydrate sorted by promptIndex, so
+  // every turn claiming 0 mislabels/merges them in the Trace tab.
+  const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // Internal liveness abort: the heartbeat fires this when the lease is
+  // DEFINITIVELY lost (stolen/expired) or when transient heartbeat failures
+  // span the lease TTL. Combined with the caller's abortSignal so either tears
+  // the turn down; declared at function scope so the catch can read it.
+  const livenessAbort = new AbortController();
+  const effectiveAbortSignal: AbortSignal = abortSignal
+    ? AbortSignal.any([abortSignal, livenessAbort.signal])
+    : livenessAbort.signal;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
   let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  // §3 atomic commit: built in executeEngine's finally (after session.stop()),
+  // consumed by onFinishEngine's onConversationComplete so the resume state
+  // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
+  // closure free the lane if the commit can't happen (stop/persist failure).
+  let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
+  let releaseHarnessLease: (() => Promise<void>) | undefined;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
+  // ── Live trace emission (parity with runChatEngineLoop's writeTraceEvent) ──
+  // The Trace tab is built entirely from `data-trace-event` SSE parts; the
+  // harness path must emit turn_start / trace_snapshot / turn_finish or the tab
+  // stays on its "Sample trace" placeholder forever. `traceTurnStarted` gates
+  // the error-path finish so a pre-stream failure can't emit a phantom turn.
+  // `stepStartedAt` clocks the synthetic per-step agent (llm) span — the span
+  // that renders the "Agent:" row and guarantees non-empty spans even for
+  // text-only turns (capturedSpans otherwise holds tool spans only).
+  // `toolSetForTrace` is the harness-side stand-in for an `ai` ToolSet (there
+  // is none — it drives the in-sandbox CLI via .mcp.json): a toolName→serverId
+  // map so emitTraceSnapshot can attach actualToolCalls.serverId.
+  // `traceBaseMs` is the zero-point for span offsets — set to STREAM start (after
+  // credential/claim/box-wake/connect), not `turnStartedAt` (function entry).
+  // Basing on function entry painted the per-turn setup latency as an empty gap
+  // before every turn's bar; the emulated engine clocks from stream start too,
+  // so this keeps the harness trace gapless and on parity. Setup time still
+  // shows in the [harness][timing] phase log.
+  let traceTurnStarted = false;
+  let traceBaseMs = turnStartedAt;
+  let stepStartedAt = turnStartedAt;
+  const toolSetForTrace: Record<string, { _serverId?: string }> = {};
+  const snapshotTurnContext = () => ({
+    turnId,
+    promptIndex,
+    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
+    turnSpans: capturedSpans,
+    ...(usage ? { turnUsage: usage } : {}),
+  });
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
-    if (abortSignal?.aborted) {
+    if (effectiveAbortSignal.aborted) {
       aborted = true;
       return;
     }
@@ -237,11 +316,28 @@ export async function runHarnessTurn(
         );
       }
 
-      // 1. Resolve the model credential FIRST. It's a pure, fail-fast check —
-      // the env-credential gate throws when disabled/unset — so doing it before
-      // resolveHarnessSandbox keeps a misconfigured turn from waking/provisioning
-      // the user's computer (and bumping its activity) only to fail afterward.
-      const auth = resolveHarnessModelAuth();
+      // Phase timing — log where a turn spends its wall-clock (credential /
+      // claim / box wake / session connect / model stream / finalize) so "takes
+      // forever" can be attributed instead of guessed.
+      const tStart = Date.now();
+      let tAuth = tStart;
+      let tClaim = tStart;
+      let tSandbox = tStart;
+      let tConnect = tStart;
+      let resumedSession = false;
+
+      // 1. Resolve the model credential FIRST — fetched from Convex (the
+      // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
+      // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
+      // user's computer (and bumps its activity), so a misconfigured turn never
+      // touches the box.
+      const auth = await harnessAdapter.resolveAuth({
+        projectId,
+        modelId,
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      tAuth = Date.now();
 
       // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
       // harnessServerInputFromConfig throws e.g. for a local stdio server with
@@ -263,12 +359,100 @@ export async function runHarnessTurn(
         selectedServers ?? [],
       );
 
+      // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
+      // waking the box so a "turn already running" (409) doesn't provision it.
+      // Continuity needs a chat owner (chatSessionId + auth + a supported
+      // ownerType); eval/synthetic harness turns (streamSink "none", no
+      // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
+      const runtimeFingerprint = harnessRuntimeFingerprint({
+        modelId,
+        selectedServers: selectedServers ?? [],
+        permissionMode: "allow-all",
+      });
+      const ownerType: HarnessOwnerRef["ownerType"] | undefined =
+        sourceType === "chatbox"
+          ? "chatbox-chat"
+          : sourceType === "eval" || sourceType === "sandbox"
+            ? undefined
+            : "direct-chat";
+      let continuity:
+        | {
+            owner: HarnessOwnerRef;
+            leaseId: string;
+            stateVersion: number;
+            state: {
+              harnessSessionId: string;
+              resumeState: unknown;
+              computerId: string;
+            } | null;
+          }
+        | undefined;
+      if (
+        chatSessionId &&
+        projectId &&
+        authHeader &&
+        ownerType &&
+        (ownerType !== "chatbox-chat" || chatboxId)
+      ) {
+        const owner: HarnessOwnerRef = {
+          projectId,
+          ownerType,
+          chatSessionId,
+          ...(chatboxId ? { chatboxId } : {}),
+        };
+        const leaseId = crypto.randomUUID();
+        const claim = await claimHarnessSessionState({
+          owner,
+          runtimeFingerprint,
+          leaseId,
+          leasedBy: `${HARNESS_INSTANCE_ID}:${turnId}`,
+          leaseTtlMs: HARNESS_LEASE_TTL_MS,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!claim.ok) {
+          // FAIL CLOSED for chat-backed owners (this block only runs for
+          // direct-chat/chatbox-chat). Never silently start a fresh,
+          // non-persisted Claude Code session when continuity can't be
+          // guaranteed — that would mislead the user into thinking they're in a
+          // continuous conversation.
+          if (claim.status === 409) {
+            throw new Error(
+              "Another turn is already running for this chat — wait for it to finish.",
+            );
+          }
+          logger.warn("[harness] session-state claim failed; failing closed", {
+            status: claim.status,
+            error: claim.error,
+          });
+          throw new Error(
+            "Couldn't start a Claude Code session — the continuity service is " +
+              "unavailable right now. Please try again in a moment.",
+          );
+        } else {
+          continuity = {
+            owner,
+            leaseId,
+            stateVersion: claim.stateVersion,
+            state: claim.state,
+          };
+          releaseHarnessLease = () =>
+            releaseHarnessSessionState({
+              owner,
+              leaseId,
+              bearer: authHeader,
+            }).catch(() => {});
+        }
+      }
+      tClaim = Date.now();
+
       // 3. Resolve (and wake) the host's computer → sandbox id.
-      const { sandboxId } = await resolveHarnessSandbox({
+      const { computerId, sandboxId } = await resolveHarnessSandbox({
         bearer: authHeader,
         projectId,
         signal: abortSignal,
       });
+      tSandbox = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
@@ -276,15 +460,30 @@ export async function runHarnessTurn(
       // with full tool access (the agentic default).
       const permissionMode = "allow-all" as const;
 
-      const harness = createClaudeCode({ model: modelId, auth });
+      // The adapter maps the host modelId to the harness's native model and
+      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
+      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
+      // do zero inference). Returns the HarnessAgent boundary type directly.
+      const harnessRuntime = harnessAdapter.createHarness({ modelId, auth });
+      // MCPJam's server-executed built-in tools (e.g. web_search). The harness
+      // forwards each as a tool spec to the runtime; when Claude Code calls one
+      // it pauses, the agent runs the tool's `execute()` HERE on MCPJam's
+      // server, and submits the result back. MCP-server tools are NOT included
+      // (they reach the runtime via `.mcp.json` and its own MCP client), so the
+      // model never sees a tool twice. Cast across the dual-`ai` boundary, same
+      // as the harness adapter above (structurally identical ToolSet types).
+      const hostExecutedTools = (builtInTools ?? {}) as Record<string, unknown>;
       const agent = new HarnessAgent({
-        // Dual-`ai` boundary cast: createClaudeCode returns a HarnessV1 from its
-        // own (nested) @ai-sdk/harness copy, nominally distinct from this
-        // server's copy that HarnessAgent uses. Structurally identical; the
-        // drive below reads the resulting stream loosely.
-        harness: harness as unknown as HarnessAgentAdapter,
+        harness: harnessRuntime,
         sandbox,
         ...(systemPrompt ? { instructions: systemPrompt } : {}),
+        ...(Object.keys(hostExecutedTools).length
+          ? {
+              tools: hostExecutedTools as NonNullable<
+                ConstructorParameters<typeof HarnessAgent>[0]["tools"]
+              >,
+            }
+          : {}),
         permissionMode,
         onSandboxSession: async ({ session, sessionWorkDir }) => {
           // Write the host's MCP servers into the session workdir before
@@ -303,14 +502,88 @@ export async function runHarnessTurn(
       // and defeat the point of observing it (same rationale as progressive tool
       // discovery above). The turn-level abortSignal/timeout (propagated into
       // agent.stream below) is the cost/runaway backstop.
-      const session = await agent.createSession();
+      //
+      // Resume-or-fresh: if the claimed lane has resume state captured on THIS
+      // computer (the workdir lives there), reattach the Claude Code thread so
+      // prior turns carry over. Any resume failure falls back fresh (lossy,
+      // logged). A computer mismatch (reset/reprovision) ⇒ fresh.
+      const resumable =
+        continuity?.state && continuity.state.computerId === computerId
+          ? continuity.state
+          : undefined;
+      let session: Awaited<ReturnType<typeof agent.createSession>>;
+      if (resumable) {
+        try {
+          session = await agent.createSession({
+            sessionId: resumable.harnessSessionId,
+            resumeFrom: resumable.resumeState,
+          } as unknown as Parameters<typeof agent.createSession>[0]);
+          resumedSession = true;
+        } catch (resumeErr) {
+          logger.warn("[harness] resume failed; starting fresh", {
+            error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
+          });
+          session = await agent.createSession();
+        }
+      } else {
+        session = await agent.createSession();
+      }
+      tConnect = Date.now();
+
+      // Heartbeat the lease while we stream (turns can outlive the TTL). The
+      // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
+      // lease loss, tolerates transient failures (network blips), and gives up
+      // only if those transients span the whole lease TTL ("lost liveness").
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      if (continuity) {
+        const c = continuity;
+        let firstRetryableAt = 0;
+        heartbeatTimer = setInterval(() => {
+          void heartbeatHarnessSessionState({
+            owner: c.owner,
+            leaseId: c.leaseId,
+            leaseTtlMs: HARNESS_LEASE_TTL_MS,
+            bearer: authHeader,
+          }).then((result) => {
+            if (result === "ok") {
+              firstRetryableAt = 0;
+              return;
+            }
+            if (result === "lost") {
+              logger.warn("[harness] lease lost — aborting turn", {
+                leaseId: c.leaseId,
+              });
+              livenessAbort.abort(new Error("harness lease lost"));
+              return;
+            }
+            // retryable: tolerate blips, but don't run blind forever
+            if (firstRetryableAt === 0) firstRetryableAt = Date.now();
+            const elapsedMs = Date.now() - firstRetryableAt;
+            logger.warn("[harness] heartbeat transient failure; will retry", {
+              elapsedMs,
+            });
+            if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
+              logger.warn(
+                "[harness] heartbeat lost liveness past TTL — aborting turn",
+              );
+              livenessAbort.abort(new Error("harness lost liveness"));
+            }
+          });
+        }, HARNESS_HEARTBEAT_MS);
+      }
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
+        // `session` is REQUIRED — agent.stream() reads options.session in
+        // _startTurn (session.promptTurn); omitting it throws "Cannot read
+        // properties of undefined (reading 'promptTurn')". `_resolveTurnInput`
+        // accepts `messages` and uses the last role:"user" entry as the prompt.
         const res = await agent.stream({
+          session,
           messages,
-          // Hand the harness the abort signal so a cancel propagates into the
-          // in-sandbox run rather than only stopping our forwarding.
-          ...(abortSignal ? { abortSignal } : {}),
+          // Hand the harness the combined abort signal so a user cancel OR a
+          // lost-lease liveness abort propagates into the in-sandbox run rather
+          // than only stopping our forwarding.
+          abortSignal: effectiveAbortSignal,
         } as unknown as Parameters<typeof agent.stream>[0]);
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
@@ -337,12 +610,50 @@ export async function runHarnessTurn(
         }> = [];
         const flushSegment = () => {
           if (assistantParts.length > 0) {
+            const assistantMsgIndex = messageHistory.length;
             messageHistory.push({
               role: "assistant",
               content: [...assistantParts],
             } as unknown as ModelMessage);
             assistantParts.length = 0;
+            // Synthetic agent span: renders the "Agent:" row (llm category) and
+            // guarantees non-empty trace spans even when the step produced only
+            // text. The harness can't observe genuine LLM latency/tokens, so the
+            // span is a wall-clock envelope; cumulative usage is attached once
+            // the final flush runs after `await res.text` settles it.
+            capturedSpans.push({
+              id: crypto.randomUUID(),
+              name: modelId,
+              category: "llm",
+              // Span times are turn-relative offsets (ms from traceBaseMs), not
+              // absolute epoch — the timeline treats endMs as an offset
+              // (getTraceSpansDurationMs = max(endMs)) and rebases turns end-to-end.
+              ...createOffsetInterval(traceBaseMs, stepStartedAt, Date.now()),
+              promptIndex,
+              stepIndex,
+              status: "ok",
+              messageStartIndex: assistantMsgIndex,
+              messageEndIndex: assistantMsgIndex,
+              modelId,
+              finishReason: turnFinishReason,
+              ...(usage
+                ? {
+                    ...(typeof usage.inputTokens === "number"
+                      ? { inputTokens: usage.inputTokens }
+                      : {}),
+                    ...(typeof usage.outputTokens === "number"
+                      ? { outputTokens: usage.outputTokens }
+                      : {}),
+                    ...(typeof usage.totalTokens === "number"
+                      ? { totalTokens: usage.totalTokens }
+                      : {}),
+                  }
+                : {}),
+            });
           }
+          const flushedToolCallIds = new Set(
+            pendingResults.map((tr) => tr.toolCallId),
+          );
           for (const tr of pendingResults) {
             messageHistory.push({
               role: "tool",
@@ -367,6 +678,16 @@ export async function runHarnessTurn(
             } as unknown as ModelMessage);
           }
           pendingResults.length = 0;
+          // Back-fill messageStartIndex/EndIndex on this step's tool spans now
+          // that their tool-result messages exist in messageHistory (trace ↔
+          // transcript correlation; parity with runChatEngineLoop).
+          setToolSpanMessageRangesFromResults(
+            capturedSpans,
+            messageHistory,
+            promptIndex,
+            stepIndex,
+            flushedToolCallIds,
+          );
         };
         // Step + tool-identity tracking. A "step" spans assistant content + its
         // tool results; the next assistant content after results begins the next
@@ -381,19 +702,40 @@ export async function runHarnessTurn(
         const finishStep = () => {
           onStepFinish?.({
             stepIndex,
-            promptIndex: 0,
+            promptIndex,
             // Usage is only known at the harness `finish`, so intermediate steps
             // carry what's settled (matches the engine's cumulative semantics).
             ...(usage ? { turnUsage: usage } : {}),
             settledWithError: false,
             turnSpans: [...capturedSpans],
           });
+          // Stream the cumulative spans + messages to the live Trace tab. This
+          // is the event that flips the tab off its "Sample trace" placeholder.
+          emitTraceSnapshot(
+            writer,
+            messageHistory,
+            toolSetForTrace as unknown as ToolSet,
+            snapshotTurnContext(),
+          );
           stepIndex += 1;
+          stepStartedAt = Date.now();
         };
+        // Emit turn_start here (not at function entry) so a pre-stream failure
+        // (credential/box/connect) never creates a phantom turn in the trace.
+        // Anchor the trace clock to stream start so setup latency isn't a gap.
+        traceBaseMs = Date.now();
+        writeTraceEvent(writer, {
+          type: "turn_start",
+          turnId,
+          promptIndex,
+          startedAtMs: traceBaseMs,
+        });
+        traceTurnStarted = true;
+        stepStartedAt = traceBaseMs;
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
-          if (abortSignal?.aborted) {
+          if (effectiveAbortSignal.aborted) {
             aborted = true;
             break;
           }
@@ -412,7 +754,7 @@ export async function runHarnessTurn(
             }
             if (textId === undefined) {
               textId = crypto.randomUUID();
-              writer.write({ type: "text-start", id: textId });
+              emitTextStart(writer, textId);
             }
             // Append to the open trailing text part, or start a new one, so
             // text keeps its order relative to tool-calls.
@@ -422,7 +764,7 @@ export async function runHarnessTurn(
             } else {
               assistantParts.push({ type: "text", text: delta });
             }
-            writer.write({ type: "text-delta", id: textId, delta });
+            emitTextDelta(writer, textId, delta);
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -434,7 +776,7 @@ export async function runHarnessTurn(
             // balanced (matches the emulated engine's flush-before-tool order);
             // later text opens a fresh block with a new id.
             if (textId !== undefined) {
-              writer.write({ type: "text-end", id: textId });
+              emitTextEnd(writer, textId);
               textId = undefined;
             }
             const toolCallId = String(
@@ -461,19 +803,26 @@ export async function runHarnessTurn(
               ...(serverId ? { serverId } : {}),
               toolName,
             });
+            // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
+            // can resolve this tool's serverId (the harness has no `ai` ToolSet).
+            toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
-            writer.write({
-              type: "tool-input-available",
+            // providerExecuted:true — the harness runs ALL tools in-sandbox
+            // (Claude Code executes them itself). Without it the client treats
+            // these as client-side tools to fulfill and `sendAutomaticallyWhen`
+            // auto-continues, re-submitting the turn forever.
+            emitToolInput(writer, {
               toolCallId,
               toolName,
               input,
+              providerExecuted: true,
             });
             await onToolCall?.({
               toolCallId,
               toolName,
               input,
               stepIndex,
-              promptIndex: 0,
+              promptIndex,
               serverId,
             });
             assistantParts.push({ type: "tool-call", toolCallId, toolName, input });
@@ -500,14 +849,19 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId,
               );
-            writer.write({ type: "tool-output-available", toolCallId, output });
+            // Provider-executed (in-sandbox) — see tool-input-available above.
+            emitToolOutput(writer, {
+              toolCallId,
+              output,
+              providerExecuted: true,
+            });
             await onToolResult?.({
               toolCallId,
               toolName: meta.toolName,
               output,
               isError,
               stepIndex,
-              promptIndex: 0,
+              promptIndex,
               serverId: meta.serverId,
             });
             // Record a tool span for the turn trace (cumulative; snapshotted into
@@ -516,9 +870,13 @@ export async function runHarnessTurn(
               id: crypto.randomUUID(),
               name: meta.toolName,
               category: "tool",
-              startMs: toolStartMs.get(toolCallId) ?? Date.now(),
-              endMs: Date.now(),
-              promptIndex: 0,
+              // Turn-relative offsets (see the llm span above).
+              ...createOffsetInterval(
+                traceBaseMs,
+                toolStartMs.get(toolCallId) ?? Date.now(),
+                Date.now(),
+              ),
+              promptIndex,
               stepIndex,
               status: isError ? "error" : "ok",
               toolCallId,
@@ -554,7 +912,7 @@ export async function runHarnessTurn(
         }
         // Close any open text block first so BOTH the cancelled and normal
         // paths leave a balanced UI stream.
-        if (textId !== undefined) writer.write({ type: "text-end", id: textId });
+        if (textId !== undefined) emitTextEnd(writer, textId);
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
@@ -570,33 +928,103 @@ export async function runHarnessTurn(
         flushSegment();
         // Final step settles now that usage is known from the finish part.
         finishStep();
-        writer.write({
-          type: "finish",
+        emitFinish(writer, {
           finishReason: turnFinishReason,
-          ...(usage ? { messageMetadata: usage } : {}),
+          messageMetadata: usage,
+        });
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId,
+          promptIndex,
+          finishReason: turnFinishReason,
+          ...(usage ? { usage } : {}),
         });
         runSucceeded = true;
+        const tStream = Date.now();
+        // Values inlined into the message — this logger drops the 2nd arg.
+        logger.info(
+          `[harness][timing] credential=${tAuth - tStart}ms claim=${
+            tClaim - tAuth
+          }ms boxWake=${tSandbox - tClaim}ms sessionConnect=${
+            tConnect - tSandbox
+          }ms modelStream=${tStream - tConnect}ms total=${
+            tStream - tStart
+          }ms resumed=${resumedSession}`,
+        );
       } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
-          await session.destroy();
-        } catch (destroyErr) {
-          logger.warn("[harness] session.destroy failed", { error: destroyErr });
+          // On a clean turn with continuity: STOP (not destroy) to get the
+          // resume payload, then BUILD the commit (don't send it here). The
+          // commit rides /ingest-chat atomically with the transcript in
+          // onFinishEngine so transcript + sidecar advance together. stop()
+          // exits the in-sandbox bridge; MCPJam's E2B provider stop() is a no-op
+          // so the computer (and the workdir holding the Claude Code thread)
+          // stays alive. On abort/error: destroy + release the lease.
+          if (runSucceeded && !aborted && continuity) {
+            const resumeState = await session.stop();
+            capturedHarnessCommit = {
+              ownerType: continuity.owner.ownerType as
+                | "direct-chat"
+                | "chatbox-chat",
+              chatSessionId: continuity.owner.chatSessionId as string,
+              ...(continuity.owner.chatboxId
+                ? { chatboxId: continuity.owner.chatboxId }
+                : {}),
+              leaseId: continuity.leaseId,
+              expectedStateVersion: continuity.stateVersion,
+              harnessId: "claude-code",
+              harnessSessionId: session.sessionId,
+              resumeState,
+              computerId,
+              runtimeFingerprint,
+            };
+          } else {
+            await session.destroy();
+            if (continuity) await releaseHarnessLease?.();
+          }
+        } catch (finalizeErr) {
+          logger.warn(
+            "[harness] session finalize failed; releasing lease, sidecar not committed",
+            { error: finalizeErr },
+          );
+          // stop()/destroy() threw → no resume payload to commit. Drop any
+          // half-built commit and free the lane so the next turn can claim.
+          capturedHarnessCommit = undefined;
+          await releaseHarnessLease?.();
         }
       }
     } catch (err) {
-      if (abortSignal?.aborted || isAbortError(err)) {
+      if (effectiveAbortSignal.aborted || isAbortError(err)) {
         aborted = true;
         return;
       }
       const errorText = err instanceof Error ? err.message : String(err);
       logger.error("[harness] turn failed", err);
       // Close any open text block so the UI stream stays balanced.
-      if (textId !== undefined) writer.write({ type: "text-end", id: textId });
-      writer.write({ type: "error", errorText });
+      if (textId !== undefined) emitTextEnd(writer, textId);
+      emitError(writer, errorText);
+      // A mid-stream failure still gets a final snapshot + turn_finish so the
+      // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
+      // by traceTurnStarted so a pre-stream failure emits no phantom turn.
+      if (traceTurnStarted) {
+        emitTraceSnapshot(
+          writer,
+          messageHistory,
+          toolSetForTrace as unknown as ToolSet,
+          snapshotTurnContext(),
+        );
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId,
+          promptIndex,
+          ...(usage ? { usage } : {}),
+        });
+      }
       onEngineError?.({
         message: errorText,
         rawText: errorText,
-        promptIndex: 0,
+        promptIndex,
       });
     }
   };
@@ -605,8 +1033,10 @@ export async function runHarnessTurn(
     if (runSucceeded && !aborted) {
       const trace: PersistedTurnTrace = {
         turnId,
-        promptIndex: 0,
-        startedAt: turnStartedAt,
+        // Stream start (matches the span offset base) so rehydrated traces align
+        // with the live ones — see traceBaseMs.
+        startedAt: traceBaseMs,
+        promptIndex,
         endedAt: Date.now(),
         spans: [...capturedSpans],
         ...(usage ? { usage } : {}),
@@ -614,10 +1044,26 @@ export async function runHarnessTurn(
         modelId,
       };
       capturedTurnTrace = trace;
+      // §3: hand the resume-state commit to onConversationComplete so it rides
+      // /ingest-chat atomically with the transcript. On success the backend
+      // commit releases the lease; if persistence is absent or fails, the
+      // sidecar did NOT advance — release the lane best-effort.
+      let persistOk = false;
       try {
-        await onConversationComplete?.([...messageHistory], trace);
+        await onConversationComplete?.(
+          [...messageHistory],
+          trace,
+          capturedHarnessCommit,
+        );
+        persistOk = true;
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
+      }
+      if (
+        capturedHarnessCommit &&
+        (!onConversationComplete || !persistOk)
+      ) {
+        await releaseHarnessLease?.();
       }
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown

@@ -85,6 +85,14 @@ export type HostConfigComputerV2 = {
 };
 
 /**
+ * Real agent harness for this host. `"claude-code"` runs the real Claude Code
+ * runtime (the `@ai-sdk/harness-claude-code` adapter) inside the attached
+ * personal computer instead of MCPJam's emulated engine. Absent ⇒ emulated.
+ * Mirrors the SDK's `Harness` type; the backend enforces `harness ⇒ computer`.
+ */
+export type HostConfigHarnessV2 = "claude-code";
+
+/**
  * Mutable input shape. All fields are required at write time so the editor
  * can't accidentally erase a section.
  *
@@ -141,6 +149,12 @@ export type HostConfigInputV2 = {
    * is the only shape; `workdir` optionally pins the initial shell cwd.
    */
   computer?: HostConfigComputerV2;
+  /**
+   * Real agent harness (see {@link HostConfigHarnessV2}). `"claude-code"` runs
+   * the real Claude Code runtime on the attached computer; absent ⇒ MCPJam's
+   * emulated engine. Server-authoritative — never sourced from a chat body.
+   */
+  harness?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -225,6 +239,11 @@ export type HostConfigDtoV2 = {
    * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
    */
   computer?: HostConfigComputerV2 & { toolset?: string };
+  /**
+   * Real agent harness (see HostConfigInputV2.harness). Optional; pre-feature
+   * rows and non-harness hosts omit it.
+   */
+  harness?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -287,6 +306,8 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
           ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
         }
       : undefined,
+    // String literal pass-through; absent ⇒ emulated engine.
+    harness: dto.harness,
     connectionDefaults: {
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
@@ -726,6 +747,9 @@ export function hostConfigInputsEqual(
   if (a.computer && b.computer && a.computer.workdir !== b.computer.workdir) {
     return false;
   }
+  // Harness selector: undefined vs "claude-code" are distinct states (backend
+  // hashes them distinctly). Switching engines marks the draft dirty.
+  if (a.harness !== b.harness) return false;
   if (
     a.connectionDefaults.requestTimeout !== b.connectionDefaults.requestTimeout
   )

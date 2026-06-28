@@ -283,7 +283,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             onCollapse={() => setIsLeftRailVisible(false)}
                             className="min-h-0 min-w-0 overflow-hidden"
                           >
-                            <PlaygroundLeftRail />
+                            <PlaygroundLeftRail
+                              previewedHostId={previewedHostId}
+                            />
                           </ResizablePanel>
                           <ResizableHandle withHandle />
                         </>

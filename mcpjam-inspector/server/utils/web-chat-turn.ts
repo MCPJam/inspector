@@ -57,6 +57,7 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import {
   ErrorCode,
@@ -273,7 +274,8 @@ export async function streamWebChatTurn(
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
-      turnTrace: PersistedTurnTrace
+      turnTrace: PersistedTurnTrace,
+      harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -341,6 +343,9 @@ export async function streamWebChatTurn(
             }
           : {}),
         turnTrace,
+        // §3: chat-backed harness resume-state commit, applied atomically with
+        // the transcript inside the ingest mutation.
+        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
       });
     };
@@ -461,6 +466,11 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
+    // so the harness path can hand MCPJam's server-executed built-ins
+    // (web_search) to HarnessAgent without the MCP-server tools, which the
+    // harness gets via .mcp.json.
+    ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: cleanupStream,

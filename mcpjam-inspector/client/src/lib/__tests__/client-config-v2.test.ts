@@ -202,6 +202,27 @@ describe("computer (personal cloud workstation)", () => {
   });
 });
 
+describe("harness (real agent runtime)", () => {
+  it("marks the draft dirty when the harness selector changes", () => {
+    const none = makeInput();
+    const harnessed = makeInput({ harness: "claude-code" });
+    expect(hostConfigInputsEqual(none, harnessed)).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ harness: "claude-code" }),
+        makeInput({ harness: "claude-code" })
+      )
+    ).toBe(true);
+  });
+
+  it("hostConfigDtoToInput round-trips the harness selector", () => {
+    expect(hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness).toBe(
+      "claude-code"
+    );
+    expect(hostConfigDtoToInput(makeDto({})).harness).toBeUndefined();
+  });
+});
+
 describe("hostConfigDtoToInput", () => {
   it("clones every array/record so the dto cannot be mutated through the input", () => {
     const dto: HostConfigDtoV2 = {

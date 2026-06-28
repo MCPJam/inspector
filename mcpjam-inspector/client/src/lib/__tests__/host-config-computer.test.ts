@@ -81,6 +81,19 @@ describe("host-config-computer helpers", () => {
       builtInToolIds: ["web_search"],
     });
   });
+
+  it("detachComputerPatch clears the harness (harness ⇒ computer invariant)", () => {
+    const value = emptyHostConfigInputV2({
+      builtInToolIds: ["bash"],
+      computer: { kind: "personal" },
+      harness: "claude-code",
+    });
+    const patch = detachComputerPatch(value, CATALOG);
+    expect(patch.computer).toBeUndefined();
+    expect(patch.harness).toBeUndefined();
+    expect("harness" in patch).toBe(true);
+    expect(patch.builtInToolIds).toEqual([]);
+  });
 });
 
 describe("shouldShowComputerToggle", () => {

@@ -17,6 +17,7 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
+import { harnessControlState } from "@/lib/harness-capabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -101,6 +102,23 @@ export function BehaviorTab({
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
 
+  // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
+  // cross into its runtime until the MCP proxy mediates them — and a few never
+  // can. Gray those out per-control (model + system prompt always apply, so
+  // they stay enabled) with an honest note, instead of letting the toggle look
+  // live while doing nothing. Un-graying is a one-line change in
+  // `harness-capabilities.ts` as each proxy phase lands.
+  const tempState = harnessControlState(draft.harness, "temperature");
+  const approvalState = harnessControlState(draft.harness, "requireToolApproval");
+  const visibilityState = harnessControlState(
+    draft.harness,
+    "respectToolVisibility",
+  );
+  const progressiveState = harnessControlState(
+    draft.harness,
+    "progressiveToolDiscovery",
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock title="Model & sampling">
@@ -145,13 +163,20 @@ export function BehaviorTab({
               })
             }
             aria-label={fTemp.label}
-            disabled={readOnly}
+            disabled={readOnly || !tempState.enforced}
           />
+          {!tempState.enforced ? (
+            <p className="text-[11px] text-muted-foreground">{tempState.note}</p>
+          ) : null}
         </div>
 
         <FieldRow
           label={fApproval.label}
-          description={fApproval.description}
+          description={
+            approvalState.enforced
+              ? fApproval.description
+              : `${fApproval.description} ${approvalState.note}`
+          }
           control={
             <Switch
               checked={draft.requireToolApproval}
@@ -159,14 +184,18 @@ export function BehaviorTab({
                 update({ requireToolApproval: checked })
               }
               aria-label={fApproval.label}
-              disabled={readOnly}
+              disabled={readOnly || !approvalState.enforced}
             />
           }
         />
 
         <FieldRow
           label={fVisibility.label}
-          description={fVisibility.description}
+          description={
+            visibilityState.enforced
+              ? fVisibility.description
+              : `${fVisibility.description} ${visibilityState.note}`
+          }
           control={
             <Switch
               checked={draft.respectToolVisibility}
@@ -174,7 +203,7 @@ export function BehaviorTab({
                 update({ respectToolVisibility: checked })
               }
               aria-label={fVisibility.label}
-              disabled={readOnly}
+              disabled={readOnly || !visibilityState.enforced}
             />
           }
         />
@@ -207,6 +236,9 @@ export function BehaviorTab({
               </Tooltip>
             </span>
           }
+          description={
+            progressiveState.enforced ? undefined : progressiveState.note
+          }
           /**
            * 3-state, not 2-state: the backend reads `undefined` as
            * "auto" and may enable progressive discovery above catalog/
@@ -231,7 +263,7 @@ export function BehaviorTab({
                 });
               }}
               aria-label="Progressive MCP tool discovery"
-              disabled={readOnly}
+              disabled={readOnly || !progressiveState.enforced}
             >
               <ToggleGroupItem value="auto" aria-label="Auto (default)">
                 Auto

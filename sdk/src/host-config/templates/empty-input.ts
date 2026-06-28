@@ -44,6 +44,10 @@ export type SeededHostConfigInput = {
   optionalServerIds: string[];
   builtInToolIds: string[];
   computer?: { kind: "personal"; workdir?: string };
+  // Real agent harness for this host. `"claude-code"` runs the real Claude
+  // Code runtime (requires an attached computer); absent ⇒ MCPJam's emulated
+  // engine. Kept as a literal here so this module stays free of cross-imports.
+  harness?: "claude-code";
   connectionDefaults: {
     headers: Record<string, string>;
     requestTimeout: number;
@@ -117,6 +121,8 @@ export function emptyHostConfigInputV2(
             : {}),
         }
       : undefined,
+    // String literal — near-pass-through like progressiveToolDiscovery.
+    harness: partial.harness,
     connectionDefaults: {
       headers: partial.connectionDefaults?.headers
         ? { ...partial.connectionDefaults.headers }

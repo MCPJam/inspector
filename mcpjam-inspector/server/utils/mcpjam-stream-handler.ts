@@ -26,6 +26,16 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import {
+  buildFinishChunk,
+  emitError,
+  emitToolApprovalRequest,
+  emitToolInput,
+  emitToolOutput,
+  emitToolOutputDenied,
+  safelyInvoke,
+} from "./chat-stream-chunks.js";
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
@@ -289,6 +299,16 @@ export interface MCPJamHandlerOptions {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  /**
+   * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
+   * of `tools`. The emulated engine reads them from `tools`; the harness path
+   * needs them SEPARATELY because the harness's MCP-server tools arrive via
+   * `.mcp.json` — only these host-executed tools are forwarded to
+   * `HarnessAgent({ tools })`, where the runtime calls them and the agent runs
+   * their `execute()` back on this server. Excludes appTools (no execute —
+   * browser-fulfilled) and skills (the harness has its own).
+   */
+  builtInTools?: ToolSet;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -314,7 +334,10 @@ export interface MCPJamHandlerOptions {
   approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace
+    turnTrace: PersistedTurnTrace,
+    // §3: present only for chat-backed harness turns — the resume-state commit
+    // to apply atomically with the transcript via /ingest-chat.
+    harnessSessionCommit?: HarnessSessionCommitPayload
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -737,11 +760,10 @@ function createClientFinishChunk(
       ? { ...metadata, ...usage }
       : metadata ?? usage;
 
-  return {
-    type: "finish",
+  return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
-    ...(messageMetadata != null ? { messageMetadata } : {}),
-  } as UIMessageChunk;
+    messageMetadata,
+  });
 }
 
 function setStepSpanMessageRanges(
@@ -890,17 +912,9 @@ function safelyEmitLiveTextDelta(
   delta: string
 ) {
   if (!onLiveTextDelta) return;
-  try {
-    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
-      logger.warn("[mcpjam-stream-handler] onLiveTextDelta callback failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  } catch (error) {
-    logger.warn("[mcpjam-stream-handler] onLiveTextDelta callback failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  safelyInvoke("[mcpjam-stream-handler] onLiveTextDelta", () =>
+    onLiveTextDelta(delta),
+  );
 }
 
 /**
@@ -950,17 +964,9 @@ function safelyEmitEngineError(
   event: MCPJamEngineErrorEvent
 ) {
   if (!onEngineError) return;
-  try {
-    void Promise.resolve(onEngineError(event)).catch((error) => {
-      logger.warn("[mcpjam-stream-handler] onEngineError callback failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  } catch (error) {
-    logger.warn("[mcpjam-stream-handler] onEngineError callback failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  safelyInvoke("[mcpjam-stream-handler] onEngineError", () =>
+    onEngineError(event),
+  );
 }
 
 /**
@@ -1200,8 +1206,7 @@ async function processStream(
             requireToolApproval &&
             !isApprovalFreeMetaToolName(chunk.toolName, progressivePlan)
           ) {
-            writer.write({
-              type: "tool-approval-request",
+            emitToolApprovalRequest(writer, {
               approvalId: generateToolCallId(),
               toolCallId,
             });
@@ -1314,10 +1319,10 @@ async function emitToolResults(
             };
           }
 
-          writer.write({
-            type: "tool-output-available",
+          // Prefer full result (with _meta/structuredContent) for UI. No
+          // providerExecuted: emulated tools are client/Convex-executed.
+          emitToolOutput(writer, {
             toolCallId: part.toolCallId,
-            // Prefer full result (with _meta/structuredContent) for UI
             output: outputForUi,
           });
 
@@ -1416,8 +1421,7 @@ function emitInheritedToolCalls(
           part.type === "tool-call" &&
           !existingResultIds.has(part.toolCallId)
         ) {
-          writer.write({
-            type: "tool-input-available",
+          emitToolInput(writer, {
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? {},
@@ -1552,10 +1556,7 @@ async function handlePendingApprovals(
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
       const toolName = toolCallIdToToolName.get(toolCallId) ?? "unknown";
-      writer.write({
-        type: "tool-output-denied",
-        toolCallId,
-      });
+      emitToolOutputDenied(writer, { toolCallId });
 
       if (traceTurn && typeof stepIndex === "number") {
         writeTraceEvent(writer, {
@@ -1661,8 +1662,7 @@ async function handlePendingApprovals(
       if (!Array.isArray(assistantMsg.content)) continue;
       for (const part of assistantMsg.content) {
         if (part.type === "tool-call" && part.toolCallId === toolCallId) {
-          writer.write({
-            type: "tool-input-available",
+          emitToolInput(writer, {
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? {},
@@ -1972,7 +1972,7 @@ async function processOneStep(
       stepIndex,
       errorText,
     });
-    writer.write({ type: "error", errorText });
+    emitError(writer, errorText);
     // PR 5b-followup-2: surface the structured guardrail body to
     // `streamSink: "none"` consumers (eval backend stream runner). The
     // writer-side `error` chunk above is fire-and-forget here; the
@@ -2418,7 +2418,7 @@ async function processOneStep(
         stepIndex,
         errorText,
       });
-      writer.write({ type: "error", errorText });
+      emitError(writer, errorText);
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so
@@ -2944,10 +2944,7 @@ export async function runChatEngineLoop(
             promptIndex: traceTurn.promptIndex,
             usage: traceTurn.turnUsage,
           });
-          safeWriter.write({
-            type: "error",
-            errorText,
-          });
+          emitError(safeWriter, errorText);
           // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
           // Site (3) — outer agentic-loop catch. No structured body,
           // no stepIndex.

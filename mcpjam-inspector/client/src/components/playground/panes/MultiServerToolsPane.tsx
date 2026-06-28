@@ -38,6 +38,10 @@ import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeade
 import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
+import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
+import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import {
   detectUIType,
   getToolVisibility,
@@ -48,6 +52,8 @@ import { cn } from "@/lib/utils";
 
 interface InnerProps {
   activeServerNames: string[];
+  /** Harness native built-in tools (display-only). Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
 }
 
 interface Selection {
@@ -55,7 +61,10 @@ interface Selection {
   toolName: string;
 }
 
-export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
+export function MultiServerToolsPaneInner({
+  activeServerNames,
+  builtinTools = [],
+}: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
   const reconnectingServerNames = useMemo(
@@ -77,6 +86,15 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [isListExpanded, setIsListExpanded] = useState(true);
+
+  // Harness built-in tools share the same select → detail → Run UX; "Run" asks
+  // the agent (no API fires a built-in tool call directly). One of {server tool,
+  // built-in} is selected at a time.
+  const builtin = useBuiltinToolRun(builtinTools);
+  const builtinNames = useMemo(
+    () => builtinTools.map((t) => t.name),
+    [builtinTools],
+  );
 
   const selectedEntry = useMemo(() => {
     if (!selected) return null;
@@ -155,17 +173,36 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   };
 
   const handleSelect = (entry: Selection) => {
+    builtin.clear();
     setSelected(entry);
     setIsListExpanded(false);
     setActiveTab("tools");
   };
 
+  const handleSelectBuiltin = (key: string) => {
+    setSelected(null);
+    builtin.select(key);
+    setIsListExpanded(false);
+    setActiveTab("tools");
+  };
+
+  // Top "Run": execute the selected server tool, OR ask the agent to run the
+  // selected built-in tool.
+  const handleRun = () => {
+    if (builtin.selected) builtin.askAgentToRun();
+    else void handleExecute();
+  };
+
+  const hasSelection = !!selectedEntry || !!builtin.selected;
+
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
     if (tab === "tools") {
       // Clicking the Tools tab returns to the tool list (the tool menu),
-      // deselecting any open tool — the same as the back arrow.
+      // deselecting any open tool (server tool or harness built-in) — the
+      // same as the back arrow.
       setSelected(null);
+      builtin.clear();
       setIsListExpanded(true);
     }
   };
@@ -184,9 +221,9 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     ) {
       return;
     }
-    if (!selected || state.isExecuting) return;
+    if (!hasSelection || state.isExecuting) return;
     e.preventDefault();
-    void handleExecute();
+    handleRun();
   };
 
   return (
@@ -200,10 +237,10 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
         toolCount={flat.length}
         savedCount={0}
         isExecuting={state.isExecuting}
-        canExecute={!!selected}
+        canExecute={hasSelection}
         canSave={false}
         fetchingTools={isLoadingAny}
-        onExecute={() => void handleExecute()}
+        onExecute={handleRun}
         onSave={() => {}}
         onRefresh={() => void refetch()}
       />
@@ -211,7 +248,7 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
       <div className="flex-1 min-h-0">
         {activeTab === "saved" ? (
           <SavedRequestsPlaceholder />
-        ) : isListExpanded || !selectedEntry ? (
+        ) : isListExpanded || !hasSelection ? (
           <FlatToolList
             entries={filteredEntries}
             totalCount={flat.length}
@@ -220,6 +257,9 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
             reconnecting={reconnectingServerNames.length > 0}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            builtinTools={builtinTools}
+            selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
+            onSelectBuiltin={handleSelectBuiltin}
             selected={selected}
             onToggleSelected={(entry) => {
               if (
@@ -232,15 +272,30 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
               }
             }}
           />
-        ) : (
-          <SelectedToolView
-            entry={selectedEntry}
-            isColliding={collidingNames.includes(selectedEntry.toolName)}
-            formFields={formFields}
+        ) : builtin.selected ? (
+          <BuiltinToolDetailView
+            tool={builtin.selected}
+            fields={builtin.fields}
             onExpand={() => setIsListExpanded(true)}
-            onFieldChange={handleFieldChange}
-            onToggleField={handleToggleField}
+            onFieldChange={builtin.onFieldChange}
+            onToggleField={builtin.onToggleField}
+            switchNames={builtinNames}
+            onSwitch={(name) => {
+              const t = builtinTools.find((x) => x.name === name);
+              if (t) handleSelectBuiltin(t.key);
+            }}
           />
+        ) : (
+          selectedEntry && (
+            <SelectedToolView
+              entry={selectedEntry}
+              isColliding={collidingNames.includes(selectedEntry.toolName)}
+              formFields={formFields}
+              onExpand={() => setIsListExpanded(true)}
+              onFieldChange={handleFieldChange}
+              onToggleField={handleToggleField}
+            />
+          )
         )}
       </div>
     </div>
@@ -255,6 +310,9 @@ interface FlatToolListProps {
   reconnecting: boolean;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
+  builtinTools: HarnessBuiltinToolInfo[];
+  selectedBuiltinKey: string | null;
+  onSelectBuiltin: (key: string) => void;
   selected: Selection | null;
   onToggleSelected: (entry: Selection) => void;
 }
@@ -267,9 +325,15 @@ function FlatToolList({
   reconnecting,
   searchQuery,
   onSearchQueryChange,
+  builtinTools,
+  selectedBuiltinKey,
+  onSelectBuiltin,
   selected,
   onToggleSelected,
 }: FlatToolListProps) {
+  // A harness host has native built-in tools even with zero MCP-server tools,
+  // so the "no tools" empty state must account for them.
+  const hasBuiltin = builtinTools.length > 0;
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 flex-shrink-0">
@@ -281,14 +345,14 @@ function FlatToolList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {loading && entries.length === 0 ? (
+        {loading && entries.length === 0 && !hasBuiltin ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
             <p className="text-xs text-muted-foreground">
               {reconnecting ? "Reconnecting..." : "Loading tools..."}
             </p>
           </div>
-        ) : entries.length === 0 ? (
+        ) : entries.length === 0 && !hasBuiltin ? (
           <div className="text-center py-8 px-4">
             <p className="text-xs text-muted-foreground">
               {totalCount === 0
@@ -404,6 +468,12 @@ function FlatToolList({
             })}
           </div>
         )}
+        <HarnessBuiltinToolsSection
+          tools={builtinTools}
+          searchQuery={searchQuery}
+          selectedKey={selectedBuiltinKey}
+          onSelect={onSelectBuiltin}
+        />
       </div>
     </div>
   );

@@ -99,6 +99,10 @@ export function shouldShowComputerToggle(opts: {
  * Patch that detaches the computer AND drops any computer-backed tool ids, so
  * the resulting draft can't fail the backend's requiresComputer invariant on
  * save (detaching the resource must take its dependent capabilities with it).
+ *
+ * Also clears `harness`: the Claude Code harness runs inside the computer, so a
+ * harness without a computer would fail the backend's `harness ⇒ computer`
+ * invariant. Detaching the resource takes the runtime that depends on it too.
  */
 export function detachComputerPatch(
   value: HostConfigInputV2,
@@ -107,6 +111,7 @@ export function detachComputerPatch(
   const backed = computerBackedToolIds(catalog);
   return {
     computer: undefined,
+    harness: undefined,
     builtInToolIds: value.builtInToolIds.filter((id) => !backed.has(id)),
   };
 }
@@ -130,6 +135,18 @@ export function sanitizeHostConfigForEvalSuite(
   const backed = computerBackedToolIds(catalog);
   const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));
   const idsChanged = cleanedIds.length !== value.builtInToolIds.length;
-  if (value.computer === undefined && !idsChanged) return value;
-  return { ...value, computer: undefined, builtInToolIds: cleanedIds };
+  // Clear `harness` too: the Claude Code harness runs inside the computer, so a
+  // harness left set with no computer violates the backend `harness ⇒ computer`
+  // invariant and would route an eval run toward the real harness path. Mirrors
+  // detachComputerPatch — dropping the computer takes its dependent runtime.
+  const harnessChanged = value.harness !== undefined;
+  if (value.computer === undefined && !idsChanged && !harnessChanged) {
+    return value;
+  }
+  return {
+    ...value,
+    computer: undefined,
+    harness: undefined,
+    builtInToolIds: cleanedIds,
+  };
 }

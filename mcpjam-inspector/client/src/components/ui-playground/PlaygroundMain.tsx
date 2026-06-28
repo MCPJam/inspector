@@ -105,6 +105,8 @@ import {
 } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
@@ -704,6 +706,9 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // Native built-in tools for the previewed harness (if any) — fed into the Raw
+  // tab so a harness host's empty `tools` is annotated rather than confusing.
+  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -756,6 +761,10 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
+      // Forward the previewed host id so the server re-resolves its
+      // authoritative runtime config (harness/computer) for this direct
+      // session, and so switching hosts forks the chat session.
+      ...(previewedHostId ? { hostId: previewedHostId } : {}),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
@@ -3066,6 +3075,66 @@ export function PlaygroundMain({
       sendBlocked,
     ]
   );
+  // "Ask agent to run" (harness built-in tools): the rail builds a structured
+  // prompt and requests a send via the bridge; we route it through the SAME
+  // single-model send path as the composer (send-if-ready, else leave it in the
+  // composer as a draft). No bespoke execution path — it's a normal turn.
+  const submitAgentToolPrompt = useCallback(
+    async (text: string) => {
+      if (composerDisabled || sendBlocked) {
+        composer.setInput(text);
+        return;
+      }
+      if (!(await ensureSelectedServerReadyForChat())) {
+        composer.setInput(text);
+        return;
+      }
+      if (isCompareMode) {
+        queueBroadcastRequest({
+          text,
+          prependMessages: [],
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
+      } else {
+        queueBroadcastRequest(
+          { text, prependMessages: [] },
+          { single_model_send: true },
+        );
+        sendMessage({
+          text,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
+      }
+      onFirstMessageSent?.();
+    },
+    [
+      composer,
+      composerDisabled,
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      isCompareMode,
+      queueBroadcastRequest,
+      sendMessage,
+      outgoingSenderMetadata,
+      modelContextQueue,
+      onFirstMessageSent,
+    ],
+  );
+
+  const pendingAgentToolPrompt = useAgentToolPromptBridge((s) => s.pending);
+  const consumeAgentToolPrompt = useAgentToolPromptBridge((s) => s.consume);
+  const handledAgentToolNonce = useRef<number | null>(null);
+  useEffect(() => {
+    const req = pendingAgentToolPrompt;
+    if (!req || req.nonce === handledAgentToolNonce.current) return;
+    handledAgentToolNonce.current = req.nonce;
+    consumeAgentToolPrompt();
+    void submitAgentToolPrompt(req.prompt);
+  }, [pendingAgentToolPrompt, consumeAgentToolPrompt, submitAgentToolPrompt]);
+
   const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -3818,6 +3887,7 @@ export function PlaygroundMain({
                         entries: requestPayloadHistory,
                         hasUiMessages: !isThreadEmpty,
                       }}
+                      harnessBuiltinTools={harnessBuiltinTools}
                       rawEmptyTestId="playground-live-raw-pending"
                       timelineEmptyTestId="playground-live-trace-pending"
                       nonRawShellClassName="flex-1 min-h-0 overflow-hidden px-4 py-4"

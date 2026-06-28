@@ -1037,20 +1037,29 @@ function areAuthHeadersEqual(
 type HostedSessionScope = {
   projectId?: string | null;
   chatboxId?: string;
+  hostId?: string;
 };
 
 // `accessVersion` is intentionally NOT part of the scope. The chat-reset
 // path uses this comparison to decide when to blow away `chatSessionId` /
 // `messages`, which is only appropriate when *identity* changes (different
-// project, different chatbox). A pure `accessVersion` bump — e.g. from the
-// silent re-redeem triggered by `chatbox_access_stale` — keeps the same
-// chatbox and the same conversation; tearing the chat down on those bumps
-// would defeat the purpose of the recovery path.
-function areHostedSessionScopesEqual(
+// project, different chatbox, different previewed host). A pure `accessVersion`
+// bump — e.g. from the silent re-redeem triggered by `chatbox_access_stale` —
+// keeps the same chatbox and the same conversation; tearing the chat down on
+// those bumps would defeat the purpose of the recovery path.
+//
+// `hostId` IS part of the scope: switching the previewed host in the Playground
+// (same project, no chatbox) resolves future turns against a different host —
+// so the transcript must fork rather than append host B's turns onto host A's.
+export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
-  return a.projectId === b.projectId && a.chatboxId === b.chatboxId;
+  return (
+    a.projectId === b.projectId &&
+    a.chatboxId === b.chatboxId &&
+    a.hostId === b.hostId
+  );
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -1085,6 +1094,7 @@ export function useChatSession(
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedHostId = hostedContext?.hostId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   // Published-chatbox runtime sessions must use the org-aware web engine
@@ -1512,6 +1522,11 @@ export function useChatSession(
         selectedServerNames: resolvedServerNames,
         chatSessionId,
         ...(isHostedDirectChat ? { directVisibility } : {}),
+        // Host-bound direct preview: forward the saved host id so the server
+        // re-resolves the host's authoritative runtime config (harness/computer
+        // included). Only on the direct path — chatbox sessions own their host
+        // via chatboxId and the server ignores hostId when chatboxId is set.
+        ...(isHostedDirectChat && hostedHostId ? { hostId: hostedHostId } : {}),
         ...(hostedChatboxId && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
@@ -1546,6 +1561,12 @@ export function useChatSession(
                 // omitting it client-side keeps the body honest about the
                 // session kind.
                 ...(hostedChatboxId ? {} : { directVisibility }),
+                // Host-bound direct preview: forward the saved host id so the
+                // server re-resolves harness/computer authoritatively. Direct
+                // path only — omitted when a chatbox owns the host.
+                ...(!hostedChatboxId && hostedHostId
+                  ? { hostId: hostedHostId }
+                  : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
                 // Convex server Ids parallel to `selectedServers`. Only sent
@@ -1635,6 +1656,7 @@ export function useChatSession(
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedChatboxId,
+    hostedHostId,
     hostedAccessVersion,
     hostedChatboxSurface,
     getOllamaBaseUrl,
@@ -2393,6 +2415,7 @@ export function useChatSession(
         const currentHostedScope = {
           projectId: hostedProjectId,
           chatboxId: hostedChatboxId,
+          hostId: hostedHostId,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =

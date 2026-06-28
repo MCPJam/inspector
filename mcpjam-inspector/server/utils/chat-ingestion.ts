@@ -174,6 +174,23 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  /**
+   * §3: chat-backed Claude Code harness resume-state commit. Applied ATOMICALLY
+   * with the transcript inside the ingest mutation (a failed sidecar commit
+   * rolls back the transcript write). Opaque pass-through.
+   */
+  harnessSessionCommit?: {
+    ownerType: "direct-chat" | "chatbox-chat";
+    chatSessionId: string;
+    chatboxId?: string;
+    leaseId: string;
+    expectedStateVersion: number;
+    harnessId: "claude-code";
+    harnessSessionId: string;
+    resumeState: unknown;
+    computerId: string;
+    runtimeFingerprint: string;
+  };
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
@@ -383,6 +400,9 @@ export async function persistChatSessionToConvex(
           ? { expectedVersion: options.expectedVersion }
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+        ...(options.harnessSessionCommit
+          ? { harnessSessionCommit: options.harnessSessionCommit }
+          : {}),
         ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
         ...(options.toolSnapshot ? { toolSnapshot: options.toolSnapshot } : {}),
         ...(options.synthetic ? { synthetic: true } : {}),

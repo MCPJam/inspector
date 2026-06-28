@@ -27,6 +27,8 @@ import {
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
@@ -62,6 +64,12 @@ chatV2.post("/", async (c) => {
       accessVersion?: number;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
+      // Saved host being previewed (Playground / host-bound direct chat). When
+      // present and NOT a chatbox session, the server re-fetches the host's
+      // authoritative runtime config (incl. harness/computer) by this id — the
+      // opaque pointer the client may forward; `harness` itself is never trusted
+      // from the body.
+      hostId?: string;
     };
 
     const {
@@ -76,6 +84,7 @@ chatV2.post("/", async (c) => {
       chatboxId,
       accessVersion,
       surface,
+      hostId,
     } = body;
     // True when this turn flows through a chatbox surface. sourceType +
     // accessScope decisions hinge on this.
@@ -136,6 +145,35 @@ chatV2.post("/", async (c) => {
           }
         );
       }
+    } else if (!isChatboxSession && hostId) {
+      // Host-bound direct session (Playground). The host config — including the
+      // server-authoritative `harness`/`computer` — is the source of truth for
+      // execution shaping. Unlike the chatbox path, FAIL CLOSED here: if we
+      // can't resolve the authoritative config we must not silently run the
+      // emulated engine, because the host may be a harness host and running
+      // emulated would misrepresent it as the real Claude Code runtime.
+      const runtime = await fetchHostRuntimeConfig({
+        hostId,
+        bearer: bearerToken,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (runtime.ok) {
+        hostRuntimeConfig = runtime.config as unknown as Record<
+          string,
+          unknown
+        >;
+      } else {
+        logger.warn("[chat-v2] host runtime-config fetch failed; failing closed", {
+          hostId,
+          status: runtime.status,
+          error: runtime.error,
+        });
+        throw new WebRouteError(
+          runtime.status >= 500 ? 502 : runtime.status,
+          ErrorCode.INTERNAL_ERROR,
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
+        );
+      }
     }
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -147,7 +185,11 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         builtInToolIds: body.builtInToolIds,
       },
-      precedence: "host-wins",
+      // Chatbox: the published host wins (a share-link client can't override).
+      // Host preview (Playground): the owner's in-session tweaks win, while
+      // `harness`/`computer` stay host-only (not in ExecutionOverrides, so
+      // precedence can't leak them from the body).
+      precedence: isChatboxSession ? "host-wins" : "override-wins",
     });
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -218,13 +260,28 @@ chatV2.post("/", async (c) => {
     // server-resolved runtime config — never the request body — so a
     // tampered client can't attach a shell the host didn't authorize; the
     // resolver also skips computer-backed tools for guest actors.
+    // Harness preflight: a host-bound turn whose resolved host runs the Claude
+    // Code harness must fail closed with a clear message when the runtime isn't
+    // available on this server — never silently degrade to the emulated engine.
+    if (resolvedExecution.harness === "claude-code") {
+      const availability = checkHarnessRuntimeAvailable({ requireToolApproval });
+      if (!availability.ok) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          `This host runs the Claude Code harness, which isn't available: ${availability.reason}.`
+        );
+      }
+    }
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
-        computer:
-          isChatboxSession && hostRuntimeConfig
-            ? (hostRuntimeConfig as { computer?: unknown }).computer
-            : undefined,
+        // Computer comes exclusively from the server-resolved runtime config —
+        // chatbox OR host-by-id — never the request body.
+        computer: hostRuntimeConfig
+          ? (hostRuntimeConfig as { computer?: unknown }).computer
+          : undefined,
       },
       {
         authHeader: bearerToken,
