@@ -23,6 +23,7 @@ import conformanceWeb from "./conformance.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
+import skills from "./skills.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -49,6 +50,9 @@ web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
 web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Cloud Skills live on the caller's Computer (E2B sandbox); every op needs a
+// bearer (forwarded to Convex for reserve/wake + authz).
+web.use("/skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
@@ -80,6 +84,7 @@ web.route("/checks", checks);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
+web.route("/skills", skills);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

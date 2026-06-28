@@ -963,7 +963,29 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  return <SkillsTab />;
+  const { convexProjectId } = useAppRouteContext();
+  const computersEnabled = useComputersEnabledState();
+
+  // In hosted mode skills live on the project's Computer, so the route is
+  // gated on the Computer flag — mirror ComputerRoute's tri-state: redirect
+  // only on an explicit `false`, render nothing while PostHog hydrates (so a
+  // flagged-in user cold-loading /skills isn't bounced before the flag
+  // resolves). Local mode is ungated (local FS skills always work).
+  if (HOSTED_MODE) {
+    if (computersEnabled === false) {
+      return <Navigate to={routePaths.servers} replace />;
+    }
+    if (computersEnabled === undefined) {
+      return null;
+    }
+  }
+
+  return (
+    <SkillsTab
+      projectId={convexProjectId}
+      computersEnabled={computersEnabled === true}
+    />
+  );
 }
 
 export function LearningRoute() {

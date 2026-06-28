@@ -28,7 +28,10 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveHostTools,
+  narrowHostComputer,
+} from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
@@ -237,6 +240,15 @@ chatV2.post("/", async (c) => {
       }
     );
 
+    // Cloud Skills: only when the (server-resolved) host actually has a
+    // computer. Skills then come from that E2B sandbox; loaded lazily so no
+    // wake happens unless the model calls a skill tool ("advertise == enforce").
+    const hostComputer = narrowHostComputer(
+      hostRuntimeConfig
+        ? (hostRuntimeConfig as { computer?: unknown }).computer
+        : undefined
+    );
+
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
@@ -319,6 +331,14 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          ...(hostComputer
+            ? {
+                cloudSkills: {
+                  authHeader: `Bearer ${bearerToken}`,
+                  projectId: hostedBody.projectId,
+                },
+              }
+            : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,
