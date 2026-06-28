@@ -78,4 +78,16 @@ describe("webBodyLimit", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("is not fooled by multipart/form-data appearing as a content-type param", async () => {
+    // The media type must be compared exactly — a header whose media type is
+    // application/json but carries `x=multipart/form-data` must keep the 1MB cap.
+    const res = await postBytes(
+      appUnderTest(),
+      "/api/web/skills/upload-folder",
+      2 * 1024 * 1024,
+      "application/json; x=multipart/form-data",
+    );
+    expect(res.status).toBe(400);
+  });
 });

@@ -31,8 +31,14 @@ const SKILLS_UPLOAD_PATH = "/api/web/skills/upload-folder";
 function isSkillsFolderUpload(c: Context): boolean {
   if (c.req.path !== SKILLS_UPLOAD_PATH) return false;
   if (c.req.method !== "POST") return false;
-  const contentType = (c.req.header("content-type") ?? "").toLowerCase();
-  return contentType.includes("multipart/form-data");
+  // Compare ONLY the media type, not a substring of the whole header: a
+  // `Content-Type: application/json; x=multipart/form-data` must NOT match and
+  // sneak past the 1MB cap.
+  const mediaType = (c.req.header("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  return mediaType === "multipart/form-data";
 }
 
 /**
