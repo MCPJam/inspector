@@ -526,15 +526,19 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
 describe("canonicalizeHostConfigV2 — harness field", () => {
   it("rejects an unknown harness id (closed-enum guard)", () => {
     // Untyped (JS) callers must not persist a value the runtime can't honor.
+    // `pi` is a plausible-but-unregistered runtime — not in HARNESS_IDS.
     expect(() =>
-      canonicalizeHostConfigV2(base({ harness: "codex" as never })),
-    ).toThrow(/harness must be "claude-code"/);
+      canonicalizeHostConfigV2(base({ harness: "pi" as never })),
+    ).toThrow(/harness must be/);
   });
 
-  it('passes "claude-code" through to the canonical form', () => {
-    const canonical = canonicalizeHostConfigV2(base({ harness: "claude-code" }));
-    expect(canonical.harness).toBe("claude-code");
-  });
+  it.each(["claude-code", "codex"] as const)(
+    "passes the registered harness %s through to the canonical form",
+    (harness) => {
+      const canonical = canonicalizeHostConfigV2(base({ harness }));
+      expect(canonical.harness).toBe(harness);
+    },
+  );
 
   it("absent harness drops from canonical JSON and hashes distinctly from when set", async () => {
     const without = base();

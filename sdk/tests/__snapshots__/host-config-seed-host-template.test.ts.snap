@@ -1060,12 +1060,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {},
     },
-    "computer": undefined,
+    "computer": {
+      "kind": "personal",
+    },
     "connectionDefaults": {
       "headers": {},
       "requestTimeout": 10000,
     },
-    "harness": undefined,
+    "harness": "codex",
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "codex",
@@ -1098,12 +1100,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {},
     },
-    "computer": undefined,
+    "computer": {
+      "kind": "personal",
+    },
     "connectionDefaults": {
       "headers": {},
       "requestTimeout": 10000,
     },
-    "harness": undefined,
+    "harness": "codex",
     "hostCapabilitiesOverride": undefined,
     "hostContext": {},
     "hostStyle": "codex",

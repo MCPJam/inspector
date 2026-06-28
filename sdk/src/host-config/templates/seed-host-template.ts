@@ -1351,6 +1351,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5-nano",
         temperature: 0.7,
         requireToolApproval: false,
+        // Run the REAL OpenAI Codex runtime (the @ai-sdk/harness-codex adapter)
+        // instead of MCPJam's emulated engine — mirrors the claude-code template.
+        // The harness executes inside an attached personal computer, so seed one
+        // too; the backend enforces the `harness ⇒ computer` invariant on write.
+        // Gated in the UI behind the `codex-host-enabled` flag.
+        harness: "codex",
+        computer: { kind: "personal" },
       });
       // Codex CLI probe advertises only elicitation. It does NOT advertise
       // the MCP UI extension (no widget rendering), so we replace the SDK
