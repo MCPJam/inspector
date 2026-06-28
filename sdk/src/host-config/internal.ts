@@ -57,6 +57,8 @@ export type {
   HostExecutionPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
+export { hostConnectionProfile } from "./host-connection.js";
+export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
   compatPresetForHostStyle,

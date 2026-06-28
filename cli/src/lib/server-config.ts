@@ -40,6 +40,8 @@ export interface SharedServerTargetOptions {
   timeout?: number;
   retries?: number;
   retryDelayMs?: number;
+  /** Connect as this host (added by `addHostOption`, resolved separately). */
+  host?: string;
 }
 
 const DEFAULT_CLI_RETRY_POLICY: RetryPolicy = {
@@ -98,6 +100,20 @@ export function addSharedServerOptions(command: Command): Command {
       'Stdio environment assignment in "KEY=VALUE" format. Pass multiple values or repeat the flag.',
     )
     .option("--cwd <path>", "Working directory for the stdio MCP server process");
+}
+
+/**
+ * Add `--host <id>` — connect "as" a host: send its identity, advertised client
+ * capabilities, and protocol version in `initialize`, and apply its tool
+ * visibility. Kept separate from {@link addSharedServerOptions} so it can be
+ * applied only to the commands where running as a host makes sense, and to
+ * avoid colliding with `compat`'s own (report-filter) `--host`.
+ */
+export function addHostOption(command: Command): Command {
+  return command.option(
+    "--host <id>",
+    "Connect as this host (e.g. claude, chatgpt, cursor) — sends its identity/capabilities/protocol and applies its tool visibility",
+  );
 }
 
 export function getGlobalOptions(command: Command): GlobalOptions {

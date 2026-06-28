@@ -77,6 +77,18 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "./types";
+// Canonical MCP Apps capability matrices live in the SDK so the compat engine
+// and this playground emulation share ONE source. The SDK types them sparse
+// (`McpAppsCapabilities`); they are complete surfaces, so we present them as
+// the client's resolved (all-required) shape. The cast is guarded by a
+// completeness test (built-ins matrix-parity). SLACK + the OpenAI surfaces stay
+// local — the SDK catalog doesn't carry them.
+import {
+  MCP_APPS_FULL,
+  MCP_APPS_COPILOT,
+  MCP_APPS_GOOSE,
+  MCP_APPS_NO_CLAIMS,
+} from "@mcpjam/sdk/host-compat";
 
 /**
  * Full `window.openai.*` method surface — every method on, every display
@@ -144,31 +156,8 @@ export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
  * model different APIs (`window.openai.*` shim vs `app.*` spec) and never
  * cross-gate.
  */
-export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
-  toolInputPartial: true,
-  toolCancelled: true,
-  hostContextChanged: true,
-  resourceTeardown: true,
-  toolInfo: true,
-  openLinks: true,
-  serverTools: true,
-  serverResources: true,
-  logging: true,
-  updateModelContext: true,
-  message: true,
-  sandboxPermissions: true,
-  cspFrameDomains: true,
-  cspBaseUriDomains: true,
-  resourcePrefersBorder: true,
-  downloadFile: true,
-  requestTeardown: true,
-  // Default to today's behavior — host accepts widget-initiated
-  // `ui/request-display-mode` calls. Set to "user-initiated-only" or
-  // "decline" per-preset (or via user override) to harden against
-  // widgets that re-request fullscreen on every host-context-changed.
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_FULL as ResolvedMcpAppsCapabilities;
 
 /**
  * Spec-default "no claims" surface — every advertise key off, no
@@ -179,27 +168,8 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
  * silently advertise near-full support on hosts that don't exist
  * (mirrors `SPEC_DEFAULT_HOST_CAPABILITIES` in `registry.ts`).
  */
-export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: false,
-  openLinks: false,
-  serverTools: false,
-  serverResources: false,
-  logging: false,
-  updateModelContext: false,
-  message: false,
-  sandboxPermissions: false,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
-  downloadFile: false,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_NO_CLAIMS as ResolvedMcpAppsCapabilities;
 
 /**
  * Microsoft 365 Copilot's published MCP Apps spec-bridge surface, verbatim
@@ -231,30 +201,8 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
  *
  * Note: `updateModelContext` and `message` stay on (Copilot honors both).
  */
-export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: false,
-  openLinks: true,
-  serverTools: true,
-  serverResources: false,
-  logging: false,
-  updateModelContext: true,
-  message: true,
-  sandboxPermissions: false,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
-  // Copilot's published spec-bridge table does not list downloadFile or
-  // a request-teardown ack — leave off until Microsoft publishes
-  // otherwise.
-  downloadFile: false,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_COPILOT as ResolvedMcpAppsCapabilities;
 
 /**
  * Goose Desktop 1.38.0 captured MCP Apps surface. Goose renders MCP Apps and
@@ -262,27 +210,8 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
  * captured `ui/initialize.hostCapabilities` only advertised `openLinks`.
  * Keep the rest off until a probe demonstrates those bridge methods.
  */
-export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: true,
-  openLinks: true,
-  serverTools: false,
-  serverResources: false,
-  logging: false,
-  updateModelContext: false,
-  message: false,
-  sandboxPermissions: false,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
-  downloadFile: false,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_GOOSE as ResolvedMcpAppsCapabilities;
 
 /**
  * Slackbot MCP host surface captured on 2026-06-24. Slackbot renders MCP Apps and

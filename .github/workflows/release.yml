@@ -304,6 +304,13 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector
 
+      - name: Smoke packed npm packages
+        run: node .github/scripts/smoke-packed-npm-packages.mjs
+        env:
+          PUBLISH_SDK: ${{ needs.preflight.outputs.publish_sdk }}
+          PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
+          PUBLISH_INSPECTOR: ${{ needs.preflight.outputs.publish_inspector }}
+
       - name: Inject SDK sourcemap debug ids
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         run: npx @sentry/cli sourcemaps inject ./sdk/dist

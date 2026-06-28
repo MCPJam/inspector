@@ -1,170 +1,63 @@
-import {
-  findHostStyle,
-  getCompatRuntimeForStyle,
-} from "@/lib/client-styles/registry";
-import { getHostTemplateSupportedProtocolVersions } from "@/lib/client-templates";
-import type { HostTemplateId } from "@/lib/client-templates";
-import type { CompatProvenance, HostCompatProfile } from "./types";
+import { buildMarketHostProfiles } from "@mcpjam/sdk/host-compat";
+import type { HostCompatProfile } from "./types";
 
 /**
- * The "market view" host list — the real shipping targets a developer asks
- * "where can I ship this?" about. MCPJam is omitted (compatible by
- * construction — it's the surface you're already on).
+ * Client presentation join for the SDK's market-host catalog.
  *
- * Each entry carries the facts the registry can't give us:
- *   - identity (label/logo) and `provenance` (how much to trust the matrix).
- *   - `rendersMcpApps`: does this host render MCP Apps (`ui://`) widgets at
- *     all? Headless clients such as Codex, n8n, Perplexity, and Cline carry
- *     capability matrices for protocol-bucket reasons but have no rendering
- *     surface. That "is it headless?" fact isn't in the registry, so it's
- *     explicit here.
- *     (ChatGPT/Copilot render BOTH MCP Apps and the OpenAI bridge —
- *     `rendersOpenAiApps` is resolved separately below.)
- *
- * The granular *capabilities* (which widget features each host supports —
- * serverResources, message, sandbox, …) still come live from the registry,
- * so the report never drifts from the playground's emulation.
- *
- * Provenance: probe = captured from a real host;
- * vendor-doc = published vendor table (Copilot; ChatGPT's OpenAI surface);
- * assumed = best-effort preset, unverified.
+ * The host *facts* (which bridges each host renders, its capability matrix,
+ * advertised protocol versions, provenance) come from the SDK's logo-free
+ * `buildMarketHostProfiles()`. The inspector adds the per-host logos here — the
+ * one piece of presentation the SDK deliberately doesn't carry — joined by
+ * host id.
  */
-type MarketHost = {
-  // `HostTemplateId` (not `string`) so a market-host id that isn't a real host
-  // template is a compile error here, and `getHostTemplateSupportedProtocolVersions`
-  // can resolve it strictly without a cast.
-  id: HostTemplateId;
-  label: string;
-  logoSrc: string;
-  logoSrcByTheme?: { light: string; dark: string };
-  provenance: CompatProvenance;
-  rendersMcpApps: boolean;
-};
-
-const MARKET_HOSTS: readonly MarketHost[] = [
-  {
-    id: "claude",
-    label: "Claude",
-    logoSrc: "/claude_logo.png",
-    provenance: "assumed",
-    rendersMcpApps: true,
-  },
-  {
-    id: "chatgpt",
-    label: "ChatGPT",
-    logoSrc: "/openai_logo.png",
-    provenance: "vendor-doc",
-    rendersMcpApps: true,
-  },
-  // Le Chat renders MCP Apps (via `ui/initialize`) and the normalized
-  // template advertises the standard MCP UI extension for that surface.
-  // Captured from a probe.
-  {
-    id: "mistral",
-    label: "Mistral",
-    logoSrc: "/mistral_logo.png",
-    provenance: "probe",
-    rendersMcpApps: true,
-  },
-  {
-    id: "goose",
-    label: "Goose",
+const LOGO_BY_ID: Record<
+  string,
+  { logoSrc: string; logoSrcByTheme?: { light: string; dark: string } }
+> = {
+  claude: { logoSrc: "/claude_logo.png" },
+  chatgpt: { logoSrc: "/openai_logo.png" },
+  mistral: { logoSrc: "/mistral_logo.png" },
+  goose: {
     logoSrc: "/goose_logo_light.png",
     logoSrcByTheme: {
       light: "/goose_logo_light.png",
       dark: "/goose_logo_dark.png",
     },
-    provenance: "probe",
-    rendersMcpApps: true,
   },
-  {
-    id: "cursor",
-    label: "Cursor",
-    logoSrc: "/cursor_logo.png",
-    provenance: "probe",
-    rendersMcpApps: true,
-  },
-  {
-    id: "copilot",
-    label: "Copilot",
-    logoSrc: "/copilot_logo.png",
-    provenance: "vendor-doc",
-    rendersMcpApps: true,
-  },
-  // Codex is a CLI — it renders no widgets, of either flavor.
-  {
-    id: "codex",
-    label: "Codex",
-    logoSrc: "/codex-logo.svg",
-    provenance: "assumed",
-    rendersMcpApps: false,
-  },
-  {
-    id: "n8n",
-    label: "n8n",
-    logoSrc: "/n8n_logo.svg",
-    provenance: "probe",
-    rendersMcpApps: false,
-  },
-  {
-    id: "perplexity",
-    label: "Perplexity",
-    logoSrc: "/perplexity_logo.svg",
-    provenance: "probe",
-    rendersMcpApps: false,
-  },
-  {
-    id: "cline",
-    label: "Cline",
+  cursor: { logoSrc: "/cursor_logo.png" },
+  copilot: { logoSrc: "/copilot_logo.png" },
+  codex: { logoSrc: "/codex-logo.svg" },
+  n8n: { logoSrc: "/n8n_logo.svg" },
+  perplexity: { logoSrc: "/perplexity_logo.svg" },
+  cline: {
     logoSrc: "/cline_logo_light.svg",
     logoSrcByTheme: {
       light: "/cline_logo_light.svg",
       dark: "/cline_logo_dark.svg",
     },
-    provenance: "probe",
-    rendersMcpApps: false,
   },
-];
+};
 
-/**
- * Build the compat profiles by joining the market-host facts with the
- * registry's live capability matrix. `rendersOpenAiApps` is the one render
- * flag the registry CAN give us cleanly (the `window.openai` shim toggle),
- * so it stays derived; `rendersMcpApps` is the explicit CLI-aware fact.
- */
-// The profile array has no per-server input — it's a pure function of the
-// static market list + registry — so build it once. Every connected server's
-// memoized `useHostCompatReports` calls `evaluateAllHosts` on each tools/
-// widget/protocol change, which would otherwise rebuild this byte-identical
-// array (registry lookups + spreads) every time.
+// The joined profile array is a pure function of the SDK catalog + the static
+// logo map, so build it once. Every connected server's memoized
+// `useHostCompatReports` calls into `evaluateAllHosts` on each tools/widget/
+// protocol change, which would otherwise rebuild this byte-identical array
+// (SDK calls + logo joins) every time.
 let cachedProfiles: HostCompatProfile[] | null = null;
 
 export function buildHostCompatProfiles(): HostCompatProfile[] {
   if (cachedProfiles) return cachedProfiles;
-  cachedProfiles = MARKET_HOSTS.map((host) => {
-    const rendersOpenAiApps = getCompatRuntimeForStyle(host.id).injected;
-    const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
-    return {
-      ...host,
-      rendersOpenAiApps,
-      supportedProtocolVersions: supportedProtocolVersionsFor(host.id),
-      capabilities: rendersWidgets
-        ? findHostStyle(host.id)?.mcp.mcpAppsCapabilities
-        : undefined,
-    };
-  });
+  cachedProfiles = buildMarketHostProfiles().map((p) => ({
+    ...p,
+    logoSrc: LOGO_BY_ID[p.id]?.logoSrc ?? "",
+    logoSrcByTheme: LOGO_BY_ID[p.id]?.logoSrcByTheme,
+  }));
   return cachedProfiles;
 }
 
-// Seeding a template builds a full HostConfigInputV2, so cache the
-// protocol-version read per id (templates are static for the session). Uses
-// the strict resolver — an unknown market-host id throws on first evaluation.
-const protocolVersionCache = new Map<HostTemplateId, string[] | undefined>();
-function supportedProtocolVersionsFor(
-  id: HostTemplateId,
-): string[] | undefined {
-  if (!protocolVersionCache.has(id)) {
-    protocolVersionCache.set(id, getHostTemplateSupportedProtocolVersions(id));
-  }
-  return protocolVersionCache.get(id);
-}
+/**
+ * Profiles keyed by host id — used by the engine adapter to join logos +
+ * `rendersWidgets` onto the SDK's logo-free reports.
+ */
+export const PROFILE_BY_ID: Record<string, HostCompatProfile> =
+  Object.fromEntries(buildHostCompatProfiles().map((p) => [p.id, p]));
