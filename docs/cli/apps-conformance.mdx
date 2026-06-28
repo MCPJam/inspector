@@ -1,10 +1,12 @@
 ---
 title: "MCP Apps Conformance"
-description: "Validate MCP Apps tool metadata and ui:// resource wiring from the CLI"
+description: "Validate MCP Apps tool metadata, ui:// resource wiring, and headless widget renders from the CLI"
 icon: "app-window"
 ---
 
 The `apps conformance` command validates the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
+
+Use `apps render` when you want a headless screenshot and render verdict for a UI-capable tool — no browser tab required.
 
 Use `tools call --ui` when you want to execute one UI-capable tool and render the completed result in the local Inspector App Builder.
 
@@ -201,6 +203,105 @@ mcpjam resources read \
   --quiet \
   --format json
 ```
+
+## Headless widget render
+
+Use `apps render` to capture what an MCP App widget **actually paints** — a screenshot and a render verdict — without opening a browser tab. The render runs server-side inside the local Inspector's headless Chromium, so it works in CI and agent pipelines.
+
+<Note>
+  `apps render` is a **local-Inspector capability** (local dev + CI). It requires
+  the local Inspector to be running or auto-startable. The render path is
+  disabled in hosted mode.
+</Note>
+
+### Quick start
+
+```bash
+mcpjam apps render \
+  --url https://your-server.com/mcp \
+  --tool-name show_seats \
+  --tool-args '{"seat": 12}' \
+  --screenshot-out render.png \
+  --format json
+```
+
+The command auto-starts the local Inspector if it is not already running, connects the target server, calls the tool, mounts the widget in headless Chromium, and returns a JSON result.
+
+### Output
+
+```json
+{
+  "status": "rendered",
+  "toolName": "show_seats",
+  "serverName": "your-server",
+  "observation": {
+    "resourceUri": "ui://widget/seats",
+    "bridgeInitialized": true,
+    "elapsedMs": 1240
+  },
+  "screenshotCaptured": true,
+  "screenshotPath": "/absolute/path/to/render.png"
+}
+```
+
+`status` is one of:
+
+| Status | Meaning |
+|--------|---------|
+| `rendered` | Widget painted successfully |
+| `no_ui_resource` | Tool has no `_meta.ui.resourceUri` — not a widget tool |
+| `browser_unavailable` | Chromium is not installed; see `hint` for the install command |
+| `bridge_timeout` | Widget did not complete the `ui/initialize` handshake in time |
+| `blank_screenshot` | Screenshot was captured but the frame was blank |
+| `mount_failed` | Widget HTML could not be loaded |
+| `resource_read_failed` | `resources/read` for the `ui://` resource failed |
+| `render_error` | Harness encountered an error during render |
+| `screenshot_failed` | Screenshot capture failed |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <tool>` | Tool name (required; `--name` is an alias) |
+| `--tool-args <json>` | Tool parameters as inline JSON, `@path`, or `-` for stdin (`--params` is an alias) |
+| `--tool-args-stdin` | Read tool parameters from stdin |
+| `--screenshot-out <path>` | Write the screenshot PNG to a file |
+| `--screenshot-base64` | Include the screenshot as base64 in the JSON output (opt-in; keeps stdout clean by default) |
+| `--viewport <WxH>` | Headless viewport size, e.g. `1280x800` |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` (default) or `openai-sdk` |
+| `--server-name <name>` | Server name inside Inspector (auto-derived from the target URL when omitted) |
+| `--inspector-url <url>` | Local Inspector base URL (defaults to `http://127.0.0.1:6274`) |
+| `--require-render` | Exit non-zero when `status` is not `rendered` |
+
+### Missing Chromium
+
+When Chromium is not installed, the render returns `browser_unavailable` with an actionable hint rather than failing hard:
+
+```json
+{
+  "status": "browser_unavailable",
+  "hint": "npx playwright install chromium",
+  "screenshotCaptured": false
+}
+```
+
+Run the hint command once to install Chromium, then re-run `apps render`. The first render after install may take longer than usual while Playwright sets up the browser.
+
+### CI usage
+
+Use `--require-render` to fail CI when the widget does not render:
+
+```bash
+mcpjam apps render \
+  --url https://your-server.com/mcp \
+  --tool-name show_seats \
+  --tool-args '{"seat": 12}' \
+  --screenshot-out render.png \
+  --require-render \
+  --format json
+```
+
+Exit code `1` when `status !== rendered` and `--require-render` is set; `0` otherwise (including `browser_unavailable` without the flag).
 
 ## Shared connection flags
 
