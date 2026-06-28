@@ -1626,6 +1626,7 @@ const executeTestCase = async (params: {
         hostPolicy,
         toolSignals,
         suiteHostConfig,
+        environment,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1672,6 +1673,7 @@ const executeTestCase = async (params: {
         hostPolicy,
         toolSignals,
         suiteHostConfig,
+        environment,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -3053,6 +3055,10 @@ const runHostedIterationWithBrowser = async (
     toolSignals,
     suiteHostConfig,
     orgModelConfigTarget,
+    // Pinned reproducible-env id lives on the run environment; drives per-
+    // iteration eval-sandbox provisioning + the bash tool (hosted parity with
+    // the local runner).
+    environment,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3230,6 +3236,18 @@ const runHostedIterationWithBrowser = async (
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
       : null
   );
+  // Reproducible-eval sandbox for this hosted iteration (parity with the local
+  // runner). Provisioned inside the prepareChatV2 try so a failure records a
+  // clean failed iteration; released right after the agent run below.
+  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
+    null;
+  const releaseEvalSandboxIfAny = async (): Promise<void> => {
+    if (evalSandbox?.ok) {
+      const { sandboxRowId } = evalSandbox.value;
+      evalSandbox = null;
+      await releaseEvalSandbox({ sandboxRowId }).catch(() => {});
+    }
+  };
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3248,7 +3266,37 @@ const runHostedIterationWithBrowser = async (
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+    // Pinned env → boot a fresh ephemeral sandbox and add the `bash` tool to
+    // prepared.allTools (the hosted path serializes those to toolDefs for the
+    // backend agent, then executes tool calls inspector-side). A provision
+    // failure throws → the catch below persists a failed iteration.
+    const pinnedEnvironmentId = (
+      environment as { computerEnvironmentId?: string } | undefined
+    )?.computerEnvironmentId;
+    if (pinnedEnvironmentId && runId !== null) {
+      if (!isComputersDataPlaneConfigured()) {
+        throw new Error(
+          "This eval pins a reproducible computer environment, but this server isn't configured as a computers data plane (needs CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY) — it could provision a sandbox but not exec or release it."
+        );
+      }
+      evalSandbox = await provisionEvalSandbox({
+        bearer: convexAuthToken,
+        runId: String(runId),
+        ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!evalSandbox.ok) {
+        throw new Error(
+          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
+        );
+      }
+      prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
+        sandboxId: evalSandbox.value.sandboxId,
+      });
+    }
   } catch (error) {
+    // Release any sandbox provisioned before a later line in the try threw.
+    await releaseEvalSandboxIfAny();
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     await persistSetupFailedIteration({
@@ -3383,25 +3431,33 @@ const runHostedIterationWithBrowser = async (
     buildSinks: hostedBuildSinks,
   });
   const stepState = createStepExecutionState();
-  const result = await executeSteps({
-    steps,
-    state: stepState,
-    browser,
-    handlers: hostedHandlers,
-    isAborted,
-    ...(emit
-      ? {
-          onStepStatus: (e) =>
-            emit({
-              type: "step_status",
-              turnIndex: e.turnOrdinal,
-              stepId: e.stepId,
-              kind: e.kind,
-              status: e.status,
-            }),
-        }
-      : {}),
-  });
+  let result: Awaited<ReturnType<typeof executeSteps>>;
+  try {
+    result = await executeSteps({
+      steps,
+      state: stepState,
+      browser,
+      handlers: hostedHandlers,
+      isAborted,
+      ...(emit
+        ? {
+            onStepStatus: (e) =>
+              emit({
+                type: "step_status",
+                turnIndex: e.turnOrdinal,
+                stepId: e.stepId,
+                kind: e.kind,
+                status: e.status,
+              }),
+          }
+        : {}),
+    });
+  } finally {
+    // The eval sandbox is only used during the agent run; release as soon as it
+    // finishes or throws — the verdict/finalize below don't need it, and the
+    // backend GC reaps anything this misses.
+    await releaseEvalSandboxIfAny();
+  }
   if (isAborted()) return returnCancelled();
   if (result.iterationError) {
     iterationError = result.iterationError;
