@@ -135,6 +135,18 @@ export function sanitizeHostConfigForEvalSuite(
   const backed = computerBackedToolIds(catalog);
   const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));
   const idsChanged = cleanedIds.length !== value.builtInToolIds.length;
-  if (value.computer === undefined && !idsChanged) return value;
-  return { ...value, computer: undefined, builtInToolIds: cleanedIds };
+  // Clear `harness` too: the Claude Code harness runs inside the computer, so a
+  // harness left set with no computer violates the backend `harness ⇒ computer`
+  // invariant and would route an eval run toward the real harness path. Mirrors
+  // detachComputerPatch — dropping the computer takes its dependent runtime.
+  const harnessChanged = value.harness !== undefined;
+  if (value.computer === undefined && !idsChanged && !harnessChanged) {
+    return value;
+  }
+  return {
+    ...value,
+    computer: undefined,
+    harness: undefined,
+    builtInToolIds: cleanedIds,
+  };
 }

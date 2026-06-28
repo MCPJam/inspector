@@ -155,6 +155,7 @@ chatV2.post("/", async (c) => {
       const runtime = await fetchHostRuntimeConfig({
         hostId,
         bearer: bearerToken,
+        signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (runtime.ok) {
         hostRuntimeConfig = runtime.config as unknown as Record<

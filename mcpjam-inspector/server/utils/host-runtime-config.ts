@@ -55,10 +55,20 @@ export async function fetchHostRuntimeConfig(args: {
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HostRuntimeConfigResult> {
-  const url = new URL(
-    "/web/host/runtime-config",
-    getConvexHttpUrl()
-  ).toString();
+  let url: string;
+  try {
+    url = new URL("/web/host/runtime-config", getConvexHttpUrl()).toString();
+  } catch (err) {
+    // Keep missing/invalid Convex config inside the result contract so callers
+    // always get the fail-closed { ok: false, status, error } path instead of a
+    // thrown exception escaping before the request flow.
+    logger.error("[host-runtime-config] missing endpoint config", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Host runtime-config endpoint is not configured",
+    };
+  }
   const authorization = args.bearer.startsWith("Bearer ")
     ? args.bearer
     : `Bearer ${args.bearer}`;
