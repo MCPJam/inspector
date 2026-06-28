@@ -72,7 +72,6 @@ import {
   useAppNavigate,
 } from "@/lib/app-navigation";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
@@ -382,17 +381,13 @@ const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
 
 /**
- * Render-time gate for hosted Skills. `getHostedNavigationSections` runs at
- * module load (no hooks), so it marks Skills disabled by default. Once the
- * Computer feature flag resolves, flip Skills to enabled — in hosted mode
- * skills live on the project's Computer, so the Computer flag governs them.
- * Flag off keeps the existing disabled + "available locally" affordance.
+ * Enable the hosted Skills nav item. `getHostedNavigationSections` runs at
+ * module load (no hooks) and marks Skills disabled by default; hosted skills are
+ * a **project-membership** resource (authored in Convex, available even without
+ * a Computer), so for any hosted member we flip it to enabled. Access is
+ * enforced server-side, not by this nav state.
  */
-function withCloudSkillsGate(
-  sections: NavSection[],
-  computersEnabled: boolean,
-): NavSection[] {
-  if (!computersEnabled) return sections;
+function enableHostedSkillsNav(sections: NavSection[]): NavSection[] {
   return sections.map((section) => ({
     ...section,
     items: section.items.map((item) =>
@@ -681,10 +676,9 @@ export function MCPSidebar({
     ]
   );
   const hubNavHash = "#servers";
-  const computersEnabled = useComputersEnabled();
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE
-      ? withCloudSkillsGate(hostedNavigationSections, computersEnabled)
+      ? enableHostedSkillsNav(hostedNavigationSections)
       : navigationSections,
     featureFlags
   );

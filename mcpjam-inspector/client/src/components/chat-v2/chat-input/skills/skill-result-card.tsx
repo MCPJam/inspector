@@ -22,6 +22,10 @@ export function SkillResultCard({
   onUpdate,
   skillsSource,
 }: SkillResultCardProps) {
+  // Prefer the source stamped on the skill at selection time; fall back to the
+  // current prop for legacy/local selections. This keeps file reads pinned to
+  // the project the skill was selected from, even if the active project changed.
+  const effectiveSource = skillResult.source ?? skillsSource;
   const [isExpanded, setIsExpanded] = useState(false);
   const [files, setFiles] = useState<SkillFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -38,7 +42,7 @@ export function SkillResultCard({
     if (isExpanded && files.length === 0 && !loading) {
       setLoading(true);
       setError(null);
-      listSkillFiles(skillResult.name, skillsSource)
+      listSkillFiles(skillResult.name, effectiveSource)
         .then((fetchedFiles: SkillFile[]) => {
           setFiles(fetchedFiles);
         })
@@ -49,7 +53,7 @@ export function SkillResultCard({
           setLoading(false);
         });
     }
-  }, [isExpanded, skillResult.name, files.length, loading, skillsSource]);
+  }, [isExpanded, skillResult.name, files.length, loading, effectiveSource]);
 
   // Handle file selection toggle
   const handleFileToggle = useCallback(
@@ -77,7 +81,7 @@ export function SkillResultCard({
           const fileContent = await readSkillFile(
             skillResult.name,
             filePath,
-            skillsSource,
+            effectiveSource,
           );
           if (!fileContent.isText || !fileContent.content) {
             // Skip non-text files
@@ -103,7 +107,7 @@ export function SkillResultCard({
         }
       }
     },
-    [skillResult, selectedPaths, onUpdate, skillsSource],
+    [skillResult, selectedPaths, onUpdate, effectiveSource],
   );
 
   // Count of additional files selected (not counting SKILL.md which is always included)

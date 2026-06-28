@@ -74,7 +74,9 @@ export function SkillsPopoverSection({
           skill_name: skill.name,
           ...standardEventProps("chat_input_skills_popover"),
         });
-        onSkillSelected(fullSkill);
+        // Stamp the source onto the result so later file reads (expanding the
+        // card) stay pinned to the project it was selected from.
+        onSkillSelected({ ...fullSkill, source: skillsSource });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("[SkillsPopoverSection] Failed to get skill", message);

@@ -966,24 +966,14 @@ export function SkillsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const computersEnabled = useComputersEnabledState();
 
-  // In hosted mode skills live on the project's Computer, so the route is
-  // gated on the Computer flag — mirror ComputerRoute's tri-state: redirect
-  // only on an explicit `false`, render nothing while PostHog hydrates (so a
-  // flagged-in user cold-loading /skills isn't bounced before the flag
-  // resolves). Local mode is ungated (local FS skills always work).
-  if (HOSTED_MODE) {
-    if (computersEnabled === false) {
-      return <Navigate to={routePaths.servers} replace />;
-    }
-    if (computersEnabled === undefined) {
-      return null;
-    }
-    // Hosted skills are a project resource and have no local FS to fall back to.
-    // Don't render SkillsTab until the project resolves, or it would briefly run
-    // in local mode and hit unavailable /api/mcp/skills/* routes.
-    if (!convexProjectId) {
-      return null;
-    }
+  // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
+  // available even without a Computer) — NOT gated on the Computer flag. Access
+  // is enforced server-side. We only wait for the project to resolve, since
+  // hosted skills have no local FS to fall back to (rendering early would hit
+  // the unavailable /api/mcp/skills/* routes). `computersEnabled` is passed
+  // through only for the local-mode Local/Cloud toggle.
+  if (HOSTED_MODE && !convexProjectId) {
+    return null;
   }
 
   return (

@@ -195,14 +195,27 @@ export async function uploadSkillFolder(
   sharing: SkillSharing = "user",
 ): Promise<Skill> {
   if (isCloud(source)) {
-    // v1 cloud skills are SKILL.md-only: read the SKILL.md, create from it
-    // (supporting files in the folder are ignored until v2).
+    // v1 cloud skills are SKILL.md-only. Rather than silently drop supporting
+    // files (which would create a broken skill if SKILL.md references them),
+    // reject a folder that contains anything besides SKILL.md.
     const skillMdFile = files.find(
       (f) =>
         f.name === "SKILL.md" ||
         ((f as any).webkitRelativePath || "").endsWith("/SKILL.md"),
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
+    const supporting = files.filter((f) => f !== skillMdFile);
+    if (supporting.length > 0) {
+      const names = supporting
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(", ");
+      throw new Error(
+        `Cloud skills are SKILL.md-only for now — this folder has ` +
+          `${supporting.length} other file(s) (${names}${supporting.length > 3 ? ", …" : ""}). ` +
+          `Remove them (inline anything SKILL.md needs) or add this skill to a local build.`,
+      );
+    }
     const { description, body } = parseSkillMd(await skillMdFile.text());
     return uploadSkill(
       { name: skillName, description, content: body },
