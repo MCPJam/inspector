@@ -122,6 +122,11 @@ export type HarnessRuntimeAdapter = {
   /** Map a host model id to the harness's native model id/alias, if it needs
    *  one. Undefined ⇒ let the harness use its default. */
   toNativeModel?(modelId: string): string | undefined;
+  /** Can this runtime actually run the given host model? Claude Code runs any
+   *  Anthropic model the CLI accepts (true); Codex only the gpt-5 family it maps.
+   *  The preflight rejects unsupported models rather than letting the runtime
+   *  silently fall back to its own default. */
+  supportsModel(modelId: string): boolean;
   /** Map a runtime tool name back to MCPJam tool identity. Claude Code namespaces
    *  MCP tools `mcp__<server>__<tool>`; other harnesses differ, so this is
    *  per-adapter rather than pinned to Claude's scheme. */
@@ -272,6 +277,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCode()),
   resolveAuth: resolveGatewayAuth,
   toNativeModel: toClaudeCodeModel,
+  // The CLI runs any model it's pointed at (haiku/sonnet/opus map to aliases,
+  // others ride the gateway default); never block on model here.
+  supportsModel: () => true,
   parseToolName: parseHarnessToolName,
   async deliverMcpServers({ writeTextFile, sessionWorkDir, mcpJson }) {
     // Write the host's MCP servers into the session workdir before Claude Code
@@ -315,6 +323,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   listBuiltinTools: memoizedBuiltinTools(() => createCodex()),
   resolveAuth: resolveGatewayAuth,
   toNativeModel: toCodexModel,
+  // Codex only runs the gpt-5 family it maps; anything else would silently fall
+  // back to Codex's default model, so the preflight rejects it.
+  supportsModel: (modelId) => toCodexModel(modelId) !== undefined,
   // No MCP namespacing in v1 — pass the name through as a native tool.
   parseToolName: (rawToolName) => ({ toolName: rawToolName }),
   createHarness({ modelId, auth }) {

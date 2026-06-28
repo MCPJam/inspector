@@ -378,9 +378,19 @@ export async function runHarnessTurn(
       // "observe the real runtime" purpose, and isn't expressible anyway —
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
       // Only adapters that deliver MCP servers (Claude Code) build the config.
-      // Codex v1 declares `supportsSelectedMcpServers: false`; a Codex host with
-      // selected servers is rejected at the availability preflight, so here we
-      // simply skip the build (empty attribution map → native tools only).
+      // FAIL CLOSED (defense in depth): a harness that can't deliver the host's
+      // selected servers must NOT silently run without them. The route preflight
+      // already rejects this, but eval/synthetic/unified paths don't hit that
+      // preflight — so guard here too rather than dropping the servers.
+      if (
+        !harnessAdapter.supportsSelectedMcpServers &&
+        (selectedServers?.length ?? 0) > 0
+      ) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+        );
+      }
       const { mcpJson, keyToServerId } = harnessAdapter.supportsSelectedMcpServers
         ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };

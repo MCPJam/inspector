@@ -41,6 +41,17 @@ describe("harness registry", () => {
     expect(toNativeModel?.("anthropic/claude-haiku-4.5")).toBeUndefined();
   });
 
+  it("supportsModel: Claude Code runs anything, Codex only gpt-5", () => {
+    const cc = getHarnessAdapter("claude-code");
+    const codex = getHarnessAdapter("codex");
+    expect(cc.supportsModel("anthropic/claude-haiku-4.5")).toBe(true);
+    expect(cc.supportsModel("openai/gpt-5-nano")).toBe(true);
+    expect(codex.supportsModel("openai/gpt-5-nano")).toBe(true);
+    // MCPJam-provided but not Codex-mappable ⇒ unsupported (rejected in preflight).
+    expect(codex.supportsModel("anthropic/claude-haiku-4.5")).toBe(false);
+    expect(codex.supportsModel("openai/o1")).toBe(false);
+  });
+
   it("Claude Code attributes mcp__ tool names; Codex passes them through", () => {
     const keyToServerId = { weather: "srv_123" };
     expect(

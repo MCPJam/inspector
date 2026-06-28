@@ -340,6 +340,11 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
+    // Carry the harness selector through to the handler — runHarnessTurn reads it
+    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
+    // unified harness turns reach runHarnessTurn with harness=undefined (the old
+    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

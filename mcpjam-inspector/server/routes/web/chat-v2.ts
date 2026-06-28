@@ -277,11 +277,16 @@ chatV2.post("/", async (c) => {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
         requireToolApproval,
-        hasSelectedMcpServers: selectedServerIds.length > 0,
+        // Use the SERVER-resolved host server list, not the request body — a
+        // stale/tampered request mustn't send an empty array to bypass the
+        // "no MCP servers" fail-closed gate.
+        hasSelectedMcpServers:
+          (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
         modelEligible: isMCPJamProvidedModel(
           String(modelDefinition.id),
           modelDefinition.provider
         ),
+        modelId: String(modelDefinition.id),
       });
       if (!availability.ok) {
         throw new WebRouteError(

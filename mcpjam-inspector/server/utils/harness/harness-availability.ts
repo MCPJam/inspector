@@ -34,6 +34,10 @@ export function checkHarnessRuntimeAvailable(args: {
    *  interactive path fails closed here rather than silently degrading to the
    *  emulated engine. */
   modelEligible: boolean;
+  /** The host's model id — checked against the adapter's `supportsModel` so a
+   *  model the runtime can't actually run (e.g. a non-gpt-5 model on Codex) is
+   *  rejected instead of silently falling back to the runtime's default. */
+  modelId: string;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
@@ -92,6 +96,18 @@ export function checkHarnessRuntimeAvailable(args: {
       reason:
         `the ${name} harness only runs MCPJam-provided models — pick one on ` +
         "this host to run the real runtime",
+    };
+  }
+
+  // Runtime model support: even an MCPJam-provided model may not be one this
+  // runtime can run (e.g. a non-gpt-5 model on Codex). Reject it rather than let
+  // the runtime silently substitute its own default model.
+  if (!adapter.supportsModel(args.modelId)) {
+    return {
+      ok: false,
+      reason:
+        `the ${name} harness can't run this host's model — pick a ` +
+        `${name}-compatible model to run the real runtime`,
     };
   }
 

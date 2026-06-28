@@ -572,7 +572,13 @@ chatV2.post("/", async (c) => {
         harnessId: resolvedExecution.harness,
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
-        modelEligible: isMcpJamProvidedModel,
+        // Provider-aware: a bare model id (no creator prefix) needs the provider
+        // to resolve its canonical id, else a hosted MCPJam model is misjudged.
+        modelEligible: isMCPJamProvidedModel(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+        modelId: String(modelDefinition.id),
       });
       if (!availability.ok) {
         return c.json(

@@ -39,20 +39,36 @@ function args(overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>
     requireToolApproval: false,
     hasSelectedMcpServers: false,
     modelEligible: true,
+    // A model each default harness can run: anthropic for claude-code; the
+    // codex cases below override with a gpt-5 model.
+    modelId: "anthropic/claude-haiku-4.5",
     ...overrides,
   };
 }
 
 describe("checkHarnessRuntimeAvailable", () => {
-  it.each(["claude-code", "codex"] as const)(
+  it.each([
+    ["claude-code", "anthropic/claude-haiku-4.5"],
+    ["codex", "openai/gpt-5-nano"],
+  ] as const)(
     "is ok for %s when the data plane is configured and gates pass",
-    (harnessId) => {
+    (harnessId, modelId) => {
       setFullyAvailable();
-      expect(checkHarnessRuntimeAvailable(args({ harnessId }))).toEqual({
-        ok: true,
-      });
+      expect(
+        checkHarnessRuntimeAvailable(args({ harnessId, modelId })),
+      ).toEqual({ ok: true });
     },
   );
+
+  it("rejects a model the runtime can't run (non-gpt-5 on Codex)", () => {
+    setFullyAvailable();
+    // MCPJam-provided but not Codex-mappable ⇒ rejected, not silently defaulted.
+    const r = checkHarnessRuntimeAvailable(
+      args({ harnessId: "codex", modelId: "anthropic/claude-haiku-4.5" }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
+  });
 
   it("fails when the computers data plane is not configured", () => {
     setFullyAvailable();
