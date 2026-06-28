@@ -1,45 +1,31 @@
-diff --git a/.changeset/evals-steps-cli.md b/.changeset/evals-steps-cli.md
+diff --git a/.changeset/release-rollup-2026-06-26.md b/.changeset/release-rollup-2026-06-26.md
 deleted file mode 100644
-index c9a9d7d97..000000000
---- a/.changeset/evals-steps-cli.md
+index 8c32bb1c2..000000000
+--- a/.changeset/release-rollup-2026-06-26.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": minor
-----
--
--Support the TestStep eval model in the `eval` command and capture per-step eval screenshots.
-diff --git a/.changeset/evals-steps-inspector.md b/.changeset/evals-steps-inspector.md
-deleted file mode 100644
-index 8373a52c5..000000000
---- a/.changeset/evals-steps-inspector.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,13 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
-----
--
--Add the TestStep eval model: shared Steps contract, inspector server runtime, step authoring/replay UI, widget interaction recorder, and the eval dashboard with cross-host regression coverage. Also adds XAA support on the Connect page and pasted/dropped chat attachments.
-diff --git a/.changeset/evals-steps-sdk.md b/.changeset/evals-steps-sdk.md
-deleted file mode 100644
-index 24b6ad8b6..000000000
---- a/.changeset/evals-steps-sdk.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
 -"@mcpjam/sdk": minor
+-"@mcpjam/cli": patch
+-"@mcpjam/widget-react": patch
 ----
 -
--Extend the platform client with Steps-aware eval operations and types, and update eval result mapping to cover the new TestStep model.
+-Release the latest host compatibility, eval export, and dependency updates.
+-
+-- Add `@mcpjam/sdk/host-compat` for deriving server requirements, evaluating host compatibility, and scanning widget bridge usage.
+-- Add the Inspector Compatibility destination with conformance gates, host matrices, live observed widget rendering, and caniuse.dev showcase support.
+-- Add OTLP/OpenInference trace export from eval run detail pages.
+-- Pin `@modelcontextprotocol/client` to the stable alpha version used by the workspace.
 diff --git a/cli/package.json b/cli/package.json
-index 5ce5526f2..25500b645 100644
+index 597df0e85..7b83bfae2 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.10.1",
-+  "version": "3.11.0",
+-  "version": "3.11.0",
++  "version": "3.11.1",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -47,21 +33,21 @@ index 5ce5526f2..25500b645 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^1.22.0",
-+    "@mcpjam/sdk": "^1.25.0",
+-    "@mcpjam/sdk": "^1.25.0",
++    "@mcpjam/sdk": "^1.26.0",
      "@modelcontextprotocol/server": "^2.0.0-alpha.2",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 078ab00e0..2a6be4533 100644
+index a54e5b712..6eda75e47 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.19.0",
-+  "version": "2.20.0",
+-  "version": "2.20.0",
++  "version": "2.21.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -69,24 +55,24 @@ index 078ab00e0..2a6be4533 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.24.0",
-+    "@mcpjam/sdk": "^1.25.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+-    "@mcpjam/sdk": "^1.25.0",
++    "@mcpjam/sdk": "^1.26.0",
+     "@modelcontextprotocol/client": "2.0.0-alpha.2",
      "@modelcontextprotocol/ext-apps": "^1.7.2",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 36b0c233d..d834bb66b 100644
+index 78e9f64ec..f4e0d1f52 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -58,9 +58,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.10.1",
-+      "version": "3.11.0",
+-      "version": "3.11.0",
++      "version": "3.11.1",
        "dependencies": {
--        "@mcpjam/sdk": "^1.22.0",
-+        "@mcpjam/sdk": "^1.25.0",
+-        "@mcpjam/sdk": "^1.25.0",
++        "@mcpjam/sdk": "^1.26.0",
          "@modelcontextprotocol/server": "^2.0.0-alpha.2",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -94,8 +80,8 @@ index 36b0c233d..d834bb66b 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.19.0",
-+      "version": "2.20.0",
+-      "version": "2.20.0",
++      "version": "2.21.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -103,29 +89,64 @@ index 36b0c233d..d834bb66b 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.24.0",
-+        "@mcpjam/sdk": "^1.25.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+-        "@mcpjam/sdk": "^1.25.0",
++        "@mcpjam/sdk": "^1.26.0",
+         "@modelcontextprotocol/client": "2.0.0-alpha.2",
          "@modelcontextprotocol/ext-apps": "^1.7.2",
          "@openrouter/ai-sdk-provider": "^2.0.2",
 @@ -36879,7 +36879,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.24.0",
-+      "version": "1.25.0",
+-      "version": "1.25.0",
++      "version": "1.26.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
+@@ -37196,11 +37196,11 @@
+     },
+     "widget-react": {
+       "name": "@mcpjam/widget-react",
+-      "version": "0.1.0",
++      "version": "0.1.1",
+       "license": "MIT",
+       "dependencies": {
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^1.18.0",
++        "@mcpjam/sdk": "^1.26.0",
+         "@modelcontextprotocol/client": "2.0.0-alpha.2",
+         "@modelcontextprotocol/ext-apps": "^1.7.2",
+         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 945290c3f..adb111272 100644
+index 9a9087197..04c346188 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.24.0",
-+  "version": "1.25.0",
+-  "version": "1.25.0",
++  "version": "1.26.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
+diff --git a/widget-react/package.json b/widget-react/package.json
+index ff78229c8..25b223dd8 100644
+--- a/widget-react/package.json
++++ b/widget-react/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/widget-react",
+-  "version": "0.1.0",
++  "version": "0.1.1",
+   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
+   "license": "MIT",
+   "type": "module",
+@@ -34,7 +34,7 @@
+   },
+   "dependencies": {
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^1.18.0",
++    "@mcpjam/sdk": "^1.26.0",
+     "@modelcontextprotocol/client": "2.0.0-alpha.2",
+     "@modelcontextprotocol/ext-apps": "^1.7.2",
+     "lucide-react": "^0.525.0",

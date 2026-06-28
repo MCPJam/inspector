@@ -23,6 +23,19 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useComputersDataPlaneConfig: () => mockDataPlane,
 }));
 
+let mockEnvironments: Array<{ environmentId: string; name: string }> = [];
+const resetComputer = vi.fn(async () => ({ reset: true }));
+vi.mock("@/hooks/useComputerEnvironments", () => ({
+  useEnvironments: () => mockEnvironments,
+  useResetComputer: () => resetComputer,
+}));
+
+// The drawer calls its own Convex hooks; stub it (its own tests cover it).
+vi.mock("../EnvironmentsDrawer", () => ({
+  EnvironmentsDrawer: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="env-drawer" /> : null,
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (sel: (s: { themeMode: string }) => unknown) =>
     sel({ themeMode: "dark" }),
@@ -45,6 +58,7 @@ afterEach(() => {
   vi.clearAllMocks();
   mockStatus = undefined;
   mockUsage = undefined;
+  mockEnvironments = [];
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 });
 
@@ -232,6 +246,78 @@ describe("ComputerView", () => {
     expect(queryByTestId("terminal-stub")).toBeNull();
     expect(queryByText(/Starting your computer/i)).toBeNull();
     expect(getByText(/no longer available/i)).toBeTruthy();
+  });
+});
+
+describe("ComputerView image strip", () => {
+  it("shows the base image when no environment is attached", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("Base image")).toBeTruthy();
+  });
+
+  it("labels an attached env whose name hasn't resolved as a custom image, not base", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "envX",
+    };
+    mockEnvironments = []; // still loading / not visible to this caller
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("Custom image")).toBeTruthy();
+    expect(queryByText("Base image")).toBeNull();
+  });
+
+  it("shows the attached environment's name", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("ml-toolkit")).toBeTruthy();
+  });
+
+  it("Change opens the environments drawer", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByTestId, getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("env-drawer")).toBeNull();
+    fireEvent.click(getByText("Change"));
+    expect(getByTestId("env-drawer")).toBeTruthy();
+  });
+
+  it("Reset confirms then resets the computer to its image", async () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Reset"));
+    expect(getByText(/Installed files are wiped/i)).toBeTruthy();
+    fireEvent.click(getByText("Reset", { selector: "button" }));
+    await waitFor(() =>
+      expect(resetComputer).toHaveBeenCalledWith({ projectId: "p1" })
+    );
+  });
+
+  it("disables Reset while the computer is mid-provision", () => {
+    mockStatus = { computerId: "c1", status: "provisioning", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(
+      (getByText("Reset", { selector: "button" }) as HTMLButtonElement).disabled
+    ).toBe(true);
   });
 });
 

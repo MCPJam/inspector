@@ -114,6 +114,11 @@ export type EvalSuite = {
       serverName: string;
       projectServerId?: string;
     }>;
+    /**
+     * Reproducible-evals pin: the computer environment each eval iteration
+     * boots a fresh sandbox from. Set via the suite settings env-picker.
+     */
+    computerEnvironmentId?: string;
   };
   createdAt: number;
   updatedAt: number;
@@ -483,6 +488,20 @@ export type EvalSuiteRun = {
         serverName: string;
         projectServerId?: string;
       }>;
+      computerEnvironmentId?: string;
+    };
+    /**
+     * Frozen reproducible-env pin for this run: the exact built image each
+     * iteration's sandbox launched from. Surfaced in run-detail so users can
+     * see which environment a run used (and spot mismatches when comparing).
+     */
+    computerEnvironment?: {
+      environmentId: string;
+      environmentBuildId: string;
+      e2bTemplateId: string;
+      e2bBuildId?: string;
+      baseImageDigests: string[];
+      provider: "e2b" | "stub";
     };
     /**
      * Suite-level judge config snapshotted at run-create. The run-detail

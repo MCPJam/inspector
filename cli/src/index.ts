@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerAuthCommands } from "./commands/auth.js";
+import { registerCompatCommands } from "./commands/compat.js";
+import { registerEnvironmentsCommands } from "./commands/environments.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
@@ -71,6 +73,7 @@ export async function main(
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
+  registerCompatCommands(program);
   registerPromptCommands(program);
   registerAppsCommands(program);
   registerOAuthCommands(program);
@@ -79,6 +82,7 @@ export async function main(
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerHostsCommands(program);
+  registerEnvironmentsCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);
   registerMcpCommands(program);

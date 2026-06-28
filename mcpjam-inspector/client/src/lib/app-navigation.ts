@@ -26,6 +26,8 @@ export const routePaths = {
   servers: "/servers",
   hosts: "/hosts",
   hostCompare: "/host-compare",
+  /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
+  embedHostCompare: "/embed/host-compare",
   computer: "/computer",
   registry: "/registry",
   tools: "/tools",

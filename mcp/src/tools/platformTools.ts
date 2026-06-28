@@ -10,6 +10,7 @@
  */
 import {
   callServerToolOperation,
+  checkHostCompatibilityOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
   deleteEvalCaseOperation,
@@ -68,6 +69,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  checkHostCompatibilityOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,

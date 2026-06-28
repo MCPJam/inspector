@@ -197,10 +197,13 @@ export function MultiServerToolsPaneInner({
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
-    if (tab === "tools" && hasSelection) {
-      // Returning to Tools while a selection exists: keep selection but show
-      // the parameters view. Mirrors single-server behavior.
-      setIsListExpanded(false);
+    if (tab === "tools") {
+      // Clicking the Tools tab returns to the tool list (the tool menu),
+      // deselecting any open tool (server tool or harness built-in) — the
+      // same as the back arrow.
+      setSelected(null);
+      builtin.clear();
+      setIsListExpanded(true);
     }
   };
 

@@ -22,6 +22,10 @@
       "description": "Project hosts: named model + capability profiles you run chats and eval suites against."
     },
     {
+      "name": "Computer environments",
+      "description": "Custom Computer images: digest-pinned Dockerfile environments your project's computers boot from."
+    },
+    {
       "name": "Server diagnostics",
       "description": "Connect-level health checks against a saved MCP server."
     },
@@ -75,6 +79,260 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
           "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments": {
+      "get": {
+        "operationId": "listComputerEnvironments",
+        "tags": ["Computer environments"],
+        "summary": "List a project's computer environments",
+        "description": "The custom Computer images (digest-pinned Dockerfile environments) saved in the project — your own personal drafts plus the project-shared ones.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's environments.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "post": {
+        "operationId": "createComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Create a computer environment",
+        "description": "Create a personal-draft environment from a Dockerfile and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentCreateRequest" },
+              "example": { "name": "scraper", "dockerfile": "FROM debian:bookworm-slim@sha256:...\nRUN apt-get update" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The environment was created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}": {
+      "get": {
+        "operationId": "getComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Get a computer environment",
+        "description": "One environment's Dockerfile, sharing, and latest build. An environment that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "patch": {
+        "operationId": "updateComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Update a computer environment",
+        "description": "Edit an environment's name and/or Dockerfile. Re-build it for the changes to take effect on a computer. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentUpdateRequest" },
+              "example": { "name": "scraper (v2)" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Delete a computer environment",
+        "description": "Permanently delete an environment. Computers booted from it fall back to the base image. Deleting a project-shared environment requires project admin. Bodyless — any field is rejected. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment was deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentDeleted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/builds": {
+      "get": {
+        "operationId": "listComputerEnvironmentBuilds",
+        "tags": ["Computer environments"],
+        "summary": "List an environment's builds",
+        "description": "An environment's builds, newest first, each with its status and capped log preview.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment's builds.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/build": {
+      "post": {
+        "operationId": "buildComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Build a computer environment",
+        "description": "Trigger a build of the environment's image and respond `202`. The build runs asynchronously — poll the builds list for status. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "202": {
+            "description": "The build was accepted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildStarted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/promote": {
+      "post": {
+        "operationId": "promoteComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Share an environment with the project",
+        "description": "Promote a personal-draft environment to a project-shared one. Requires project admin. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The now-shared environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/use": {
+      "post": {
+        "operationId": "useComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Boot your computer from an environment",
+        "description": "Attach the environment to the caller's computer, which re-provisions it from the pinned image (installed files are wiped). The environment must have a `ready` build, and the computer provider must match the build's. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The environment was attached; the computer is re-provisioning.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerAttached" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer/reset": {
+      "post": {
+        "operationId": "resetComputer",
+        "tags": ["Computer environments"],
+        "summary": "Reset your computer to its image",
+        "description": "Reset the caller's computer back to its current image, wiping mutable state. Bodyless. Guest callers are denied (a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The reset was requested.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerReset" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
         }
       }
     },
@@ -1393,6 +1651,13 @@
         "required": true,
         "description": "Host ID, as returned by the project's host list.",
         "schema": { "type": "string" }
+      },
+      "environmentId": {
+        "name": "environmentId",
+        "in": "path",
+        "required": true,
+        "description": "Computer environment ID, as returned by the project's environment list.",
+        "schema": { "type": "string" }
       }
     },
     "requestBodies": {
@@ -2702,6 +2967,109 @@
         "properties": {
           "id": { "type": "string" },
           "deleted": { "type": "boolean", "enum": [true] }
+        }
+      },
+      "ComputerEnvironmentBuild": {
+        "type": "object",
+        "description": "One build of an environment's image.",
+        "required": ["id", "status", "provider", "baseImageDigests", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "building", "ready", "failed"] },
+          "provider": { "type": "string", "enum": ["e2b", "stub"] },
+          "e2bBuildId": { "type": "string" },
+          "baseImageDigests": { "type": "array", "items": { "type": "string" }, "description": "Resolved sha256 digest of every FROM base (the reproducibility pin)." },
+          "logPreview": { "type": "string", "description": "Capped, ANSI-stripped tail of the build log." },
+          "error": { "type": "string" },
+          "createdAt": { "type": "number" },
+          "startedAt": { "type": "number" },
+          "finishedAt": { "type": "number" }
+        }
+      },
+      "ComputerEnvironment": {
+        "type": "object",
+        "description": "A project's custom Computer image: a digest-pinned Dockerfile plus its latest build.",
+        "required": ["id", "projectId", "name", "dockerfile", "contentHash", "sharing", "isOwner", "currentBuild", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": "string" },
+          "name": { "type": "string" },
+          "dockerfile": { "type": "string" },
+          "contentHash": { "type": "string" },
+          "sharing": { "type": "string", "enum": ["user", "project"], "description": "`user` = a personal draft; `project` = shared with the whole project." },
+          "isOwner": { "type": "boolean" },
+          "currentBuild": { "oneOf": [{ "$ref": "#/components/schemas/ComputerEnvironmentBuild" }, { "type": "null" }] },
+          "createdAt": { "type": "number" },
+          "updatedAt": { "type": "number" }
+        }
+      },
+      "ComputerEnvironmentPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironment" } },
+          "nextCursor": { "type": "string" }
+        }
+      },
+      "ComputerEnvironmentBuildPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironmentBuild" } },
+          "nextCursor": { "type": "string" }
+        }
+      },
+      "ComputerEnvironmentCreateRequest": {
+        "type": "object",
+        "description": "Create an environment from a Dockerfile. The Dockerfile must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
+        "required": ["name", "dockerfile"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "Display name for the new environment; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Dockerfile text." }
+        }
+      },
+      "ComputerEnvironmentUpdateRequest": {
+        "type": "object",
+        "description": "Edit an environment. Provide at least one of `name` or `dockerfile`; only the fields you pass change.",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "New display name; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Replacement Dockerfile text." }
+        },
+        "anyOf": [{ "required": ["name"] }, { "required": ["dockerfile"] }]
+      },
+      "ComputerEnvironmentDeleted": {
+        "type": "object",
+        "required": ["id", "deleted"],
+        "properties": {
+          "id": { "type": "string" },
+          "deleted": { "type": "boolean", "enum": [true] }
+        }
+      },
+      "ComputerEnvironmentBuildStarted": {
+        "type": "object",
+        "description": "A build was accepted (202). It runs in the background — poll the builds list for status.",
+        "required": ["id", "buildId", "reused"],
+        "properties": {
+          "id": { "type": "string", "description": "The environment id." },
+          "buildId": { "type": "string" },
+          "reused": { "type": "boolean", "description": "True when an identical prior build was reused instead of rebuilding." }
+        }
+      },
+      "ComputerAttached": {
+        "type": "object",
+        "required": ["environmentId", "computerId", "status"],
+        "properties": {
+          "environmentId": { "type": "string" },
+          "computerId": { "type": "string" },
+          "status": { "type": "string", "description": "The computer's lifecycle status after attaching (it re-provisions)." }
+        }
+      },
+      "ComputerReset": {
+        "type": "object",
+        "required": ["projectId", "reset"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "reset": { "type": "boolean" }
         }
       }
     },

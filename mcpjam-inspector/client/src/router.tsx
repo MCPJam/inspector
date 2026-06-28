@@ -78,6 +78,11 @@ export function createAppRouter(): AppRouter {
           loader: ({ params }) => redirect(buildHostsPath(params.hostId)),
         },
         { path: "host-compare", element: <HostCompareRoute /> },
+        // Chrome-less host-compare surface for vanity domains (caniuse.dev):
+        // App renders this full-bleed (no sidebar/header) and skips the
+        // first-run onboarding redirect. `bare` forces the no-sub-nav render
+        // even for signed-in users.
+        { path: "embed/host-compare", element: <HostCompareRoute bare /> },
         { path: "computer", element: <ComputerRoute /> },
         { path: "hosts", element: <HostsRoute /> },
         { path: "hosts/:hostId", element: <HostsRoute /> },

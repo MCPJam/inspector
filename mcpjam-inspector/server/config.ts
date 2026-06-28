@@ -93,3 +93,12 @@ export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
       h.trim().toLowerCase()
     )
   : [];
+
+// Vanity domains whose root path ("/") should land on the host-compare
+// showcase ("Can I use" for MCP hosts). Override via env if more are added.
+export const CANIUSE_LANDING_HOSTS = new Set(
+  (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0),
+);

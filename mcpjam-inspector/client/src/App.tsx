@@ -645,7 +645,10 @@ export function HostsRoute() {
   );
 }
 
-export function HostCompareRoute() {
+/** Where the embed (caniuse.dev) entry point sends people for the full product. */
+const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
+
+export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
@@ -658,8 +661,9 @@ export function HostCompareRoute() {
   );
 
   // Mirror the gating HostsRoute uses: when signed out, Compare has no peer
-  // Servers/Client tabs to switch to, so render bare.
-  if (!isAuthenticated) {
+  // Servers/Client tabs to switch to, so render bare. `bare` forces the same
+  // for the chrome-less embed route (caniuse.dev) regardless of auth.
+  if (bare || !isAuthenticated) {
     return compareView;
   }
 
@@ -1335,6 +1339,12 @@ export default function App() {
   const isChatboxChatRoute =
     !exitedChatboxChat && hostedRouteKind === "chatbox";
 
+  // Chrome-less host-compare for vanity domains (caniuse.dev): rendered
+  // full-bleed without the sidebar/header, and the first-run onboarding
+  // redirect is suppressed so guests land directly on the comparison.
+  const isBareCompareRoute =
+    window.location.pathname === routePaths.embedHostCompare;
+
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
 
@@ -1833,6 +1843,7 @@ export default function App() {
       activeProjectId === "none");
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
+    !isBareCompareRoute &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -3281,6 +3292,41 @@ export default function App() {
     </SidebarProvider>
   );
 
+  // Vanity-domain embed (caniuse.dev): render the matched route
+  // (`HostCompareRoute bare`) full-bleed without the sidebar/header chrome.
+  // Still nested inside every provider in the return below, so auth, project,
+  // and the guest session resolve exactly as on the normal route.
+  const bareCompareContent = (
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
+      {/* Subtle branding + entry point back to the full product. */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
+        <a
+          href={MAIN_PRODUCT_URL}
+          className="text-[15px] font-semibold tracking-tight text-foreground"
+          aria-label="MCPJam home"
+        >
+          MCP<span className="text-primary">Jam</span>
+        </a>
+        <a
+          href={MAIN_PRODUCT_URL}
+          className="inline-flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Open the full app
+          <span aria-hidden>↗</span>
+        </a>
+      </div>
+      <div className="min-h-0 flex-1">
+        <AppRouteReactContext.Provider value={routeContext}>
+          {locationContext ? (
+            <Outlet context={routeContext} />
+          ) : (
+            <NoRouterRouteBody activeTab={activeTab} />
+          )}
+        </AppRouteReactContext.Provider>
+      </div>
+    </div>
+  );
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -3352,6 +3398,8 @@ export default function App() {
                     pathToken={chatboxPathToken}
                     onExitChatboxChat={() => setExitedChatboxChat(true)}
                   />
+                ) : isBareCompareRoute ? (
+                  bareCompareContent
                 ) : (
                   appContent
                 )}

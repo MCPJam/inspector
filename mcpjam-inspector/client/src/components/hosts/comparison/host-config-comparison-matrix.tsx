@@ -113,20 +113,23 @@ export function HostConfigComparisonMatrix({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="overflow-auto rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]"
+      className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]"
     >
+      {/* Legend sits outside the horizontal scroll so it never slides off-screen on mobile. */}
       <SupportLegend />
+      {/* Only the table scrolls horizontally; field column stays sticky. */}
+      <div className="overflow-auto">
       <table className="w-full border-collapse text-[13px]">
         <colgroup>
-          <col style={{ width: 300 }} />
+          <col className="w-[168px] sm:w-[300px]" />
           {subjects.map((s) => (
-            <col key={s.hostId} style={{ width: 220 }} />
+            <col key={s.hostId} className="w-[148px] sm:w-[220px]" />
           ))}
         </colgroup>
 
         <thead>
           <tr>
-            <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-5 py-4 text-left">
+            <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-3 py-3 sm:px-5 sm:py-4 text-left">
               <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                 Field
               </span>
@@ -169,6 +172,7 @@ export function HostConfigComparisonMatrix({
           })}
         </tbody>
       </table>
+      </div>
     </motion.div>
   );
 }
@@ -312,7 +316,7 @@ function FieldRow({
     <tr className="border-b border-border last:border-b-0">
       <td
         className={cn(
-          "sticky left-0 z-10 bg-card border-r border-border px-5 py-2.5",
+          "sticky left-0 z-10 bg-card border-r border-border px-3 sm:px-5 py-2.5",
           "relative",
         )}
       >
@@ -372,7 +376,7 @@ function FieldRow({
       {subjects.map((s) => (
         <td
           key={s.hostId}
-          className="border-l border-border px-4 py-2.5 align-top"
+          className="border-l border-border px-3 sm:px-4 py-2.5 align-top"
         >
           <FieldCell field={field} subject={s} />
         </td>
@@ -599,7 +603,7 @@ function HostColumnHeader({
   const reduceMotion = useReducedMotion();
 
   return (
-    <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-4 py-4 text-left align-top">
+    <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-3 py-3 sm:px-4 sm:py-4 text-left align-top">
       <motion.div
         key={subject.hostId}
         className="flex items-start gap-2"
