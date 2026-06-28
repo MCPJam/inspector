@@ -48,6 +48,7 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
+import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -412,6 +413,19 @@ export function RunDetailView({
   const { availableModels } = useAvailableModels({
     projectId: selectedRunDetails.projectId ?? null,
   });
+
+  // The frozen reproducible-env pin this run launched from (if any). Resolve a
+  // friendly name best-effort; fall back to the snapshot's environmentId if the
+  // environment was deleted since the run.
+  const runComputerEnv = selectedRunDetails.configSnapshot?.computerEnvironment;
+  const runEnvironments = useEnvironments(
+    runComputerEnv ? selectedRunDetails.projectId ?? null : null
+  );
+  const runComputerEnvName = runComputerEnv
+    ? runEnvironments?.find(
+        (e) => e.environmentId === runComputerEnv.environmentId
+      )?.name ?? null
+    : null;
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,
@@ -682,6 +696,27 @@ export function RunDetailView({
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Host</span>
           <HostChip name={runClient.displayName} hostId={runClient.hostId} />
+        </div>
+      ) : null}
+
+      {runComputerEnv ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Environment</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+            title={`Image ${runComputerEnv.e2bTemplateId}${
+              runComputerEnv.baseImageDigests[0]
+                ? ` · ${runComputerEnv.baseImageDigests[0]}`
+                : ""
+            } · ${runComputerEnv.provider}`}
+          >
+            <span className="text-foreground">
+              {runComputerEnvName ?? formatRunId(runComputerEnv.environmentId)}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              {runComputerEnv.provider}
+            </span>
+          </span>
         </div>
       ) : null}
 
