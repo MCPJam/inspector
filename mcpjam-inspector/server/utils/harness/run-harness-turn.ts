@@ -175,15 +175,10 @@ export function harnessRuntimeFingerprint(parts: {
   modelId: string;
   selectedServers?: string[];
   permissionMode: string;
-  /** Hash of the project's runtime skills. A change MUST invalidate resume so
-   *  the adapter re-writes skills on a fresh start (it skips writes on resume).
-   *  Omitted on a transient skills-fetch failure to preserve resumability. */
-  skillsHash?: string;
 }): string {
   const s = [
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
-    parts.skillsHash ?? "",
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -382,13 +377,13 @@ export async function runHarnessTurn(
       // ownerType); eval/synthetic harness turns (streamSink "none", no
       // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
       // Runtime skills (Convex source of truth) feed BOTH the harness `skills`
-      // param (the adapter writes them in-sandbox) and the fingerprint (a skill
-      // change must invalidate resume so the adapter re-writes them). TRI-STATE:
-      // a fetch FAILURE must never read as "zero skills" — leave skills untouched
-      // (no fingerprint contribution, no cleanup, no payload) so a transient blip
-      // can't wipe the box or needlessly churn the session. `skillsFingerprint`
-      // returns "" for an empty list, so an empty project and a failure both
-      // leave the fingerprint unchanged.
+      // param (the adapter writes them in-sandbox) and resume invalidation (a
+      // skill change must force a fresh session so the adapter re-writes them).
+      // TRI-STATE: a fetch FAILURE must never read as "zero skills" — `skillsHash`
+      // stays `undefined` so it is OMITTED from claim/commit, and the backend
+      // reuses the stored hash (no resume churn, no empty-hash commit). The skills
+      // fingerprint is tracked SEPARATELY from `runtimeFingerprint` precisely so
+      // "unknown" (failure) is distinguishable from "" (empty project).
       const skillsFetch =
         projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId)
@@ -401,7 +396,6 @@ export async function runHarnessTurn(
         modelId,
         selectedServers: selectedServers ?? [],
         permissionMode: "allow-all",
-        skillsHash,
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
@@ -438,6 +432,7 @@ export async function runHarnessTurn(
         const claim = await claimHarnessSessionState({
           owner,
           runtimeFingerprint,
+          ...(skillsHash !== undefined ? { skillsHash } : {}),
           leaseId,
           leasedBy: `${HARNESS_INSTANCE_ID}:${turnId}`,
           leaseTtlMs: HARNESS_LEASE_TTL_MS,
@@ -1049,6 +1044,9 @@ export async function runHarnessTurn(
               resumeState,
               computerId,
               runtimeFingerprint,
+              // Persist only a real (ok:true) hash; omit on failure so the
+              // backend keeps the prior stored hash (no empty-hash regression).
+              ...(skillsHash !== undefined ? { skillsHash } : {}),
             };
           } else {
             await session.destroy();

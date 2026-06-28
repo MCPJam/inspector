@@ -346,6 +346,7 @@ export function SkillsTab({
                   variant="ghost"
                   size="sm"
                   title="Upload skill"
+                  disabled={cloudNotReady}
                 >
                   <Plus className="h-3 w-3 cursor-pointer" />
                 </Button>
@@ -386,6 +387,7 @@ export function SkillsTab({
                         variant="outline"
                         size="sm"
                         onClick={() => setIsUploadDialogOpen(true)}
+                        disabled={cloudNotReady}
                       >
                         <Plus className="h-3 w-3 mr-2" />
                         Upload your first skill

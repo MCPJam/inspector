@@ -37,20 +37,10 @@ describe("harnessRuntimeFingerprint", () => {
     );
   });
 
-  it("changes when the skills hash changes (skill add/edit/delete forks)", () => {
-    expect(harnessRuntimeFingerprint(base)).not.toBe(
-      harnessRuntimeFingerprint({ ...base, skillsHash: "deadbeef" })
-    );
-  });
-
-  it("treats an omitted skillsHash the same as an empty one (no churn on fetch failure / empty project)", () => {
-    // On a transient skills-fetch failure we OMIT skillsHash; an empty project
-    // contributes "" — both must equal the legacy fingerprint so neither churns
-    // a resumable session.
-    expect(harnessRuntimeFingerprint(base)).toBe(
-      harnessRuntimeFingerprint({ ...base, skillsHash: "" })
-    );
-  });
+  // NOTE: skills are deliberately NOT part of this opaque fingerprint. They are
+  // tracked as a SEPARATE `skillsHash` on the Convex harness-session sidecar so a
+  // transient skills-fetch failure ("unknown") is distinguishable from "" (empty)
+  // and never churns resume. See harnessSessions claim/commit tests.
 
   it("does NOT depend on the system prompt (app/widget per-turn injection)", () => {
     // The fn no longer accepts a system prompt; passing a stray field changes

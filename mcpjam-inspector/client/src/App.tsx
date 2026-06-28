@@ -890,7 +890,7 @@ export function CompatibilityRoute() {
   const { appState, selectedServerEntry, activeProjectId, setSelectedServer } =
     useAppRouteContext();
   const connectedServers = Object.values<ServerWithName>(
-    appState.servers,
+    appState.servers
   ).filter((s) => s.connectionStatus === "connected");
   // The page resolves the detail against `servers` (ignoring a stale/
   // disconnected global selection), so it's safe to pass the raw selection.
@@ -976,6 +976,12 @@ export function SkillsRoute() {
       return <Navigate to={routePaths.servers} replace />;
     }
     if (computersEnabled === undefined) {
+      return null;
+    }
+    // Hosted skills are a project resource and have no local FS to fall back to.
+    // Don't render SkillsTab until the project resolves, or it would briefly run
+    // in local mode and hit unavailable /api/mcp/skills/* routes.
+    if (!convexProjectId) {
       return null;
     }
   }
