@@ -103,10 +103,21 @@ When you select a skill via `/`, it appears as a card above the input. You can e
 
 ## LLM Tool Integration
 
-When skills are available, the LLM has access to three tools:
+The tools available to the LLM depend on the skills source:
+
+**Local mode** — three tools:
 
 | Tool | Description |
 |------|-------------|
+| `loadSkill(name)` | Load the full skill instructions by name |
+| `listSkillFiles(name)` | List all files in the skill directory |
+| `readSkillFile(name, path)` | Read the content of a specific supporting file |
+
+**Cloud mode** — four tools (adds discovery):
+
+| Tool | Description |
+|------|-------------|
+| `listSkills()` | Discover skills installed on the Computer |
 | `loadSkill(name)` | Load the full skill instructions by name |
 | `listSkillFiles(name)` | List all files in the skill directory |
 | `readSkillFile(name, path)` | Read the content of a specific supporting file |
