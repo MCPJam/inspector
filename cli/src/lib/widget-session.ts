@@ -114,7 +114,7 @@ export async function runWidgetSessionStart(
     startIfNeeded: options.startIfNeeded ?? true,
     timeoutMs: options.timeoutMs,
   });
-  await client.connectServer(options.serverName, options.config, {
+  await client.connectServerAdhoc(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
   });
 
