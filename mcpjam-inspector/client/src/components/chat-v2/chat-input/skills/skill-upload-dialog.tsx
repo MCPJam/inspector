@@ -254,7 +254,7 @@ export function SkillUploadDialog({
               {source?.kind === "cloud" ? "~/.claude/skills/" : "~/.mcpjam/skills/"}
               {skillInfo?.name || "{name}"}/
             </code>
-            {source?.kind === "cloud" ? " on your computer" : ""}
+            {source?.kind === "cloud" ? " on your personal computer" : ""}
           </DialogDescription>
         </DialogHeader>
 

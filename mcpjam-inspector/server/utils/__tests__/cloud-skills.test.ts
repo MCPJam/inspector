@@ -10,6 +10,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 class FakeFs {
   files = new Map<string, string | Uint8Array>();
   dirs = new Set<string>();
+  /** When set, the next `files.list` throws a non-not-found error. */
+  failListOnce = false;
 
   mkdir(p: string) {
     const parts = p.split("/").filter(Boolean);
@@ -60,14 +62,24 @@ let fs: FakeFs;
 
 vi.mock("e2b", () => {
   // Defined inside the factory: vi.mock is hoisted above top-level class
-  // declarations, so a class referenced here would hit the TDZ.
-  class FakeFileNotFoundError extends Error {}
+  // declarations, so a class referenced here would hit the TDZ. Mirror the real
+  // e2b hierarchy: FileNotFoundError extends NotFoundError — safeList catches
+  // NotFoundError, so the fake "missing" errors must be instances of it.
+  class FakeNotFoundError extends Error {}
+  class FakeFileNotFoundError extends FakeNotFoundError {}
   return {
+    NotFoundError: FakeNotFoundError,
     FileNotFoundError: FakeFileNotFoundError,
     Sandbox: {
       connect: vi.fn(async () => ({
         files: {
           list: vi.fn(async (dir: string) => {
+            // Simulate a transient provider/transport failure (NOT not-found)
+            // to prove safeList propagates rather than swallowing it.
+            if (fs.failListOnce) {
+              fs.failListOnce = false;
+              throw new Error("transient E2B list failure");
+            }
             const exists =
               fs.dirs.has(dir) ||
               [...fs.files.keys()].some((f) => f.startsWith(dir + "/"));
@@ -122,7 +134,6 @@ import {
   deleteCloudSkill,
   listCloudSkillFiles,
   readCloudSkillFile,
-  CloudSkillsError,
 } from "../computers/cloud-skills";
 
 const CLAUDE_SKILLS = "/home/user/.claude/skills";
@@ -167,13 +178,16 @@ function seedSkill(name: string, description: string, body = "do the thing") {
 describe("cloud-skills service", () => {
   beforeEach(() => {
     fs = new FakeFs();
-    process.env.CONVEX_HTTP_URL = "https://convex.example";
-    process.env.COMPUTERS_DATA_PLANE_SECRET = "secret";
-    process.env.E2B_API_KEY = "e2b-key";
+    // vi.stubEnv is restored by vi.unstubAllEnvs() — don't mutate process.env
+    // directly or these leak into sibling test files.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
+    vi.stubEnv("E2B_API_KEY", "e2b-key");
     installControlPlaneStub();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("lists skills across dirs, deduped by name", async () => {
@@ -278,8 +292,61 @@ describe("cloud-skills service", () => {
     expect(fs.files.has(`${CLAUDE_SKILLS}/temp/SKILL.md`)).toBe(false);
   });
 
-  it("fails closed when the data plane is not configured", async () => {
-    delete process.env.E2B_API_KEY;
-    await expect(listCloudSkills(ctx)).rejects.toBeInstanceOf(CloudSkillsError);
+  it("propagates a transient list failure instead of returning []", async () => {
+    seedSkill("pdf-tools", "Process PDFs");
+    fs.failListOnce = true;
+    // A non-not-found list error must surface, not silently hide skills.
+    await expect(listCloudSkills(ctx)).rejects.toThrow(
+      /transient E2B list failure/,
+    );
+  });
+
+  it("normalizes a nested folder so SKILL.md lands at the skill root", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    await uploadCloudSkillFolder(ctx, "kit", [
+      {
+        path: "kit/SKILL.md",
+        bytes: enc("---\nname: kit\ndescription: A kit\n---\n\nuse it"),
+      },
+      { path: "kit/scripts/run.py", bytes: enc("print('hi')") },
+    ]);
+    // SKILL.md must be discoverable at the root, not buried under `kit/`.
+    expect(fs.files.has(`${CLAUDE_SKILLS}/kit/SKILL.md`)).toBe(true);
+    expect(fs.files.has(`${CLAUDE_SKILLS}/kit/scripts/run.py`)).toBe(true);
+    expect(fs.files.has(`${CLAUDE_SKILLS}/kit/kit/SKILL.md`)).toBe(false);
+  });
+
+  it("rejects an over-large folder upload before touching the sandbox", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const big = new Uint8Array(6 * 1024 * 1024); // > 5MB per-file cap
+    await expect(
+      uploadCloudSkillFolder(ctx, "big", [
+        { path: "SKILL.md", bytes: enc("---\nname: big\ndescription: x\n---\n\ny") },
+        { path: "blob.bin", bytes: big },
+      ]),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(fs.files.has(`${CLAUDE_SKILLS}/big/SKILL.md`)).toBe(false);
+  });
+
+  it("rejects too many files", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const many = Array.from({ length: 101 }, (_, i) => ({
+      path: `f${i}.txt`,
+      bytes: enc("x"),
+    }));
+    many[0] = {
+      path: "SKILL.md",
+      bytes: enc("---\nname: many\ndescription: x\n---\n\ny"),
+    };
+    await expect(
+      uploadCloudSkillFolder(ctx, "many", many),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("fails closed (503) when the data plane is not configured", async () => {
+    vi.stubEnv("E2B_API_KEY", ""); // unconfigured (restored by unstubAllEnvs)
+    await expect(listCloudSkills(ctx)).rejects.toMatchObject({
+      status: 503,
+    });
   });
 });

@@ -169,9 +169,9 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
 }
 
 const CLOUD_SKILLS_PROMPT_SECTION =
-  `\n\n## Skills (on your computer)\n\n` +
-  `Your computer may have skills installed — reusable instruction packages for ` +
-  `specific tasks. Call the \`listSkills\` tool to see what's available, then ` +
+  `\n\n## Skills (on your personal computer)\n\n` +
+  `Your personal computer may have skills installed — reusable instruction ` +
+  `packages for specific tasks. Call the \`listSkills\` tool to see what's available, then ` +
   `\`loadSkill\` to load a skill's full instructions when a task matches its ` +
   `purpose. After loading, use \`listSkillFiles\` and \`readSkillFile\` to access ` +
   `any supporting files (rules, templates, scripts) the skill provides.`;

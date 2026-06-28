@@ -130,7 +130,7 @@ skills.post("/upload-folder", async (c) =>
     const formData = await c.req.formData();
     const projectId = formData.get("projectId");
     const skillName = formData.get("skillName");
-    const rawFiles = formData.getAll("files") as File[];
+    const rawFiles = formData.getAll("files");
 
     if (typeof projectId !== "string" || !projectId) {
       throw new WebRouteError(
@@ -153,9 +153,23 @@ skills.post("/upload-folder", async (c) =>
         "No files uploaded",
       );
     }
+    // Each "files" part must be a real File (with bytes + a name). A malformed
+    // multipart entry (e.g. a stray text field named "files") would otherwise
+    // fall through to `.arrayBuffer()` and throw an opaque 500 — reject cleanly.
+    const fileParts: File[] = [];
+    for (const part of rawFiles) {
+      if (!(part instanceof File) || typeof part.name !== "string") {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          'Each "files" part must be an uploaded file',
+        );
+      }
+      fileParts.push(part);
+    }
 
     const files: CloudSkillUploadFile[] = await Promise.all(
-      rawFiles.map(async (f) => ({
+      fileParts.map(async (f) => ({
         path: f.name,
         bytes: new Uint8Array(await f.arrayBuffer()),
       })),

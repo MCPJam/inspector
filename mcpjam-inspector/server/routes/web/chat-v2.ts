@@ -241,13 +241,21 @@ chatV2.post("/", async (c) => {
     );
 
     // Cloud Skills: only when the (server-resolved) host actually has a
-    // computer. Skills then come from that E2B sandbox; loaded lazily so no
-    // wake happens unless the model calls a skill tool ("advertise == enforce").
-    const hostComputer = narrowHostComputer(
-      hostRuntimeConfig
-        ? (hostRuntimeConfig as { computer?: unknown }).computer
-        : undefined
-    );
+    // computer — the SAME source the bash/computer built-in tool resolves from
+    // (`resolveHostTools` above), so skills wire wherever computer tools do.
+    // Today that's chatbox sessions (the only path that resolves
+    // hostRuntimeConfig); playground/direct host-config resolution lands later.
+    // Guests are excluded, mirroring the `isGuest` gate already applied to the
+    // computer-backed bash tool — a guest share-link/chatbox session must not
+    // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
+    // is called ("advertise == enforce").
+    const hostComputer = c.get("guestId")
+      ? null
+      : narrowHostComputer(
+          hostRuntimeConfig
+            ? (hostRuntimeConfig as { computer?: unknown }).computer
+            : undefined
+        );
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.

@@ -103,13 +103,15 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
   };
 
   // Refetch whenever the data source switches (Local⇄Cloud), clearing the
-  // selection + per-skill file cache so stale entries from the other source
-  // never bleed across.
+  // per-skill file cache so stale entries from the other source never bleed
+  // across. `resetSelection` forces fetchSkills to pick a fresh selection from
+  // the new list rather than honoring the (now-stale) prior selection — a same-
+  // named skill in both sources would otherwise leave the tab with nothing
+  // selected.
   useEffect(() => {
-    setSelectedSkillName("");
     setSelectedSkill(null);
     setSkillFiles({});
-    fetchSkills();
+    fetchSkills({ resetSelection: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillsSource]);
 
@@ -130,20 +132,23 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
     }
   }, [selectedSkillName, selectedFilePath]);
 
-  const fetchSkills = async () => {
+  const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
     setFetchingSkills(true);
 
     try {
       const skillsList = await listSkills(skillsSource);
       setSkills(skillsList);
 
+      // On a source switch the prior selection is stale, so ignore it and pick
+      // the first skill. On a plain refresh, keep the current selection if it
+      // still exists.
+      const currentName = opts?.resetSelection ? "" : selectedSkillName;
       if (skillsList.length === 0) {
         setSelectedSkillName("");
         setSelectedSkill(null);
       } else if (
-        !skillsList.some(
-          (skill: SkillListItem) => skill.name === selectedSkillName,
-        )
+        !currentName ||
+        !skillsList.some((skill: SkillListItem) => skill.name === currentName)
       ) {
         setSelectedSkillName(skillsList[0].name);
       }
@@ -307,7 +312,7 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                   <Plus className="h-3 w-3 cursor-pointer" />
                 </Button>
                 <Button
-                  onClick={fetchSkills}
+                  onClick={() => fetchSkills()}
                   variant="ghost"
                   size="sm"
                   disabled={fetchingSkills}

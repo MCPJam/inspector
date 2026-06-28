@@ -22,7 +22,7 @@
  * via its native filesystem discovery — one source of truth for both the
  * non-harness chat tools here and the in-sandbox harness.
  */
-import { Sandbox, FileNotFoundError } from "e2b";
+import { Sandbox, FileNotFoundError, NotFoundError } from "e2b";
 import path from "path";
 import {
   ensureComputerReady,
@@ -60,6 +60,15 @@ const SKILLS_DIRS = [
   path.posix.join(SANDBOX_HOME, ".agents", "skills"),
 ];
 const PRIMARY_SKILLS_DIR = SKILLS_DIRS[0];
+
+/**
+ * Upload caps enforced by the service BEFORE connecting to the sandbox. The
+ * global `/api/web/*` body limit is a coarse backstop; these give a clean 400
+ * with a specific reason and bound how much we ever write to the computer.
+ */
+export const MAX_SKILL_FILES = 100;
+export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024; // 5 MB per file
+export const MAX_SKILL_TOTAL_BYTES = 20 * 1024 * 1024; // 20 MB per skill
 
 export interface CloudSkillsContext {
   /** Bearer authorization forwarded to Convex (authz + wake). */
@@ -137,12 +146,19 @@ async function withSandbox<T>(
   return fn(sandbox);
 }
 
-/** List a directory; a missing directory yields `[]` (not an error). */
+/**
+ * List a directory. A genuinely missing directory yields `[]` (the skills dirs
+ * are optional — a user may have none). Any OTHER failure (transport, auth,
+ * sandbox gone) propagates: swallowing those would make a user's skills
+ * silently "disappear" during a transient provider/filesystem blip.
+ */
 async function safeList(sandbox: Sandbox, dir: string) {
   try {
     return await sandbox.files.list(dir);
-  } catch {
-    return [];
+  } catch (err) {
+    // FileNotFoundError extends NotFoundError, so this covers both.
+    if (err instanceof NotFoundError) return [];
+    throw err;
   }
 }
 
@@ -295,6 +311,12 @@ export async function uploadCloudSkill(
       400,
     );
   }
+  if (Buffer.byteLength(data.content, "utf8") > MAX_SKILL_FILE_BYTES) {
+    throw new CloudSkillsError(
+      `Skill content too large (max ${MAX_SKILL_FILE_BYTES / 1024 / 1024}MB)`,
+      400,
+    );
+  }
   return withSandbox(ctx, async (sandbox) => {
     if (await skillExists(sandbox, data.name)) {
       throw new CloudSkillsError(`Skill '${data.name}' already exists`, 409);
@@ -333,15 +355,59 @@ export async function uploadCloudSkillFolder(
       400,
     );
   }
-  const skillMd = files.find(
+
+  // Enforce caps BEFORE touching the sandbox (cheap reject; bounds writes).
+  if (files.length === 0) {
+    throw new CloudSkillsError("No files uploaded", 400);
+  }
+  if (files.length > MAX_SKILL_FILES) {
+    throw new CloudSkillsError(
+      `Too many files (max ${MAX_SKILL_FILES})`,
+      400,
+    );
+  }
+  let total = 0;
+  for (const f of files) {
+    if (f.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
+      throw new CloudSkillsError(
+        `File "${f.path}" too large (max ${MAX_SKILL_FILE_BYTES / 1024 / 1024}MB)`,
+        400,
+      );
+    }
+    total += f.bytes.byteLength;
+  }
+  if (total > MAX_SKILL_TOTAL_BYTES) {
+    throw new CloudSkillsError(
+      `Skill too large (max ${MAX_SKILL_TOTAL_BYTES / 1024 / 1024}MB total)`,
+      400,
+    );
+  }
+
+  // Normalize: an uploaded folder often nests everything under a single root
+  // dir, so SKILL.md arrives as `<root>/SKILL.md`. Strip that common prefix so
+  // SKILL.md lands at the skill root (where discovery looks) rather than
+  // succeeding with a buried SKILL.md that's then invisible. The client strips
+  // it today, but the service contract must own this.
+  const skillMdRaw = files.find(
     (f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"),
   );
-  if (!skillMd) {
+  if (!skillMdRaw) {
     throw new CloudSkillsError(
       "No SKILL.md file found in uploaded files",
       400,
     );
   }
+  const rootPrefix = skillMdRaw.path.slice(
+    0,
+    skillMdRaw.path.length - "SKILL.md".length,
+  ); // "" or "<root>/"
+  const normalized: CloudSkillUploadFile[] = files.map((f) =>
+    rootPrefix && f.path.startsWith(rootPrefix)
+      ? { ...f, path: f.path.slice(rootPrefix.length) }
+      : f,
+  );
+  const skillMd = normalized.find((f) => f.path === "SKILL.md")!;
+
   const parsed = parseSkillFile(
     new TextDecoder().decode(skillMd.bytes),
     skillName,
@@ -366,7 +432,7 @@ export async function uploadCloudSkillFolder(
     const skillDir = path.posix.join(PRIMARY_SKILLS_DIR, skillName);
     await sandbox.files.makeDir(skillDir);
 
-    for (const file of files) {
+    for (const file of normalized) {
       // Security: never let an uploaded path escape the skill directory.
       if (!isPathWithinDirectory(skillDir, file.path)) {
         logger.warn(`Skipping skill file with invalid path: ${file.path}`);
