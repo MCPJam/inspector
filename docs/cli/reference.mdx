@@ -212,12 +212,18 @@ Uses shared connection flags, plus:
 
 ### `prompts list`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ### `prompts get`
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--prompt-name <name>` | Name of the prompt |
 | `--name <name>` | Legacy alias for `--prompt-name` |
 | `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
