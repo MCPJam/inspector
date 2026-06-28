@@ -29,7 +29,7 @@ import {
 import { SkillsPopoverSection } from "../skills/skills-popover-section";
 import { SkillUploadDialog } from "../skills/skill-upload-dialog";
 import type { SkillResult } from "../skills/skill-types";
-import { listSkills } from "@/lib/apis/mcp-skills-api";
+import { listSkills, type SkillsSource } from "@/lib/apis/mcp-skills-api";
 
 export interface MCPPromptResult extends PromptListItem {
   result: PromptContentResponse;
@@ -51,6 +51,8 @@ interface PromptsPopoverProps {
   caretIndex: number;
   /** Shared chat-only mode – skips prompts/skills fetch to avoid auth-denied noise */
   minimalMode?: boolean;
+  /** When set, list/load skills from the cloud (Convex/Computer) source. */
+  skillsSource?: SkillsSource;
 }
 
 // Utility function to check if MCP prompts are requested
@@ -75,6 +77,7 @@ export function PromptsPopover({
   value,
   caretIndex,
   minimalMode = false,
+  skillsSource,
 }: PromptsPopoverProps) {
   const [open, setOpen] = useState(false);
   const [promptListItems, setPromptListItems] = useState<PromptListItem[]>([]);
@@ -140,7 +143,7 @@ export function PromptsPopover({
     let active = true;
     (async () => {
       try {
-        const skills = await listSkills();
+        const skills = await listSkills(skillsSource);
         if (!active) return;
         setSkillsCount(skills.length);
       } catch {
@@ -150,7 +153,7 @@ export function PromptsPopover({
     return () => {
       active = false;
     };
-  }, [skillsEnabled]);
+  }, [skillsEnabled, skillsSource]);
 
   // Total items for navigation (prompts + skills)
   const totalItems = promptListItems.length + skillsCount;
@@ -329,6 +332,7 @@ export function PromptsPopover({
               isHovering={isHovering}
               actionTrigger={actionTrigger}
               onOpenUploadDialog={handleOpenUploadDialog}
+              skillsSource={skillsSource}
             />
           )}
         </PopoverContent>
@@ -343,9 +347,10 @@ export function PromptsPopover({
       <SkillUploadDialog
         open={isSkillUploadDialogOpen}
         onOpenChange={setIsSkillUploadDialogOpen}
+        source={skillsSource}
         onSkillCreated={(skill) => {
           // Refresh skills count after creation
-          listSkills()
+          listSkills(skillsSource)
             .then((skills) => setSkillsCount(skills.length))
             .catch(() => {});
           // Optionally select the newly created skill

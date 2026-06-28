@@ -1,19 +1,26 @@
 import { X, ChevronDown, ChevronUp, SquareSlash, Loader2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import type { SkillResult, SelectedSkillFile, SkillFile } from "./skill-types";
-import { listSkillFiles, readSkillFile } from "@/lib/apis/mcp-skills-api";
+import {
+  listSkillFiles,
+  readSkillFile,
+  type SkillsSource,
+} from "@/lib/apis/mcp-skills-api";
 import { SkillFileTreeSelectable } from "./skill-file-tree-selectable";
 
 interface SkillResultCardProps {
   skillResult: SkillResult;
   onRemove: () => void;
   onUpdate?: (updatedSkill: SkillResult) => void;
+  /** Source the skill came from (cloud → fetch files from Convex/Computer). */
+  skillsSource?: SkillsSource;
 }
 
 export function SkillResultCard({
   skillResult,
   onRemove,
   onUpdate,
+  skillsSource,
 }: SkillResultCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [files, setFiles] = useState<SkillFile[]>([]);
@@ -31,8 +38,8 @@ export function SkillResultCard({
     if (isExpanded && files.length === 0 && !loading) {
       setLoading(true);
       setError(null);
-      listSkillFiles(skillResult.name)
-        .then((fetchedFiles) => {
+      listSkillFiles(skillResult.name, skillsSource)
+        .then((fetchedFiles: SkillFile[]) => {
           setFiles(fetchedFiles);
         })
         .catch((err) => {
@@ -42,7 +49,7 @@ export function SkillResultCard({
           setLoading(false);
         });
     }
-  }, [isExpanded, skillResult.name, files.length, loading]);
+  }, [isExpanded, skillResult.name, files.length, loading, skillsSource]);
 
   // Handle file selection toggle
   const handleFileToggle = useCallback(
@@ -67,7 +74,11 @@ export function SkillResultCard({
         // Add file to selection - need to fetch content first
         setLoadingFile(filePath);
         try {
-          const fileContent = await readSkillFile(skillResult.name, filePath);
+          const fileContent = await readSkillFile(
+            skillResult.name,
+            filePath,
+            skillsSource,
+          );
           if (!fileContent.isText || !fileContent.content) {
             // Skip non-text files
             setLoadingFile(null);
@@ -92,7 +103,7 @@ export function SkillResultCard({
         }
       }
     },
-    [skillResult, selectedPaths, onUpdate],
+    [skillResult, selectedPaths, onUpdate, skillsSource],
   );
 
   // Count of additional files selected (not counting SKILL.md which is always included)
