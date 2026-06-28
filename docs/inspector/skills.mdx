@@ -80,7 +80,12 @@ npx skills update
 
 ### Progressive Disclosure
 
-When you have skills available, MCPJam injects a lightweight list of all skill names and descriptions into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+When you have skills available, the LLM discovers and loads them on demand:
+
+- **Local mode**: MCPJam injects a lightweight list of all skill names and descriptions into the LLM's system prompt. The LLM calls `loadSkill` to load only the instructions it needs.
+- **Cloud mode**: The LLM calls `listSkills` first to discover what's available on the Computer, then `loadSkill` to load a skill's instructions. This lazy approach avoids waking the sandbox on every turn.
+
+Once a skill is loaded, the LLM can browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
 
 ### Deterministic Injection
 
