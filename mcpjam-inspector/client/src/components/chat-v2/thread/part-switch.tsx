@@ -1,10 +1,7 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
-import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
-import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
 import { ToolPart } from "./parts/tool-part";
 import {
@@ -16,19 +13,15 @@ import { SourceUrlPart } from "./parts/source-url-part";
 import { SourceDocumentPart } from "./parts/source-document-part";
 import { JsonPart } from "./parts/json-part";
 import { TextPart } from "./parts/text-part";
-import { useViewQueries } from "@/hooks/useViews";
-import { useSaveView, type ToolDataForSave } from "@/hooks/useSaveView";
+import { toast } from "@/lib/toast";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import {
   callTool,
+  executeToolApi,
   getToolServerId,
   ToolServerMap,
 } from "@/lib/apis/mcp-tools-api";
-import {
-  detectUIType,
-  getUIResourceUri,
-  UIType,
-} from "@/lib/mcp-ui/mcp-apps-utils";
+import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   AnyPart,
   getDataLabel,
@@ -41,7 +34,6 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
-import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
   ToolRenderOverride,
   widgetSlotShouldRender,
@@ -60,6 +52,10 @@ import {
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function recorderDebug(message: string, details?: Record<string, unknown>) {
   try {
@@ -123,7 +119,7 @@ export function PartSwitch({
   onToolApprovalResponse,
   messageParts,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -162,7 +158,7 @@ export function PartSwitch({
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
-  showSaveViewButton?: boolean;
+  showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -179,113 +175,61 @@ export function PartSwitch({
   >();
   void messageParts;
 
-  // Get auth and app state for saving views
-  const { isAuthenticated } = useConvexAuth();
-  const posthog = usePostHog();
   const appState = useSharedAppState();
   const resolveHostCaps = useActiveHostCapsResolver();
   const hostStyle = useChatboxHostStyle();
-  const savingEnabled = isAuthenticated && !minimalMode && interactive;
-
-  // Get the Convex project ID (sharedProjectId) from the active project
-  const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)
       ? getToolInfo(part as ToolUIPart<UITools> | DynamicToolUIPart)
       : null;
 
-  // Prefer the tool's server when saving views to avoid cross-server mismatch
-  const currentServerName =
-    (toolInfoFromPart
-      ? getToolServerId(toolInfoFromPart.toolName, toolServerMap)
-      : undefined) ??
-    appState.selectedServer ??
-    "unknown";
-
-  // Get existing view names for duplicate handling
-  const { sortedViews } = useViewQueries({
-    isAuthenticated: savingEnabled,
-    projectId: convexProjectId,
-  });
-  const existingViewNames = useMemo(
-    () => new Set(sortedViews.map((v) => v.name)),
-    [sortedViews]
-  );
-
-  // Instant save hook
-  const { saveViewInstant, isSaving } = useSaveView({
-    isAuthenticated: savingEnabled,
-    projectId: convexProjectId,
-    serverName: currentServerName,
-    existingViewNames,
-  });
-
-  // Get widget debug info for the current tool
+  // Tool-call identity for the current part (drives the edit reset effect).
   const toolCallId =
     isToolPart(part) || isDynamicTool(part)
       ? ((part as any).toolCallId as string | undefined)
       : undefined;
-  const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined
+
+  // --- Inline live-edit of tool input/output (no persistence) ---
+  // Override state lives here so it feeds BOTH the ToolPart data editors and the
+  // sibling <WidgetReplay>; the existing sendToolInput/sendToolResult path then
+  // re-renders the live iframe with no reload. Sentinel-wrapped so "edited to
+  // null" stays distinct from pristine (null = pristine).
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
+    null
   );
-
-  // Create save view handler for a specific tool (instant save)
-  const createSaveViewHandler = useCallback(
-    (
-      toolName: string,
-      input: unknown,
-      output: unknown,
-      errorText: string | undefined,
-      toolState: "output-available" | "output-error",
-      uiType: UIType,
-      resourceUri?: string,
-      outputTemplate?: string,
-      toolMetadata?: Record<string, unknown>
-    ) => {
-      return async () => {
-        posthog.capture("save_as_view_clicked", {
-          location: "chat_tool_result",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-        });
-
-        const data: ToolDataForSave = {
-          uiType,
-          toolName,
-          toolCallId,
-          input,
-          output,
-          errorText,
-          state: toolState,
-          widgetDebugInfo: widgetDebugInfo
-            ? {
-                csp: widgetDebugInfo.csp,
-                protocol: widgetDebugInfo.protocol,
-                modelContext: widgetDebugInfo.modelContext,
-              }
-            : undefined,
-          resourceUri,
-          outputTemplate,
-          toolMetadata,
-          // Include cached widget HTML for offline rendering (MCP Apps only)
-          widgetHtml: widgetDebugInfo?.widgetHtml,
-          // Compat provenance — the renderer stamps these onto the
-          // debug-store entry at fetch time. Persisting them with
-          // the saved view lets replay reproduce the original
-          // `window.openai` API surface even when the live host
-          // config has since changed.
-          injectedOpenAiCompat: widgetDebugInfo?.injectedOpenAiCompat,
-          injectedOpenAiCompatCapabilities:
-            widgetDebugInfo?.injectedOpenAiCompatCapabilities,
-        };
-
-        await saveViewInstant(data);
-      };
-    },
-    [toolCallId, widgetDebugInfo, saveViewInstant, posthog]
+  const [editedOutput, setEditedOutput] = useState<{ value: unknown } | null>(
+    null
   );
+  const [isRunning, setIsRunning] = useState(false);
+  // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
+  // Run-result swap / new tool call). Keystroke edits never bump it.
+  const [editVersion, setEditVersion] = useState(0);
+
+  const handleInputChange = useCallback(
+    (value: unknown) => setEditedInput({ value }),
+    []
+  );
+  const handleOutputChange = useCallback(
+    (value: unknown) => setEditedOutput({ value }),
+    []
+  );
+  const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
+  const handleRevert = useCallback(() => {
+    setEditedInput(null);
+    setEditedOutput(null);
+    setEditVersion((v) => v + 1);
+  }, []);
+
+  // Drop edits when the tool-call identity changes or the display mode switches.
+  useEffect(() => {
+    setIsEditing(false);
+    setEditedInput(null);
+    setEditedOutput(null);
+    setIsRunning(false);
+    setEditVersion((v) => v + 1);
+  }, [toolCallId, displayMode]);
 
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -309,9 +253,6 @@ export function PartSwitch({
     const effectiveToolMeta =
       renderOverride?.toolMetadata ?? partToolMeta ?? streamedToolMeta;
     const uiType = detectUIType(effectiveToolMeta, toolInfo.rawOutput);
-    const uiResourceUri =
-      renderOverride?.resourceUri ??
-      getUIResourceUri(uiType, effectiveToolMeta);
     // MCP-UI legacy (inline ui:// resources via @mcp-ui/client) was
     // removed during the renderer consolidation. Inline resources are no
     // longer rendered; tools that want a widget must declare it via
@@ -327,52 +268,62 @@ export function PartSwitch({
       ? renderOverride.toolOutput
       : toolInfo.output ?? toolInfo.rawOutput;
 
-    // Determine why save might be disabled
-    const hasOutput =
-      resolvedToolOutput !== undefined ||
-      toolInfo.rawOutput !== undefined ||
-      toolInfo.toolState === "output-available" ||
-      toolInfo.toolState === "output-error";
+    // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
+    const effectiveInput = (editedInput
+      ? (editedInput.value as Record<string, unknown> | null)
+      : toolInfo.input ?? null) as Record<string, unknown> | null;
+    const baseOutput = resolvedToolOutput;
+    const effectiveOutput = (() => {
+      if (!editedOutput) return baseOutput;
+      const edited = editedOutput.value;
+      // Pin `_meta` to the original: edits can never repoint the widget binding
+      // or leak into toolResponseMetadata (binding also derives from rawOutput,
+      // which we never override).
+      if (isPlainObject(edited) && isPlainObject(baseOutput)) {
+        return { ...edited, _meta: baseOutput._meta };
+      }
+      return edited;
+    })();
+    const hasEdits = editedInput !== null || editedOutput !== null;
 
-    // Can save if we have output (or output-available state) or error
-    const canSaveView =
+    const isServerConnected =
+      !!serverId &&
+      appState.servers[serverId]?.connectionStatus === "connected";
+    // Frozen eval replays render a screenshot (no live iframe) → no inline edit.
+    const allowInlineEdit =
       interactive &&
+      showInlineEdit &&
       !minimalMode &&
-      isAuthenticated &&
-      !!convexProjectId &&
-      hasOutput;
-    const allowSaveView = interactive && showSaveViewButton && !minimalMode;
+      !renderOverride?.frozenScreenshotUrl &&
+      toolInfo.toolState === "output-available";
+    const canRun = allowInlineEdit && isServerConnected && !isRunning;
 
-    // Compute reason for disabled state
-    let saveDisabledReason: string | undefined;
-    if (!isAuthenticated) {
-      saveDisabledReason = "Sign in to save views";
-    } else if (!convexProjectId) {
-      saveDisabledReason = "Select a shared project to save views";
-    } else if (!hasOutput) {
-      saveDisabledReason = "No output to save";
-    }
-
-    // Create handler for this specific tool
-    // Use rawOutput as fallback if output is undefined
-    const outputToSave = resolvedToolOutput;
-    // OpenAI outputTemplate is stored under "openai/outputTemplate" key
-    const outputTemplate = effectiveToolMeta?.["openai/outputTemplate"] as
-      | string
-      | undefined;
-    const handleSaveView = createSaveViewHandler(
-      toolInfo.toolName,
-      toolInfo.input,
-      outputToSave,
-      toolInfo.errorText,
-      toolInfo.toolState === "output-error"
-        ? "output-error"
-        : "output-available",
-      uiType || UIType.MCP_APPS,
-      uiResourceUri ?? undefined,
-      outputTemplate,
-      effectiveToolMeta as Record<string, unknown> | undefined
-    );
+    const handleRun = async () => {
+      if (!serverId) return;
+      const params = isPlainObject(effectiveInput) ? effectiveInput : {};
+      setIsRunning(true);
+      try {
+        const res = await executeToolApi(serverId, toolInfo.toolName, params);
+        if ("error" in res) {
+          toast.error(`Execution failed: ${res.error}`);
+          return;
+        }
+        if (res.status === "elicitation_required") {
+          toast.error("Tool requires elicitation (not supported here)");
+          return;
+        }
+        if (res.status === "task_created") {
+          toast.error("Background tasks are not supported here");
+          return;
+        }
+        setEditedOutput({ value: res.result });
+        setEditVersion((v) => v + 1);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Execution failed");
+      } finally {
+        setIsRunning(false);
+      }
+    };
 
     // Gate widget render on the active host's advertised capabilities for
     // this tool's server. Hosts that don't advertise the MCP UI extension
@@ -425,10 +376,19 @@ export function PartSwitch({
             appSupportedDisplayModes={
               interactive ? appSupportedDisplayModes : undefined
             }
-            onSaveView={allowSaveView ? handleSaveView : undefined}
-            canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
-            isSaving={isSaving}
+            allowInlineEdit={allowInlineEdit}
+            isEditing={isEditing}
+            onToggleEdit={handleToggleEdit}
+            onInputChange={handleInputChange}
+            onOutputChange={handleOutputChange}
+            inputValue={effectiveInput}
+            outputValue={effectiveOutput}
+            hasEdits={hasEdits}
+            onRevert={handleRevert}
+            onRun={handleRun}
+            isRunning={isRunning}
+            canRun={canRun}
+            editVersion={editVersion}
             minimalMode={minimalMode}
             {...approvalProps}
           />
@@ -514,8 +474,8 @@ export function PartSwitch({
                 };
               })()}
               toolState={toolInfo.toolState}
-              toolInput={toolInfo.input ?? null}
-              toolOutput={resolvedToolOutput}
+              toolInput={effectiveInput}
+              toolOutput={effectiveOutput}
               rawOutput={toolInfo.rawOutput}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
@@ -570,10 +530,6 @@ export function PartSwitch({
         part={toolPart}
         chatSessionId={chatSessionId}
         uiType={uiType}
-        onSaveView={allowSaveView ? handleSaveView : undefined}
-        canSaveView={allowSaveView ? canSaveView : undefined}
-        saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
-        isSaving={isSaving}
         minimalMode={minimalMode}
         {...approvalProps}
       />

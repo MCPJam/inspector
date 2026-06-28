@@ -68,7 +68,7 @@ interface ThreadProps {
   onFullscreenChatStop?: () => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
-  showSaveViewButton?: boolean;
+  showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -150,7 +150,7 @@ export function Thread({
   onFullscreenChatStop,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -355,7 +355,7 @@ export function Thread({
           onDisplayModeChange={onDisplayModeChange}
           onToolApprovalResponse={onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
-          showSaveViewButton={showSaveViewButton}
+          showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
           interactive={interactive}
           reasoningDisplayMode={reasoningDisplayMode}

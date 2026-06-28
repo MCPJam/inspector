@@ -226,7 +226,7 @@ export function EvalLiveChatPanel({
                       blockSubmitUntilServerConnected
                       hideWelcomeHero
                       hideCenterHeaderChrome
-                      hideSaveViewButton
+                      hideInlineEdit
                       suppressHistoryConflictToast
                       onMessagesChange={handleMessagesChange}
                       recorder={recorder}

@@ -247,7 +247,7 @@ export function TranscriptThread({
   onDisplayModeChange,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -566,7 +566,7 @@ export function TranscriptThread({
               onDisplayModeChange={onDisplayModeChange}
               onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={toolRenderOverrides}
-              showSaveViewButton={showSaveViewButton}
+              showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}

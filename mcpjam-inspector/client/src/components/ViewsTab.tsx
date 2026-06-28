@@ -1126,7 +1126,7 @@ export function ViewsTab({
               }
               toolRenderOverrides={toolRenderOverrides}
               disableChatInput
-              hideSaveViewButton
+              hideInlineEdit
               disabledInputPlaceholder="Chat is disabled in Views"
             />
           )}
