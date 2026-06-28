@@ -60,6 +60,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import { materializeSkills } from "../computers/materialize-skills.js";
 import {
   claimHarnessSessionState,
   heartbeatHarnessSessionState,
@@ -492,6 +493,16 @@ export async function runHarnessTurn(
             path: `${sessionWorkDir}/.mcp.json`,
             content: serializeHarnessMcpJson(mcpJson),
           });
+          // Project the project's durable skills (Convex source of truth) onto
+          // ~/.claude/skills so Claude Code discovers them natively. The box FS
+          // is a cache (wiped by delete/reset/reprovision), so this reconciles
+          // every turn. Best-effort — never fails the turn.
+          await materializeSkills({
+            session,
+            projectId,
+            bearer: authHeader,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          }).catch(() => {});
         },
       });
 
