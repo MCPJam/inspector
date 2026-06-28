@@ -44,7 +44,6 @@ export const routePaths = {
   tracing: "/tracing",
   chatboxes: "/chatboxes",
   playground: "/playground",
-  views: "/views",
   support: "/support",
   settings: "/settings",
   profile: "/profile",

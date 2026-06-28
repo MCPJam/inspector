@@ -14,7 +14,6 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "registry",
   "chatboxes",
   "playground",
-  "views",
   "client-config",
   "evals",
   "ci-evals",

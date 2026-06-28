@@ -26,7 +26,6 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
-import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
@@ -468,8 +467,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "playground":
       return <PlaygroundRoute />;
-    case "views":
-      return <ViewsRoute />;
     case "support":
       return <SupportRoute />;
     case "settings":
@@ -864,19 +861,6 @@ export function CiEvalsRoute() {
     <CiEvalsTab
       convexProjectId={convexProjectId}
       ensureServersReady={ensureServersReady}
-    />
-  );
-}
-
-export function ViewsRoute() {
-  const { appState, activeProjectId, handleUpdateHostContext } =
-    useAppRouteContext();
-
-  return (
-    <ViewsTab
-      selectedServer={appState.selectedServer}
-      activeProjectId={activeProjectId}
-      onSaveHostContext={handleUpdateHostContext}
     />
   );
 }
@@ -3005,8 +2989,7 @@ export default function App() {
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
-    activeTab === "chat" ||
-    activeTab === "views";
+    activeTab === "chat";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -3053,7 +3036,7 @@ export default function App() {
           autoSelectFilteredServer:
             activeTab !== "oauth-flow" &&
             !(activeTab === "xaa-flow" && xaaEnabled === true),
-          showOnlyServersWithViews: activeTab === "views",
+          showOnlyServersWithViews: false,
           serversWithViews: serversWithViews,
           hasMessages: false,
         }
