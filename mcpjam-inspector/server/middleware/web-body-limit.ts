@@ -22,19 +22,29 @@ export const SKILLS_UPLOAD_BODY_LIMIT = MAX_SKILL_TOTAL_BYTES + 1024 * 1024;
 
 const SKILLS_UPLOAD_PATH = "/api/web/skills/upload-folder";
 
-function limitForPath(path: string): number {
-  return path === SKILLS_UPLOAD_PATH
-    ? SKILLS_UPLOAD_BODY_LIMIT
-    : DEFAULT_WEB_BODY_LIMIT;
+/**
+ * The carve-out applies ONLY to the real upload request shape — a multipart
+ * POST to the upload path. Anything else hitting that exact path (a GET, a JSON
+ * POST) keeps the default 1MB cap, so the larger limit can't be used to slip a
+ * non-multipart oversized body past the blanket cap.
+ */
+function isSkillsFolderUpload(c: Context): boolean {
+  if (c.req.path !== SKILLS_UPLOAD_PATH) return false;
+  if (c.req.method !== "POST") return false;
+  const contentType = (c.req.header("content-type") ?? "").toLowerCase();
+  return contentType.includes("multipart/form-data");
 }
 
 /**
- * Per-request body limit for `/api/web/*`: 1MB everywhere except the skills
- * folder-upload path. Mount once with `app.use("/api/web/*", webBodyLimit())`.
+ * Per-request body limit for `/api/web/*`: 1MB everywhere except a multipart
+ * POST to the skills folder-upload path. Mount once with
+ * `app.use("/api/web/*", webBodyLimit())`.
  */
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
-    const maxSize = limitForPath(c.req.path);
+    const maxSize = isSkillsFolderUpload(c)
+      ? SKILLS_UPLOAD_BODY_LIMIT
+      : DEFAULT_WEB_BODY_LIMIT;
     const limitMb = Math.round(maxSize / 1024 / 1024);
     return bodyLimit({
       maxSize,

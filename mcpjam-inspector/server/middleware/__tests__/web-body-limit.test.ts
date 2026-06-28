@@ -17,16 +17,23 @@ function appUnderTest() {
   return app;
 }
 
-function postBytes(app: Hono, path: string, size: number) {
+function postBytes(
+  app: Hono,
+  path: string,
+  size: number,
+  contentType = "application/octet-stream",
+) {
   return app.request(path, {
     method: "POST",
     headers: {
-      "content-type": "application/octet-stream",
+      "content-type": contentType,
       "content-length": String(size),
     },
     body: new Uint8Array(size),
   });
 }
+
+const MULTIPART = "multipart/form-data; boundary=----test";
 
 describe("webBodyLimit", () => {
   it("sizes the skills upload carve-out from the service total cap", () => {
@@ -39,21 +46,35 @@ describe("webBodyLimit", () => {
     expect(await res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("allows a multi-MB body on the skills folder-upload route", async () => {
+  it("allows a multi-MB multipart body on the skills folder-upload route", async () => {
     const res = await postBytes(
       appUnderTest(),
       "/api/web/skills/upload-folder",
       2 * 1024 * 1024, // > 1MB, well under the carve-out
+      MULTIPART,
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  it("still rejects a body over the skills carve-out", async () => {
+  it("still rejects a multipart body over the skills carve-out", async () => {
     const res = await postBytes(
       appUnderTest(),
       "/api/web/skills/upload-folder",
       SKILLS_UPLOAD_BODY_LIMIT + 1024,
+      MULTIPART,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("does NOT extend the carve-out to a non-multipart request on that path", async () => {
+    // A JSON (non-multipart) POST to the upload path keeps the default 1MB cap,
+    // so the larger limit can't be abused by anything but a real upload.
+    const res = await postBytes(
+      appUnderTest(),
+      "/api/web/skills/upload-folder",
+      2 * 1024 * 1024,
+      "application/json",
     );
     expect(res.status).toBe(400);
   });
