@@ -175,11 +175,11 @@ const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
 };
 
 export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
-  const adapter = (HARNESS_ADAPTERS as Record<string, HarnessRuntimeAdapter>)[
-    id
-  ];
-  if (!adapter) {
+  // Own-property guard: a prototype key (`__proto__`, `constructor`, …) would
+  // otherwise resolve to an inherited value and slip past the `!adapter` check,
+  // yielding a 500 downstream instead of a controlled unsupported-harness error.
+  if (!Object.prototype.hasOwnProperty.call(HARNESS_ADAPTERS, id)) {
     throw new Error(`Unsupported harness: ${id}`);
   }
-  return adapter;
+  return (HARNESS_ADAPTERS as Record<string, HarnessRuntimeAdapter>)[id];
 }

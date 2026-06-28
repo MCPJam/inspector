@@ -41,13 +41,27 @@ export async function fetchHarnessModelCredential(args: {
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessModelCredentialResult> {
-  const url = new URL(
-    "/web/harness/model-credential",
-    getConvexHttpUrl()
-  ).toString();
-  const authorization = args.bearer.startsWith("Bearer ")
-    ? args.bearer
-    : `Bearer ${args.bearer}`;
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/model-credential",
+      getConvexHttpUrl()
+    ).toString();
+  } catch (err) {
+    // Keep missing/invalid Convex config inside the result contract so callers
+    // always get the fail-closed { ok: false } path instead of a thrown
+    // exception escaping before the request flow.
+    logger.error("[harness-model-credential] missing endpoint config", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Harness model-credential endpoint is not configured",
+    };
+  }
+  const trimmedBearer = args.bearer.trim();
+  const authorization = /^Bearer\s/i.test(trimmedBearer)
+    ? trimmedBearer
+    : `Bearer ${trimmedBearer}`;
 
   let response: Response;
   try {

@@ -69,9 +69,10 @@ export async function fetchHostRuntimeConfig(args: {
       error: "Host runtime-config endpoint is not configured",
     };
   }
-  const authorization = args.bearer.startsWith("Bearer ")
-    ? args.bearer
-    : `Bearer ${args.bearer}`;
+  const trimmedBearer = args.bearer.trim();
+  const authorization = /^Bearer\s/i.test(trimmedBearer)
+    ? trimmedBearer
+    : `Bearer ${trimmedBearer}`;
 
   let response: Response;
   try {
