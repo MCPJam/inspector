@@ -151,6 +151,12 @@ export interface WebChatTurnPrepareInputs {
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   widgetModelContext?: WidgetModelContextEntry[];
+  /**
+   * When set, skills are sourced from the caller's Computer (E2B sandbox)
+   * rather than the local FS. Set by the hosted chat route only when the host
+   * actually has a computer. See `chat-v2-orchestration.ts`.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -218,6 +224,7 @@ export async function streamWebChatTurn(
         : {}),
       appTools: prepare.appTools,
       builtInTools: prepare.builtInTools,
+      ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

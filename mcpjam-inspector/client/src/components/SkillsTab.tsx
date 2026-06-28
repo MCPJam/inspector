@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -26,7 +26,10 @@ import {
   deleteSkill,
   listSkillFiles,
   readSkillFile,
+  type SkillsSource,
 } from "@/lib/apis/mcp-skills-api";
+import { HOSTED_MODE } from "@/lib/config";
+import { ViewModeSelector } from "./shared/view-mode-selector";
 import type {
   Skill,
   SkillListItem,
@@ -47,8 +50,28 @@ import {
 import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
-export function SkillsTab() {
+interface SkillsTabProps {
+  /** Convex project id — required to address the cloud (computer) skill store. */
+  projectId?: string;
+  /** Whether the Computer feature is enabled for this user (PostHog gate). */
+  computersEnabled?: boolean;
+}
+
+export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) {
   const posthog = usePostHog();
+  // Skills data source. Hosted mode has no local FS, so it's always cloud.
+  // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
+  const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
+  const [source, setSource] = useState<"local" | "cloud">(
+    HOSTED_MODE ? "cloud" : "local",
+  );
+  const skillsSource: SkillsSource = useMemo(
+    () =>
+      source === "cloud" && projectId
+        ? { kind: "cloud", projectId }
+        : { kind: "local" },
+    [source, projectId],
+  );
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -79,9 +102,18 @@ export function SkillsTab() {
     }
   };
 
+  // Refetch whenever the data source switches (Local⇄Cloud), clearing the
+  // per-skill file cache so stale entries from the other source never bleed
+  // across. `resetSelection` forces fetchSkills to pick a fresh selection from
+  // the new list rather than honoring the (now-stale) prior selection — a same-
+  // named skill in both sources would otherwise leave the tab with nothing
+  // selected.
   useEffect(() => {
-    fetchSkills();
-  }, []);
+    setSelectedSkill(null);
+    setSkillFiles({});
+    fetchSkills({ resetSelection: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillsSource]);
 
   useEffect(() => {
     if (selectedSkillName) {
@@ -100,20 +132,23 @@ export function SkillsTab() {
     }
   }, [selectedSkillName, selectedFilePath]);
 
-  const fetchSkills = async () => {
+  const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
     setFetchingSkills(true);
 
     try {
-      const skillsList = await listSkills();
+      const skillsList = await listSkills(skillsSource);
       setSkills(skillsList);
 
+      // On a source switch the prior selection is stale, so ignore it and pick
+      // the first skill. On a plain refresh, keep the current selection if it
+      // still exists.
+      const currentName = opts?.resetSelection ? "" : selectedSkillName;
       if (skillsList.length === 0) {
         setSelectedSkillName("");
         setSelectedSkill(null);
       } else if (
-        !skillsList.some(
-          (skill: SkillListItem) => skill.name === selectedSkillName,
-        )
+        !currentName ||
+        !skillsList.some((skill: SkillListItem) => skill.name === currentName)
       ) {
         setSelectedSkillName(skillsList[0].name);
       }
@@ -126,7 +161,7 @@ export function SkillsTab() {
 
   const fetchSkillContent = async (name: string) => {
     try {
-      const skill = await getSkill(name);
+      const skill = await getSkill(name, skillsSource);
       setSelectedSkill(skill);
     } catch (err) {
       console.error("Error getting skill:", err);
@@ -142,7 +177,7 @@ export function SkillsTab() {
 
       setLoadingFiles((prev) => ({ ...prev, [name]: true }));
       try {
-        const files = await listSkillFiles(name);
+        const files = await listSkillFiles(name, skillsSource);
         setSkillFiles((prev) => ({ ...prev, [name]: files }));
       } catch (err) {
         console.error("Error fetching skill files:", err);
@@ -151,7 +186,7 @@ export function SkillsTab() {
         setLoadingFiles((prev) => ({ ...prev, [name]: false }));
       }
     },
-    [skillFiles],
+    [skillFiles, skillsSource],
   );
 
   const fetchFileContent = async (name: string, filePath: string) => {
@@ -159,7 +194,7 @@ export function SkillsTab() {
     setFileError("");
 
     try {
-      const content = await readSkillFile(name, filePath);
+      const content = await readSkillFile(name, filePath, skillsSource);
       setFileContent(content);
     } catch (err) {
       const message =
@@ -176,7 +211,7 @@ export function SkillsTab() {
 
     setIsDeleting(true);
     try {
-      await deleteSkill(skillToDelete);
+      await deleteSkill(skillToDelete, skillsSource);
       posthog.capture("skill_deleted", {
         ...standardEventProps("skills_tab"),
         skill_name: skillToDelete,
@@ -255,6 +290,19 @@ export function SkillsTab() {
                 </Badge>
               </div>
               <div className="flex items-center gap-1">
+                {showSourceToggle && (
+                  <ViewModeSelector
+                    value={source}
+                    ariaLabel="Skills source"
+                    indicatorId="skills-source"
+                    onChange={(next) => setSource(next)}
+                    options={[
+                      { value: "local", label: "Local" },
+                      { value: "cloud", label: "Cloud" },
+                    ]}
+                    className="mr-1"
+                  />
+                )}
                 <Button
                   onClick={() => setIsUploadDialogOpen(true)}
                   variant="ghost"
@@ -264,7 +312,7 @@ export function SkillsTab() {
                   <Plus className="h-3 w-3 cursor-pointer" />
                 </Button>
                 <Button
-                  onClick={fetchSkills}
+                  onClick={() => fetchSkills()}
                   variant="ghost"
                   size="sm"
                   disabled={fetchingSkills}
@@ -437,6 +485,7 @@ export function SkillsTab() {
         open={isUploadDialogOpen}
         onOpenChange={setIsUploadDialogOpen}
         onSkillCreated={handleSkillCreated}
+        source={skillsSource}
       />
 
       {/* Delete Confirmation Dialog */}

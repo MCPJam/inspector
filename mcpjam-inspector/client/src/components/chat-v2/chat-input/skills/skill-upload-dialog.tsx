@@ -8,7 +8,10 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@mcpjam/design-system/dialog";
-import { uploadSkillFolder } from "@/lib/apis/mcp-skills-api";
+import {
+  uploadSkillFolder,
+  type SkillsSource,
+} from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
 import { usePostHog } from "posthog-js/react";
@@ -17,6 +20,8 @@ interface SkillUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSkillCreated?: (skill: SkillResult) => void;
+  /** Where the skill is written — local FS or the project's Computer. */
+  source?: SkillsSource;
 }
 
 interface ParsedSkillInfo {
@@ -47,6 +52,7 @@ export function SkillUploadDialog({
   open,
   onOpenChange,
   onSkillCreated,
+  source,
 }: SkillUploadDialogProps) {
   const posthog = usePostHog();
   const [files, setFiles] = useState<File[]>([]);
@@ -200,7 +206,7 @@ export function SkillUploadDialog({
     setIsLoading(true);
 
     try {
-      const skill = await uploadSkillFolder(files, skillInfo.name);
+      const skill = await uploadSkillFolder(files, skillInfo.name, source);
       posthog.capture("skill_uploaded", {
         skill_name: skillInfo.name,
         file_count: files.length,
@@ -245,8 +251,10 @@ export function SkillUploadDialog({
             Upload a skill folder containing a SKILL.md file. The folder will be
             saved to{" "}
             <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              ~/.mcpjam/skills/{skillInfo?.name || "{name}"}/
+              {source?.kind === "cloud" ? "~/.claude/skills/" : "~/.mcpjam/skills/"}
+              {skillInfo?.name || "{name}"}/
             </code>
+            {source?.kind === "cloud" ? " on your personal computer" : ""}
           </DialogDescription>
         </DialogHeader>
 

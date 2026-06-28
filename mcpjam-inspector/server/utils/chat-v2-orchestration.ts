@@ -28,6 +28,7 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
+import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import { HOSTED_MODE } from "../config.js";
@@ -479,6 +480,13 @@ export interface PrepareChatV2Options {
   appTools?: AppToolEntry[];
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
+  /**
+   * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
+   * instead of the local filesystem — the hosted/`/web` path. Only set by
+   * callers whose host actually has a computer, so "advertise == enforce".
+   * Takes precedence over the local/HOSTED_MODE skill branches.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
 }
 
 /**
@@ -545,6 +553,7 @@ export async function prepareChatV2(
     customProviders,
     appTools,
     builtInTools,
+    cloudSkills,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -583,10 +592,20 @@ export async function prepareChatV2(
   if (respectToolVisibility !== false) {
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
+  // Skills source, in precedence order:
+  //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
+  //      with a provisioned computer. Lazy discovery (no upfront wake).
+  //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
+  //   3. local ⇒ the inspector's own filesystem.
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    HOSTED_MODE
-      ? { tools: {}, systemPromptSection: "" }
-      : await getSkillToolsAndPrompt();
+    cloudSkills
+      ? getCloudSkillToolsAndPrompt({
+          authHeader: cloudSkills.authHeader,
+          projectId: cloudSkills.projectId,
+        })
+      : HOSTED_MODE
+        ? { tools: {}, systemPromptSection: "" }
+        : await getSkillToolsAndPrompt();
 
   const finalSkillTools: Record<string, unknown> = requireToolApproval
     ? Object.fromEntries(

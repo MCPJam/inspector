@@ -72,6 +72,7 @@ import {
   useAppNavigate,
 } from "@/lib/app-navigation";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
@@ -380,6 +381,28 @@ export function getHostedNavigationSections(
 const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
 
+/**
+ * Render-time gate for hosted Skills. `getHostedNavigationSections` runs at
+ * module load (no hooks), so it marks Skills disabled by default. Once the
+ * Computer feature flag resolves, flip Skills to enabled — in hosted mode
+ * skills live on the project's Computer, so the Computer flag governs them.
+ * Flag off keeps the existing disabled + "available locally" affordance.
+ */
+function withCloudSkillsGate(
+  sections: NavSection[],
+  computersEnabled: boolean,
+): NavSection[] {
+  if (!computersEnabled) return sections;
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) =>
+      normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills"
+        ? { ...item, disabled: false, disabledTooltip: undefined }
+        : item,
+    ),
+  }));
+}
+
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
@@ -658,8 +681,11 @@ export function MCPSidebar({
     ]
   );
   const hubNavHash = "#servers";
+  const computersEnabled = useComputersEnabled();
   const visibleNavigationSections = filterByFeatureFlags(
-    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    HOSTED_MODE
+      ? withCloudSkillsGate(hostedNavigationSections, computersEnabled)
+      : navigationSections,
     featureFlags
   );
 
