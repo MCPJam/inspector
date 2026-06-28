@@ -24,7 +24,10 @@ describe("harnessRuntimeFingerprint", () => {
 
   it("changes when the model changes (fork)", () => {
     expect(harnessRuntimeFingerprint(base)).not.toBe(
-      harnessRuntimeFingerprint({ ...base, modelId: "anthropic/claude-haiku-4.5" })
+      harnessRuntimeFingerprint({
+        ...base,
+        modelId: "anthropic/claude-haiku-4.5",
+      })
     );
   });
 
@@ -33,6 +36,11 @@ describe("harnessRuntimeFingerprint", () => {
       harnessRuntimeFingerprint({ ...base, selectedServers: ["srv-a"] })
     );
   });
+
+  // NOTE: skills are deliberately NOT part of this opaque fingerprint. They are
+  // tracked as a SEPARATE `skillsHash` on the Convex harness-session sidecar so a
+  // transient skills-fetch failure ("unknown") is distinguishable from "" (empty)
+  // and never churns resume. See harnessSessions claim/commit tests.
 
   it("does NOT depend on the system prompt (app/widget per-turn injection)", () => {
     // The fn no longer accepts a system prompt; passing a stray field changes

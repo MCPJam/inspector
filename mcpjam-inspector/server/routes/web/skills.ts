@@ -1,41 +1,40 @@
 /**
- * Cloud Skills — hosted/`/web` routes. The horizontally-scaled counterpart of
- * the local filesystem skills routes (`routes/mcp/skills.ts`). Every operation
- * runs against the caller's **Computer** (E2B sandbox) via
- * `utils/computers/cloud-skills.ts`; there is no local FS in hosted mode.
+ * Cloud Skills — hosted/`/web` routes. The durable, project-scoped skills
+ * surface. Skills live in Convex (`convex/projectSkills.ts`), not on any
+ * Computer, so reads/writes here never wake a sandbox. v1 is SKILL.md-only.
  *
- * Auth: bearer end-to-end (forwarded to Convex for reserve/wake + authz, which
- * only ever resolves the (project, user) computer of the bearer's owner). The
- * `projectId` in each request body selects which computer. Mirrors
- * `routes/web/computers.ts`.
+ * Auth: the user's bearer is exchanged for a Convex bearer
+ * (`getConvexBearerForRequest`) and forwarded; Convex enforces membership +
+ * admin-for-shared. All UI ops are keyed by `skillId`. `projectId` selects the
+ * project on every route.
  */
 import { Hono } from "hono";
 import { z } from "zod";
 import "../../types/hono"; // Type extensions
+import type { Context } from "hono";
 import {
   ErrorCode,
   WebRouteError,
   handleRoute,
   parseWithSchema,
   readJsonBody,
-  assertBearerToken,
 } from "./auth.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   CloudSkillsError,
   listCloudSkills,
   getCloudSkill,
-  uploadCloudSkill,
-  uploadCloudSkillFolder,
+  getCloudSkillByName,
+  createCloudSkill,
+  updateCloudSkill,
   deleteCloudSkill,
-  listCloudSkillFiles,
-  readCloudSkillFile,
+  promoteCloudSkill,
+  MAX_SKILL_CONTENT_BYTES,
   type CloudSkillsContext,
-  type CloudSkillUploadFile,
 } from "../../utils/computers/cloud-skills.js";
 
 const skills = new Hono();
 
-/** Map a service-layer status to the closest web ErrorCode. */
 function codeForStatus(status: number): ErrorCode {
   switch (status) {
     case 400:
@@ -47,8 +46,6 @@ function codeForStatus(status: number): ErrorCode {
       return ErrorCode.FORBIDDEN;
     case 404:
       return ErrorCode.NOT_FOUND;
-    case 502:
-      return ErrorCode.SERVER_UNREACHABLE;
     case 503:
       return ErrorCode.FEATURE_NOT_SUPPORTED;
     default:
@@ -62,36 +59,55 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (err) {
     if (err instanceof CloudSkillsError) {
-      throw new WebRouteError(err.status, codeForStatus(err.status), err.message);
+      throw new WebRouteError(
+        err.status,
+        codeForStatus(err.status),
+        err.message,
+      );
     }
     throw err;
   }
 }
 
-function ctxFrom(c: any, projectId: string): CloudSkillsContext {
-  return {
-    authHeader: `Bearer ${assertBearerToken(c)}`,
-    projectId,
-    signal: c.req.raw.signal,
-  };
+async function ctxFrom(c: Context, projectId: string): Promise<CloudSkillsContext> {
+  // Exchange the request bearer for a Convex-usable bearer (handles WorkOS
+  // API-key → delegated-JWT; a session JWT passes through).
+  const bearer = await getConvexBearerForRequest(c);
+  return { authHeader: bearer, projectId, signal: c.req.raw.signal };
 }
 
 const projectOnly = z.object({ projectId: z.string().min(1) });
-const nameSchema = projectOnly.extend({ name: z.string().min(1) });
+const skillIdSchema = projectOnly.extend({ skillId: z.string().min(1) });
+const sharingSchema = z.enum(["user", "project"]).optional();
 
 skills.post("/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(projectOnly, await readJsonBody(c));
-    const list = await run(() => listCloudSkills(ctxFrom(c, body.projectId)));
+    const list = await run(async () =>
+      listCloudSkills(await ctxFrom(c, body.projectId)),
+    );
     return { skills: list };
   }),
 );
 
 skills.post("/get", async (c) =>
   handleRoute(c, async () => {
-    const body = parseWithSchema(nameSchema, await readJsonBody(c));
-    const skill = await run(() =>
-      getCloudSkill(ctxFrom(c, body.projectId), body.name),
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const skill = await run(async () =>
+      getCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
+    );
+    return { skill };
+  }),
+);
+
+skills.post("/get-by-name", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      projectOnly.extend({ name: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const skill = await run(async () =>
+      getCloudSkillByName(await ctxFrom(c, body.projectId), body.name),
     );
     if (!skill) {
       throw new WebRouteError(
@@ -104,79 +120,48 @@ skills.post("/get", async (c) =>
   }),
 );
 
-skills.post("/upload", async (c) =>
+skills.post("/create", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(
       projectOnly.extend({
         name: z.string().min(1),
         description: z.string().min(1),
-        content: z.string().min(1),
+        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES),
+        sharing: sharingSchema,
       }),
       await readJsonBody(c),
     );
-    const skill = await run(() =>
-      uploadCloudSkill(ctxFrom(c, body.projectId), {
+    const skill = await run(async () =>
+      createCloudSkill(await ctxFrom(c, body.projectId), {
         name: body.name,
         description: body.description,
         content: body.content,
+        ...(body.sharing ? { sharing: body.sharing } : {}),
       }),
     );
     return { success: true, skill };
   }),
 );
 
-skills.post("/upload-folder", async (c) =>
+skills.post("/update", async (c) =>
   handleRoute(c, async () => {
-    const formData = await c.req.formData();
-    const projectId = formData.get("projectId");
-    const skillName = formData.get("skillName");
-    const rawFiles = formData.getAll("files");
-
-    if (typeof projectId !== "string" || !projectId) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "projectId is required",
-      );
-    }
-    if (typeof skillName !== "string" || !skillName) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "skillName is required",
-      );
-    }
-    if (!rawFiles || rawFiles.length === 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "No files uploaded",
-      );
-    }
-    // Each "files" part must be a real File (with bytes + a name). A malformed
-    // multipart entry (e.g. a stray text field named "files") would otherwise
-    // fall through to `.arrayBuffer()` and throw an opaque 500 — reject cleanly.
-    const fileParts: File[] = [];
-    for (const part of rawFiles) {
-      if (!(part instanceof File) || typeof part.name !== "string") {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          'Each "files" part must be an uploaded file',
-        );
-      }
-      fileParts.push(part);
-    }
-
-    const files: CloudSkillUploadFile[] = await Promise.all(
-      fileParts.map(async (f) => ({
-        path: f.name,
-        bytes: new Uint8Array(await f.arrayBuffer()),
-      })),
+    const body = parseWithSchema(
+      skillIdSchema.extend({
+        name: z.string().min(1).optional(),
+        description: z.string().min(1).optional(),
+        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES).optional(),
+      }),
+      await readJsonBody(c),
     );
-
-    const skill = await run(() =>
-      uploadCloudSkillFolder(ctxFrom(c, projectId), skillName, files),
+    const skill = await run(async () =>
+      updateCloudSkill(await ctxFrom(c, body.projectId), {
+        skillId: body.skillId,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.description !== undefined
+          ? { description: body.description }
+          : {}),
+        ...(body.content !== undefined ? { content: body.content } : {}),
+      }),
     );
     return { success: true, skill };
   }),
@@ -184,41 +169,21 @@ skills.post("/upload-folder", async (c) =>
 
 skills.post("/delete", async (c) =>
   handleRoute(c, async () => {
-    const body = parseWithSchema(nameSchema, await readJsonBody(c));
-    const deleted = await run(() =>
-      deleteCloudSkill(ctxFrom(c, body.projectId), body.name),
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    await run(async () =>
+      deleteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
     );
-    if (!deleted) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        `Skill '${body.name}' not found`,
-      );
-    }
     return { success: true };
   }),
 );
 
-skills.post("/files", async (c) =>
+skills.post("/promote", async (c) =>
   handleRoute(c, async () => {
-    const body = parseWithSchema(nameSchema, await readJsonBody(c));
-    const files = await run(() =>
-      listCloudSkillFiles(ctxFrom(c, body.projectId), body.name),
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const skill = await run(async () =>
+      promoteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
     );
-    return { files };
-  }),
-);
-
-skills.post("/read-file", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(
-      nameSchema.extend({ filePath: z.string().min(1) }),
-      await readJsonBody(c),
-    );
-    const file = await run(() =>
-      readCloudSkillFile(ctxFrom(c, body.projectId), body.name, body.filePath),
-    );
-    return { file };
+    return { success: true, skill };
   }),
 );
 

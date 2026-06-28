@@ -190,6 +190,7 @@ interface PersistChatSessionOptions {
     resumeState: unknown;
     computerId: string;
     runtimeFingerprint: string;
+    skillsHash?: string;
   };
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */

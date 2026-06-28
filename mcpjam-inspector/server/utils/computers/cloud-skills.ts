@@ -1,84 +1,37 @@
 /**
- * Cloud Skills — Project-Computer-backed equivalent of the local
- * filesystem skills (`server/utils/skill-parser.ts` + `routes/mcp/skills.ts`).
+ * Cloud Skills service — Convex-sourced.
  *
- * Local skills read `~/.mcpjam/skills` etc. on the machine running the
- * inspector. In hosted / horizontally-scaled mode there is no durable local
- * FS, but a project's **Computer** (an E2B sandbox) is a persistent
- * workstation whose files survive between sessions — exactly what skills need.
+ * Skills are durable in Convex (`convex/projectSkills.ts`), NOT on the Computer
+ * filesystem, so they survive Computer delete/reset/reprovision and can be
+ * shared across a project. This service is a thin adapter over
+ * `convex-skills-client.ts`: it forwards the caller's bearer, shapes results for
+ * the `/web/skills` routes + chat tools, and maps Convex errors to a
+ * `CloudSkillsError` carrying an HTTP-ish status.
  *
- * This module performs the same operations (list / get / upload / delete /
- * files / read-file) against the computer's filesystem, reusing:
- *   - the parser + validators in `../skill-parser.ts` (one source of truth for
- *     SKILL.md frontmatter, name rules, mime/text detection, path-traversal);
- *   - the control-plane resolution + wake pipeline in `./control-plane-client`
- *     (`ensureComputerReady` → `getComputerSandboxInfo`), identical to
- *     `run-command.ts` / `resolve-sandbox.ts`;
- *   - the E2B Filesystem API (`sandbox.files.*`), the same surface the harness
- *     sandbox provider uses (`harness/e2b-sandbox-provider.ts`).
+ * Reads never touch the Computer (no sandbox wake) — that's the whole point of
+ * the Convex-source move. Delivery to the in-sandbox harness is separate: the
+ * harness `skills` param (see `harness/runtime-skills.ts`), with on-box cleanup
+ * in `harness/reconcile-skill-dirs.ts`.
  *
- * Skills are stored under `~/.claude/skills` (PRIMARY) so that Claude Code
- * running *inside* the computer (the harness) discovers the very same skills
- * via its native filesystem discovery — one source of truth for both the
- * non-harness chat tools here and the in-sandbox harness.
+ * v1 is SKILL.md-only: a skill is `{name, description, content}`. Supporting
+ * files are a v2 add (they'll need `_storage` blobs in the backend).
  */
-import { Sandbox, FileNotFoundError, NotFoundError } from "e2b";
-import path from "path";
 import {
-  ensureComputerReady,
-  getComputerSandboxInfo,
-  isComputersDataPlaneConfigured,
-} from "./control-plane-client.js";
-import {
-  parseSkillFile,
-  skillToListItem,
-  generateSkillFileContent,
-  getMimeType,
-  isTextMimeType,
-  isPathWithinDirectory,
-  isValidSkillName,
-} from "../skill-parser.js";
-import { logger } from "../logger.js";
-import type {
-  Skill,
-  SkillListItem,
-  SkillFile,
-  SkillFileContent,
-} from "../../../shared/skill-types.js";
+  convexCreateSkill,
+  convexDeleteSkill,
+  convexGetSkill,
+  convexGetSkillByName,
+  convexListSkills,
+  convexPromoteSkill,
+  convexUpdateSkill,
+  type CloudSkillDetail,
+  type CloudSkillListItem,
+  type SkillSharing,
+} from "./convex-skills-client.js";
 
-/** E2B computer-template home (matches `harness/e2b-sandbox-provider.ts`). */
-const SANDBOX_HOME = "/home/user";
+/** Client-side preflight cap (the backend enforces the real one). */
+export const MAX_SKILL_CONTENT_BYTES = 128 * 1024;
 
-/**
- * Directories scanned for skills inside the computer. PRIMARY (uploads) first.
- * `~/.claude/skills` is primary so the in-sandbox Claude Code harness discovers
- * the same skills natively.
- */
-const SKILLS_DIRS = [
-  path.posix.join(SANDBOX_HOME, ".claude", "skills"),
-  path.posix.join(SANDBOX_HOME, ".mcpjam", "skills"),
-  path.posix.join(SANDBOX_HOME, ".agents", "skills"),
-];
-const PRIMARY_SKILLS_DIR = SKILLS_DIRS[0];
-
-/**
- * Upload caps enforced by the service BEFORE connecting to the sandbox. The
- * global `/api/web/*` body limit is a coarse backstop; these give a clean 400
- * with a specific reason and bound how much we ever write to the computer.
- */
-export const MAX_SKILL_FILES = 100;
-export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024; // 5 MB per file
-export const MAX_SKILL_TOTAL_BYTES = 20 * 1024 * 1024; // 20 MB per skill
-
-export interface CloudSkillsContext {
-  /** Bearer authorization forwarded to Convex (authz + wake). */
-  authHeader: string;
-  /** Project whose (project, user) computer the skills live on. */
-  projectId: string;
-  signal?: AbortSignal;
-}
-
-/** Carries an HTTP-ish status so the web route can map it faithfully. */
 export class CloudSkillsError extends Error {
   readonly status: number;
   constructor(message: string, status = 500) {
@@ -88,453 +41,139 @@ export class CloudSkillsError extends Error {
   }
 }
 
-/** `~/...` display path for a skill dir, mirroring the local route. */
-function displayPath(skillsDir: string, skillName: string): string {
-  const full = path.posix.join(skillsDir, skillName);
-  return full.startsWith(SANDBOX_HOME)
-    ? full.replace(SANDBOX_HOME, "~")
-    : full;
+export interface CloudSkillsContext {
+  /** The user's Convex bearer (WorkOS/session JWT; "Bearer " prefix tolerated). */
+  authHeader: string;
+  projectId: string;
+  signal?: AbortSignal;
 }
 
-/**
- * Resolve + wake the caller's computer, connect to the E2B sandbox, and run
- * `fn` against it. One connection per top-level operation (skills counts are
- * small, so N+1 `files.read` within an operation is acceptable). Throws
- * `CloudSkillsError` with a status the route can surface.
- */
-async function withSandbox<T>(
-  ctx: CloudSkillsContext,
-  fn: (sandbox: Sandbox) => Promise<T>,
-): Promise<T> {
-  if (!isComputersDataPlaneConfigured()) {
-    throw new CloudSkillsError(
-      "Computers are not configured on this server.",
-      503,
-    );
-  }
+export type { CloudSkillDetail, CloudSkillListItem, SkillSharing };
 
-  const ready = await ensureComputerReady({
-    bearer: ctx.authHeader,
-    projectId: ctx.projectId,
-    signal: ctx.signal,
-  });
-  if (!ready.ok) {
-    throw new CloudSkillsError(
-      `Computer unavailable: ${ready.error}`,
-      ready.status || 502,
-    );
-  }
+const CODE_STATUS: Record<string, number> = {
+  VALIDATION: 400,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+};
 
-  const info = await getComputerSandboxInfo({
-    computerId: ready.value.computerId,
-    signal: ctx.signal,
-  });
-  if (!info.ok) {
-    throw new CloudSkillsError(
-      `Computer unavailable: ${info.error}`,
-      info.status || 502,
-    );
-  }
-  if (!info.value.providerComputerId) {
-    throw new CloudSkillsError(
-      "Computer is still provisioning — try again in a moment.",
-      503,
-    );
-  }
-
-  const sandbox = await Sandbox.connect(info.value.providerComputerId);
-  return fn(sandbox);
-}
-
-/**
- * List a directory. A genuinely missing directory yields `[]` (the skills dirs
- * are optional — a user may have none). Any OTHER failure (transport, auth,
- * sandbox gone) propagates: swallowing those would make a user's skills
- * silently "disappear" during a transient provider/filesystem blip.
- */
-async function safeList(sandbox: Sandbox, dir: string) {
-  try {
-    return await sandbox.files.list(dir);
-  } catch (err) {
-    // FileNotFoundError extends NotFoundError, so this covers both.
-    if (err instanceof NotFoundError) return [];
-    throw err;
-  }
-}
-
-/** Read a file; a genuinely missing file yields `null`, real errors throw. */
-async function readTextOrNull(
-  sandbox: Sandbox,
-  filePath: string,
-): Promise<string | null> {
-  try {
-    return await sandbox.files.read(filePath);
-  } catch (err) {
-    if (err instanceof FileNotFoundError) return null;
-    throw err;
-  }
-}
-
-/** Find the absolute computer path of a skill directory by skill name. */
-async function findSkillDir(
-  sandbox: Sandbox,
-  name: string,
-): Promise<string | null> {
-  for (const dir of SKILLS_DIRS) {
-    const entries = await safeList(sandbox, dir);
-    for (const entry of entries) {
-      if (entry.type !== "dir") continue;
-      const skillDir = path.posix.join(dir, entry.name);
-      const content = await readTextOrNull(
-        sandbox,
-        path.posix.join(skillDir, "SKILL.md"),
-      );
-      if (!content) continue;
-      const skill = parseSkillFile(content, entry.name);
-      if (skill && skill.name === name) return skillDir;
-    }
-  }
+/** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */
+function convexErrorData(
+  err: unknown
+): { code?: string; message?: string } | null {
+  const data = (err as { data?: unknown })?.data;
+  if (data && typeof data === "object") return data as { code?: string };
   return null;
 }
 
-/** True if a skill with `name` already exists in any scanned directory. */
-async function skillExists(sandbox: Sandbox, name: string): Promise<boolean> {
-  return (await findSkillDir(sandbox, name)) !== null;
-}
+/**
+ * Map a Convex error to a CloudSkillsError with an HTTP status.
+ *
+ * Primary path: the backend throws `ConvexError({ code, message })` for expected
+ * failures — `code` + `message` survive Convex's production redaction, so we map
+ * the code → status precisely (and surface the message). Fallback (a plain
+ * `Error` / unexpected fault): regex the message in dev, else opaque 500.
+ */
+function mapConvexError(err: unknown): CloudSkillsError {
+  if (err instanceof CloudSkillsError) return err;
 
-/** Recursive file tree of one skill dir, mirroring `listFilesRecursive`. */
-async function listFilesRecursiveE2B(
-  sandbox: Sandbox,
-  dirPath: string,
-  relativeTo: string = dirPath,
-): Promise<SkillFile[]> {
-  const files: SkillFile[] = [];
-  const entries = await safeList(sandbox, dirPath);
-
-  for (const entry of entries) {
-    const fullPath = path.posix.join(dirPath, entry.name);
-    const relativePath = path.posix.relative(relativeTo, fullPath);
-    const ext = path.posix.extname(entry.name).toLowerCase();
-
-    if (entry.type === "dir") {
-      const children = await listFilesRecursiveE2B(
-        sandbox,
-        fullPath,
-        relativeTo,
-      );
-      files.push({
-        path: relativePath,
-        name: entry.name,
-        type: "directory",
-        children,
-      });
-    } else {
-      files.push({
-        path: relativePath,
-        name: entry.name,
-        type: "file",
-        size: entry.size,
-        mimeType: getMimeType(entry.name),
-        extension: ext || undefined,
-      });
-    }
+  const data = convexErrorData(err);
+  if (data?.code && CODE_STATUS[data.code] !== undefined) {
+    return new CloudSkillsError(
+      data.message ?? "Skill request failed",
+      CODE_STATUS[data.code]
+    );
   }
 
-  // SKILL.md first, then dirs, then files; alphabetical within each group —
-  // identical ordering to the local `listFilesRecursive`.
-  return files.sort((a, b) => {
-    if (a.name === "SKILL.md") return -1;
-    if (b.name === "SKILL.md") return 1;
-    if (a.type === "directory" && b.type !== "directory") return -1;
-    if (a.type !== "directory" && b.type === "directory") return 1;
-    return a.name.localeCompare(b.name);
-  });
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  let status = 500;
+  if (
+    /not authorized|requires project admin|owned by another|only the owner|requires project member/.test(
+      lower
+    )
+  ) {
+    status = 403;
+  } else if (/not found/.test(lower)) {
+    status = 404;
+  } else if (
+    /already exists|already shared|already a personal|pick a different name|already have a skill/.test(
+      lower
+    )
+  ) {
+    status = 409;
+  } else if (/must be|is required|too large|invalid/.test(lower)) {
+    status = 400;
+  }
+  return new CloudSkillsError(message, status);
 }
 
-// ── public service operations ────────────────────────────────────────────
+async function run<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw mapConvexError(err);
+  }
+}
 
-export async function listCloudSkills(
+export function listCloudSkills(
+  ctx: CloudSkillsContext
+): Promise<CloudSkillListItem[]> {
+  return run(() => convexListSkills(ctx.authHeader, ctx.projectId));
+}
+
+export function getCloudSkill(
   ctx: CloudSkillsContext,
-): Promise<SkillListItem[]> {
-  return withSandbox(ctx, async (sandbox) => {
-    const out: SkillListItem[] = [];
-    const seen = new Set<string>();
-    for (const dir of SKILLS_DIRS) {
-      const entries = await safeList(sandbox, dir);
-      for (const entry of entries) {
-        if (entry.type !== "dir") continue;
-        const content = await readTextOrNull(
-          sandbox,
-          path.posix.join(dir, entry.name, "SKILL.md"),
-        );
-        if (!content) continue;
-        const skill = parseSkillFile(content, displayPath(dir, entry.name));
-        if (skill && !seen.has(skill.name)) {
-          seen.add(skill.name);
-          out.push(skillToListItem(skill));
-        }
-      }
-    }
-    return out;
-  });
+  skillId: string
+): Promise<CloudSkillDetail> {
+  return run(() => convexGetSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
-export async function getCloudSkill(
+export function getCloudSkillByName(
   ctx: CloudSkillsContext,
-  name: string,
-): Promise<Skill | null> {
-  return withSandbox(ctx, async (sandbox) => {
-    for (const dir of SKILLS_DIRS) {
-      const entries = await safeList(sandbox, dir);
-      for (const entry of entries) {
-        if (entry.type !== "dir") continue;
-        const content = await readTextOrNull(
-          sandbox,
-          path.posix.join(dir, entry.name, "SKILL.md"),
-        );
-        if (!content) continue;
-        const skill = parseSkillFile(content, displayPath(dir, entry.name));
-        if (skill && skill.name === name) return skill;
-      }
-    }
-    return null;
-  });
+  name: string
+): Promise<CloudSkillDetail | null> {
+  return run(() => convexGetSkillByName(ctx.authHeader, ctx.projectId, name));
 }
 
-export async function uploadCloudSkill(
+export function createCloudSkill(
   ctx: CloudSkillsContext,
-  data: { name: string; description: string; content: string },
-): Promise<Skill> {
-  if (!isValidSkillName(data.name)) {
-    throw new CloudSkillsError(
-      "name must contain only lowercase letters, numbers, and hyphens",
-      400,
-    );
+  data: {
+    name: string;
+    description: string;
+    content: string;
+    sharing?: SkillSharing;
   }
-  if (Buffer.byteLength(data.content, "utf8") > MAX_SKILL_FILE_BYTES) {
-    throw new CloudSkillsError(
-      `Skill content too large (max ${MAX_SKILL_FILE_BYTES / 1024 / 1024}MB)`,
-      400,
-    );
-  }
-  return withSandbox(ctx, async (sandbox) => {
-    if (await skillExists(sandbox, data.name)) {
-      throw new CloudSkillsError(`Skill '${data.name}' already exists`, 409);
-    }
-    const skillDir = path.posix.join(PRIMARY_SKILLS_DIR, data.name);
-    await sandbox.files.makeDir(skillDir);
-    const fileContent = generateSkillFileContent(
-      data.name,
-      data.description,
-      data.content,
-    );
-    await sandbox.files.write(path.posix.join(skillDir, "SKILL.md"), fileContent);
-    return {
-      name: data.name,
-      description: data.description,
-      content: data.content,
-      path: displayPath(PRIMARY_SKILLS_DIR, data.name),
-    };
-  });
-}
-
-export interface CloudSkillUploadFile {
-  /** Path of the file relative to the skill root (e.g. "scripts/run.py"). */
-  path: string;
-  bytes: Uint8Array;
-}
-
-export async function uploadCloudSkillFolder(
-  ctx: CloudSkillsContext,
-  skillName: string,
-  files: CloudSkillUploadFile[],
-): Promise<Skill> {
-  if (!isValidSkillName(skillName)) {
-    throw new CloudSkillsError(
-      "Skill name must contain only lowercase letters, numbers, and hyphens",
-      400,
-    );
-  }
-
-  // Enforce caps BEFORE touching the sandbox (cheap reject; bounds writes).
-  if (files.length === 0) {
-    throw new CloudSkillsError("No files uploaded", 400);
-  }
-  if (files.length > MAX_SKILL_FILES) {
-    throw new CloudSkillsError(
-      `Too many files (max ${MAX_SKILL_FILES})`,
-      400,
-    );
-  }
-  let total = 0;
-  for (const f of files) {
-    if (f.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new CloudSkillsError(
-        `File "${f.path}" too large (max ${MAX_SKILL_FILE_BYTES / 1024 / 1024}MB)`,
-        400,
-      );
-    }
-    total += f.bytes.byteLength;
-  }
-  if (total > MAX_SKILL_TOTAL_BYTES) {
-    throw new CloudSkillsError(
-      `Skill too large (max ${MAX_SKILL_TOTAL_BYTES / 1024 / 1024}MB total)`,
-      400,
-    );
-  }
-
-  // Normalize: an uploaded folder often nests everything under a single root
-  // dir, so SKILL.md arrives as `<root>/SKILL.md`. Strip that common prefix so
-  // SKILL.md lands at the skill root (where discovery looks) rather than
-  // succeeding with a buried SKILL.md that's then invisible. The client strips
-  // it today, but the service contract must own this.
-  const skillMdRaw = files.find(
-    (f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"),
+): Promise<CloudSkillDetail> {
+  return run(() =>
+    convexCreateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
   );
-  if (!skillMdRaw) {
-    throw new CloudSkillsError(
-      "No SKILL.md file found in uploaded files",
-      400,
-    );
+}
+
+export function updateCloudSkill(
+  ctx: CloudSkillsContext,
+  data: {
+    skillId: string;
+    name?: string;
+    description?: string;
+    content?: string;
   }
-  const rootPrefix = skillMdRaw.path.slice(
-    0,
-    skillMdRaw.path.length - "SKILL.md".length,
-  ); // "" or "<root>/"
-  const normalized: CloudSkillUploadFile[] = files.map((f) =>
-    rootPrefix && f.path.startsWith(rootPrefix)
-      ? { ...f, path: f.path.slice(rootPrefix.length) }
-      : f,
+): Promise<CloudSkillDetail> {
+  return run(() =>
+    convexUpdateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
   );
-  const skillMd = normalized.find((f) => f.path === "SKILL.md")!;
-
-  const parsed = parseSkillFile(
-    new TextDecoder().decode(skillMd.bytes),
-    skillName,
-  );
-  if (!parsed) {
-    throw new CloudSkillsError(
-      "Invalid SKILL.md format. Must contain valid frontmatter with 'name' and 'description' fields.",
-      400,
-    );
-  }
-  if (parsed.name !== skillName) {
-    throw new CloudSkillsError(
-      `Skill name mismatch: provided "${skillName}" but SKILL.md contains "${parsed.name}"`,
-      400,
-    );
-  }
-
-  return withSandbox(ctx, async (sandbox) => {
-    if (await skillExists(sandbox, skillName)) {
-      throw new CloudSkillsError(`Skill '${skillName}' already exists`, 409);
-    }
-    const skillDir = path.posix.join(PRIMARY_SKILLS_DIR, skillName);
-    await sandbox.files.makeDir(skillDir);
-
-    for (const file of normalized) {
-      // Security: never let an uploaded path escape the skill directory.
-      if (!isPathWithinDirectory(skillDir, file.path)) {
-        logger.warn(`Skipping skill file with invalid path: ${file.path}`);
-        continue;
-      }
-      const fullPath = path.posix.join(skillDir, file.path);
-      const parentDir = path.posix.dirname(fullPath);
-      if (parentDir !== skillDir) {
-        await sandbox.files.makeDir(parentDir);
-      }
-      // Copy into an exactly-sized ArrayBuffer (Buffer.slice would expose the
-      // pool) — same care as `harness/e2b-sandbox-provider.ts`.
-      const buf = new ArrayBuffer(file.bytes.byteLength);
-      new Uint8Array(buf).set(file.bytes);
-      await sandbox.files.write(fullPath, buf);
-    }
-
-    return {
-      name: parsed.name,
-      description: parsed.description,
-      content: parsed.content,
-      path: displayPath(PRIMARY_SKILLS_DIR, skillName),
-    };
-  });
 }
 
-export async function deleteCloudSkill(
+export function deleteCloudSkill(
   ctx: CloudSkillsContext,
-  name: string,
-): Promise<boolean> {
-  return withSandbox(ctx, async (sandbox) => {
-    const skillDir = await findSkillDir(sandbox, name);
-    if (!skillDir) return false;
-    await sandbox.files.remove(skillDir);
-    return true;
-  });
+  skillId: string
+): Promise<{ deleted: true }> {
+  return run(() => convexDeleteSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
-export async function listCloudSkillFiles(
+export function promoteCloudSkill(
   ctx: CloudSkillsContext,
-  name: string,
-): Promise<SkillFile[]> {
-  return withSandbox(ctx, async (sandbox) => {
-    const skillDir = await findSkillDir(sandbox, name);
-    if (!skillDir) {
-      throw new CloudSkillsError(`Skill '${name}' not found`, 404);
-    }
-    return listFilesRecursiveE2B(sandbox, skillDir);
-  });
-}
-
-export async function readCloudSkillFile(
-  ctx: CloudSkillsContext,
-  name: string,
-  filePath: string,
-): Promise<SkillFileContent> {
-  return withSandbox(ctx, async (sandbox) => {
-    const skillDir = await findSkillDir(sandbox, name);
-    if (!skillDir) {
-      throw new CloudSkillsError(`Skill '${name}' not found`, 404);
-    }
-    if (!isPathWithinDirectory(skillDir, filePath)) {
-      throw new CloudSkillsError("Invalid file path", 400);
-    }
-    const fullPath = path.posix.join(skillDir, filePath);
-
-    let info;
-    try {
-      info = await sandbox.files.getInfo(fullPath);
-    } catch (err) {
-      if (err instanceof FileNotFoundError) {
-        throw new CloudSkillsError("File not found", 404);
-      }
-      throw err;
-    }
-    if (info.type !== "file") {
-      throw new CloudSkillsError("Path is not a file", 400);
-    }
-
-    const mimeType = getMimeType(filePath);
-    const isText = isTextMimeType(mimeType);
-    const maxSize = isText ? 1024 * 1024 : 5 * 1024 * 1024;
-    if (info.size > maxSize) {
-      throw new CloudSkillsError(
-        `File too large (${(info.size / 1024 / 1024).toFixed(2)}MB). Maximum is ${maxSize / 1024 / 1024}MB`,
-        400,
-      );
-    }
-
-    const content: SkillFileContent = {
-      path: filePath,
-      name: path.posix.basename(filePath),
-      mimeType,
-      size: info.size,
-      isText,
-    };
-    if (isText) {
-      content.content = await sandbox.files.read(fullPath);
-    } else {
-      const bytes = await sandbox.files.read(fullPath, { format: "bytes" });
-      content.base64 = Buffer.from(bytes).toString("base64");
-    }
-    return content;
-  });
+  skillId: string
+): Promise<CloudSkillDetail> {
+  return run(() => convexPromoteSkill(ctx.authHeader, ctx.projectId, skillId));
 }

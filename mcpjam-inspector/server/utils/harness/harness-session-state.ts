@@ -47,6 +47,8 @@ export type HarnessSessionCommitPayload = {
   resumeState: unknown;
   computerId: string;
   runtimeFingerprint: string;
+  /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
+  skillsHash?: string;
 };
 
 export type HarnessClaimResult =
@@ -70,14 +72,13 @@ async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<
-  | { ok: true; payload: any }
-  | { ok: false; status: number; error: string }
+  { ok: true; payload: any } | { ok: false; status: number; error: string }
 > {
   const url = new URL(
     `/web/harness/session-state/${pathSuffix}`,
-    getConvexHttpUrl(),
+    getConvexHttpUrl()
   ).toString();
   const authorization = bearer.startsWith("Bearer ")
     ? bearer
@@ -92,7 +93,11 @@ async function postSessionState(
     });
   } catch (err) {
     logger.error(`[harness-session-state] ${pathSuffix} network error`, err);
-    return { ok: false, status: 502, error: "Failed to reach session-state endpoint" };
+    return {
+      ok: false,
+      status: 502,
+      error: "Failed to reach session-state endpoint",
+    };
   }
   let payload: any = null;
   try {
@@ -120,6 +125,9 @@ async function postSessionState(
 export async function claimHarnessSessionState(args: {
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
+  /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
+   *  backend reuses the stored hash (no resume churn). "" means an empty project. */
+  skillsHash?: string;
   leaseId: string;
   leasedBy: string;
   leaseTtlMs: number;
@@ -132,11 +140,12 @@ export async function claimHarnessSessionState(args: {
     {
       ...args.owner,
       runtimeFingerprint: args.runtimeFingerprint,
+      ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
     },
-    args.signal,
+    args.signal
   );
   if (!res.ok) return res;
   return {
@@ -200,6 +209,8 @@ export async function commitHarnessSessionState(args: {
   resumeState: unknown;
   computerId: string;
   runtimeFingerprint: string;
+  /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
+  skillsHash?: string;
   bearer: string;
 }): Promise<boolean> {
   const res = await postSessionState("commit", args.bearer, {
@@ -210,6 +221,7 @@ export async function commitHarnessSessionState(args: {
     resumeState: args.resumeState,
     computerId: args.computerId,
     runtimeFingerprint: args.runtimeFingerprint,
+    ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
   });
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });

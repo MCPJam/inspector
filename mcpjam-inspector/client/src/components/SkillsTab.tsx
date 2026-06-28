@@ -16,6 +16,7 @@ import {
   Check,
   Code,
   Eye,
+  Globe,
 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -26,6 +27,7 @@ import {
   deleteSkill,
   listSkillFiles,
   readSkillFile,
+  promoteSkill,
   type SkillsSource,
 } from "@/lib/apis/mcp-skills-api";
 import { HOSTED_MODE } from "@/lib/config";
@@ -57,20 +59,29 @@ interface SkillsTabProps {
   computersEnabled?: boolean;
 }
 
-export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) {
+export function SkillsTab({
+  projectId,
+  computersEnabled,
+}: SkillsTabProps = {}) {
   const posthog = usePostHog();
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
   const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
   const [source, setSource] = useState<"local" | "cloud">(
-    HOSTED_MODE ? "cloud" : "local",
+    HOSTED_MODE ? "cloud" : "local"
   );
+  const isCloudMode = HOSTED_MODE || source === "cloud";
+  // Cloud skills are a project resource. Without a project id we must NOT fall
+  // back to the local FS API — in hosted mode those routes don't exist, so the
+  // page would silently list empty "local" skills and uploads/deletes would
+  // 404. Treat cloud-without-project as an explicit not-ready state instead.
+  const cloudNotReady = isCloudMode && !projectId;
   const skillsSource: SkillsSource = useMemo(
     () =>
-      source === "cloud" && projectId
+      isCloudMode && projectId
         ? { kind: "cloud", projectId }
         : { kind: "local" },
-    [source, projectId],
+    [isCloudMode, projectId]
   );
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
@@ -133,6 +144,15 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
   }, [selectedSkillName, selectedFilePath]);
 
   const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
+    // Never call the skills API in cloud mode without a project — see
+    // `cloudNotReady`. Show an empty, explicit state rather than a local fallback.
+    if (cloudNotReady) {
+      setSkills([]);
+      setSelectedSkillName("");
+      setSelectedSkill(null);
+      setFetchingSkills(false);
+      return;
+    }
     setFetchingSkills(true);
 
     try {
@@ -186,7 +206,7 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
         setLoadingFiles((prev) => ({ ...prev, [name]: false }));
       }
     },
-    [skillFiles, skillsSource],
+    [skillFiles, skillsSource]
   );
 
   const fetchFileContent = async (name: string, filePath: string) => {
@@ -240,6 +260,24 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
   const handleSkillCreated = () => {
     fetchSkills();
     setIsUploadDialogOpen(false);
+  };
+
+  // The list item for the selected skill carries cloud metadata (sharing/origin)
+  // that the detail `Skill` doesn't.
+  const selectedItem = skills.find((s) => s.name === selectedSkillName);
+
+  const handlePromote = async () => {
+    if (!projectId || !selectedItem) return;
+    try {
+      await promoteSkill(selectedItem.name, projectId);
+      posthog.capture("skill_promoted", {
+        ...standardEventProps("skills_tab"),
+        skill_name: selectedItem.name,
+      });
+      await fetchSkills();
+    } catch (err) {
+      console.error("Error promoting skill:", err);
+    }
   };
 
   const handleSelectSkill = (name: string) => {
@@ -308,6 +346,7 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                   variant="ghost"
                   size="sm"
                   title="Upload skill"
+                  disabled={cloudNotReady}
                 >
                   <Plus className="h-3 w-3 cursor-pointer" />
                 </Button>
@@ -318,7 +357,9 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                   disabled={fetchingSkills}
                 >
                   <RefreshCw
-                    className={`h-3 w-3 ${fetchingSkills ? "animate-spin" : ""} cursor-pointer`}
+                    className={`h-3 w-3 ${
+                      fetchingSkills ? "animate-spin" : ""
+                    } cursor-pointer`}
                   />
                 </Button>
               </div>
@@ -346,6 +387,7 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                         variant="outline"
                         size="sm"
                         onClick={() => setIsUploadDialogOpen(true)}
+                        disabled={cloudNotReady}
                       >
                         <Plus className="h-3 w-3 mr-2" />
                         Upload your first skill
@@ -384,6 +426,18 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                       <span className="font-medium text-sm text-foreground truncate">
                         {selectedSkill.name}
                       </span>
+                      {selectedItem && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] uppercase tracking-wide flex-shrink-0"
+                        >
+                          {selectedItem.origin === "cloud"
+                            ? selectedItem.sharing === "project"
+                              ? "Shared"
+                              : "Personal"
+                            : "Local"}
+                        </Badge>
+                      )}
                       {selectedFilePath === "SKILL.md" ? (
                         <span
                           className="text-xs text-muted-foreground/60 font-mono truncate"
@@ -406,7 +460,9 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                           onClick={() =>
                             setDescriptionExpanded(!descriptionExpanded)
                           }
-                          className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${descriptionExpanded ? "" : "line-clamp-1"}`}
+                          className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${
+                            descriptionExpanded ? "" : "line-clamp-1"
+                          }`}
                         >
                           {selectedSkill.description}
                         </p>
@@ -444,6 +500,18 @@ export function SkillsTab({ projectId, computersEnabled }: SkillsTabProps = {}) 
                         )}
                       </Button>
                     )}
+                    {selectedItem?.origin === "cloud" &&
+                      selectedItem.sharing === "user" && (
+                        <Button
+                          onClick={handlePromote}
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="Promote to project (share with all members)"
+                        >
+                          <Globe className="h-4 w-4" />
+                        </Button>
+                      )}
                     <Button
                       onClick={() => setSkillToDelete(selectedSkill.name)}
                       variant="ghost"
