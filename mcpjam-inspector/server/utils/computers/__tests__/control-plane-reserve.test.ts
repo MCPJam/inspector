@@ -10,9 +10,11 @@ import type { ExecutionScope } from "../../execution-scope.js";
  */
 describe("reserveComputer body (Phase 3 executionScope)", () => {
   const realFetch = global.fetch;
+  let previousConvexHttpUrl: string | undefined;
   let bodies: unknown[];
 
   beforeEach(() => {
+    previousConvexHttpUrl = process.env.CONVEX_HTTP_URL;
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     bodies = [];
     global.fetch = vi.fn(async (_url: unknown, init: { body: string }) => {
@@ -25,6 +27,11 @@ describe("reserveComputer body (Phase 3 executionScope)", () => {
   });
 
   afterEach(() => {
+    if (previousConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = previousConvexHttpUrl;
+    }
     global.fetch = realFetch;
     vi.restoreAllMocks();
   });
