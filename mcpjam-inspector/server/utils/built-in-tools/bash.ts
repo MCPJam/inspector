@@ -24,6 +24,7 @@
  */
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
+import { type ExecutionScope } from "../execution-scope.js";
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { execViaRemoteDataPlane } from "../computers/remote-data-plane.js";
 import {
@@ -42,6 +43,11 @@ export interface BashToolOptions {
   authHeader: string;
   /** Project whose (project, user) computer this turn runs on. */
   projectId: string;
+  /**
+   * Phase 3 execution scope from the server-resolved runtime config; forwarded
+   * to the reserve call so the backend re-resolves live access. Absent ⇒ legacy.
+   */
+  executionScope?: ExecutionScope;
   /** Host-pinned initial working directory, if any. */
   workdir?: string;
   /** Mirrors the host's requireToolApproval — a root shell must honor it. */
@@ -85,6 +91,7 @@ export function buildBashTool(
       const execArgs = {
         authHeader: opts.authHeader,
         projectId: opts.projectId,
+        executionScope: opts.executionScope,
         command,
         commandId: toolCallId,
         workdir: opts.workdir,

@@ -15,8 +15,9 @@
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger.js";
+import { type RuntimeExecutionFields } from "./execution-scope.js";
 
-export type ChatboxRuntimeConfig = {
+export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
   chatboxId: string;
   accessVersion: number;
   modelId: string;

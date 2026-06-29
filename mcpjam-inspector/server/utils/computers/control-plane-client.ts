@@ -16,6 +16,7 @@
  *   terminal-sessions shared-secret auth — session open/close records
  */
 import { logger } from "../logger.js";
+import { type ExecutionScope } from "../execution-scope.js";
 
 const SECRET_HEADER = "x-computers-data-plane-secret";
 
@@ -165,16 +166,25 @@ export async function releaseEvalSandbox(args: {
   }
 }
 
-/** Reserve/wake the acting user's computer (user-bearer auth). */
+/**
+ * Reserve/wake the acting user's computer (user-bearer auth). Phase 3: when an
+ * `executionScope` is supplied (from runtime-config), send it so the backend
+ * re-resolves live access and applies per-swarm isolation/caps; otherwise fall
+ * back to the legacy `{ projectId }` body. The scope is opaque to the client —
+ * the backend is authoritative.
+ */
 export async function reserveComputer(args: {
   bearer: string;
   projectId: string;
+  executionScope?: ExecutionScope;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ReservedComputer>> {
   return postJson<ReservedComputer>(
     "/computers/reserve",
     bearerHeader(args.bearer),
-    { projectId: args.projectId },
+    args.executionScope
+      ? { executionScope: args.executionScope }
+      : { projectId: args.projectId },
     args.signal
   );
 }
@@ -256,6 +266,8 @@ export async function recordTerminalSession(args: {
 export async function ensureComputerReady(args: {
   bearer: string;
   projectId: string;
+  /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
+  executionScope?: ExecutionScope;
   signal?: AbortSignal;
   /** Overall budget. E2B cold provision is seconds; waking ~1s. */
   timeoutMs?: number;
