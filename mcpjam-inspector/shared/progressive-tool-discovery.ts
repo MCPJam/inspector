@@ -569,13 +569,22 @@ export function shouldForceInitialToolSearch(
   state: ToolDiscoveryState | undefined,
   stepIndex: number,
 ): boolean {
+  if (plan?.enabled !== true || state === undefined || stepIndex !== 0) {
+    return false;
+  }
+
+  const knownToolIds = new Set(plan.catalog.map((entry) => entry.toolId));
+  const hasKnownToolId = (ids: ReadonlySet<string>) => {
+    for (const id of ids) {
+      if (knownToolIds.has(id)) return true;
+    }
+    return false;
+  };
+
   return (
-    plan?.enabled === true &&
-    state !== undefined &&
-    stepIndex === 0 &&
-    state.loadedToolIds.size === 0 &&
-    state.newlyLoadedToolIds.size === 0 &&
-    state.pendingApprovalToolIds.size === 0
+    !hasKnownToolId(state.loadedToolIds) &&
+    !hasKnownToolId(state.newlyLoadedToolIds) &&
+    !hasKnownToolId(state.pendingApprovalToolIds)
   );
 }
 

@@ -390,14 +390,27 @@ describe("shouldForceInitialToolSearch", () => {
     );
   });
 
-  it("does not force when a real tool is already loaded or pending", () => {
+  it("does not force when a real tool is already loaded, newly loaded, or pending", () => {
     const loadedState = createDiscoveryState();
     loadedState.loadedToolIds.add(plan.catalog[0].toolId);
     expect(shouldForceInitialToolSearch(plan, loadedState, 0)).toBe(false);
 
+    const newlyLoadedState = createDiscoveryState();
+    newlyLoadedState.newlyLoadedToolIds.add(plan.catalog[0].toolId);
+    expect(shouldForceInitialToolSearch(plan, newlyLoadedState, 0)).toBe(false);
+
     const pendingState = createDiscoveryState();
     pendingState.pendingApprovalToolIds.add(plan.catalog[0].toolId);
     expect(shouldForceInitialToolSearch(plan, pendingState, 0)).toBe(false);
+  });
+
+  it("ignores stale unknown ids when deciding whether to force search", () => {
+    const state = createDiscoveryState();
+    state.loadedToolIds.add("ghost::loaded");
+    state.newlyLoadedToolIds.add("ghost::new");
+    state.pendingApprovalToolIds.add("ghost::pending");
+
+    expect(shouldForceInitialToolSearch(plan, state, 0)).toBe(true);
   });
 
   it("does not force when progressive discovery is disabled", () => {

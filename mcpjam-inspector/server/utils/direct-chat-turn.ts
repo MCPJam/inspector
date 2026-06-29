@@ -665,6 +665,7 @@ export function runDirectChatTurn(
         stepOptions.activeTools = activeToolNames;
       }
       if (
+        toolChoice === undefined &&
         shouldForceInitialToolSearch(
           progressivePlan,
           discoveryState,
