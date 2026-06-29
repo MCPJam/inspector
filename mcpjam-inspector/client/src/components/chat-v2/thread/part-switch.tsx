@@ -199,13 +199,17 @@ export function PartSwitch({
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
     null
   );
-  // `fromRun` distinguishes a fresh server Run result (pass through verbatim,
-  // keeping its own _meta / toolResponseMetadata) from a manual JSON edit
-  // (pin _meta to the original so a hand-edit can't repoint metadata).
-  const [editedOutput, setEditedOutput] = useState<{
-    value: unknown;
-    fromRun: boolean;
-  } | null>(null);
+  // Manual hand-edits to the Result JSON (null = none).
+  const [editedOutput, setEditedOutput] = useState<{ value: unknown } | null>(
+    null
+  );
+  // The most recent server Run result, kept as the metadata anchor: it becomes
+  // the base whose _meta / toolResponseMetadata applies to later manual edits,
+  // so "Run, then tweak the result" keeps the latest run's metadata, not the
+  // original tool result's.
+  const [lastRunOutput, setLastRunOutput] = useState<{ value: unknown } | null>(
+    null
+  );
   const [isRunning, setIsRunning] = useState(false);
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
   // Run-result swap / new tool call). Keystroke edits never bump it.
@@ -224,7 +228,7 @@ export function PartSwitch({
     []
   );
   const handleOutputChange = useCallback(
-    (value: unknown) => setEditedOutput({ value, fromRun: false }),
+    (value: unknown) => setEditedOutput({ value }),
     []
   );
   // The input editor reports its parse state on every keystroke (null = valid).
@@ -240,6 +244,7 @@ export function PartSwitch({
     runSeqRef.current += 1;
     setEditedInput(null);
     setEditedOutput(null);
+    setLastRunOutput(null);
     setIsRunning(false);
     setInputInvalid(false);
     setEditVersion((v) => v + 1);
@@ -251,6 +256,7 @@ export function PartSwitch({
     setIsEditing(false);
     setEditedInput(null);
     setEditedOutput(null);
+    setLastRunOutput(null);
     setIsRunning(false);
     setInputInvalid(false);
     setEditVersion((v) => v + 1);
@@ -304,34 +310,42 @@ export function PartSwitch({
         ? editedInput.value
         : baseInput
       : baseInput;
-    const baseOutput = resolvedToolOutput;
+    // Metadata anchor: the latest server Run result if one has happened this
+    // session, else the original tool result. Its _meta applies to manual edits
+    // and is the raw-output meta source, so "Run, then tweak the result" keeps
+    // the latest run's toolResponseMetadata rather than reverting to the
+    // original's.
+    const metaAnchor = lastRunOutput ? lastRunOutput.value : resolvedToolOutput;
     const effectiveOutput = (() => {
-      if (!editedOutput) return baseOutput;
-      const edited = editedOutput.value;
-      // A fresh server Run result is a real tool result — pass it through
-      // verbatim so its own _meta / toolResponseMetadata reaches the widget.
-      if (editedOutput.fromRun) return edited;
-      // Manual hand-edits: tool results are always objects (CallToolResult).
-      // Ignore non-object / null edits for rendering and fall back to the
-      // original (the renderer coalesces a null `toolOutput` back to `rawOutput`
-      // and the streaming hook skips falsy output, so feeding null would
-      // silently diverge the widget from the editor). Object edits flow through
-      // with `_meta` pinned to the original so a hand-edit can't repoint the
-      // binding or change toolResponseMetadata.
-      if (!isPlainObject(edited)) return baseOutput;
-      return isPlainObject(baseOutput)
-        ? { ...edited, _meta: baseOutput._meta }
-        : edited;
+      // Manual hand-edit takes precedence over the displayed result.
+      if (editedOutput) {
+        const edited = editedOutput.value;
+        // Tool results are always objects (CallToolResult). Ignore non-object /
+        // null edits for rendering and fall back to the anchor (the renderer
+        // coalesces a null `toolOutput` back to `rawOutput` and the streaming
+        // hook skips falsy output, so feeding null would silently diverge the
+        // widget from the editor). Object edits flow through with `_meta` pinned
+        // to the anchor so a hand-edit can't repoint the binding or change
+        // toolResponseMetadata directly.
+        if (!isPlainObject(edited)) return metaAnchor;
+        return isPlainObject(metaAnchor)
+          ? { ...edited, _meta: metaAnchor._meta }
+          : edited;
+      }
+      // No manual edit: show the latest run result verbatim (fresh _meta), or
+      // the original tool result.
+      return metaAnchor;
     })();
-    // WidgetReplay derives toolResponseMetadata from rawOutput first, so a fresh
-    // Run result must also become the raw-output meta source — otherwise the
-    // widget would pair the new result with the original's metadata. Binding
-    // (resourceUri) stays stable because WidgetReplay receives the original
-    // `effectiveToolMeta` via its toolMetadata prop.
-    const effectiveRawOutput = editedOutput?.fromRun
-      ? editedOutput.value
+    // WidgetReplay derives toolResponseMetadata from rawOutput first, so the
+    // metadata anchor must also be the raw-output meta source — otherwise a run
+    // result (or a tweak of it) would pair with the original's metadata.
+    // Binding (resourceUri) stays stable because WidgetReplay receives the
+    // original `effectiveToolMeta` via its toolMetadata prop.
+    const effectiveRawOutput = lastRunOutput
+      ? lastRunOutput.value
       : toolInfo.rawOutput;
-    const hasEdits = editedInput !== null || editedOutput !== null;
+    const hasEdits =
+      editedInput !== null || editedOutput !== null || lastRunOutput !== null;
 
     const isServerConnected =
       !!serverId &&
@@ -386,7 +400,9 @@ export function PartSwitch({
           toast.error("Background tasks are not supported here");
           return;
         }
-        setEditedOutput({ value: res.result, fromRun: true });
+        // The run supersedes any manual output edit; anchor metadata to it.
+        setLastRunOutput({ value: res.result });
+        setEditedOutput(null);
         setEditVersion((v) => v + 1);
       } catch (err) {
         if (runSeqRef.current === seq) {
