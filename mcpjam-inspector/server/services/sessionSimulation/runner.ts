@@ -548,7 +548,16 @@ async function runOneSession(args: {
     // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
     // harness path (it delivers skills itself), so this only wires the emulated
     // tools, mirroring `web/chat-v2.ts`.
+    //
+    // BUT skip skills entirely when the chatbox requires tool approval. A
+    // synthetic visitor is headless and can't grant approval: the local-runtime
+    // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
+    // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
+    // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
+    // tools, even for a project with no skills) would turn an otherwise-toolless
+    // approval simulation into one that fails every session for no benefit.
     const cloudSkillsEnabled =
+      !requireToolApproval &&
       Boolean(authHeader) &&
       Boolean(projectId) &&
       shouldEnableCloudSkillTools({

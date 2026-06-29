@@ -444,6 +444,19 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(prepareOpts.cloudSkills).toBeUndefined();
   });
 
+  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
+    // on any non-empty tool set, so the always-present listSkills/loadSkill
+    // meta-tools must not be injected when requireToolApproval is on.
+    await startSimulation({ ...baseOptions(), requireToolApproval: true });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
   it("disposes the context when the turn throws (session failure path)", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
