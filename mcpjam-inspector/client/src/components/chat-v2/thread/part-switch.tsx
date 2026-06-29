@@ -199,9 +199,13 @@ export function PartSwitch({
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
     null
   );
-  const [editedOutput, setEditedOutput] = useState<{ value: unknown } | null>(
-    null
-  );
+  // `fromRun` distinguishes a fresh server Run result (pass through verbatim,
+  // keeping its own _meta / toolResponseMetadata) from a manual JSON edit
+  // (pin _meta to the original so a hand-edit can't repoint metadata).
+  const [editedOutput, setEditedOutput] = useState<{
+    value: unknown;
+    fromRun: boolean;
+  } | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
   // Run-result swap / new tool call). Keystroke edits never bump it.
@@ -220,7 +224,7 @@ export function PartSwitch({
     []
   );
   const handleOutputChange = useCallback(
-    (value: unknown) => setEditedOutput({ value }),
+    (value: unknown) => setEditedOutput({ value, fromRun: false }),
     []
   );
   // The input editor reports its parse state on every keystroke (null = valid).
@@ -304,19 +308,29 @@ export function PartSwitch({
     const effectiveOutput = (() => {
       if (!editedOutput) return baseOutput;
       const edited = editedOutput.value;
-      // Tool results are always objects (CallToolResult). Ignore non-object /
-      // null edits for rendering and fall back to the original: the renderer
-      // coalesces a null `toolOutput` back to `rawOutput` and the streaming
-      // hook skips falsy output, so feeding null would silently diverge the
-      // widget from the editor. Object edits flow through with `_meta` pinned
-      // to the original (edits can never repoint the binding or leak into
-      // toolResponseMetadata; binding also derives from rawOutput, which we
-      // never override).
+      // A fresh server Run result is a real tool result — pass it through
+      // verbatim so its own _meta / toolResponseMetadata reaches the widget.
+      if (editedOutput.fromRun) return edited;
+      // Manual hand-edits: tool results are always objects (CallToolResult).
+      // Ignore non-object / null edits for rendering and fall back to the
+      // original (the renderer coalesces a null `toolOutput` back to `rawOutput`
+      // and the streaming hook skips falsy output, so feeding null would
+      // silently diverge the widget from the editor). Object edits flow through
+      // with `_meta` pinned to the original so a hand-edit can't repoint the
+      // binding or change toolResponseMetadata.
       if (!isPlainObject(edited)) return baseOutput;
       return isPlainObject(baseOutput)
         ? { ...edited, _meta: baseOutput._meta }
         : edited;
     })();
+    // WidgetReplay derives toolResponseMetadata from rawOutput first, so a fresh
+    // Run result must also become the raw-output meta source — otherwise the
+    // widget would pair the new result with the original's metadata. Binding
+    // (resourceUri) stays stable because WidgetReplay receives the original
+    // `effectiveToolMeta` via its toolMetadata prop.
+    const effectiveRawOutput = editedOutput?.fromRun
+      ? editedOutput.value
+      : toolInfo.rawOutput;
     const hasEdits = editedInput !== null || editedOutput !== null;
 
     const isServerConnected =
@@ -372,7 +386,7 @@ export function PartSwitch({
           toast.error("Background tasks are not supported here");
           return;
         }
-        setEditedOutput({ value: res.result });
+        setEditedOutput({ value: res.result, fromRun: true });
         setEditVersion((v) => v + 1);
       } catch (err) {
         if (runSeqRef.current === seq) {
@@ -536,7 +550,7 @@ export function PartSwitch({
               toolState={toolInfo.toolState}
               toolInput={effectiveInput}
               toolOutput={effectiveOutput}
-              rawOutput={toolInfo.rawOutput}
+              rawOutput={effectiveRawOutput}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
               toolsMetadata={toolsMetadata}
