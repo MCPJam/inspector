@@ -77,6 +77,7 @@ export function ToolPart({
   onToggleEdit,
   onInputChange,
   onOutputChange,
+  onInputValidityChange,
   inputValue,
   outputValue,
   hasEdits,
@@ -84,6 +85,7 @@ export function ToolPart({
   onRun,
   isRunning,
   canRun,
+  runDisabledReason,
   editVersion,
   minimalMode = false,
 }: {
@@ -113,6 +115,8 @@ export function ToolPart({
   onInputChange?: (value: unknown) => void;
   /** Lift edited tool output (valid JSON only) to the parent. */
   onOutputChange?: (value: unknown) => void;
+  /** Report the input editor's parse state (true = valid JSON). */
+  onInputValidityChange?: (valid: boolean) => void;
   /** Effective input shown in the editor — exactly what the widget receives. */
   inputValue?: unknown;
   /** Effective output shown in the editor — exactly what the widget receives. */
@@ -125,8 +129,10 @@ export function ToolPart({
   onRun?: () => void;
   /** Whether a Run is in flight. */
   isRunning?: boolean;
-  /** Whether Run is available (server connected). */
+  /** Whether Run is available (server connected, input valid). */
   canRun?: boolean;
+  /** Tooltip text explaining why Run is disabled, if it is. */
+  runDisabledReason?: string;
   /** Bumped by the parent to remount + reseed the editors on a hard reset. */
   editVersion?: number;
   minimalMode?: boolean;
@@ -479,7 +485,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : "Connect the server to run"}
+                  : runDisabledReason ?? "Re-run tool with edited input"}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -551,6 +557,8 @@ export function ToolPart({
                   onModeChange: () => {},
                   showModeToggle: false,
                   onChange: onInputChange,
+                  onValidationError: (error: string | null) =>
+                    onInputValidityChange?.(error === null),
                 }
               : { viewOnly: true })}
           />

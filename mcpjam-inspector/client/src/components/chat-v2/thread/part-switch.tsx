@@ -206,6 +206,10 @@ export function PartSwitch({
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
   // Run-result swap / new tool call). Keystroke edits never bump it.
   const [editVersion, setEditVersion] = useState(0);
+  // True while the input editor holds unparseable JSON. The editor only emits
+  // onChange on a valid parse, so without this Run could execute the last valid
+  // value while the editor visibly shows broken JSON.
+  const [inputInvalid, setInputInvalid] = useState(false);
   // Monotonic token invalidating in-flight Runs. Bumped on every Run start and
   // on any reset (Revert / new tool call / display-mode switch) so a server
   // response that lands after the context changed can't write stale output.
@@ -219,6 +223,11 @@ export function PartSwitch({
     (value: unknown) => setEditedOutput({ value }),
     []
   );
+  // The input editor reports its parse state on every keystroke (null = valid).
+  const handleInputValidityChange = useCallback(
+    (valid: boolean) => setInputInvalid(!valid),
+    []
+  );
   const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
   const handleRevert = useCallback(() => {
     // Bumping runSeqRef invalidates any in-flight Run, whose guarded `finally`
@@ -228,6 +237,7 @@ export function PartSwitch({
     setEditedInput(null);
     setEditedOutput(null);
     setIsRunning(false);
+    setInputInvalid(false);
     setEditVersion((v) => v + 1);
   }, []);
 
@@ -238,6 +248,7 @@ export function PartSwitch({
     setEditedInput(null);
     setEditedOutput(null);
     setIsRunning(false);
+    setInputInvalid(false);
     setEditVersion((v) => v + 1);
   }, [toolCallId, displayMode]);
 
@@ -311,6 +322,12 @@ export function PartSwitch({
     const isServerConnected =
       !!serverId &&
       appState.servers[serverId]?.connectionStatus === "connected";
+    // Run must execute exactly what the input editor shows. Block it when the
+    // editor holds invalid JSON (onChange never fired, so effectiveInput is
+    // stale) or a valid-but-non-object root (effectiveInput fell back to the
+    // original) — otherwise Run would send something other than what's visible.
+    const inputEditedToNonObject =
+      editedInput !== null && !isPlainObject(editedInput.value);
     // Frozen eval replays render a screenshot (no live iframe) → no inline edit.
     const allowInlineEdit =
       interactive &&
@@ -318,7 +335,19 @@ export function PartSwitch({
       !minimalMode &&
       !renderOverride?.frozenScreenshotUrl &&
       toolInfo.toolState === "output-available";
-    const canRun = allowInlineEdit && isServerConnected && !isRunning;
+    const canRun =
+      allowInlineEdit &&
+      isServerConnected &&
+      !isRunning &&
+      !inputInvalid &&
+      !inputEditedToNonObject;
+    const runDisabledReason = !isServerConnected
+      ? "Connect the server to run"
+      : inputInvalid
+        ? "Fix the invalid input JSON to run"
+        : inputEditedToNonObject
+          ? "Input must be a JSON object to run"
+          : undefined;
 
     const handleRun = async () => {
       if (!serverId) return;
@@ -410,6 +439,7 @@ export function PartSwitch({
             onToggleEdit={handleToggleEdit}
             onInputChange={handleInputChange}
             onOutputChange={handleOutputChange}
+            onInputValidityChange={handleInputValidityChange}
             inputValue={effectiveInput}
             outputValue={effectiveOutput}
             hasEdits={hasEdits}
@@ -417,6 +447,7 @@ export function PartSwitch({
             onRun={handleRun}
             isRunning={isRunning}
             canRun={canRun}
+            runDisabledReason={runDisabledReason}
             editVersion={editVersion}
             minimalMode={minimalMode}
             {...approvalProps}
