@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
@@ -286,7 +286,12 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider
         ),
-        modelId: String(modelDefinition.id),
+        // Canonical id so the adapter's supportsModel check sees the prefixed
+        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
+        modelId: getCanonicalModelId(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
       });
       if (!availability.ok) {
         throw new WebRouteError(

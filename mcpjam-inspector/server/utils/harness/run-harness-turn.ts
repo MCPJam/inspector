@@ -58,6 +58,7 @@ import type {
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
+import { getCanonicalModelId } from "@/shared/types";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
@@ -196,7 +197,8 @@ export async function runHarnessTurn(
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
-    modelId,
+    modelId: rawModelId,
+    provider,
     systemPrompt,
     authHeader,
     projectId,
@@ -218,6 +220,12 @@ export async function runHarnessTurn(
     harness,
     builtInTools,
   } = options;
+  // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
+  // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
+  // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
+  // attribution, fingerprint — relies on the canonical form, so a bare id can't
+  // make Codex silently fall back to its default model.
+  const modelId = getCanonicalModelId(rawModelId, provider);
   // The harness adapter declares the per-harness bits (auth, native model
   // mapping, MCP delivery, tool-name attribution, file-change naming, approval,
   // skills). runHarnessTurn stays harness-agnostic and reads capabilities off it.

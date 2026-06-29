@@ -8,6 +8,7 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
+  getCanonicalModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -578,7 +579,12 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider
         ),
-        modelId: String(modelDefinition.id),
+        // Canonical id so the adapter's supportsModel check sees the prefixed
+        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
+        modelId: getCanonicalModelId(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
       });
       if (!availability.ok) {
         return c.json(
