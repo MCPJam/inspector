@@ -275,9 +275,16 @@ export function PartSwitch({
       : toolInfo.output ?? toolInfo.rawOutput;
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
-    const effectiveInput = (editedInput
-      ? (editedInput.value as Record<string, unknown> | null)
-      : toolInfo.input ?? null) as Record<string, unknown> | null;
+    const baseInput = (toolInfo.input ?? null) as Record<string, unknown> | null;
+    // Tool input is an arguments object. Mirror the output normalization: ignore
+    // non-object edits (null / array / string) for BOTH the live widget feed and
+    // Run, falling back to the original — otherwise the preview could render one
+    // payload while Run executes a coerced `{}`. They must stay identical.
+    const effectiveInput: Record<string, unknown> | null = editedInput
+      ? isPlainObject(editedInput.value)
+        ? editedInput.value
+        : baseInput
+      : baseInput;
     const baseOutput = resolvedToolOutput;
     const effectiveOutput = (() => {
       if (!editedOutput) return baseOutput;
