@@ -915,7 +915,7 @@ export function TraceViewer({
                     onToolApprovalResponse={onToolApprovalResponse}
                     toolRenderOverrides={toolRenderOverrides}
                     appToolInvocationsOverride={appToolInvocationsOverride}
-                    showSaveViewButton={false}
+                    showInlineEdit={false}
                     minimalMode={true}
                     interactive={threadInteractive}
                     recorder={recorder}

@@ -30,6 +30,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
@@ -319,6 +320,17 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    // Phase 3: the server-resolved runtime config (chatbox OR host-by-id) carries
+    // an opaque executionScope; thread it into the computer-backed (bash) tool so
+    // the reserve call re-resolves live access (per-swarm isolation/caps). Absent
+    // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
+    const executionScope = (
+      hostRuntimeConfig as
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
+    )?.executionScope;
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -331,6 +343,7 @@ chatV2.post("/", async (c) => {
       {
         authHeader: bearerToken,
         projectId: hostedBody.projectId,
+        ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
         isChatboxSession,

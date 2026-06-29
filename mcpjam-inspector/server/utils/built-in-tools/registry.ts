@@ -42,6 +42,7 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
+import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
@@ -54,6 +55,13 @@ export interface BuiltInToolContext {
   authHeader: string;
   /** Project the built-in tool's usage bills against / executes in. */
   projectId: string;
+  /**
+   * Phase 3 execution scope from the server-resolved runtime config. Threaded
+   * into the computer-backed (bash) reserve call so the backend re-resolves
+   * live access and applies per-swarm isolation/caps. Absent ⇒ legacy
+   * `projectId` reserve (a backend that predates Phase 3, or a non-computer turn).
+   */
+  executionScope?: ExecutionScope;
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
   /**
@@ -177,6 +185,10 @@ export function resolveHostTools(
       out[BASH_TOOL_NAME] = buildBashTool({
         authHeader,
         projectId: ctx.projectId,
+        // Phase 3: thread the server-resolved execution scope so the reserve
+        // call re-resolves live access (per-swarm isolation/caps). Absent ⇒
+        // legacy projectId reserve.
+        ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
         workdir: computer.workdir,
         requireToolApproval: ctx.requireToolApproval,
       });

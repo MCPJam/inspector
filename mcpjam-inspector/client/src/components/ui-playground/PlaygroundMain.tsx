@@ -307,7 +307,7 @@ interface PlaygroundMainProps {
   onTimeZoneChange?: (timeZone: string) => void;
   // View-mode controls
   disableChatInput?: boolean;
-  hideSaveViewButton?: boolean;
+  hideInlineEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -453,7 +453,7 @@ export function PlaygroundMain({
     "UTC",
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
-  hideSaveViewButton = false,
+  hideInlineEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
@@ -3410,10 +3410,10 @@ export function PlaygroundMain({
                 onFullscreenChange={setIsWidgetFullscreen}
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
-                showSaveViewButton={!hideSaveViewButton}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
                 }
+                showInlineEdit={!hideInlineEdit}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -3740,7 +3740,7 @@ export function PlaygroundMain({
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={effectiveThreadTheme}
                           deviceType={storeDeviceType}
-                          hideSaveViewButton={hideSaveViewButton}
+                          hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}
                           isExecuting={isExecuting}
@@ -3830,7 +3830,7 @@ export function PlaygroundMain({
                             hostStyle={hostStyle}
                             effectiveThreadTheme={effectiveThreadTheme}
                             deviceType={storeDeviceType}
-                            hideSaveViewButton={hideSaveViewButton}
+                            hideInlineEdit={hideInlineEdit}
                             onWidgetStateChange={onWidgetStateChange}
                             toolRenderOverrides={externalToolRenderOverrides}
                             isExecuting={isExecuting}

@@ -69,6 +69,7 @@ import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callb
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
+import { type ExecutionScope } from "../../utils/execution-scope.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -631,6 +632,16 @@ chatV2.post("/", async (c) => {
     // requests without either (anonymous local mode, no project) omit the
     // tools — same degradation as a host that never enabled them.
     const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
+    // Phase 3: thread the server-resolved runtime config's executionScope into
+    // the computer-backed (bash) tool so the reserve call re-resolves live
+    // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
+    const executionScope = (
+      hostRuntimeConfig as
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
+    )?.executionScope;
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -644,6 +655,7 @@ chatV2.post("/", async (c) => {
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
               : {}),

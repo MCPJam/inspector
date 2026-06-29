@@ -10,11 +10,13 @@ vi.mock("lucide-react", () => {
     Check: s,
     ChevronDown: s,
     Database: s,
-    Layers: s,
     Loader2: s,
     Maximize2: s,
     MessageCircle: s,
+    Pencil: s,
     PictureInPicture2: s,
+    Play: s,
+    RotateCcw: s,
     Shield: s,
     ShieldCheck: s,
     ShieldX: s,
@@ -145,70 +147,32 @@ describe("ToolPart approval expansion", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not show a one-time save hint above save view", () => {
+  it("shows an Edit control when inline edit is allowed", () => {
+    render(<ToolPart part={basePart as any} uiType="mcp-apps" allowInlineEdit />);
+
+    expect(
+      screen.getByRole("button", { name: /edit input and output/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("toggles edit mode via onToggleEdit when the Edit control is clicked", async () => {
+    const user = userEvent.setup();
+    const onToggleEdit = vi.fn();
+
     render(
       <ToolPart
         part={basePart as any}
         uiType="mcp-apps"
-        onSaveView={() => {}}
-        canSaveView
-      />
+        allowInlineEdit
+        onToggleEdit={onToggleEdit}
+      />,
     );
 
-    expect(
-      screen.queryByText("Like how it looks? Save it.")
-    ).not.toBeInTheDocument();
-  });
-
-  it("marks save button as used and redirects to Views once after first successful save", async () => {
-    const user = userEvent.setup();
-
-    const onSaveView = vi.fn().mockResolvedValue(undefined);
-    const { rerender } = render(
-      <ToolPart
-        part={basePart as any}
-        uiType="mcp-apps"
-        onSaveView={onSaveView}
-        canSaveView
-      />
+    await user.click(
+      screen.getByRole("button", { name: /edit input and output/i }),
     );
 
-    const saveButton = screen
-      .getAllByRole("button")
-      .find((button) => button.getAttribute("aria-expanded") === null);
-    expect(saveButton).toBeTruthy();
-    if (saveButton) {
-      await user.click(saveButton);
-    }
-
-    await waitFor(() => {
-      expect(onSaveView).toHaveBeenCalledTimes(1);
-    });
-    expect(localStorage.getItem("mcpjam-save-view-button-used")).toBe("true");
-    expect(window.location.pathname).toBe("/views");
-
-    window.history.replaceState({}, "", "/chat-v2");
-    rerender(
-      <ToolPart
-        part={basePart as any}
-        uiType="mcp-apps"
-        onSaveView={onSaveView}
-        canSaveView
-      />
-    );
-
-    const saveButtonAgain = screen
-      .getAllByRole("button")
-      .find((button) => button.getAttribute("aria-expanded") === null);
-    expect(saveButtonAgain).toBeTruthy();
-    if (saveButtonAgain) {
-      await user.click(saveButtonAgain);
-    }
-
-    await waitFor(() => {
-      expect(onSaveView).toHaveBeenCalledTimes(2);
-    });
-    expect(window.location.pathname).toBe("/chat-v2");
+    expect(onToggleEdit).toHaveBeenCalledTimes(1);
   });
 
   it("keeps attached readable output collapsed until the header is clicked", async () => {

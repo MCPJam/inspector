@@ -10,7 +10,6 @@ import {
   FlaskConical,
   Boxes,
   Workflow,
-  Layers,
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
@@ -205,11 +204,6 @@ const navigationSections: NavSection[] = [
   {
     id: "mcp-apps",
     items: [
-      {
-        title: "Views",
-        url: "/views",
-        icon: Layers,
-      },
       {
         title: "Swarms",
         url: "/chatboxes",

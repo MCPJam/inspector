@@ -19,8 +19,9 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
+import { type RuntimeExecutionFields } from "./execution-scope.js";
 
-export type ChatboxRuntimeConfig = {
+export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
   chatboxId: string;
   accessVersion: number;
   modelId: string;

@@ -11,11 +11,13 @@ import {
   Check,
   ChevronDown,
   Database,
-  Layers,
   Loader2,
   Maximize2,
   MessageCircle,
+  Pencil,
   PictureInPicture2,
+  Play,
+  RotateCcw,
   Shield,
   ShieldCheck,
   ShieldX,
@@ -58,14 +60,11 @@ import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
-import { navigateApp } from "@/lib/app-navigation";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
-const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
-const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
@@ -83,10 +82,21 @@ export function ToolPart({
   approvalId,
   onApprove,
   onDeny,
-  onSaveView,
-  canSaveView,
-  saveDisabledReason,
-  isSaving,
+  allowInlineEdit,
+  isEditing,
+  onToggleEdit,
+  onInputChange,
+  onOutputChange,
+  onInputValidityChange,
+  inputValue,
+  outputValue,
+  hasEdits,
+  onRevert,
+  onRun,
+  isRunning,
+  canRun,
+  runDisabledReason,
+  editVersion,
   minimalMode = false,
   serverId,
   mcpToolResultImageRendering,
@@ -108,14 +118,36 @@ export function ToolPart({
   approvalId?: string;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
-  /** Callback to save this tool execution as a view */
-  onSaveView?: () => void | Promise<void>;
-  /** Whether the save view button should be enabled */
-  canSaveView?: boolean;
-  /** Reason why save is disabled (for tooltip) */
-  saveDisabledReason?: string;
-  /** Whether the view is currently being saved */
-  isSaving?: boolean;
+  /** Whether the inline Edit affordance is available for this card. */
+  allowInlineEdit?: boolean;
+  /** Whether the input/output editors are currently editable. */
+  isEditing?: boolean;
+  /** Toggle edit mode on/off. */
+  onToggleEdit?: () => void;
+  /** Lift edited tool input (valid JSON only) to the parent. */
+  onInputChange?: (value: unknown) => void;
+  /** Lift edited tool output (valid JSON only) to the parent. */
+  onOutputChange?: (value: unknown) => void;
+  /** Report the input editor's parse state (true = valid JSON). */
+  onInputValidityChange?: (valid: boolean) => void;
+  /** Effective input shown in the editor — exactly what the widget receives. */
+  inputValue?: unknown;
+  /** Effective output shown in the editor — exactly what the widget receives. */
+  outputValue?: unknown;
+  /** Whether there are uncommitted edits (enables Revert). */
+  hasEdits?: boolean;
+  /** Discard edits back to the original input/output. */
+  onRevert?: () => void;
+  /** Re-run the tool with the edited input (server round-trip). */
+  onRun?: () => void;
+  /** Whether a Run is in flight. */
+  isRunning?: boolean;
+  /** Whether Run is available (server connected, input valid). */
+  canRun?: boolean;
+  /** Tooltip text explaining why Run is disabled, if it is. */
+  runDisabledReason?: string;
+  /** Bumped by the parent to remount + reseed the editors on a hard reset. */
+  editVersion?: number;
   minimalMode?: boolean;
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -184,11 +216,17 @@ export function ToolPart({
   );
   const showInlineImagePreview = imageRenderPlacement === "inline";
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
-  const canRenderToolImages = showInlineImagePreview || showPanelImagePreview;
+  const canRenderToolImages =
+    showInlineImagePreview || (showPanelImagePreview && isExpanded);
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? imagePreviewData : undefined,
     { serverId, renderingPolicy: mcpToolResultImageRendering }
   );
+  // Editors render the effective values (what the widget sees) when the parent
+  // supplies them; fall back to the raw part data otherwise (non-widget branch).
+  const editInputValue = inputValue !== undefined ? inputValue : inputData;
+  const editOutputValue = outputValue !== undefined ? outputValue : outputData;
+  const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =
     typeof (part as unknown as { traceDisplayText?: unknown })
@@ -311,27 +349,12 @@ export function ToolPart({
     onDisplayModeChange?.(mode);
   };
 
-  const handleSaveViewClick = (e: MouseEvent<HTMLButtonElement>) => {
+  // Enter/exit inline edit. Always open the Data tab so the editors are visible.
+  const handleEditClick = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (!onSaveView || !canSaveView || isSaving) return;
-
-    if (typeof window === "undefined") {
-      void Promise.resolve(onSaveView());
-      return;
-    }
-
-    const shouldRedirectAfterSave =
-      localStorage.getItem(SAVE_VIEW_REDIRECTED_KEY) !== "true";
-
-    if (localStorage.getItem(SAVE_VIEW_BUTTON_USED_KEY) !== "true") {
-      localStorage.setItem(SAVE_VIEW_BUTTON_USED_KEY, "true");
-    }
-
-    void Promise.resolve(onSaveView()).then(() => {
-      if (!shouldRedirectAfterSave) return;
-      localStorage.setItem(SAVE_VIEW_REDIRECTED_KEY, "true");
-      navigateApp("/views");
-    });
+    onToggleEdit?.();
+    setActiveDebugTab("data");
+    setUserExpanded(true);
   };
 
   const renderDisplayModeOptionButtons = () =>
@@ -434,41 +457,99 @@ export function ToolPart({
       );
     });
 
-  const saveViewAriaLabel = isSaving
-    ? "Saving view"
-    : canSaveView
-    ? "Save as View"
-    : saveDisabledReason || "No output to save";
-
-  const renderSaveViewButton = () => (
-    <span className="relative inline-flex items-center">
+  const renderEditControls = () => (
+    <span className="relative inline-flex items-center gap-1">
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
-            aria-label={saveViewAriaLabel}
-            disabled={!canSaveView || isSaving}
-            onClick={handleSaveViewClick}
-            className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
-              canSaveView && !isSaving
-                ? "border border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80 cursor-pointer"
-                : "border border-border/30 text-muted-foreground/30 cursor-not-allowed"
+            aria-label={isEditing ? "Done editing" : "Edit input and output"}
+            onClick={handleEditClick}
+            className={`inline-flex items-center gap-1 px-1.5 py-1 rounded border transition-colors cursor-pointer ${
+              isEditing
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80"
             }`}
           >
-            {isSaving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {isEditing ? (
+              <Check className="h-3.5 w-3.5" />
             ) : (
-              <Layers className="h-3.5 w-3.5" />
+              <Pencil className="h-3.5 w-3.5" />
             )}
             <span className="text-[9px] leading-none hidden @[33rem]:inline">
-              Save View
+              {isEditing ? "Done" : "Edit"}
             </span>
           </button>
         </TooltipTrigger>
         <TooltipContent>
-          <p className="font-medium">Save View</p>
+          <p className="font-medium">
+            {isEditing ? "Done editing" : "Edit input & output"}
+          </p>
         </TooltipContent>
       </Tooltip>
+
+      {isEditing && (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Run tool with edited input"
+                disabled={!canRun}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (canRun) onRun?.();
+                }}
+                className={`inline-flex items-center gap-1 px-1.5 py-1 rounded border transition-colors ${
+                  canRun
+                    ? "border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80 cursor-pointer"
+                    : "border-border/30 text-muted-foreground/30 cursor-not-allowed"
+                }`}
+              >
+                {isRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                <span className="text-[9px] leading-none hidden @[33rem]:inline">
+                  Run
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">
+                {canRun
+                  ? "Re-run tool with edited input"
+                  : runDisabledReason ?? "Re-run tool with edited input"}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+
+          {hasEdits && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Revert edits"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRevert?.();
+                  }}
+                  className="inline-flex items-center gap-1 px-1.5 py-1 rounded border border-border/50 bg-background text-muted-foreground hover:text-foreground hover:bg-background/80 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span className="text-[9px] leading-none hidden @[33rem]:inline">
+                    Revert
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">Revert edits</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </>
+      )}
     </span>
   );
 
@@ -499,12 +580,22 @@ export function ToolPart({
         </div>
         <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
           <JsonEditor
+            key={`tool-input-${editorKeyVersion}`}
             height="100%"
-            viewOnly
-            value={inputData}
+            value={editInputValue}
             className="p-2 text-[11px]"
             collapsible
             defaultExpandDepth={2}
+            {...(isEditing && !isRunning && onInputChange
+              ? {
+                  mode: "edit" as const,
+                  onModeChange: () => {},
+                  showModeToggle: false,
+                  onChange: onInputChange,
+                  onValidationError: (error: string | null) =>
+                    onInputValidityChange?.(error === null),
+                }
+              : { viewOnly: true })}
           />
         </div>
       </div>
@@ -585,12 +676,20 @@ export function ToolPart({
         ) : (
           <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
             <JsonEditor
+              key={`tool-result-${editorKeyVersion}`}
               height="100%"
-              viewOnly
-              value={outputData}
+              value={editOutputValue}
               className="p-2 text-[11px]"
               collapsible
               defaultExpandDepth={2}
+              {...(isEditing && !isRunning && onOutputChange
+                ? {
+                    mode: "edit" as const,
+                    onModeChange: () => {},
+                    showModeToggle: false,
+                    onChange: onOutputChange,
+                  }
+                : { viewOnly: true })}
             />
           </div>
         )}
@@ -860,15 +959,12 @@ export function ToolPart({
               </span>
             </>
           )}
-          {!hideDiagnosticsUI &&
-            onSaveView &&
-            uiType &&
-            uiType !== UIType.MCP_UI && (
-              <>
-                {hasWidgetDebugUI && <div className="h-4 w-px bg-border/40" />}
-                {renderSaveViewButton()}
-              </>
-            )}
+          {!hideDiagnosticsUI && allowInlineEdit && (
+            <>
+              {hasWidgetDebugUI && <div className="h-4 w-px bg-border/40" />}
+              {renderEditControls()}
+            </>
+          )}
           {toolState &&
             StatusIcon &&
             state !== "output-available" &&

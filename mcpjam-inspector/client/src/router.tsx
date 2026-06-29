@@ -29,7 +29,6 @@ import App, {
   TasksRoute,
   ToolsRoute,
   TracingRoute,
-  ViewsRoute,
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
@@ -112,7 +111,6 @@ export function createAppRouter(): AppRouter {
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
-        { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },
         { path: "settings/api-keys", element: <ApiKeysSettingsRoute /> },

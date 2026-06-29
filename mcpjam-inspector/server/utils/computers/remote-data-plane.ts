@@ -24,6 +24,7 @@ import {
   COMPUTERS_NOT_CONFIGURED_ERROR,
   type RunComputerCommandResult,
 } from "./run-command.js";
+import { type ExecutionScope } from "../execution-scope.js";
 
 /** Origin of the deployed data plane, or null when unset/invalid. */
 export function getComputersRemoteDataPlaneUrl(): string | null {
@@ -53,6 +54,8 @@ export async function execViaRemoteDataPlane(args: {
   /** Bearer authorization forwarded verbatim (the remote re-validates it). */
   authHeader: string;
   projectId: string;
+  /** Phase 3 scope forwarded so the remote reserve re-resolves live access. */
+  executionScope?: ExecutionScope;
   command: string;
   commandId: string;
   workdir?: string;
@@ -76,6 +79,7 @@ export async function execViaRemoteDataPlane(args: {
       headers: { "content-type": "application/json", authorization },
       body: JSON.stringify({
         projectId: args.projectId,
+        ...(args.executionScope ? { executionScope: args.executionScope } : {}),
         command: args.command,
         commandId: args.commandId,
         ...(args.workdir ? { workdir: args.workdir } : {}),
