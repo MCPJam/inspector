@@ -96,7 +96,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       name: /respect tool visibility/i,
     })[0];
     const toolImages = screen.getByRole("switch", {
-      name: /expose tool images to model/i,
+      name: /make tool image content visible to model/i,
     });
     expect(approval).toBeDisabled();
     expect(visibility).toBeDisabled();

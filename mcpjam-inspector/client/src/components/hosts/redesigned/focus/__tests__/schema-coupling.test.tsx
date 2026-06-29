@@ -80,28 +80,31 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
   });
 
-  it("renders schema labels for MCP image policy fields", () => {
+  it("uses schema labels for MCP image policy controls", () => {
     renderTab();
     for (const field of [
       "modelVisibleMcpToolResults.directContent.image",
       "modelVisibleMcpToolResults.embeddedResources.blob.image",
       "modelVisibleMcpToolResults.linkedResources.blob.image",
-      "mcpToolResultImageRendering",
     ] as const) {
       const label = hostConfigField(field).label;
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+      expect(screen.getByRole("switch", { name: label })).toBeInTheDocument();
     }
+
+    const renderLabel = hostConfigField("mcpToolResultImageRendering").label;
+    expect(
+      screen.getByRole("group", { name: renderLabel })
+    ).toBeInTheDocument();
   });
 
   it("keeps info hovers for MCP image policy fields", () => {
     renderTab();
-    for (const field of [
-      "modelVisibleMcpToolResults.directContent.image",
-      "modelVisibleMcpToolResults.embeddedResources.blob.image",
-      "modelVisibleMcpToolResults.linkedResources.blob.image",
-      "mcpToolResultImageRendering",
+    for (const label of [
+      "MCP tool-result images",
+      "Tool image content",
+      "Embedded resource images",
+      "Resource link images",
     ] as const) {
-      const label = hostConfigField(field).label;
       expect(
         screen.getByRole("button", { name: `About ${label}` })
       ).toBeInTheDocument();
