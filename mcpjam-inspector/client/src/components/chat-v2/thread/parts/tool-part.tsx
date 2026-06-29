@@ -545,7 +545,7 @@ export function ToolPart({
             className="p-2 text-[11px]"
             collapsible
             defaultExpandDepth={2}
-            {...(isEditing && onInputChange
+            {...(isEditing && !isRunning && onInputChange
               ? {
                   mode: "edit" as const,
                   onModeChange: () => {},
@@ -587,7 +587,7 @@ export function ToolPart({
             className="p-2 text-[11px]"
             collapsible
             defaultExpandDepth={2}
-            {...(isEditing && onOutputChange
+            {...(isEditing && !isRunning && onOutputChange
               ? {
                   mode: "edit" as const,
                   onModeChange: () => {},
