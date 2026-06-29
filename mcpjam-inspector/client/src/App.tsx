@@ -114,7 +114,7 @@ import type {
   ActiveServerSelectorProps,
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
-import { useViewQueries, useProjectServers } from "./hooks/useViews";
+import { useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -2136,12 +2136,6 @@ export default function App() {
     isLoadingRemoteProjects,
   ]);
 
-  // Fetch views for the project to determine which servers have saved views
-  const { viewsByServer } = useViewQueries({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
-
   // Fetch project servers to map server IDs to names
   const { serversById } = useProjectServers({
     isAuthenticated,
@@ -2249,18 +2243,6 @@ export default function App() {
     hasSession: !!workOsUser || isWorkOsLoading,
     enabled: !isHostedChatRoute,
   });
-
-  // Compute the set of server names that have saved views
-  const serversWithViews = useMemo(() => {
-    const serverNames = new Set<string>();
-    for (const serverId of viewsByServer.keys()) {
-      const serverName = serversById.get(serverId);
-      if (serverName) {
-        serverNames.add(serverName);
-      }
-    }
-    return serverNames;
-  }, [viewsByServer, serversById]);
 
   const navigateToTarget = useCallback(
     (target: string, options?: { replace?: boolean }) => {
@@ -3037,7 +3019,6 @@ export default function App() {
             activeTab !== "oauth-flow" &&
             !(activeTab === "xaa-flow" && xaaEnabled === true),
           showOnlyServersWithViews: false,
-          serversWithViews: serversWithViews,
           hasMessages: false,
         }
       : undefined;

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
@@ -206,6 +206,10 @@ export function PartSwitch({
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
   // Run-result swap / new tool call). Keystroke edits never bump it.
   const [editVersion, setEditVersion] = useState(0);
+  // Monotonic token invalidating in-flight Runs. Bumped on every Run start and
+  // on any reset (Revert / new tool call / display-mode switch) so a server
+  // response that lands after the context changed can't write stale output.
+  const runSeqRef = useRef(0);
 
   const handleInputChange = useCallback(
     (value: unknown) => setEditedInput({ value }),
@@ -217,6 +221,7 @@ export function PartSwitch({
   );
   const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
   const handleRevert = useCallback(() => {
+    runSeqRef.current += 1;
     setEditedInput(null);
     setEditedOutput(null);
     setEditVersion((v) => v + 1);
@@ -224,6 +229,7 @@ export function PartSwitch({
 
   // Drop edits when the tool-call identity changes or the display mode switches.
   useEffect(() => {
+    runSeqRef.current += 1;
     setIsEditing(false);
     setEditedInput(null);
     setEditedOutput(null);
@@ -276,13 +282,18 @@ export function PartSwitch({
     const effectiveOutput = (() => {
       if (!editedOutput) return baseOutput;
       const edited = editedOutput.value;
-      // Pin `_meta` to the original: edits can never repoint the widget binding
-      // or leak into toolResponseMetadata (binding also derives from rawOutput,
-      // which we never override).
-      if (isPlainObject(edited) && isPlainObject(baseOutput)) {
-        return { ...edited, _meta: baseOutput._meta };
-      }
-      return edited;
+      // Tool results are always objects (CallToolResult). Ignore non-object /
+      // null edits for rendering and fall back to the original: the renderer
+      // coalesces a null `toolOutput` back to `rawOutput` and the streaming
+      // hook skips falsy output, so feeding null would silently diverge the
+      // widget from the editor. Object edits flow through with `_meta` pinned
+      // to the original (edits can never repoint the binding or leak into
+      // toolResponseMetadata; binding also derives from rawOutput, which we
+      // never override).
+      if (!isPlainObject(edited)) return baseOutput;
+      return isPlainObject(baseOutput)
+        ? { ...edited, _meta: baseOutput._meta }
+        : edited;
     })();
     const hasEdits = editedInput !== null || editedOutput !== null;
 
@@ -300,10 +311,15 @@ export function PartSwitch({
 
     const handleRun = async () => {
       if (!serverId) return;
+      // Token this Run. A reset (new tool call / display-mode switch / Revert)
+      // or a newer Run bumps runSeqRef, after which every state write below
+      // is skipped — a late response can't clobber the current context.
+      const seq = (runSeqRef.current += 1);
       const params = isPlainObject(effectiveInput) ? effectiveInput : {};
       setIsRunning(true);
       try {
         const res = await executeToolApi(serverId, toolInfo.toolName, params);
+        if (runSeqRef.current !== seq) return;
         if ("error" in res) {
           toast.error(`Execution failed: ${res.error}`);
           return;
@@ -319,9 +335,11 @@ export function PartSwitch({
         setEditedOutput({ value: res.result });
         setEditVersion((v) => v + 1);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Execution failed");
+        if (runSeqRef.current === seq) {
+          toast.error(err instanceof Error ? err.message : "Execution failed");
+        }
       } finally {
-        setIsRunning(false);
+        if (runSeqRef.current === seq) setIsRunning(false);
       }
     };
 
