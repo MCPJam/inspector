@@ -14,12 +14,16 @@ export {
 } from "./mcp-client-manager/capabilities.js";
 export {
   MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_IMAGE_MAX_MEDIA_PARTS,
+  MCP_IMAGE_MAX_TOTAL_BYTES,
+  MCP_LINKED_RESOURCE_MAX_READS,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
+  type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
 export { redactSensitiveValue } from "./redaction.js";
@@ -229,6 +233,8 @@ export type {
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

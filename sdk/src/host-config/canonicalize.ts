@@ -26,6 +26,8 @@ import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpAppsCapabilities,
+  type McpToolResultBlobVisibility,
+  type ModelVisibleMcpToolResults,
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
@@ -93,9 +95,6 @@ const MCP_APPS_WIDGET_DISPLAY_MODE_REQUEST_VALUES = [
   "user-initiated-only",
   "decline",
 ] as const;
-const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
-  "modelVisibleMcpImageToolResults";
-
 const MCP_APPS_DISPLAY_MODE_VALUE_SET: ReadonlySet<string> = new Set(
   MCP_APPS_DISPLAY_MODE_VALUES
 );
@@ -129,6 +128,133 @@ function requireRecord(
     throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
   }
   return deepSortStringKeys(value);
+}
+
+const DIRECT_CONTENT_VISIBILITY_KEYS = ["text", "image", "audio"] as const;
+const RESOURCE_VISIBILITY_KEYS = ["text", "blob"] as const;
+const BLOB_VISIBILITY_KEYS = [
+  "enabled",
+  "image",
+  "audio",
+  "document",
+  "video",
+  "otherBinary",
+] as const;
+
+function assertOnlyKnownKeys(
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  fieldName: string
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`hostConfigV2: ${fieldName}.${key} is not supported`);
+    }
+  }
+}
+
+function readOptionalBoolean(
+  value: Record<string, unknown>,
+  key: string,
+  fieldName: string
+): boolean | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "boolean") {
+    throw new Error(`hostConfigV2: ${fieldName}.${key} must be a boolean`);
+  }
+  return raw;
+}
+
+function canonicalizeBooleanLeaves<const Keys extends ReadonlyArray<string>>(
+  value: unknown,
+  keys: Keys,
+  fieldName: string
+): { [K in Keys[number]]?: boolean } | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(record, new Set(keys), fieldName);
+
+  const out: Record<string, boolean> = {};
+  for (const key of keys) {
+    const bool = readOptionalBoolean(record, key, fieldName);
+    if (bool !== undefined) out[key] = bool;
+  }
+  return Object.keys(out).length > 0
+    ? (out as { [K in Keys[number]]?: boolean })
+    : undefined;
+}
+
+function canonicalizeBlobVisibility(
+  value: unknown,
+  fieldName: string
+): McpToolResultBlobVisibility | undefined {
+  return canonicalizeBooleanLeaves(value, BLOB_VISIBILITY_KEYS, fieldName);
+}
+
+function canonicalizeResourceVisibility(
+  value: unknown,
+  fieldName: string
+):
+  | {
+      text?: boolean;
+      blob?: McpToolResultBlobVisibility;
+    }
+  | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(record, new Set(RESOURCE_VISIBILITY_KEYS), fieldName);
+
+  const text = readOptionalBoolean(record, "text", fieldName);
+  const blob = canonicalizeBlobVisibility(record.blob, `${fieldName}.blob`);
+  const out = {
+    ...(text !== undefined ? { text } : {}),
+    ...(blob !== undefined ? { blob } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function canonicalizeModelVisibleMcpToolResults(
+  value: unknown
+): ModelVisibleMcpToolResults | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: modelVisibleMcpToolResults must be a plain object"
+    );
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(
+    record,
+    new Set(["directContent", "embeddedResources", "linkedResources"]),
+    "modelVisibleMcpToolResults"
+  );
+
+  const directContent = canonicalizeBooleanLeaves(
+    record.directContent,
+    DIRECT_CONTENT_VISIBILITY_KEYS,
+    "modelVisibleMcpToolResults.directContent"
+  );
+  const embeddedResources = canonicalizeResourceVisibility(
+    record.embeddedResources,
+    "modelVisibleMcpToolResults.embeddedResources"
+  );
+  const linkedResources = canonicalizeResourceVisibility(
+    record.linkedResources,
+    "modelVisibleMcpToolResults.linkedResources"
+  );
+  const out = {
+    ...(directContent !== undefined ? { directContent } : {}),
+    ...(embeddedResources !== undefined ? { embeddedResources } : {}),
+    ...(linkedResources !== undefined ? { linkedResources } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 // Deep variant: recursively sorts keys at every object level so nested
@@ -1063,17 +1189,22 @@ export function canonicalizeHostConfigV2(
       `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`,
     );
   }
+  if (
+    input.mcpToolResultImageRendering !== undefined &&
+    input.mcpToolResultImageRendering !== "none" &&
+    input.mcpToolResultImageRendering !== "panel" &&
+    input.mcpToolResultImageRendering !== "inline"
+  ) {
+    throw new Error(
+      'hostConfigV2: mcpToolResultImageRendering must be "none", "panel", or "inline" when set'
+    );
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
-  const legacyModelVisibleMcpImageToolResults =
-    hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  delete hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  const modelVisibleMcpImageToolResults =
-    input.modelVisibleMcpImageToolResults ??
-    (typeof legacyModelVisibleMcpImageToolResults === "boolean"
-      ? legacyModelVisibleMcpImageToolResults
-      : undefined);
+  const modelVisibleMcpToolResults = canonicalizeModelVisibleMcpToolResults(
+    input.modelVisibleMcpToolResults
+  );
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
@@ -1098,8 +1229,9 @@ export function canonicalizeHostConfigV2(
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
     // Preserve undefined-vs-set: absent rows keep their historical hash, while
-    // an explicit off/on snapshot survives template hostContext reseeds.
-    modelVisibleMcpImageToolResults,
+    // explicit off/on leaves survive template hostContext reseeds.
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering: input.mcpToolResultImageRendering,
     connectionDefaults: {
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,

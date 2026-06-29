@@ -97,7 +97,6 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
   it("maps direct MCP image results through toModelOutput", async () => {
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
-      modelVisibleMcpImageToolResults: true,
     });
     const toModelOutput = (tools.default_visibility as any).toModelOutput;
 
@@ -122,7 +121,6 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
   it("maps embedded MCP image resources through toModelOutput", async () => {
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
-      modelVisibleMcpImageToolResults: true,
     });
     const toModelOutput = (tools.default_visibility as any).toModelOutput;
 
@@ -155,7 +153,6 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     }));
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
-      modelVisibleMcpImageToolResults: true,
       readResource,
     });
     const toModelOutput = (tools.default_visibility as any).toModelOutput;
@@ -201,7 +198,6 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     );
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
-      modelVisibleMcpImageToolResults: true,
       readResource,
     });
     const toModelOutput = (tools.default_visibility as any).toModelOutput;
@@ -232,9 +228,12 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     });
   });
 
-  it("keeps direct MCP image results on JSON fallback when not enabled", async () => {
+  it("omits direct MCP image results when direct images are disabled", async () => {
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+      },
     });
     const output = {
       content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
@@ -247,18 +246,23 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
         output,
       })
     ).toEqual({
-      type: "json",
-      value: output,
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: direct image policy disabled]" },
+      ],
     });
   });
 
-  it("keeps linked MCP image resources on JSON fallback when not enabled", async () => {
+  it("omits linked MCP image resources when linked images are disabled", async () => {
     const readResource = vi.fn(async () => ({
       contents: [{ blob: "aGVsbG8=", mimeType: "image/png" }],
     }));
     const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
       callTool,
       readResource,
+      modelVisibleMcpToolResults: {
+        linkedResources: { blob: { image: false } },
+      },
     });
     const output = {
       content: [
@@ -271,15 +275,17 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       ],
     };
 
-    expect(
+    await expect(
       (tools.default_visibility as any).toModelOutput({
         toolCallId: "call-1",
         input: {},
         output,
       })
-    ).toEqual({
-      type: "json",
-      value: output,
+    ).resolves.toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[resource link omitted: policy disabled]" },
+      ],
     });
     expect(readResource).not.toHaveBeenCalled();
   });

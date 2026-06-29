@@ -18,7 +18,10 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
+import {
+  filterAppOnlyTools,
+  type ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -440,7 +443,9 @@ export function buildWidgetInteractionContextSystemPrompt(
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
     ];
     if (content.length > 0) {
-      lines.push(...content.map((block) => renderWidgetContextContentBlock(block)));
+      lines.push(
+        ...content.map((block) => renderWidgetContextContentBlock(block))
+      );
     } else {
       lines.push("(no textual content)");
     }
@@ -467,12 +472,8 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
-  /**
-   * Host/client capability for eligible MCP image-bearing tool results. This
-   * only changes the model-facing output; raw results remain available to
-   * UI/debug history.
-   */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
@@ -556,7 +557,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
-    modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults,
     customProviders,
     appTools,
     builtInTools,
@@ -573,14 +574,14 @@ export async function prepareChatV2(
   const toolOptions =
     requireToolApproval ||
     respectToolVisibility === false ||
-    modelVisibleMcpImageToolResults !== undefined
+    modelVisibleMcpToolResults !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
             : {}),
           ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
-          ...(modelVisibleMcpImageToolResults !== undefined
-            ? { modelVisibleMcpImageToolResults }
+          ...(modelVisibleMcpToolResults !== undefined
+            ? { modelVisibleMcpToolResults }
             : {}),
         }
       : undefined;

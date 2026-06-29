@@ -226,6 +226,72 @@ describe("transcriptToUIMessages", () => {
     expect(toolPart.output).toEqual(rawOutput);
   });
 
+  it("prefers raw MCP result over model-visible image output during hydration", () => {
+    const rawMcpResult = {
+      content: [
+        {
+          type: "image",
+          data: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const modelVisibleOutputs = [
+      {
+        type: "json",
+        value: {
+          type: "content",
+          value: [
+            {
+              type: "media",
+              data: "aGVsbG8=",
+              mediaType: "image/png",
+            },
+          ],
+        },
+      },
+      {
+        type: "content",
+        value: [{ type: "text", text: "[image omitted: too large]" }],
+      },
+    ];
+
+    for (const modelVisibleOutput of modelVisibleOutputs) {
+      const transcript = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-image-1",
+              toolName: "return_image",
+              args: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-image-1",
+              output: modelVisibleOutput,
+              result: rawMcpResult,
+            },
+          ],
+        },
+      ];
+
+      const messages = transcriptToUIMessages(transcript);
+      const toolPart = messages[0].parts[0] as {
+        type: string;
+        output: unknown;
+      };
+      expect(toolPart.type).toBe("dynamic-tool");
+      expect(toolPart.output).toEqual(rawMcpResult);
+    }
+  });
+
   it("merged tool history converts with convertToModelMessages", async () => {
     const transcript = [
       { role: "user", content: "search for cats" },

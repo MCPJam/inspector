@@ -40,6 +40,8 @@ export type {
   HostStyleId,
   Harness,
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

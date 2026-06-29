@@ -11,6 +11,10 @@
  */
 
 import type { ToolExposureSignals } from "./tool-visibility.js";
+import type {
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
+} from "./types.js";
 
 export type { ToolExposureSignals } from "./tool-visibility.js";
 
@@ -35,23 +39,169 @@ function readHostStyle(
   return undefined;
 }
 
-function readHostContext(
+export type ResolvedModelVisibleMcpToolResults = {
+  directContent: {
+    text: boolean;
+    image: boolean;
+    audio: boolean;
+  };
+  embeddedResources: {
+    text: boolean;
+    blob: {
+      enabled: boolean;
+      image: boolean;
+      audio: boolean;
+      document: boolean;
+      video: boolean;
+      otherBinary: boolean;
+    };
+  };
+  linkedResources: {
+    text: boolean;
+    blob: {
+      enabled: boolean;
+      image: boolean;
+      audio: boolean;
+      document: boolean;
+      video: boolean;
+      otherBinary: boolean;
+    };
+  };
+};
+
+export const DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS: ResolvedModelVisibleMcpToolResults =
+  {
+    directContent: {
+      text: true,
+      image: true,
+      audio: false,
+    },
+    embeddedResources: {
+      text: false,
+      blob: {
+        enabled: true,
+        image: true,
+        audio: false,
+        document: false,
+        video: false,
+        otherBinary: false,
+      },
+    },
+    linkedResources: {
+      text: false,
+      blob: {
+        enabled: true,
+        image: true,
+        audio: false,
+        document: false,
+        video: false,
+        otherBinary: false,
+      },
+    },
+  };
+
+function readModelVisibleMcpToolResults(
   hostConfig: Record<string, unknown>
-): Record<string, unknown> | undefined {
-  return isRecord(hostConfig.hostContext) ? hostConfig.hostContext : undefined;
+): ModelVisibleMcpToolResults | undefined {
+  const value = hostConfig.modelVisibleMcpToolResults;
+  return isRecord(value) ? (value as ModelVisibleMcpToolResults) : undefined;
 }
 
-function readBooleanPolicyOverride(
-  hostConfig: Record<string, unknown>,
-  key: string
-): boolean | undefined {
-  if (typeof hostConfig[key] === "boolean") {
-    return hostConfig[key] as boolean;
-  }
+export function resolveModelVisibleMcpToolResults(
+  policy: ModelVisibleMcpToolResults | undefined
+): ResolvedModelVisibleMcpToolResults {
+  const embeddedBlobEnabled =
+    policy?.embeddedResources?.blob?.enabled ??
+    DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob.enabled;
+  const linkedBlobEnabled =
+    policy?.linkedResources?.blob?.enabled ??
+    DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.enabled;
 
-  const hostContext = readHostContext(hostConfig);
-  const hostContextValue = hostContext?.[key];
-  return typeof hostContextValue === "boolean" ? hostContextValue : undefined;
+  return {
+    directContent: {
+      text:
+        policy?.directContent?.text ??
+        DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.directContent.text,
+      image:
+        policy?.directContent?.image ??
+        DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.directContent.image,
+      audio:
+        policy?.directContent?.audio ??
+        DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.directContent.audio,
+    },
+    embeddedResources: {
+      text:
+        policy?.embeddedResources?.text ??
+        DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.text,
+      blob: {
+        enabled: embeddedBlobEnabled,
+        image:
+          embeddedBlobEnabled &&
+          (policy?.embeddedResources?.blob?.image ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob
+              .image),
+        audio:
+          embeddedBlobEnabled &&
+          (policy?.embeddedResources?.blob?.audio ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob
+              .audio),
+        document:
+          embeddedBlobEnabled &&
+          (policy?.embeddedResources?.blob?.document ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob
+              .document),
+        video:
+          embeddedBlobEnabled &&
+          (policy?.embeddedResources?.blob?.video ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob
+              .video),
+        otherBinary:
+          embeddedBlobEnabled &&
+          (policy?.embeddedResources?.blob?.otherBinary ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.embeddedResources.blob
+              .otherBinary),
+      },
+    },
+    linkedResources: {
+      text:
+        policy?.linkedResources?.text ??
+        DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.text,
+      blob: {
+        enabled: linkedBlobEnabled,
+        image:
+          linkedBlobEnabled &&
+          (policy?.linkedResources?.blob?.image ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.image),
+        audio:
+          linkedBlobEnabled &&
+          (policy?.linkedResources?.blob?.audio ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.audio),
+        document:
+          linkedBlobEnabled &&
+          (policy?.linkedResources?.blob?.document ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob
+              .document),
+        video:
+          linkedBlobEnabled &&
+          (policy?.linkedResources?.blob?.video ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.video),
+        otherBinary:
+          linkedBlobEnabled &&
+          (policy?.linkedResources?.blob?.otherBinary ??
+            DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob
+              .otherBinary),
+      },
+    },
+  };
+}
+
+function readMcpToolResultImageRendering(
+  hostConfig: Record<string, unknown>
+): McpToolResultImageRendering | undefined {
+  const value = hostConfig.mcpToolResultImageRendering;
+  return value === "none" || value === "panel" || value === "inline"
+    ? value
+    : undefined;
 }
 
 export type HostExecutionPolicy = {
@@ -61,10 +211,11 @@ export type HostExecutionPolicy = {
   progressiveDiscoveryEnabled: boolean;
   /**
    * Whether eligible MCP image-bearing tool-result content should be passed
-   * through as model-visible image content instead of staying as JSON. This is
-   * a host/client capability, not a storage or UI-rendering concern.
+   * through as model-visible image content instead of staying as JSON. These
+   * are host/client capabilities, not storage or UI-rendering concerns.
    */
-  modelVisibleMcpImageToolResults: boolean;
+  modelVisibleMcpToolResults: ResolvedModelVisibleMcpToolResults;
+  mcpToolResultImageRendering: McpToolResultImageRendering;
   hostStyle: string | undefined;
   namedHostId: string | undefined;
 };
@@ -78,7 +229,8 @@ export function extractHostExecutionPolicy(
       requireToolApproval: false,
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
-      modelVisibleMcpImageToolResults: true,
+      modelVisibleMcpToolResults: DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
+      mcpToolResultImageRendering: "inline",
       hostStyle: undefined,
       namedHostId,
     };
@@ -101,15 +253,18 @@ export function extractHostExecutionPolicy(
       : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
   const hostStyle = readHostStyle(hostConfig);
-  const modelVisibleMcpImageToolResults =
-    readBooleanPolicyOverride(hostConfig, "modelVisibleMcpImageToolResults") ??
-    true;
+  const modelVisibleMcpToolResults = resolveModelVisibleMcpToolResults(
+    readModelVisibleMcpToolResults(hostConfig)
+  );
+  const mcpToolResultImageRendering =
+    readMcpToolResultImageRendering(hostConfig) ?? "inline";
 
   return {
     requireToolApproval,
     respectToolVisibility,
     progressiveDiscoveryEnabled,
-    modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     hostStyle,
     namedHostId,
   };
@@ -148,8 +303,17 @@ export function buildHostSnapshotMetadata(
   if (policy.progressiveDiscoveryEnabled) {
     meta.progressive_discovery_enabled = true;
   }
-  if (policy.modelVisibleMcpImageToolResults) {
-    meta.model_visible_mcp_image_tool_results = true;
+  if (policy.modelVisibleMcpToolResults.directContent.image) {
+    meta.model_visible_mcp_direct_content_image = true;
+  }
+  if (policy.modelVisibleMcpToolResults.embeddedResources.blob.image) {
+    meta.model_visible_mcp_embedded_resource_blob_image = true;
+  }
+  if (policy.modelVisibleMcpToolResults.linkedResources.blob.image) {
+    meta.model_visible_mcp_linked_resource_blob_image = true;
+  }
+  if (policy.mcpToolResultImageRendering !== "inline") {
+    meta.mcp_tool_result_image_rendering = policy.mcpToolResultImageRendering;
   }
   if (policy.namedHostId) {
     meta.host_id = policy.namedHostId;
@@ -180,8 +344,17 @@ export function buildHostIterationMetadata(
   if (policy.progressiveDiscoveryEnabled) {
     meta.progressive_discovery_enabled = true;
   }
-  if (policy.modelVisibleMcpImageToolResults) {
-    meta.model_visible_mcp_image_tool_results = true;
+  if (policy.modelVisibleMcpToolResults.directContent.image) {
+    meta.model_visible_mcp_direct_content_image = true;
+  }
+  if (policy.modelVisibleMcpToolResults.embeddedResources.blob.image) {
+    meta.model_visible_mcp_embedded_resource_blob_image = true;
+  }
+  if (policy.modelVisibleMcpToolResults.linkedResources.blob.image) {
+    meta.model_visible_mcp_linked_resource_blob_image = true;
+  }
+  if (policy.mcpToolResultImageRendering !== "inline") {
+    meta.mcp_tool_result_image_rendering = policy.mcpToolResultImageRendering;
   }
   if (injectOpenAiCompat) {
     meta.openai_compat_injected = true;

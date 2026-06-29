@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger";
 import { getRequestLogger } from "./request-logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -39,6 +40,7 @@ interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   selectedServers?: string[];
 }
 
@@ -66,7 +68,8 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   selectedServerIds: string[];
 }
 
@@ -91,7 +94,8 @@ export function buildDirectHostConfig(input: {
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {
@@ -102,7 +106,8 @@ export function buildDirectHostConfig(input: {
     resolvedTemperature,
     requireToolApproval,
     respectToolVisibility,
-    modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     selectedServerIds,
   } = input;
   return {
@@ -118,8 +123,13 @@ export function buildDirectHostConfig(input: {
     requireToolApproval: requireToolApproval === true,
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
-    respectToolVisibility,
-    modelVisibleMcpImageToolResults,
+    ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+    ...(modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults }
+      : {}),
+    ...(mcpToolResultImageRendering !== undefined
+      ? { mcpToolResultImageRendering }
+      : {}),
     selectedServerIds: selectedServerIds ?? [],
   };
 }

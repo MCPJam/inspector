@@ -94,6 +94,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -641,19 +642,15 @@ export class MCPClientManager {
        * mirroring a host that does not implement visibility filtering.
        */
       includeAppOnly?: boolean;
-      /**
-       * When true, eligible MCP image-bearing tool results are passed through
-       * as model-visible image content. Defaults to false unless the caller's
-       * host policy opts in.
-       */
-      modelVisibleMcpImageToolResults?: boolean;
+      /** Host policy for model visibility of MCP tool-result content/resources. */
+      modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-      ? [serverIds]
-      : this.listServers();
+        ? [serverIds]
+        : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -664,8 +661,7 @@ export class MCPClientManager {
             schemas: options.schemas,
             needsApproval: options.needsApproval,
             includeAppOnly: options.includeAppOnly,
-            modelVisibleMcpImageToolResults:
-              options.modelVisibleMcpImageToolResults,
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
             readResource: async ({ uri, options: readOptions }) => {
               const requestOptions = readOptions?.abortSignal
                 ? { signal: readOptions.abortSignal }
@@ -2259,8 +2255,8 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-        typeof value === "object" &&
-        ("request" in value || "retry" in value)
+      typeof value === "object" &&
+      ("request" in value || "retry" in value)
     );
   }
 

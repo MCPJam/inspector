@@ -22,18 +22,22 @@ import type {
   HostStyleId,
   McpAppsCapabilities,
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   OpenAiAppsCapabilities,
   ServerId,
 } from "./types.js";
 
 export type {
   McpProtocolVersion,
+  McpToolResultImageRendering,
   ServerId,
   HostStyleId,
   Harness,
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ModelVisibleMcpToolResults,
 };
 
 /**
@@ -88,7 +92,9 @@ export interface HostJson {
   requireToolApproval: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   /** Personal computer attached to this host; absent ⇒ none. Normalized:
    * `null` input never survives to `HostJson`. */
   computer?: HostComputer;
@@ -141,8 +147,10 @@ export interface HostInit {
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
-  /** Whether eligible MCP tool-returned images are exposed to the model. */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host policy for model visibility of MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   /**
    * Attach a personal cloud workstation (chat `bash` tool + web terminal).
    * Absent or `null` ⇒ no computer; `null` is accepted so an editor can

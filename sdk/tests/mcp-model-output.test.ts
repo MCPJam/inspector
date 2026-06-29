@@ -210,7 +210,82 @@ describe("mcpCallToolResultToModelOutput", () => {
       },
     ]);
     expect(oversized?.value).toEqual([
-      { type: "text", text: "[image omitted: image/png exceeds 2 bytes limit]" },
+      {
+        type: "text",
+        text: "[image omitted: image/png exceeds 2 bytes limit]",
+      },
+    ]);
+  });
+
+  it("rejects oversized base64 before decoding", () => {
+    const bufferFrom = vi.spyOn(Buffer, "from");
+    const oversizedData = "A".repeat(6);
+
+    const output = mcpCallToolResultToModelOutput(
+      {
+        content: [
+          {
+            type: "image",
+            data: oversizedData,
+            mimeType: "image/png",
+          },
+        ],
+      } as unknown as CallToolResult,
+      { maxImageBytes: 2 }
+    );
+
+    expect(bufferFrom).not.toHaveBeenCalled();
+    expect(output?.value).toEqual([
+      {
+        type: "text",
+        text: "[image omitted: image/png exceeds 2 bytes limit]",
+      },
+    ]);
+
+    bufferFrom.mockRestore();
+  });
+
+  it("caps image media count and aggregate decoded bytes", () => {
+    const manyImages = mcpCallToolResultToModelOutput(
+      {
+        content: Array.from({ length: 17 }, () => ({
+          type: "image",
+          data: "aGVsbG8=",
+          mimeType: "image/png",
+        })),
+      } as unknown as CallToolResult,
+      { maxImageCount: 16 }
+    );
+
+    expect(manyImages?.value).toHaveLength(17);
+    expect(manyImages?.value.slice(0, 16)).toEqual(
+      Array.from({ length: 16 }, () => ({
+        type: "media",
+        data: "aGVsbG8=",
+        mediaType: "image/png",
+      }))
+    );
+    expect(manyImages?.value[16]).toEqual({
+      type: "text",
+      text: "[image omitted: image count exceeds 16 limit]",
+    });
+
+    const aggregateOverflow = mcpCallToolResultToModelOutput(
+      {
+        content: [
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+      } as unknown as CallToolResult,
+      { maxTotalImageBytes: 8 }
+    );
+
+    expect(aggregateOverflow?.value).toEqual([
+      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+      {
+        type: "text",
+        text: "[image omitted: total image bytes exceed 8 bytes limit]",
+      },
     ]);
   });
 
@@ -228,7 +303,10 @@ describe("mcpCallToolResultToModelOutput", () => {
   });
 
   it("validates large images in browser-like runtimes without spreading all bytes", () => {
-    const originalBuffer = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
+    const originalBuffer = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "Buffer"
+    );
     const data = Buffer.from(new Uint8Array(256 * 1024)).toString("base64");
     let output: ReturnType<typeof mcpCallToolResultToModelOutput>;
 
@@ -296,7 +374,10 @@ describe("mcpCallToolResultToModelOutput", () => {
       },
     ]);
     expect(oversized?.value).toEqual([
-      { type: "text", text: "[image omitted: image/png exceeds 2 bytes limit]" },
+      {
+        type: "text",
+        text: "[image omitted: image/png exceeds 2 bytes limit]",
+      },
     ]);
   });
 
@@ -512,6 +593,31 @@ describe("mcpCallToolResultToModelOutput", () => {
           text: "[image omitted: image/png exceeds 2 bytes limit]",
         },
       ],
+    });
+  });
+
+  it("caps linked resource reads", async () => {
+    const readResource = vi.fn(async ({ uri }: { uri: string }) => ({
+      contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],
+    }));
+
+    const output = await mcpCallToolResultToModelOutputWithLinkedResources(
+      {
+        content: Array.from({ length: 17 }, (_, index) => ({
+          type: "resource_link",
+          uri: `mcp://images/${index}`,
+          name: `${index}.png`,
+          mimeType: "image/png",
+        })),
+      } as unknown as CallToolResult,
+      { readResource, maxLinkedResourceReads: 16 }
+    );
+
+    expect(readResource).toHaveBeenCalledTimes(16);
+    expect(output?.value).toHaveLength(17);
+    expect(output?.value[16]).toEqual({
+      type: "text",
+      text: "[resource link omitted: linked resource read count exceeds 16 limit]",
     });
   });
 

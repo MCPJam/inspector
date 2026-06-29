@@ -573,6 +573,16 @@ describe("buildDirectHostConfig", () => {
     expect(config.respectToolVisibility).toBe(false);
   });
 
+  it("includes MCP image rendering policy in Convex hostConfig payloads", () => {
+    const config = buildDirectHostConfig({
+      modelId: "anthropic/claude-haiku-4.5",
+      resolvedTemperature: 0.7,
+      mcpToolResultImageRendering: "panel",
+    });
+
+    expect(config.mcpToolResultImageRendering).toBe("panel");
+  });
+
   it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {
     // Phase 3: legacy `'direct'` is no longer the default. Callers
     // that used to omit hostStyle now get 'claude' so new direct chat

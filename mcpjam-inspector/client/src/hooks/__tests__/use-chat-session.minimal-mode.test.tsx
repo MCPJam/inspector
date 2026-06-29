@@ -427,16 +427,28 @@ describe("useChatSession minimal mode parity", () => {
     const selectedServers = ["server-1"];
     const { result, rerender } = renderHook(
       ({
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
       }: {
-        modelVisibleMcpImageToolResults: boolean;
+        modelVisibleMcpToolResults: {
+          directContent: { image: boolean };
+          embeddedResources: { blob: { image: boolean } };
+          linkedResources: { blob: { image: boolean } };
+        };
       }) =>
         useChatSession({
           selectedServers,
           minimalMode: true,
-          modelVisibleMcpImageToolResults,
+          modelVisibleMcpToolResults,
         }),
-      { initialProps: { modelVisibleMcpImageToolResults: false } }
+      {
+        initialProps: {
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+            embeddedResources: { blob: { image: false } },
+            linkedResources: { blob: { image: false } },
+          },
+        },
+      }
     );
 
     act(() => {
@@ -446,12 +458,22 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(getTransportRequests()).toContainEqual(
         expect.objectContaining({
-          modelVisibleMcpImageToolResults: false,
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+            embeddedResources: { blob: { image: false } },
+            linkedResources: { blob: { image: false } },
+          },
         })
       );
     });
 
-    rerender({ modelVisibleMcpImageToolResults: true });
+    rerender({
+      modelVisibleMcpToolResults: {
+        directContent: { image: true },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: true } },
+      },
+    });
 
     act(() => {
       result.current.sendMessage({ text: "hello again" });
@@ -460,7 +482,11 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(getTransportRequests()).toContainEqual(
         expect.objectContaining({
-          modelVisibleMcpImageToolResults: true,
+          modelVisibleMcpToolResults: {
+            directContent: { image: true },
+            embeddedResources: { blob: { image: true } },
+            linkedResources: { blob: { image: true } },
+          },
         })
       );
     });

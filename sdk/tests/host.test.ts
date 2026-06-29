@@ -91,45 +91,45 @@ describe("Host — public surface", () => {
     }
   });
 
-  it("migrates legacy image policy out of app-visible hostContext", () => {
+  it("serializes explicit MCP image policies", () => {
     const json = new Host({
       style: "mcpjam",
       model: "test-model",
-      hostContext: {
-        modelVisibleMcpImageToolResults: false,
-        theme: "dark",
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: false } },
       },
+      mcpToolResultImageRendering: "panel",
     }).toJSON();
 
-    expect(json.modelVisibleMcpImageToolResults).toBe(false);
-    expect(json.hostContext).toEqual({ theme: "dark" });
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(json.mcpToolResultImageRendering).toBe("panel");
   });
 
-  it("keeps the top-level image policy when legacy hostContext disagrees", () => {
-    const json = new Host({
+  it("supports MCP image policy setters", () => {
+    const host = new Host({
       style: "mcpjam",
       model: "test-model",
-      modelVisibleMcpImageToolResults: true,
-      hostContext: {
-        modelVisibleMcpImageToolResults: false,
-        theme: "dark",
-      },
-    }).toJSON();
-
-    expect(json.modelVisibleMcpImageToolResults).toBe(true);
-    expect(json.hostContext).toEqual({ theme: "dark" });
-  });
-
-  it("migrates legacy image policy from direct hostContext mutation", () => {
-    const host = new Host({ style: "mcpjam", model: "test-model" });
-    host.hostContext = {
-      modelVisibleMcpImageToolResults: false,
-      theme: "dark",
-    };
+    })
+      .setModelVisibleMcpToolResults({
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      })
+      .setMcpToolResultImageRendering("none");
 
     const json = host.toJSON();
-    expect(json.modelVisibleMcpImageToolResults).toBe(false);
-    expect(json.hostContext).toEqual({ theme: "dark" });
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
+    expect(json.mcpToolResultImageRendering).toBe("none");
   });
 
   it("validates lazily at toJSON() (invalid profile throws)", () => {

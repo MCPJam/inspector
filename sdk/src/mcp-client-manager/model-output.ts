@@ -1,6 +1,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import {
+  resolveModelVisibleMcpToolResults,
+  type ResolvedModelVisibleMcpToolResults,
+} from "../host-config/host-policy.js";
+import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 
 export const MCP_DIRECT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const MCP_IMAGE_MAX_MEDIA_PARTS = 16;
+export const MCP_IMAGE_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+export const MCP_LINKED_RESOURCE_MAX_READS = 16;
 export const MCP_PRESERVE_RAW_RESULT_FOR_UI = "_mcpjamPreserveRawResultForUi";
 
 export type McpModelOutputContentPart =
@@ -12,8 +20,15 @@ export type McpModelOutputContent = {
   value: McpModelOutputContentPart[];
 };
 
-export type McpModelOutputOptions = {
+export type McpModelVisibleToolResultPolicy = {
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+};
+
+export type McpModelOutputOptions = McpModelVisibleToolResultPolicy & {
   maxImageBytes?: number;
+  maxImageCount?: number;
+  maxTotalImageBytes?: number;
+  maxLinkedResourceReads?: number;
 };
 
 export type McpLinkedResourceReader = (params: {
@@ -28,6 +43,17 @@ export type McpModelOutputWithLinkedResourcesOptions = McpModelOutputOptions & {
 
 type ContentBlock = Record<string, unknown>;
 const BYTE_STRING_CHUNK_SIZE = 0x8000;
+const BASE64_WHITESPACE_OVERHEAD_RATIO = 0.05;
+
+type ImageBudget = {
+  maxImageBytes: number;
+  maxImageCount: number;
+  maxTotalImageBytes: number;
+  maxLinkedResourceReads: number;
+  imageCount: number;
+  totalImageBytes: number;
+  linkedResourceReads: number;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -47,20 +73,48 @@ function base64FromBytes(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function estimateBase64DecodedBytes(data: string): {
-  bytes: number;
-  normalized: string;
-} | null {
-  const normalized = data.replace(/\s/g, "");
-  if (!normalized) return null;
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
-  if (normalized.length % 4 === 1) return null;
-  if (normalized.includes("=") && !/^[A-Za-z0-9+/]+={1,2}$/.test(normalized)) {
-    return null;
+function maxBase64EncodedLength(decodedBytes: number): number {
+  return Math.ceil(decodedBytes / 3) * 4;
+}
+
+function maxBase64InputLength(decodedBytes: number): number {
+  const encoded = maxBase64EncodedLength(decodedBytes);
+  return encoded + Math.ceil(encoded * BASE64_WHITESPACE_OVERHEAD_RATIO);
+}
+
+function validateBase64ImageData(
+  data: string,
+  maxImageBytes: number
+):
+  | { kind: "ok"; bytes: number; normalized: string }
+  | { kind: "invalid" }
+  | { kind: "too_large" } {
+  if (data.length > maxBase64InputLength(maxImageBytes)) {
+    return { kind: "too_large" };
   }
 
-  const padded =
-    normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const normalized = data.replace(/\s/g, "");
+  if (!normalized) return { kind: "invalid" };
+  if (normalized.length > maxBase64EncodedLength(maxImageBytes)) {
+    return { kind: "too_large" };
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    return { kind: "invalid" };
+  }
+  if (normalized.length % 4 === 1) return { kind: "invalid" };
+  if (normalized.includes("=") && !/^[A-Za-z0-9+/]+={1,2}$/.test(normalized)) {
+    return { kind: "invalid" };
+  }
+
+  const padding = normalized.endsWith("==")
+    ? 2
+    : normalized.endsWith("=")
+      ? 1
+      : 0;
+  const bytes = Math.floor((normalized.length * 3) / 4) - padding;
+  if (bytes > maxImageBytes) return { kind: "too_large" };
+
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
   let decoded: Uint8Array;
   try {
     decoded =
@@ -68,29 +122,20 @@ function estimateBase64DecodedBytes(data: string): {
         ? Buffer.from(padded, "base64")
         : Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
   } catch {
-    return null;
+    return { kind: "invalid" };
   }
 
   let recoded: string;
   try {
     recoded = base64FromBytes(decoded);
   } catch {
-    return null;
+    return { kind: "invalid" };
   }
   if (recoded.replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
-    return null;
+    return { kind: "invalid" };
   }
 
-  const padding = normalized.endsWith("==")
-    ? 2
-    : normalized.endsWith("=")
-    ? 1
-    : 0;
-
-  return {
-    bytes: Math.floor((normalized.length * 3) / 4) - padding,
-    normalized,
-  };
+  return { kind: "ok", bytes, normalized };
 }
 
 function formatByteLimit(bytes: number): string {
@@ -109,6 +154,19 @@ function compactMediaLabel(mimeType: unknown): string {
 
 function isImageMimeType(mimeType: unknown): mimeType is string {
   return typeof mimeType === "string" && mimeType.startsWith("image/");
+}
+
+function makeImageBudget(options: McpModelOutputOptions): ImageBudget {
+  return {
+    maxImageBytes: options.maxImageBytes ?? MCP_DIRECT_IMAGE_MAX_BYTES,
+    maxImageCount: options.maxImageCount ?? MCP_IMAGE_MAX_MEDIA_PARTS,
+    maxTotalImageBytes: options.maxTotalImageBytes ?? MCP_IMAGE_MAX_TOTAL_BYTES,
+    maxLinkedResourceReads:
+      options.maxLinkedResourceReads ?? MCP_LINKED_RESOURCE_MAX_READS,
+    imageCount: 0,
+    totalImageBytes: 0,
+    linkedResourceReads: 0,
+  };
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -141,7 +199,7 @@ function isAbortError(error: unknown): boolean {
 function mapImageData(
   data: unknown,
   mimeType: unknown,
-  maxImageBytes: number
+  budget: ImageBudget
 ): McpModelOutputContentPart {
   if (!isImageMimeType(mimeType)) {
     return omissionMarker(
@@ -153,29 +211,47 @@ function mapImageData(
     return omissionMarker(`image omitted: missing base64 data (${mimeType})`);
   }
 
-  const estimated = estimateBase64DecodedBytes(data);
-  if (!estimated) {
+  if (budget.imageCount >= budget.maxImageCount) {
+    return omissionMarker(
+      `image omitted: image count exceeds ${budget.maxImageCount} limit`
+    );
+  }
+  budget.imageCount += 1;
+
+  const validated = validateBase64ImageData(data, budget.maxImageBytes);
+  if (validated.kind === "invalid") {
     return omissionMarker(`image omitted: invalid base64 data (${mimeType})`);
   }
 
-  if (estimated.bytes > maxImageBytes) {
+  if (validated.kind === "too_large") {
     return omissionMarker(
-      `image omitted: ${mimeType} exceeds ${formatByteLimit(maxImageBytes)} limit`
+      `image omitted: ${mimeType} exceeds ${formatByteLimit(
+        budget.maxImageBytes
+      )} limit`
     );
   }
 
+  if (budget.totalImageBytes + validated.bytes > budget.maxTotalImageBytes) {
+    return omissionMarker(
+      `image omitted: total image bytes exceed ${formatByteLimit(
+        budget.maxTotalImageBytes
+      )} limit`
+    );
+  }
+  budget.totalImageBytes += validated.bytes;
+
   return {
     type: "media",
-    data: estimated.normalized,
+    data: validated.normalized,
     mediaType: mimeType,
   };
 }
 
 function mapImageBlock(
   block: ContentBlock,
-  maxImageBytes: number
+  budget: ImageBudget
 ): McpModelOutputContentPart {
-  return mapImageData(block.data, block.mimeType, maxImageBytes);
+  return mapImageData(block.data, block.mimeType, budget);
 }
 
 function getEmbeddedResource(block: ContentBlock): ContentBlock | undefined {
@@ -191,37 +267,44 @@ function isEmbeddedImageResourceBlock(block: ContentBlock): boolean {
 
 function mapEmbeddedResourceBlock(
   block: ContentBlock,
-  maxImageBytes: number
+  budget: ImageBudget
 ): McpModelOutputContentPart {
   const resource = getEmbeddedResource(block);
-  return mapImageData(resource?.blob, resource?.mimeType, maxImageBytes);
+  return mapImageData(resource?.blob, resource?.mimeType, budget);
 }
 
 function isImageResourceLinkBlock(block: ContentBlock): boolean {
   return block.type === "resource_link" && isImageMimeType(block.mimeType);
 }
 
-function hasSyncImageCandidate(block: unknown): boolean {
+function hasSyncImageCandidate(
+  block: unknown,
+  _policy: ResolvedModelVisibleMcpToolResults
+): boolean {
   return (
     isRecord(block) &&
     (block.type === "image" || isEmbeddedImageResourceBlock(block))
   );
 }
 
-function hasLinkedImageCandidate(block: unknown): boolean {
+function hasLinkedImageCandidate(
+  block: unknown,
+  _policy: ResolvedModelVisibleMcpToolResults
+): boolean {
   return isRecord(block) && isImageResourceLinkBlock(block);
 }
 
 function mapReadResourceImageContents(
   readResult: unknown,
-  maxImageBytes: number
+  budget: ImageBudget
 ): McpModelOutputContentPart[] {
   const contents = isRecord(readResult)
     ? Array.isArray(readResult.contents)
       ? readResult.contents
-      : isRecord(readResult.content) && Array.isArray(readResult.content.contents)
-      ? readResult.content.contents
-      : undefined
+      : isRecord(readResult.content) &&
+          Array.isArray(readResult.content.contents)
+        ? readResult.content.contents
+        : undefined
     : undefined;
 
   if (!contents) {
@@ -236,7 +319,7 @@ function mapReadResourceImageContents(
       continue;
     }
     sawImageContent = true;
-    parts.push(mapImageData(content.blob, content.mimeType, maxImageBytes));
+    parts.push(mapImageData(content.blob, content.mimeType, budget));
   }
 
   return sawImageContent
@@ -246,13 +329,10 @@ function mapReadResourceImageContents(
 
 async function mapResourceLinkBlock(
   block: ContentBlock,
-  options: Required<
-    Pick<McpModelOutputWithLinkedResourcesOptions, "maxImageBytes">
-  > &
-    Pick<
-      McpModelOutputWithLinkedResourcesOptions,
-      "readResource" | "abortSignal"
-    >
+  options: Pick<
+    McpModelOutputWithLinkedResourcesOptions,
+    "readResource" | "abortSignal"
+  > & { budget: ImageBudget }
 ): Promise<McpModelOutputContentPart[]> {
   if (typeof block.uri !== "string" || block.uri.length === 0) {
     return [omissionMarker("resource link omitted: missing URI")];
@@ -262,6 +342,16 @@ async function mapResourceLinkBlock(
       omissionMarker("resource link omitted: resource reader unavailable"),
     ];
   }
+  if (
+    options.budget.linkedResourceReads >= options.budget.maxLinkedResourceReads
+  ) {
+    return [
+      omissionMarker(
+        `resource link omitted: linked resource read count exceeds ${options.budget.maxLinkedResourceReads} limit`
+      ),
+    ];
+  }
+  options.budget.linkedResourceReads += 1;
 
   try {
     throwIfAborted(options.abortSignal);
@@ -272,7 +362,7 @@ async function mapResourceLinkBlock(
         : undefined,
     });
     throwIfAborted(options.abortSignal);
-    return mapReadResourceImageContents(result, options.maxImageBytes);
+    return mapReadResourceImageContents(result, options.budget);
   } catch (error) {
     if (isAbortError(error) && !isTimeoutError(options.abortSignal?.reason)) {
       throw error;
@@ -318,9 +408,14 @@ export function mcpCallToolResultToModelOutput(
 ): McpModelOutputContent | undefined {
   if (!result || !Array.isArray(result.content)) return undefined;
 
-  if (!result.content.some(hasSyncImageCandidate)) return undefined;
+  const policy = resolveModelVisibleMcpToolResults(
+    options.modelVisibleMcpToolResults
+  );
+  if (!result.content.some((block) => hasSyncImageCandidate(block, policy))) {
+    return undefined;
+  }
 
-  const maxImageBytes = options.maxImageBytes ?? MCP_DIRECT_IMAGE_MAX_BYTES;
+  const budget = makeImageBudget(options);
   const value: McpModelOutputContentPart[] = [];
 
   for (const block of result.content) {
@@ -337,12 +432,20 @@ export function mcpCallToolResultToModelOutput(
     }
 
     if (block.type === "image") {
-      value.push(mapImageBlock(block, maxImageBytes));
+      value.push(
+        policy.directContent.image
+          ? mapImageBlock(block, budget)
+          : omissionMarker("image omitted: direct image policy disabled")
+      );
       continue;
     }
 
     if (isEmbeddedImageResourceBlock(block)) {
-      value.push(mapEmbeddedResourceBlock(block, maxImageBytes));
+      value.push(
+        policy.embeddedResources.blob.image
+          ? mapEmbeddedResourceBlock(block, budget)
+          : omissionMarker("embedded image resource omitted: policy disabled")
+      );
       continue;
     }
 
@@ -363,12 +466,17 @@ export async function mcpCallToolResultToModelOutputWithLinkedResources(
 ): Promise<McpModelOutputContent | undefined> {
   if (!result || !Array.isArray(result.content)) return undefined;
 
+  const policy = resolveModelVisibleMcpToolResults(
+    options.modelVisibleMcpToolResults
+  );
   const hasImageCandidate = result.content.some(
-    (block) => hasSyncImageCandidate(block) || hasLinkedImageCandidate(block)
+    (block) =>
+      hasSyncImageCandidate(block, policy) ||
+      hasLinkedImageCandidate(block, policy)
   );
   if (!hasImageCandidate) return undefined;
 
-  const maxImageBytes = options.maxImageBytes ?? MCP_DIRECT_IMAGE_MAX_BYTES;
+  const budget = makeImageBudget(options);
   const value: McpModelOutputContentPart[] = [];
 
   for (const block of result.content) {
@@ -387,19 +495,31 @@ export async function mcpCallToolResultToModelOutputWithLinkedResources(
     }
 
     if (block.type === "image") {
-      value.push(mapImageBlock(block, maxImageBytes));
+      value.push(
+        policy.directContent.image
+          ? mapImageBlock(block, budget)
+          : omissionMarker("image omitted: direct image policy disabled")
+      );
       continue;
     }
 
     if (isEmbeddedImageResourceBlock(block)) {
-      value.push(mapEmbeddedResourceBlock(block, maxImageBytes));
+      value.push(
+        policy.embeddedResources.blob.image
+          ? mapEmbeddedResourceBlock(block, budget)
+          : omissionMarker("embedded image resource omitted: policy disabled")
+      );
       continue;
     }
 
     if (isImageResourceLinkBlock(block)) {
+      if (!policy.linkedResources.blob.image) {
+        value.push(omissionMarker("resource link omitted: policy disabled"));
+        continue;
+      }
       value.push(
         ...(await mapResourceLinkBlock(block, {
-          maxImageBytes,
+          budget,
           readResource: options.readResource,
           abortSignal: options.abortSignal,
         }))

@@ -7,7 +7,7 @@ import {
 } from "../src/host-config/internal";
 
 function mockSource(
-  metaByServer: Record<string, Record<string, Record<string, unknown>>>,
+  metaByServer: Record<string, Record<string, Record<string, unknown>>>
 ): ToolMetadataSource {
   return {
     getAllToolsMetadata(serverId: string) {
@@ -116,7 +116,36 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
     requireToolApproval: false,
     respectToolVisibility: undefined,
     progressiveDiscoveryEnabled: false,
-    modelVisibleMcpImageToolResults: false,
+    modelVisibleMcpToolResults: {
+      directContent: {
+        text: true,
+        image: false,
+        audio: false,
+      },
+      embeddedResources: {
+        text: false,
+        blob: {
+          enabled: true,
+          image: false,
+          audio: false,
+          document: false,
+          video: false,
+          otherBinary: false,
+        },
+      },
+      linkedResources: {
+        text: false,
+        blob: {
+          enabled: true,
+          image: false,
+          audio: false,
+          document: false,
+          video: false,
+          otherBinary: false,
+        },
+      },
+    },
+    mcpToolResultImageRendering: "inline",
     hostStyle: undefined,
     namedHostId: undefined,
   };
@@ -144,7 +173,7 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
     const signals = applyVisibilityPolicyAndCountSignals(
       tools,
       makeSource(),
-      basePolicy,
+      basePolicy
     );
     expect(Object.keys(tools).sort()).toEqual(["both_tool", "model_tool"]);
     expect(signals.toolsTotalBefore).toBe(3);
@@ -186,10 +215,7 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
   // through `applyVisibilityPolicyAndCountSignals`) and converts this skip
   // into a real assertion.
   // eslint-disable-next-line vitest/no-disabled-tests
-  it.skip(
-    "preserves raw Tool[] app-only when respectToolVisibility=false — fix at HostRunner.ts:90 (Stage 4)",
-    () => {
-      // TODO(Stage 4): mock raw Tool[] input + assert post-filter preservation.
-    },
-  );
+  it.skip("preserves raw Tool[] app-only when respectToolVisibility=false — fix at HostRunner.ts:90 (Stage 4)", () => {
+    // TODO(Stage 4): mock raw Tool[] input + assert post-filter preservation.
+  });
 });

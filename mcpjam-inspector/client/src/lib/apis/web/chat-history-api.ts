@@ -1,5 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "./base";
+import type { ModelVisibleMcpToolResults } from "@/lib/client-config-v2";
 
 /**
  * Per-message shape inside the JSON pointed at by `messagesBlobUrl`.
@@ -49,6 +50,9 @@ export interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   selectedServers?: string[];
 }
 
@@ -133,7 +137,7 @@ interface ChatHistoryRequestOptions {
 }
 
 function buildChatHistoryHeaders(
-  initHeaders?: HeadersInit,
+  initHeaders?: HeadersInit
 ): HeadersInit | undefined {
   const headers = new Headers(initHeaders);
   return Array.from(headers.keys()).length > 0 ? headers : undefined;
@@ -141,7 +145,7 @@ function buildChatHistoryHeaders(
 
 async function webGet<T>(
   path: string,
-  options?: ChatHistoryRequestOptions,
+  options?: ChatHistoryRequestOptions
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "GET",
@@ -161,8 +165,8 @@ async function webGet<T>(
       typeof body?.message === "string"
         ? body.message
         : typeof body?.error === "string"
-          ? body.error
-          : `Request failed (${response.status})`;
+        ? body.error
+        : `Request failed (${response.status})`;
     throw new WebApiError(response.status, code, message);
   }
 
@@ -172,7 +176,7 @@ async function webGet<T>(
 async function webPost<TRequest, TResponse>(
   path: string,
   payload: TRequest,
-  options?: ChatHistoryRequestOptions,
+  options?: ChatHistoryRequestOptions
 ): Promise<TResponse> {
   const initHeaders = new Headers(options?.headers);
   initHeaders.set("Content-Type", "application/json");
@@ -196,8 +200,8 @@ async function webPost<TRequest, TResponse>(
       typeof body?.message === "string"
         ? body.message
         : typeof body?.error === "string"
-          ? body.error
-          : `Request failed (${response.status})`;
+        ? body.error
+        : `Request failed (${response.status})`;
     throw new WebApiError(response.status, code, message);
   }
 
@@ -211,7 +215,7 @@ export async function listChatHistory(
     limit?: number;
     before?: number;
   },
-  requestOptions?: ChatHistoryRequestOptions,
+  requestOptions?: ChatHistoryRequestOptions
 ): Promise<ChatHistoryListResponse> {
   const searchParams = new URLSearchParams();
   if (params.projectId) searchParams.set("projectId", params.projectId);
@@ -221,7 +225,7 @@ export async function listChatHistory(
 
   return webGet<ChatHistoryListResponse>(
     `/api/web/chat-history/list?${searchParams.toString()}`,
-    requestOptions,
+    requestOptions
   );
 }
 
@@ -231,7 +235,7 @@ export async function getChatHistoryDetail(
     chatSessionId: string;
     projectId?: string;
   },
-  requestOptions?: ChatHistoryRequestOptions,
+  requestOptions?: ChatHistoryRequestOptions
 ): Promise<ChatHistoryDetailResponse> {
   const searchParams = new URLSearchParams();
   if (params.sessionId) searchParams.set("sessionId", params.sessionId);
@@ -240,7 +244,7 @@ export async function getChatHistoryDetail(
 
   return webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,
-    requestOptions,
+    requestOptions
   );
 }
 
@@ -248,18 +252,18 @@ export async function chatHistoryAction(
   action: string,
   sessionId: string,
   params?: Record<string, unknown>,
-  requestOptions?: ChatHistoryRequestOptions,
+  requestOptions?: ChatHistoryRequestOptions
 ): Promise<{ ok: boolean }> {
   return webPost<Record<string, unknown>, { ok: boolean }>(
     "/api/web/chat-history/action",
     { action, sessionId, ...params },
-    requestOptions,
+    requestOptions
   );
 }
 
 export async function generateWidgetSnapshotUploadUrl(
   payload: GenerateWidgetSnapshotUploadUrlRequest,
-  requestOptions?: ChatHistoryRequestOptions,
+  requestOptions?: ChatHistoryRequestOptions
 ): Promise<GenerateWidgetSnapshotUploadUrlResponse> {
   return webPost<
     GenerateWidgetSnapshotUploadUrlRequest,
@@ -267,13 +271,13 @@ export async function generateWidgetSnapshotUploadUrl(
   >(
     "/api/web/chat-history/widget-snapshot/generate-upload-url",
     payload,
-    requestOptions,
+    requestOptions
   );
 }
 
 export async function createChatHistoryWidgetSnapshot(
   payload: CreateChatHistoryWidgetSnapshotRequest,
-  requestOptions?: ChatHistoryRequestOptions,
+  requestOptions?: ChatHistoryRequestOptions
 ): Promise<CreateChatHistoryWidgetSnapshotResponse> {
   return webPost<
     CreateChatHistoryWidgetSnapshotRequest,

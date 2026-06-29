@@ -11,6 +11,9 @@
  */
 
 import {
+  isMcpDirectContentImageVisible,
+  isMcpEmbeddedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageVisible,
   resolveEffectiveCompatRuntime,
   resolveEffectiveMcpAppsCapabilities,
 } from "@/lib/client-config-v2";
@@ -134,7 +137,10 @@ const mcpProfile = (cfg: HostConfigDtoV2) => cfg.mcpProfile;
 // because coverage/filter/search/divergence all call `read` repeatedly.
 // ============================================================
 
-const mcpAppsCache = new WeakMap<HostConfigDtoV2, ResolvedMcpAppsCapabilities>();
+const mcpAppsCache = new WeakMap<
+  HostConfigDtoV2,
+  ResolvedMcpAppsCapabilities
+>();
 const effMcpApps = (cfg: HostConfigDtoV2): ResolvedMcpAppsCapabilities => {
   let v = mcpAppsCache.get(cfg);
   if (!v) {
@@ -180,7 +186,8 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "MCP Apps capabilities",
     label: "availableDisplayModes",
     path: "mcpProfile.apps.mcpAppsOverrides.availableDisplayModes (effective)",
-    description: "Display modes the host offers widgets (inline / fullscreen / pip).",
+    description:
+      "Display modes the host offers widgets (inline / fullscreen / pip).",
     kind: { kind: "mode-set", modes: ALL_DISPLAY_MODES },
     read: (cfg) => effMcpApps(cfg).availableDisplayModes,
   },
@@ -204,7 +211,7 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       description,
       kind: { kind: "boolean" },
       read: (cfg) => effMcpApps(cfg)[key],
-    }),
+    })
   ),
 ];
 
@@ -224,7 +231,9 @@ const OPENAI_SHIM_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     kind: { kind: "boolean" },
     read: (cfg) => effCompat(cfg).injected,
   },
-  ...OPENAI_APPS_METHOD_LABELS.filter(({ key }) => key !== "requestDisplayMode").map(
+  ...OPENAI_APPS_METHOD_LABELS.filter(
+    ({ key }) => key !== "requestDisplayMode"
+  ).map(
     ({ key, label }): HostConfigFieldDef => ({
       id: `openaiShim.${key}`,
       section: "apps",
@@ -237,7 +246,7 @@ const OPENAI_SHIM_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
         const c = effCompat(cfg);
         return c.injected ? Boolean(c.capabilities[key]) : false;
       },
-    }),
+    })
   ),
   {
     id: "openaiShim.requestDisplayMode",
@@ -273,7 +282,7 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
       kind: { kind: "boolean" },
       read: (cfg) =>
         Boolean(mcpProfile(cfg)?.apps?.sandbox?.permissions?.allow?.[key]),
-    }),
+    })
   );
 
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
@@ -324,16 +333,50 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => cfg.respectToolVisibility ?? true,
   },
   {
-    id: "modelVisibleMcpImageToolResults",
+    id: "modelVisibleMcpToolResults.directContent.image",
     section: "agent",
     subsection: "Model & sampling",
-    label: "Expose tool images to model",
-    path: "modelVisibleMcpImageToolResults",
-    description: "Pass eligible MCP tool-returned images to the model.",
+    label: "Make tool image content visible to model",
+    path: "modelVisibleMcpToolResults.directContent.image",
+    description: "Pass MCP image content from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      cfg.modelVisibleMcpImageToolResults ??
-      (cfg.hostContext?.modelVisibleMcpImageToolResults !== false),
+      isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "modelVisibleMcpToolResults.embeddedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Make embedded resource images visible to model",
+    path: "modelVisibleMcpToolResults.embeddedResources.blob.image",
+    description: "Pass MCP embedded resource images from tool results to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "modelVisibleMcpToolResults.linkedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Make resource link images visible to model",
+    path: "modelVisibleMcpToolResults.linkedResources.blob.image",
+    description: "Resolve MCP resource link images and pass them to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "mcpToolResultImageRendering",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render tool images",
+    path: "mcpToolResultImageRendering",
+    description: "Human-facing display mode for MCP tool-returned images.",
+    kind: {
+      kind: "enum",
+      options: ["none", "panel", "inline"],
+    },
+    read: (cfg) => cfg.mcpToolResultImageRendering ?? "inline",
   },
   {
     id: "progressiveToolDiscovery",

@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
-import {
-  classifySelectedTool,
-  useToolExecution,
-} from "../useToolExecution";
+import { classifySelectedTool, useToolExecution } from "../useToolExecution";
 import {
   useAppToolsRegistry,
   type AppInstance,
@@ -36,7 +33,10 @@ vi.mock("@/lib/apis/mcp-resources-api", () => ({
 
 // --- Helpers ----------------------------------------------------------------
 
-function tool(name: string, extra?: Partial<AppToolDescriptor>): AppToolDescriptor {
+function tool(
+  name: string,
+  extra?: Partial<AppToolDescriptor>
+): AppToolDescriptor {
   return {
     name,
     annotations: { readOnlyHint: true },
@@ -48,7 +48,7 @@ function tool(name: string, extra?: Partial<AppToolDescriptor>): AppToolDescript
 function makeInstance(
   bridgeId: string,
   tools: AppToolDescriptor[],
-  callTool: AppInstance["bridge"]["callTool"],
+  callTool: AppInstance["bridge"]["callTool"]
 ): AppInstance {
   return {
     bridgeId,
@@ -139,19 +139,21 @@ describe("useToolExecution app-tool routing", () => {
     });
 
     const { result } = renderHook(() =>
-      useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      useToolExecution(makeHookOptions({ selectedTool: "get_weather" }))
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
-      outcome = await result.current.executeTool({ parameters: { city: "NYC" } });
+      outcome = await result.current.executeTool({
+        parameters: { city: "NYC" },
+      });
     });
 
-    expect(mockExecuteToolApi).toHaveBeenCalledWith(
-      "srv-1",
-      "get_weather",
-      { city: "NYC" },
-    );
+    expect(mockExecuteToolApi).toHaveBeenCalledWith("srv-1", "get_weather", {
+      city: "NYC",
+    });
     expect(callTool).not.toHaveBeenCalled();
     expect(outcome?.ok).toBe(true);
     expect(result.current.pendingExecution?.toolMeta?._serverId).toBe("srv-1");
@@ -187,8 +189,7 @@ describe("useToolExecution app-tool routing", () => {
     const { result } = renderHook(() =>
       useToolExecution({
         ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
-        modelVisibleMcpImageToolResults: true,
-      }),
+      })
     );
 
     await act(async () => {
@@ -197,7 +198,7 @@ describe("useToolExecution app-tool routing", () => {
 
     expect(mockReadResource).toHaveBeenCalledWith(
       "srv-1",
-      "example://linked-image.png",
+      "example://linked-image.png"
     );
     expect(result.current.pendingExecution?.result).toBe(rawResult);
     expect(result.current.pendingExecution?.modelOutput).toEqual({
@@ -226,11 +227,12 @@ describe("useToolExecution app-tool routing", () => {
     const { result } = renderHook(() =>
       useToolExecution({
         ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
-        modelVisibleMcpImageToolResults: true,
-      }),
+      })
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
       outcome = await result.current.executeTool({ parameters: {} });
     });
@@ -240,7 +242,7 @@ describe("useToolExecution app-tool routing", () => {
     expect(result.current.pendingExecution?.modelOutput).toBeUndefined();
   });
 
-  it("does not resolve linked image resources when model image output is disabled", async () => {
+  it("does not resolve linked image resources when linked image output is disabled", async () => {
     mockExecuteToolApi.mockResolvedValueOnce({
       status: "completed",
       result: {
@@ -257,8 +259,10 @@ describe("useToolExecution app-tool routing", () => {
     const { result } = renderHook(() =>
       useToolExecution({
         ...makeHookOptions({ selectedTool: "qa_return_linked_image_resource" }),
-        modelVisibleMcpImageToolResults: false,
-      }),
+        modelVisibleMcpToolResults: {
+          linkedResources: { blob: { image: false } },
+        },
+      })
     );
 
     await act(async () => {
@@ -266,7 +270,12 @@ describe("useToolExecution app-tool routing", () => {
     });
 
     expect(mockReadResource).not.toHaveBeenCalled();
-    expect(result.current.pendingExecution?.modelOutput).toBeUndefined();
+    expect(result.current.pendingExecution?.modelOutput).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[resource link omitted: policy disabled]" },
+      ],
+    });
   });
 
   it("app tool dispatches via bridge.callTool with rawName, not the alias", async () => {
@@ -279,10 +288,12 @@ describe("useToolExecution app-tool routing", () => {
     const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
 
     const { result } = renderHook(() =>
-      useToolExecution(makeHookOptions({ selectedTool: alias })),
+      useToolExecution(makeHookOptions({ selectedTool: alias }))
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
       outcome = await result.current.executeTool({
         parameters: { kind: "bar" },
@@ -319,7 +330,7 @@ describe("useToolExecution app-tool routing", () => {
     await useAppToolsRegistry
       .getState()
       .registerInstance(
-        makeInstance("b-1", [tool("qa_return_linked_image_resource")], callTool),
+        makeInstance("b-1", [tool("qa_return_linked_image_resource")], callTool)
       );
     const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
     mockReadResource.mockRejectedValueOnce(new Error("read failed"));
@@ -327,11 +338,12 @@ describe("useToolExecution app-tool routing", () => {
     const { result } = renderHook(() =>
       useToolExecution({
         ...makeHookOptions({ selectedTool: alias }),
-        modelVisibleMcpImageToolResults: true,
-      }),
+      })
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
       outcome = await result.current.executeTool({ parameters: {} });
     });
@@ -343,10 +355,12 @@ describe("useToolExecution app-tool routing", () => {
 
   it("stale alias returns a clear error and never calls the MCP server", async () => {
     const { result } = renderHook(() =>
-      useToolExecution(makeHookOptions({ selectedTool: "app_deadbeef" })),
+      useToolExecution(makeHookOptions({ selectedTool: "app_deadbeef" }))
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
       outcome = await result.current.executeTool({ parameters: {} });
     });
@@ -395,7 +409,7 @@ describe("useToolExecution app-tool routing", () => {
     const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
 
     const { result } = renderHook(() =>
-      useToolExecution(makeHookOptions({ selectedTool: alias })),
+      useToolExecution(makeHookOptions({ selectedTool: alias }))
     );
 
     await act(async () => {
@@ -404,7 +418,9 @@ describe("useToolExecution app-tool routing", () => {
 
     // After settle, the pending set should be empty (or absent) — the
     // dispatch path must clean up after itself even on success.
-    const pending = useAppToolsRegistry.getState().pendingControllers.get("b-1");
+    const pending = useAppToolsRegistry
+      .getState()
+      .pendingControllers.get("b-1");
     expect(pending === undefined || pending.size === 0).toBe(true);
   });
 
@@ -421,10 +437,12 @@ describe("useToolExecution app-tool routing", () => {
       useToolExecution({
         ...makeHookOptions({ selectedTool: alias }),
         serverName: undefined,
-      }),
+      })
     );
 
-    let outcome: Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    let outcome:
+      | Awaited<ReturnType<typeof result.current.executeTool>>
+      | undefined;
     await act(async () => {
       outcome = await result.current.executeTool({ parameters: {} });
     });

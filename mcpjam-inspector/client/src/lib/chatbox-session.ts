@@ -2,7 +2,10 @@ import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import type {
+  HostConfigMcpProfileV1,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
@@ -72,7 +75,8 @@ export interface ChatboxBootstrapPayload {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
   chatUi?: ChatUiPayload | null;
@@ -145,7 +149,7 @@ export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
 
 /** sessionStorage: optional servers enabled in builder preview for a chatbox id. */
 export function chatboxPreviewEnabledOptionalStorageKey(
-  chatboxId: string,
+  chatboxId: string
 ): string {
   return `chatbox-preview-opt-in:${chatboxId}`;
 }
@@ -183,12 +187,21 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
 }
 
 function normalizeHostCapabilitiesOverride(
-  input: unknown,
+  input: unknown
 ): Record<string, unknown> | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
   }
   return input as Record<string, unknown>;
+}
+
+function normalizeModelVisibleMcpToolResults(
+  input: unknown
+): ModelVisibleMcpToolResults | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as ModelVisibleMcpToolResults;
 }
 
 /**
@@ -200,9 +213,7 @@ function normalizeHostCapabilitiesOverride(
  * guards against an upstream serialization bug slipping garbage into
  * typed code.
  */
-function normalizeChatUiOverride(
-  input: unknown,
-): ChatUiOverride | undefined {
+function normalizeChatUiOverride(input: unknown): ChatUiOverride | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
   }
@@ -210,7 +221,7 @@ function normalizeChatUiOverride(
 }
 
 function normalizeMcpProfile(
-  input: unknown,
+  input: unknown
 ): HostConfigMcpProfileV1 | undefined {
   // Same untrusted-shape gate as normalizeHostCapabilitiesOverride: this
   // is the boundary between the redeem-response JSON and the typed
@@ -253,7 +264,7 @@ export function hasActiveChatboxSession(): boolean {
 }
 
 export function normalizeChatboxSession(
-  parsed: Partial<ChatboxSession> | null,
+  parsed: Partial<ChatboxSession> | null
 ): ChatboxSession | null {
   if (!parsed || typeof parsed !== "object") {
     return null;
@@ -309,9 +320,14 @@ export function normalizeChatboxSession(
       modelId: payload.modelId,
       temperature: payload.temperature,
       requireToolApproval: payload.requireToolApproval,
-      modelVisibleMcpImageToolResults:
-        typeof payload.modelVisibleMcpImageToolResults === "boolean"
-          ? payload.modelVisibleMcpImageToolResults
+      modelVisibleMcpToolResults: normalizeModelVisibleMcpToolResults(
+        payload.modelVisibleMcpToolResults
+      ),
+      mcpToolResultImageRendering:
+        payload.mcpToolResultImageRendering === "none" ||
+        payload.mcpToolResultImageRendering === "panel" ||
+        payload.mcpToolResultImageRendering === "inline"
+          ? payload.mcpToolResultImageRendering
           : undefined,
       servers: payload.servers
         .filter(
@@ -319,7 +335,7 @@ export function normalizeChatboxSession(
             !!server &&
             typeof server === "object" &&
             typeof server.serverId === "string" &&
-            typeof server.serverName === "string",
+            typeof server.serverName === "string"
         )
         .map((server) => ({
           serverId: server.serverId,
@@ -337,13 +353,13 @@ export function normalizeChatboxSession(
       chatUi: normalizeChatUiPayload(payload.chatUi),
       hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
         (payload as { hostCapabilitiesOverride?: unknown })
-          .hostCapabilitiesOverride,
+          .hostCapabilitiesOverride
       ),
       chatUiOverride: normalizeChatUiOverride(
-        (payload as { chatUiOverride?: unknown }).chatUiOverride,
+        (payload as { chatUiOverride?: unknown }).chatUiOverride
       ),
       mcpProfile: normalizeMcpProfile(
-        (payload as { mcpProfile?: unknown }).mcpProfile,
+        (payload as { mcpProfile?: unknown }).mcpProfile
       ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
@@ -360,7 +376,7 @@ function readStoredChatboxSession(storageKey: string): ChatboxSession | null {
     if (!raw) return null;
 
     return normalizeChatboxSession(
-      JSON.parse(raw) as Partial<ChatboxSession> | null,
+      JSON.parse(raw) as Partial<ChatboxSession> | null
     );
   } catch {
     return null;
@@ -373,7 +389,7 @@ export function readChatboxSession(): ChatboxSession | null {
 
 function writeStoredChatboxSession(
   storageKey: string,
-  session: ChatboxSession,
+  session: ChatboxSession
 ): void {
   sessionStorage.setItem(storageKey, JSON.stringify(session));
 }
@@ -383,7 +399,7 @@ export function writeChatboxSession(session: ChatboxSession): void {
 }
 
 export function readChatboxSurfaceFromUrl(
-  search: string,
+  search: string
 ): "preview" | "share_link" {
   try {
     const surface = new URLSearchParams(search).get("surface");
@@ -429,7 +445,7 @@ function pruneExpiredPlaygroundSessions(): void {
 }
 
 export function writePlaygroundSession(
-  session: ChatboxPlaygroundSession,
+  session: ChatboxPlaygroundSession
 ): void {
   try {
     localStorage.setItem(
@@ -437,7 +453,7 @@ export function writePlaygroundSession(
       JSON.stringify({
         ...session,
         updatedAt: Date.now(),
-      }),
+      })
     );
     pruneExpiredPlaygroundSessions();
   } catch {
@@ -446,7 +462,7 @@ export function writePlaygroundSession(
 }
 
 export function readPlaygroundSession(
-  playgroundId: string,
+  playgroundId: string
 ): ChatboxPlaygroundSession | null {
   try {
     const storageKey = `${CHATBOX_PLAYGROUND_KEY_PREFIX}${playgroundId}`;
@@ -503,7 +519,7 @@ export function writeChatboxSignInReturnPath(path: string): void {
   try {
     localStorage.setItem(
       CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
-      normalizedPath,
+      normalizedPath
     );
   } catch {
     // Ignore storage failures.
@@ -530,13 +546,15 @@ export function clearChatboxSignInReturnPath(): void {
 
 export function buildChatboxLink(token: string, chatboxName: string): string {
   const origin = getShareableAppOrigin();
-  return `${origin}/chatbox/${slugify(chatboxName)}/${encodeURIComponent(token)}`;
+  return `${origin}/chatbox/${slugify(chatboxName)}/${encodeURIComponent(
+    token
+  )}`;
 }
 
 export function buildPlaygroundChatboxLink(
   token: string,
   chatboxName: string,
-  playgroundId: string,
+  playgroundId: string
 ): string {
   const url = new URL(buildChatboxLink(token, chatboxName));
   url.searchParams.set("playground", "1");
@@ -557,7 +575,7 @@ export interface ChatboxBuilderSession {
 }
 
 export function readBuilderSession(
-  projectId: string,
+  projectId: string
 ): ChatboxBuilderSession | null {
   try {
     const raw = sessionStorage.getItem(BUILDER_SESSION_KEY);

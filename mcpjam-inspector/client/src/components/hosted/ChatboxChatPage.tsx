@@ -904,8 +904,10 @@ export function ChatboxChatPage({
             systemPrompt: session.payload.systemPrompt,
             temperature: session.payload.temperature,
             requireToolApproval: session.payload.requireToolApproval,
-            modelVisibleMcpImageToolResults:
-              session.payload.modelVisibleMcpImageToolResults,
+            modelVisibleMcpToolResults:
+              session.payload.modelVisibleMcpToolResults,
+            mcpToolResultImageRendering:
+              session.payload.mcpToolResultImageRendering,
           }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}
@@ -951,47 +953,47 @@ export function ChatboxChatPage({
                     Playground previews keep platform routing (local
                     builds reuse the builder's local connections). */}
                 <WebManagedServersProvider value={!playgroundParams}>
-                <div
-                  className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
-                  data-host-style={hostStyle}
-                  style={shellStyle}
-                >
-                  <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-                    <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-                      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                        {session?.payload.name || "\u00A0"}
-                      </h1>
-                      <button
-                        onClick={handleOpenMcpJam}
-                        className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
-                      >
-                        <img
-                          src={
-                            themeMode === "dark"
-                              ? "/mcp_jam_dark.png"
-                              : "/mcp_jam_light.png"
-                          }
-                          alt="MCPJam"
-                          className="h-4 w-auto object-contain"
-                        />
-                      </button>
-                      <div className="flex flex-1 items-center justify-end gap-1.5">
-                        {session && shareableToken ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-muted-foreground"
-                            onClick={handleCopyLink}
-                          >
-                            Copy link
-                          </Button>
-                        ) : null}
+                  <div
+                    className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
+                    data-host-style={hostStyle}
+                    style={shellStyle}
+                  >
+                    <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+                        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                          {session?.payload.name || "\u00A0"}
+                        </h1>
+                        <button
+                          onClick={handleOpenMcpJam}
+                          className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+                        >
+                          <img
+                            src={
+                              themeMode === "dark"
+                                ? "/mcp_jam_dark.png"
+                                : "/mcp_jam_light.png"
+                            }
+                            alt="MCPJam"
+                            className="h-4 w-auto object-contain"
+                          />
+                        </button>
+                        <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {session && shareableToken ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleCopyLink}
+                            >
+                              Copy link
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  </header>
+                    </header>
 
-                  {renderContent()}
-                </div>
+                    {renderContent()}
+                  </div>
                 </WebManagedServersProvider>
               </ChatboxSurfaceProvider>
             </ActiveHostCapsResolverScope>

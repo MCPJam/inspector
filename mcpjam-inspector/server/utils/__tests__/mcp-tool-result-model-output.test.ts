@@ -29,11 +29,7 @@ describe("mapMcpImageToolOutputs", () => {
   ] as unknown as ModelMessage[];
 
   it("maps direct MCP image tool outputs to model-visible media output when enabled", async () => {
-    await expect(
-      mapMcpImageToolOutputs(toolMessages, {
-        modelVisibleMcpImageToolResults: true,
-      })
-    ).resolves.toEqual([
+    await expect(mapMcpImageToolOutputs(toolMessages)).resolves.toEqual([
       {
         role: "tool",
         content: [
@@ -57,10 +53,34 @@ describe("mapMcpImageToolOutputs", () => {
     ]);
   });
 
-  it("leaves direct MCP image tool outputs as JSON when disabled", async () => {
-    await expect(mapMcpImageToolOutputs(toolMessages)).resolves.toEqual(
-      toolMessages
-    );
+  it("omits direct MCP image tool outputs when disabled", async () => {
+    await expect(
+      mapMcpImageToolOutputs(toolMessages, {
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+        },
+      })
+    ).resolves.toEqual([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "content",
+              value: [
+                {
+                  type: "text",
+                  text: "[image omitted: direct image policy disabled]",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("strips internal MCPJam provider metadata even when image mapping is disabled", async () => {
@@ -101,7 +121,11 @@ describe("mapMcpImageToolOutputs", () => {
     ] as unknown as ModelMessage[];
 
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: false,
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: false } },
+      },
     });
 
     expect((mapped[0] as any).content[0].providerOptions).toEqual({
@@ -111,8 +135,13 @@ describe("mapMcpImageToolOutputs", () => {
       keepme: { value: true },
     });
     expect((mapped[1] as any).content[0].output).toEqual({
-      type: "json",
-      value: imageResult,
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[image omitted: direct image policy disabled]",
+        },
+      ],
     });
   });
 
@@ -145,9 +174,7 @@ describe("mapMcpImageToolOutputs", () => {
       },
     ] as unknown as ModelMessage[];
 
-    const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
-    });
+    const mapped = await mapMcpImageToolOutputs(messages, {});
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
@@ -196,7 +223,6 @@ describe("mapMcpImageToolOutputs", () => {
     );
 
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
       readLinkedResource,
     });
 
@@ -263,7 +289,6 @@ describe("mapMcpImageToolOutputs", () => {
     );
 
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
       readLinkedResource,
     });
 
@@ -334,7 +359,6 @@ describe("mapMcpImageToolOutputs", () => {
     );
 
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
       readLinkedResource,
     });
 
@@ -376,13 +400,184 @@ describe("mapMcpImageToolOutputs", () => {
       },
     ] as unknown as ModelMessage[];
 
+    const mapped = await mapMcpImageToolOutputs(messages, {});
+
+    expect((mapped[0] as any).content[0].output).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("replays prior image media when every image source policy is enabled", async () => {
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "json",
+              value: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "aGVsbG8=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
+      modelVisibleMcpToolResults: {
+        directContent: { image: true },
+        embeddedResources: { blob: { enabled: true, image: true } },
+        linkedResources: { blob: { enabled: true, image: true } },
+      },
     });
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
       value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("omits sourceless replayed image media when any image source policy is disabled", async () => {
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "json",
+              value: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "aGVsbG8=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const mapped = await mapMcpImageToolOutputs(messages, {
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { enabled: true, image: true } },
+        linkedResources: { blob: { enabled: true, image: true } },
+      },
+    });
+
+    expect((mapped[0] as any).content[0].output).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[image omitted: replayed image policy disabled]",
+        },
+      ],
+    });
+  });
+
+  it("uses preserved raw MCP result to replay direct images when linked images are disabled", async () => {
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "content",
+              value: [
+                {
+                  type: "media",
+                  data: "aGVsbG8=",
+                  mediaType: "image/png",
+                },
+              ],
+            },
+            result: imageResult,
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const mapped = await mapMcpImageToolOutputs(messages, {
+      modelVisibleMcpToolResults: {
+        directContent: { image: true },
+        linkedResources: { blob: { enabled: true, image: false } },
+      },
+    });
+
+    expect((mapped[0] as any).content[0]).toMatchObject({
+      type: "tool-result",
+      output: {
+        type: "content",
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      },
+      result: imageResult,
+    });
+  });
+
+  it("uses preserved raw MCP result to omit direct images when direct images are disabled", async () => {
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "qa_return_image_tool_result",
+            output: {
+              type: "content",
+              value: [
+                {
+                  type: "media",
+                  data: "aGVsbG8=",
+                  mediaType: "image/png",
+                },
+              ],
+            },
+            result: imageResult,
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const mapped = await mapMcpImageToolOutputs(messages, {
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { enabled: true, image: true } },
+        linkedResources: { blob: { enabled: true, image: true } },
+      },
+    });
+
+    expect((mapped[0] as any).content[0].output).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[image omitted: direct image policy disabled]",
+        },
+      ],
     });
   });
 
@@ -413,9 +608,7 @@ describe("mapMcpImageToolOutputs", () => {
       },
     ] as unknown as ModelMessage[];
 
-    const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
-    });
+    const mapped = await mapMcpImageToolOutputs(messages, {});
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
@@ -449,9 +642,7 @@ describe("mapMcpImageToolOutputs", () => {
       },
     ] as unknown as ModelMessage[];
 
-    const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
-    });
+    const mapped = await mapMcpImageToolOutputs(messages, {});
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "json",
@@ -525,7 +716,6 @@ describe("mapMcpImageToolOutputs", () => {
     );
 
     const mapped = await mapMcpImageToolOutputs(messages, {
-      modelVisibleMcpImageToolResults: true,
       resolveLinkedResourceServerId,
       readLinkedResource,
     });
@@ -558,7 +748,9 @@ describe("mapMcpImageToolOutputs", () => {
     });
 
     await expect(resolver({ toolName: "unique_tool" })).resolves.toBe("srv-1");
-    await expect(resolver({ toolName: "shared_tool" })).resolves.toBeUndefined();
+    await expect(
+      resolver({ toolName: "shared_tool" })
+    ).resolves.toBeUndefined();
   });
 
   it("resolves linked MCP image resources after UI-message conversion", async () => {
@@ -604,7 +796,6 @@ describe("mapMcpImageToolOutputs", () => {
         },
       ] as any,
       {
-        modelVisibleMcpImageToolResults: true,
         readLinkedResource,
       }
     );
@@ -677,9 +868,7 @@ describe("mapMcpImageToolOutputs", () => {
           ],
         },
       ] as any,
-      {
-        modelVisibleMcpImageToolResults: true,
-      }
+      {}
     );
 
     expect(mapped).toEqual([
@@ -764,7 +953,6 @@ describe("mapMcpImageToolOutputs", () => {
         },
       ] as any,
       {
-        modelVisibleMcpImageToolResults: true,
         readLinkedResource,
       }
     );

@@ -1207,7 +1207,6 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const messages = callMessage("screenshot");
     const newMessages = await executeToolCallsFromMessages(messages, {
       tools,
-      modelVisibleMcpImageToolResults: true,
     });
 
     const part = (newMessages[0] as any).content[0];
@@ -1240,7 +1239,6 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const messages = callMessage("screenshot");
     const newMessages = await executeToolCallsFromMessages(messages, {
       tools,
-      modelVisibleMcpImageToolResults: true,
     });
 
     const part = (newMessages[0] as any).content[0];
@@ -1283,7 +1281,6 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const messages = callMessage("screenshot");
     const newMessages = await executeToolCallsFromMessages(messages, {
       tools,
-      modelVisibleMcpImageToolResults: true,
       readLinkedResource,
     });
 
@@ -1329,7 +1326,6 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     await expect(
       executeToolCallsFromMessages(messages, {
         tools,
-        modelVisibleMcpImageToolResults: true,
         readLinkedResource,
         abortSignal: abortController.signal,
       })
@@ -1347,9 +1343,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
         abortController.abort();
         return {
           type: "content",
-          value: [
-            { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
-          ],
+          value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
         };
       }
     );
@@ -1372,7 +1366,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     expect(toModelOutput).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps direct MCP image results on JSON when model-visible images are not enabled", async () => {
+  it("omits direct MCP image results when direct image visibility is disabled", async () => {
     const implResult = {
       content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
     };
@@ -1385,13 +1379,21 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const messages = callMessage("screenshot");
     const newMessages = await executeToolCallsFromMessages(messages, {
       tools,
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+      },
     });
 
     const part = (newMessages[0] as any).content[0];
-    expect(part.output).toEqual({ type: "json", value: implResult });
+    expect(part.output).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: direct image policy disabled]" },
+      ],
+    });
   });
 
-  it("keeps linked MCP image resources on JSON when model-visible images are not enabled", async () => {
+  it("omits linked MCP image resources when linked image visibility is disabled", async () => {
     const implResult = {
       content: [
         {
@@ -1416,10 +1418,18 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const newMessages = await executeToolCallsFromMessages(messages, {
       tools,
       readLinkedResource,
+      modelVisibleMcpToolResults: {
+        linkedResources: { blob: { image: false } },
+      },
     });
 
     const part = (newMessages[0] as any).content[0];
-    expect(part.output).toEqual({ type: "json", value: implResult });
+    expect(part.output).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[resource link omitted: policy disabled]" },
+      ],
+    });
     expect(readLinkedResource).not.toHaveBeenCalled();
   });
 });

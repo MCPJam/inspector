@@ -12,11 +12,16 @@ import {
   buildHostedStepHandlers,
 } from "./evals/step-handlers";
 import { buildHostedEvalSinks } from "./evals/hosted-eval-sinks";
-import { buildStepResultRecords, buildStepScriptedCheckFailures, resolveTurnCheckResultsFromStepExecution } from "./evals/step-verdict-adapters";
+import {
+  buildStepResultRecords,
+  buildStepScriptedCheckFailures,
+  resolveTurnCheckResultsFromStepExecution,
+} from "./evals/step-verdict-adapters";
 
 import {
   applyVisibilityPolicyAndCountSignals,
   type HostExecutionPolicy,
+  type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import { type MCPClientManager } from "@mcpjam/sdk";
@@ -390,15 +395,16 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   mcpClientManager: MCPClientManager;
   serverIds: string[];
   includeAppOnly: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): Promise<ToolSet> {
+  const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
   const toolOptions =
-    args.includeAppOnly || args.modelVisibleMcpImageToolResults
+    args.includeAppOnly || hasModelVisiblePolicy
       ? {
           ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
-          ...(args.modelVisibleMcpImageToolResults
-            ? { modelVisibleMcpImageToolResults: true }
+          ...(args.modelVisibleMcpToolResults !== undefined
+            ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
             : {}),
         }
       : undefined;
@@ -409,7 +415,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         return toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
               [serverId],
-              toolOptions,
+              toolOptions
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
       } catch (error) {
@@ -1810,8 +1816,8 @@ export const runEvalSuiteWithAiSdk = async ({
       mcpClientManager,
       serverIds,
       includeAppOnly: Boolean(hostExecutionPolicy),
-      modelVisibleMcpImageToolResults:
-        hostExecutionPolicy?.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults:
+        hostExecutionPolicy?.modelVisibleMcpToolResults,
       environment: config.environment,
     });
 
@@ -2413,6 +2419,7 @@ const runLocalIteration = async ({
         systemPrompt: system,
         temperature,
         respectToolVisibility: hostPolicy?.respectToolVisibility,
+        modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
@@ -2734,7 +2741,7 @@ const runLocalIteration = async ({
     // re-evaluation of promptTurns.checks — avoids duplicates vs executeSteps).
     const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
       stepState,
-      steps,
+      steps
     );
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -3271,6 +3278,7 @@ const runHostedIterationWithBrowser = async (
       systemPrompt,
       temperature,
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+      modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(backendCustomProviders?.length
         ? { customProviders: backendCustomProviders }
         : {}),
@@ -3504,15 +3512,15 @@ const runHostedIterationWithBrowser = async (
   // Per-turn predicate results from step assert execution (hosted parity).
   const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
     stepState,
-    steps,
+    steps
   );
   const effectivePredicates = test.successPredicates?.length
     ? test.successPredicates
     : isPinnedOnly({ caseType: test.caseType, promptTurns })
-      ? ([{ type: "widgetRendered" }] as NonNullable<
-          typeof test.successPredicates
-        >)
-      : undefined;
+    ? ([{ type: "widgetRendered" }] as NonNullable<
+        typeof test.successPredicates
+      >)
+    : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
@@ -3538,7 +3546,7 @@ const runHostedIterationWithBrowser = async (
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,
-    turnCheckResults,
+    turnCheckResults
   );
   // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
   // returned evaluation so totals built from `evaluation.passed` agree with the

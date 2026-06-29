@@ -38,6 +38,7 @@ import {
   isHarness,
   type Harness,
   type HostExecutionPolicy,
+  type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 
 /**
@@ -68,7 +69,8 @@ export interface ExecutionOverrides {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   hostStyle?: string;
   modelId?: string;
   selectedServerIds?: string[];
@@ -121,6 +123,8 @@ export interface ResolvedExecutionContext {
    * `built-in-tools/registry.ts` at the call site.
    */
   builtInToolIds: string[] | undefined;
+  /** Human-facing MCP tool-result image rendering policy. */
+  mcpToolResultImageRendering: "none" | "panel" | "inline" | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -131,7 +135,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): string | undefined {
   const value = hostConfig[key];
   return typeof value === "string" ? value : undefined;
@@ -139,7 +143,7 @@ function readString(
 
 function readNumber(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): number | undefined {
   const value = hostConfig[key];
   return typeof value === "number" ? value : undefined;
@@ -147,7 +151,7 @@ function readNumber(
 
 function readBoolean(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): boolean | undefined {
   const value = hostConfig[key];
   return typeof value === "boolean" ? value : undefined;
@@ -155,12 +159,28 @@ function readBoolean(
 
 function readStringArray(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): string[] | undefined {
   const value = hostConfig[key];
   if (!Array.isArray(value)) return undefined;
   if (!value.every((entry) => typeof entry === "string")) return undefined;
   return value as string[];
+}
+
+function readMcpToolResultImageRendering(
+  hostConfig: Record<string, unknown>
+): "none" | "panel" | "inline" | undefined {
+  const value = hostConfig.mcpToolResultImageRendering;
+  return value === "none" || value === "panel" || value === "inline"
+    ? value
+    : undefined;
+}
+
+function readModelVisibleMcpToolResults(
+  hostConfig: Record<string, unknown>
+): ModelVisibleMcpToolResults | undefined {
+  const value = hostConfig.modelVisibleMcpToolResults;
+  return isRecord(value) ? (value as ModelVisibleMcpToolResults) : undefined;
 }
 
 /**
@@ -170,25 +190,13 @@ function readStringArray(
  * read so the resolver accepts both shapes.
  */
 function readProgressiveToolDiscovery(
-  hostConfig: Record<string, unknown>,
+  hostConfig: Record<string, unknown>
 ): boolean | undefined {
   const raw = hostConfig.progressiveToolDiscovery;
   if (typeof raw === "boolean") return raw;
   if (isRecord(raw) && raw.enabled === true) return true;
   if (isRecord(raw) && raw.enabled === false) return false;
   return undefined;
-}
-
-function readModelVisibleMcpImageToolResults(
-  hostConfig: Record<string, unknown>,
-): boolean | undefined {
-  const topLevel = readBoolean(hostConfig, "modelVisibleMcpImageToolResults");
-  if (topLevel !== undefined) return topLevel;
-  const hostContext = isRecord(hostConfig.hostContext)
-    ? hostConfig.hostContext
-    : undefined;
-  const legacy = hostContext?.modelVisibleMcpImageToolResults;
-  return typeof legacy === "boolean" ? legacy : undefined;
 }
 
 /**
@@ -212,7 +220,7 @@ function pickField<T>(
   field: keyof ExecutionOverrides,
   override: T | undefined,
   host: T | undefined,
-  precedence: ResolverPrecedence,
+  precedence: ResolverPrecedence
 ): { value: T | undefined; drift?: ExecutionDriftEntry } {
   const overrideDefined = override !== undefined;
   const hostDefined = host !== undefined;
@@ -226,14 +234,13 @@ function pickField<T>(
     return { value: override };
   }
   // Both defined — apply precedence + record drift when they differ.
-  const drift =
-    !areEqualValues(override, host)
-      ? {
-          field,
-          overrideValue: override as unknown,
-          hostValue: host as unknown,
-        }
-      : undefined;
+  const drift = !areEqualValues(override, host)
+    ? {
+        field,
+        overrideValue: override as unknown,
+        hostValue: host as unknown,
+      }
+    : undefined;
   const winner = precedence === "host-wins" ? host : override;
   return drift ? { value: winner, drift } : { value: winner };
 }
@@ -259,13 +266,17 @@ export function resolveExecutionContext(args: {
   if (!hostConfig) {
     const policySource =
       overrides.hostStyle ||
-      overrides.modelVisibleMcpImageToolResults !== undefined
+      overrides.modelVisibleMcpToolResults !== undefined ||
+      overrides.mcpToolResultImageRendering !== undefined
         ? {
             ...(overrides.hostStyle ? { hostStyle: overrides.hostStyle } : {}),
-            ...(overrides.modelVisibleMcpImageToolResults !== undefined
+            ...(overrides.modelVisibleMcpToolResults !== undefined
+              ? { modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults }
+              : {}),
+            ...(overrides.mcpToolResultImageRendering !== undefined
               ? {
-                  modelVisibleMcpImageToolResults:
-                    overrides.modelVisibleMcpImageToolResults,
+                  mcpToolResultImageRendering:
+                    overrides.mcpToolResultImageRendering,
                 }
               : {}),
           }
@@ -281,6 +292,7 @@ export function resolveExecutionContext(args: {
       harness: undefined,
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
+      mcpToolResultImageRendering: overrides.mcpToolResultImageRendering,
       hostPolicy,
       drift,
     };
@@ -292,8 +304,8 @@ export function resolveExecutionContext(args: {
     requireToolApproval: readBoolean(hostConfig, "requireToolApproval"),
     respectToolVisibility: readBoolean(hostConfig, "respectToolVisibility"),
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
-    modelVisibleMcpImageToolResults:
-      readModelVisibleMcpImageToolResults(hostConfig),
+    modelVisibleMcpToolResults: readModelVisibleMcpToolResults(hostConfig),
+    mcpToolResultImageRendering: readMcpToolResultImageRendering(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
     builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
@@ -303,7 +315,7 @@ export function resolveExecutionContext(args: {
     "systemPrompt",
     overrides.systemPrompt,
     hostFields.systemPrompt,
-    precedence,
+    precedence
   );
   if (systemPrompt.drift) drift.push(systemPrompt.drift);
 
@@ -311,7 +323,7 @@ export function resolveExecutionContext(args: {
     "temperature",
     overrides.temperature,
     hostFields.temperature,
-    precedence,
+    precedence
   );
   if (temperature.drift) drift.push(temperature.drift);
 
@@ -319,7 +331,7 @@ export function resolveExecutionContext(args: {
     "requireToolApproval",
     overrides.requireToolApproval,
     hostFields.requireToolApproval,
-    precedence,
+    precedence
   );
   if (requireToolApprovalPick.drift) drift.push(requireToolApprovalPick.drift);
 
@@ -327,7 +339,7 @@ export function resolveExecutionContext(args: {
     "respectToolVisibility",
     overrides.respectToolVisibility,
     hostFields.respectToolVisibility,
-    precedence,
+    precedence
   );
   if (respectToolVisibility.drift) drift.push(respectToolVisibility.drift);
 
@@ -335,25 +347,36 @@ export function resolveExecutionContext(args: {
     "progressiveToolDiscovery",
     overrides.progressiveToolDiscovery,
     hostFields.progressiveToolDiscovery,
-    precedence,
+    precedence
   );
-  if (progressiveToolDiscovery.drift) drift.push(progressiveToolDiscovery.drift);
+  if (progressiveToolDiscovery.drift)
+    drift.push(progressiveToolDiscovery.drift);
 
-  const modelVisibleMcpImageToolResults = pickField(
-    "modelVisibleMcpImageToolResults",
-    overrides.modelVisibleMcpImageToolResults,
-    hostFields.modelVisibleMcpImageToolResults,
-    precedence,
+  const modelVisibleMcpToolResults = pickField(
+    "modelVisibleMcpToolResults",
+    overrides.modelVisibleMcpToolResults,
+    hostFields.modelVisibleMcpToolResults,
+    precedence
   );
-  if (modelVisibleMcpImageToolResults.drift) {
-    drift.push(modelVisibleMcpImageToolResults.drift);
+  if (modelVisibleMcpToolResults.drift) {
+    drift.push(modelVisibleMcpToolResults.drift);
+  }
+
+  const mcpToolResultImageRendering = pickField(
+    "mcpToolResultImageRendering",
+    overrides.mcpToolResultImageRendering,
+    hostFields.mcpToolResultImageRendering,
+    precedence
+  );
+  if (mcpToolResultImageRendering.drift) {
+    drift.push(mcpToolResultImageRendering.drift);
   }
 
   const modelId = pickField(
     "modelId",
     overrides.modelId,
     hostFields.modelId,
-    precedence,
+    precedence
   );
   if (modelId.drift) drift.push(modelId.drift);
 
@@ -361,7 +384,7 @@ export function resolveExecutionContext(args: {
     "selectedServerIds",
     overrides.selectedServerIds,
     hostFields.selectedServerIds,
-    precedence,
+    precedence
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
 
@@ -369,19 +392,26 @@ export function resolveExecutionContext(args: {
     "builtInToolIds",
     overrides.builtInToolIds,
     hostFields.builtInToolIds,
-    precedence,
+    precedence
   );
   if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
 
   const hostPolicy = extractHostExecutionPolicy(
-    modelVisibleMcpImageToolResults.value !== undefined
+    modelVisibleMcpToolResults.value !== undefined ||
+      mcpToolResultImageRendering.value !== undefined
       ? {
           ...hostConfig,
-          modelVisibleMcpImageToolResults:
-            modelVisibleMcpImageToolResults.value,
+          ...(modelVisibleMcpToolResults.value !== undefined
+            ? { modelVisibleMcpToolResults: modelVisibleMcpToolResults.value }
+            : {}),
+          ...(mcpToolResultImageRendering.value !== undefined
+            ? {
+                mcpToolResultImageRendering: mcpToolResultImageRendering.value,
+              }
+            : {}),
         }
       : hostConfig,
-    namedHostId,
+    namedHostId
   );
 
   return {
@@ -395,6 +425,7 @@ export function resolveExecutionContext(args: {
     harness: readHarness(hostConfig),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
+    mcpToolResultImageRendering: mcpToolResultImageRendering.value,
     hostPolicy,
     drift,
   };

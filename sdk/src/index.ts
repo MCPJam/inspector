@@ -72,6 +72,9 @@ export {
   isChatGPTAppTool,
   isMcpAppTool,
   MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_IMAGE_MAX_MEDIA_PARTS,
+  MCP_IMAGE_MAX_TOTAL_BYTES,
+  MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
@@ -81,6 +84,7 @@ export {
   type McpModelOutputContentPart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
+  type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/index.js";
 export {
@@ -601,6 +605,8 @@ export type {
   HostConnectionDefaults,
   HostStyleId,
   Harness,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

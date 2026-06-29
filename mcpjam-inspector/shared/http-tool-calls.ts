@@ -1,6 +1,7 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   type McpLinkedResourceReader,
+  type McpModelVisibleToolResultPolicy,
   type MCPClientManager,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   isMcpAppTool,
@@ -74,24 +75,25 @@ function shouldPreserveRawResultForUi(tool: unknown): boolean {
 
 async function maybeMcpModelOutput(
   result: unknown,
-  options: {
-    modelVisibleMcpImageToolResults?: boolean;
+  options: McpModelVisibleToolResultPolicy & {
     readResource?: McpLinkedResourceReader;
     abortSignal?: AbortSignal;
   }
 ): Promise<ToolResultPart | undefined> {
-  if (!options.modelVisibleMcpImageToolResults) return undefined;
   if (!result || typeof result !== "object") return undefined;
   if (options.readResource) {
     return (await mcpCallToolResultToModelOutputWithLinkedResources(
       result as any,
       {
+        modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
         readResource: options.readResource,
         abortSignal: options.abortSignal,
       }
     )) as any;
   }
-  return mcpCallToolResultToModelOutput(result as any) as any;
+  return mcpCallToolResultToModelOutput(result as any, {
+    modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+  }) as any;
 }
 
 function isSkippableClientFulfilledToolCall(
@@ -158,12 +160,8 @@ type ExecuteToolCallOptionsBase = {
    * `tool.execute is not a function`, corrupting the conversation history.
    */
   skipNonExecutableTools?: boolean;
-  /**
-   * Host/client capability for eligible MCP image-bearing tool results.
-   * When false/absent, tools without their own `toModelOutput` keep object
-   * results on the JSON serialization path.
-   */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
   /**
    * Optional bridge for resolving MCP image `resource_link` results through
    * the originating server's `resources/read` method. Callers must not fetch
@@ -197,11 +195,12 @@ export async function executeToolCallsFromMessages(
   let tools: ToolsMap = {};
 
   if ("clientManager" in options) {
-    const flattened = options.modelVisibleMcpImageToolResults
-      ? await options.clientManager.getToolsForAiSdk(options.serverIds, {
-          modelVisibleMcpImageToolResults: true,
-        })
-      : await options.clientManager.getToolsForAiSdk(options.serverIds);
+    const flattened = await options.clientManager.getToolsForAiSdk(
+      options.serverIds,
+      {
+        modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+      }
+    );
     tools = flattened as ToolsMap;
   } else if ("toolsets" in options) {
     const toolsets = options.toolsets as Toolsets;
@@ -387,8 +386,7 @@ export async function executeToolCallsFromMessages(
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {
               const mcpOutput = await maybeMcpModelOutput(result, {
-                modelVisibleMcpImageToolResults:
-                  options.modelVisibleMcpImageToolResults,
+                modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
                 readResource,
                 abortSignal: signal,
               });
@@ -431,8 +429,7 @@ export async function executeToolCallsFromMessages(
                 result as any
               );
               const scrubbedMcpOutput = await maybeMcpModelOutput(scrubbed, {
-                modelVisibleMcpImageToolResults:
-                  options.modelVisibleMcpImageToolResults,
+                modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
                 readResource,
                 abortSignal: signal,
               });

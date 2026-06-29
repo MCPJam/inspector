@@ -9,6 +9,7 @@ import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import { hasMcpToolResultImageCandidate } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 
 type DeterministicToolState = "output-available" | "output-error";
 
@@ -19,12 +20,14 @@ interface DeterministicToolOptions {
   errorText?: string;
   /** Optional fixed toolCallId for in-place updates */
   toolCallId?: string;
-  /** Optional model-facing output; raw result is still used for UI display. */
+  /** Optional model-facing output used by trace/prelude callers, not UI storage. */
   modelOutput?: unknown;
+  /** Host policy for human-facing tool-result image rendering. */
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
 }
 
 function readServerIdFromToolMeta(
-  toolMeta: Record<string, unknown> | undefined,
+  toolMeta: Record<string, unknown> | undefined
 ): string | undefined {
   const serverId = toolMeta?._serverId ?? toolMeta?.serverId;
   return typeof serverId === "string" && serverId.length > 0
@@ -43,7 +46,7 @@ export function createDeterministicToolMessages(
   params: Record<string, unknown>,
   result: unknown,
   toolMeta: Record<string, unknown> | undefined,
-  options?: DeterministicToolOptions,
+  options?: DeterministicToolOptions
 ): { messages: UIMessage[]; toolCallId: string } {
   // Validate toolName
   if (!toolName?.trim()) {
@@ -52,7 +55,7 @@ export function createDeterministicToolMessages(
 
   const toolCallId = options?.toolCallId ?? `playground-${generateId()}`;
   const state = options?.state ?? "output-available";
-  const toolOutput = options?.modelOutput ?? result;
+  const toolOutput = result;
 
   // Get custom invoked message from tool metadata if available
   const invokedMessage = toolMeta?.["openai/toolInvocation/invoked"] as
@@ -63,10 +66,8 @@ export function createDeterministicToolMessages(
   const invocationText = invokedMessage || `Invoked \`${toolName}\``;
   const uiType = detectUIType(toolMeta, result);
   const isTextTool = uiType === null;
-  const providerMetadata = mergeMcpToolOriginMetadata(
-    undefined,
-    readServerIdFromToolMeta(toolMeta),
-  );
+  const serverId = readServerIdFromToolMeta(toolMeta);
+  const providerMetadata = mergeMcpToolOriginMetadata(undefined, serverId);
 
   // Properly typed dynamic tool part based on state
   const toolPart: DynamicToolUIPart =
@@ -78,7 +79,9 @@ export function createDeterministicToolMessages(
           state: "output-error",
           input: params,
           errorText: options?.errorText ?? "Unknown error",
-          ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
+          ...(providerMetadata
+            ? { callProviderMetadata: providerMetadata }
+            : {}),
         }
       : {
           type: "dynamic-tool",
@@ -87,7 +90,9 @@ export function createDeterministicToolMessages(
           state: "output-available",
           input: params,
           output: toolOutput,
-          ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
+          ...(providerMetadata
+            ? { callProviderMetadata: providerMetadata }
+            : {}),
         };
 
   const assistantParts: UIMessage["parts"] = [
@@ -108,12 +113,18 @@ export function createDeterministicToolMessages(
         text: `Tool error: ${options?.errorText ?? "Unknown error"}`,
       });
     } else {
-      const display = extractDisplayFromToolResult(result);
+      const suppressInlineImageDataResult =
+        (options?.mcpToolResultImageRendering ?? "inline") === "inline" &&
+        hasMcpToolResultImageCandidate(result);
+      const display = suppressInlineImageDataResult
+        ? null
+        : extractDisplayFromToolResult(result);
       if (display?.kind === "json") {
         assistantParts.push({
           type: "data-result",
           data: display.value,
           autoHeight: true,
+          ...(serverId ? { serverId } : {}),
         } as any);
       } else if (display?.kind === "text") {
         assistantParts.push({

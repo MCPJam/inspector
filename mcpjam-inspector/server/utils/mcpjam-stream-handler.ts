@@ -25,6 +25,7 @@ import type {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import {
@@ -340,11 +341,11 @@ export interface MCPJamHandlerOptions {
   harness?: Harness;
   requireToolApproval?: boolean;
   /**
-   * Host/client capability for eligible MCP image-bearing tool results.
+   * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
    * UI/debug history.
    */
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
    * approval-required tool calls pause the loop until the user answers
@@ -512,7 +513,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
   usedToolCallIds: Set<string>;
@@ -1508,7 +1509,7 @@ async function handlePendingApprovals(
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
   abortSignal?: AbortSignal,
-  modelVisibleMcpImageToolResults?: boolean,
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults,
   // PR 5b-pre: propagate the chunk-level callbacks so denial /
   // resumed-approval / approved-tool-result emissions all fire them.
   onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
@@ -1736,7 +1737,7 @@ async function handlePendingApprovals(
 
     const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
-      modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults,
       readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
       ...(abortSignal ? { abortSignal } : {}),
     });
@@ -1779,7 +1780,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
-    modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
     usedToolCallIds,
@@ -2221,7 +2222,7 @@ async function processOneStep(
         tools: metaTracedTools as Record<string, any>,
         filterToolName: (name) =>
           isApprovalFreeMetaToolName(name, progressivePlan),
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
       });
@@ -2328,7 +2329,7 @@ async function processOneStep(
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: executableTools as Record<string, any>,
         skipNonExecutableTools: true,
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
       });
@@ -2588,7 +2589,7 @@ export async function runChatEngineLoop(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
-    modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults,
     approvalMode,
     onConversationComplete,
     onStreamComplete,
@@ -2799,7 +2800,7 @@ export async function runChatEngineLoop(
           traceTurn,
           effectiveSteps(),
           abortSignal,
-          modelVisibleMcpImageToolResults,
+          modelVisibleMcpToolResults,
           onToolResult,
           onToolCall
         );
@@ -2833,7 +2834,7 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           requireToolApproval,
-          modelVisibleMcpImageToolResults,
+          modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
           usedToolCallIds,

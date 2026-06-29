@@ -47,6 +47,8 @@ import type {
   HostMcp,
   HostServerOverride,
   HostStyleId,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   ServerId,
 } from "./public-types.js";
 import {
@@ -62,27 +64,6 @@ import {
 // should fail loudly, not silently get MCPJam chrome on a Claude-style flow.
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
-const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
-  "modelVisibleMcpImageToolResults";
-
-function normalizeHostContextAndImagePolicy(
-  hostContext: Record<string, unknown> | undefined,
-  explicitPolicy: boolean | undefined
-): {
-  hostContext: Record<string, unknown>;
-  modelVisibleMcpImageToolResults: boolean | undefined;
-} {
-  const nextHostContext = { ...(hostContext ?? {}) };
-  const legacyPolicy =
-    nextHostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  delete nextHostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  return {
-    hostContext: nextHostContext,
-    modelVisibleMcpImageToolResults:
-      explicitPolicy ??
-      (typeof legacyPolicy === "boolean" ? legacyPolicy : undefined),
-  };
-}
 
 /** Map the public `HostMcp` (spec vocab) to the internal `mcpProfile`. */
 function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
@@ -196,8 +177,11 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.respectToolVisibility !== undefined) {
     out.respectToolVisibility = c.respectToolVisibility;
   }
-  if (c.modelVisibleMcpImageToolResults !== undefined) {
-    out.modelVisibleMcpImageToolResults = c.modelVisibleMcpImageToolResults;
+  if (c.modelVisibleMcpToolResults !== undefined) {
+    out.modelVisibleMcpToolResults = c.modelVisibleMcpToolResults;
+  }
+  if (c.mcpToolResultImageRendering !== undefined) {
+    out.mcpToolResultImageRendering = c.mcpToolResultImageRendering;
   }
   if (c.computer !== undefined) {
     out.computer = c.computer;
@@ -273,8 +257,10 @@ export class Host {
    */
   respectToolVisibility?: boolean;
 
-  /** Whether eligible MCP tool-returned images are exposed to the model. */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host policy for model visibility of MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
 
   /**
    * Personal cloud workstation attached to this host (chat `bash` tool +
@@ -370,12 +356,8 @@ export class Host {
     this.requireToolApproval = cfg.requireToolApproval ?? false;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
-    const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
-      cfg.hostContext,
-      cfg.modelVisibleMcpImageToolResults
-    );
-    this.modelVisibleMcpImageToolResults =
-      hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
+    this.modelVisibleMcpToolResults = cfg.modelVisibleMcpToolResults;
+    this.mcpToolResultImageRendering = cfg.mcpToolResultImageRendering;
     this.computer = cfg.computer;
     this.harness = cfg.harness;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
@@ -388,7 +370,7 @@ export class Host {
         cfg.connectionDefaults?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
     };
     this.clientCapabilities = cfg.clientCapabilities ?? {};
-    this.hostContext = hostContextAndImagePolicy.hostContext;
+    this.hostContext = cfg.hostContext ?? {};
     this.hostCapabilitiesOverride = cfg.hostCapabilitiesOverride;
     this.chatUiOverride = cfg.chatUiOverride;
     this.mcp = cfg.mcp ?? {};
@@ -433,8 +415,15 @@ export class Host {
     return this;
   }
 
-  setModelVisibleMcpImageToolResults(enabled: boolean): this {
-    this.modelVisibleMcpImageToolResults = enabled;
+  setModelVisibleMcpToolResults(
+    policy: ModelVisibleMcpToolResults | undefined
+  ): this {
+    this.modelVisibleMcpToolResults = policy;
+    return this;
+  }
+
+  setMcpToolResultImageRendering(rendering: McpToolResultImageRendering): this {
+    this.mcpToolResultImageRendering = rendering;
     return this;
   }
 
@@ -540,7 +529,8 @@ export class Host {
       requireToolApproval: this.requireToolApproval,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
-      modelVisibleMcpImageToolResults: this.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults: this.modelVisibleMcpToolResults,
+      mcpToolResultImageRendering: this.mcpToolResultImageRendering,
       computer: this.computer,
       harness: this.harness,
       servers: this.servers,
@@ -554,11 +544,6 @@ export class Host {
       serverOverrides: this.serverOverrides,
     });
 
-    const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
-      snap.hostContext,
-      snap.modelVisibleMcpImageToolResults
-    );
-
     const input: HostConfigInputV2 = {
       hostStyle: snap.style,
       modelId: snap.model,
@@ -569,7 +554,7 @@ export class Host {
       optionalServerIds: snap.optionalServers,
       connectionDefaults: snap.connectionDefaults,
       clientCapabilities: snap.clientCapabilities,
-      hostContext: hostContextAndImagePolicy.hostContext,
+      hostContext: snap.hostContext,
     };
     if (snap.progressiveToolDiscovery !== undefined) {
       input.progressiveToolDiscovery = snap.progressiveToolDiscovery;
@@ -577,9 +562,11 @@ export class Host {
     if (snap.respectToolVisibility !== undefined) {
       input.respectToolVisibility = snap.respectToolVisibility;
     }
-    if (hostContextAndImagePolicy.modelVisibleMcpImageToolResults !== undefined) {
-      input.modelVisibleMcpImageToolResults =
-        hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
+    if (snap.modelVisibleMcpToolResults !== undefined) {
+      input.modelVisibleMcpToolResults = snap.modelVisibleMcpToolResults;
+    }
+    if (snap.mcpToolResultImageRendering !== undefined) {
+      input.mcpToolResultImageRendering = snap.mcpToolResultImageRendering;
     }
     // `null` (detached) is forwarded — the canonicalizer collapses it to
     // undefined so it hashes identically to "never set".
@@ -706,40 +693,12 @@ export function isHostJson(value: unknown): value is HostJson {
   );
 }
 
-function normalizeHostJsonSnapshot(host: HostJson): HostJson {
-  if (
-    !Object.prototype.hasOwnProperty.call(
-      host.hostContext,
-      LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY
-    )
-  ) {
-    return host;
-  }
-
-  const hostContextAndImagePolicy = normalizeHostContextAndImagePolicy(
-    host.hostContext,
-    host.modelVisibleMcpImageToolResults
-  );
-  const normalized: HostJson = {
-    ...host,
-    hostContext: hostContextAndImagePolicy.hostContext,
-  };
-  if (hostContextAndImagePolicy.modelVisibleMcpImageToolResults !== undefined) {
-    normalized.modelVisibleMcpImageToolResults =
-      hostContextAndImagePolicy.modelVisibleMcpImageToolResults;
-  } else {
-    delete normalized.modelVisibleMcpImageToolResults;
-  }
-  return normalized;
-}
-
 /**
  * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent
- * for current snapshots; legacy snapshots with the old image policy under
- * `hostContext` are migrated before app-visible host context is exposed.
+ * for current snapshots.
  */
 export function snapshotHostSource(host: HostSource): HostJson {
-  if (isHostJson(host)) return normalizeHostJsonSnapshot(host);
+  if (isHostJson(host)) return host;
   if (host instanceof Host) return host.toJSON();
   return new Host(host).toJSON();
 }

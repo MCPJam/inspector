@@ -98,45 +98,72 @@ describe("groupHostConfigFields", () => {
       "temperature",
       "requireToolApproval",
       "respectToolVisibility",
-      "modelVisibleMcpImageToolResults",
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
       "progressiveToolDiscovery",
     ]);
   });
 });
 
-describe("modelVisibleMcpImageToolResults field", () => {
-  it("defaults to enabled and reads explicit top-level opt-outs", () => {
-    const field = fieldById("modelVisibleMcpImageToolResults");
+describe("MCP image policy fields", () => {
+  it("default to enabled and read explicit image opt-outs", () => {
+    const direct = fieldById("modelVisibleMcpToolResults.directContent.image");
+    const embedded = fieldById(
+      "modelVisibleMcpToolResults.embeddedResources.blob.image"
+    );
+    const linked = fieldById(
+      "modelVisibleMcpToolResults.linkedResources.blob.image"
+    );
 
-    expect(field.label).toBe("Expose tool images to model");
-    expect(field.read(makeConfig())).toBe(true);
+    expect(direct.label).toBe("Make tool image content visible to model");
+    expect(embedded.label).toBe(
+      "Make embedded resource images visible to model"
+    );
+    expect(linked.label).toBe("Make resource link images visible to model");
+    expect(direct.read(makeConfig())).toBe(true);
+    expect(embedded.read(makeConfig())).toBe(true);
+    expect(linked.read(makeConfig())).toBe(true);
     expect(
-      field.read(
+      direct.read(
         makeConfig({
-          modelVisibleMcpImageToolResults: false,
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      embedded.read(
+        makeConfig({
+          modelVisibleMcpToolResults: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      linked.read(
+        makeConfig({
+          modelVisibleMcpToolResults: {
+            linkedResources: { blob: { image: false } },
+          },
         })
       )
     ).toBe(false);
   });
 
-  it("falls back to the legacy hostContext value for pre-migration rows", () => {
-    const field = fieldById("modelVisibleMcpImageToolResults");
-
+  it("defaults MCP tool-result image rendering to inline and reads explicit modes", () => {
+    const rendering = fieldById("mcpToolResultImageRendering");
+    expect(rendering.label).toBe("Render tool images");
+    expect(rendering.read(makeConfig())).toBe("inline");
     expect(
-      field.read(
-        makeConfig({
-          hostContext: { modelVisibleMcpImageToolResults: false },
-        })
-      )
-    ).toBe(false);
+      rendering.read(makeConfig({ mcpToolResultImageRendering: "panel" }))
+    ).toBe("panel");
     expect(
-      field.read(
-        makeConfig({
-          modelVisibleMcpImageToolResults: true,
-          hostContext: { modelVisibleMcpImageToolResults: false },
-        })
-      )
-    ).toBe(true);
+      rendering.read(makeConfig({ mcpToolResultImageRendering: "none" }))
+    ).toBe("none");
   });
 });
 

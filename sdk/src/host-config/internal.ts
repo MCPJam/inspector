@@ -38,6 +38,8 @@ export type {
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
 } from "./types.js";
 
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.

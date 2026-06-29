@@ -390,7 +390,8 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
-        modelVisibleMcpImageToolResults: body.modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
+        mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
@@ -429,9 +430,12 @@ chatV2.post("/", async (c) => {
             host: entry.hostValue,
           }
         );
-      } else if (entry.field === "modelVisibleMcpImageToolResults") {
+      } else if (
+        entry.field === "modelVisibleMcpToolResults" ||
+        entry.field === "mcpToolResultImageRendering"
+      ) {
         logger.warn(
-          "[mcp/chat-v2] client modelVisibleMcpImageToolResults differs from host; using host value",
+          `[mcp/chat-v2] client ${entry.field} differs from host; using host value`,
           {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
@@ -480,10 +484,9 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
-    const modelVisibleMcpImageToolResults =
-      resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
+    const { modelVisibleMcpToolResults } = resolvedExecution.hostPolicy;
     const inboundMcpToolResultModelOutputOptions = {
-      modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
     };
 
@@ -654,7 +657,7 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         respectToolVisibility,
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
         ...(builtInTools ? { builtInTools } : {}),
@@ -714,7 +717,9 @@ chatV2.post("/", async (c) => {
           resolvedTemperature,
           requireToolApproval,
           respectToolVisibility,
-          modelVisibleMcpImageToolResults,
+          modelVisibleMcpToolResults,
+          mcpToolResultImageRendering:
+            resolvedExecution.mcpToolResultImageRendering,
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
@@ -767,7 +772,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
@@ -807,7 +812,7 @@ chatV2.post("/", async (c) => {
                         temperature,
                         requireToolApproval,
                         respectToolVisibility,
-                        modelVisibleMcpImageToolResults,
+                        modelVisibleMcpToolResults,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -897,7 +902,7 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
-                      modelVisibleMcpImageToolResults,
+                      modelVisibleMcpToolResults,
                       selectedServers,
                     },
                     ...(directHostConfig
@@ -951,7 +956,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
@@ -1069,7 +1074,7 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
-                      modelVisibleMcpImageToolResults,
+                      modelVisibleMcpToolResults,
                       selectedServers,
                     },
                     ...(directHostConfig

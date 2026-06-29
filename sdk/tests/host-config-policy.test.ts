@@ -13,7 +13,14 @@ describe("extractHostExecutionPolicy", () => {
     expect(policy.requireToolApproval).toBe(false);
     expect(policy.respectToolVisibility).toBeUndefined();
     expect(policy.progressiveDiscoveryEnabled).toBe(false);
-    expect(policy.modelVisibleMcpImageToolResults).toBe(true);
+    expect(policy.modelVisibleMcpToolResults.directContent.image).toBe(true);
+    expect(policy.modelVisibleMcpToolResults.embeddedResources.blob.image).toBe(
+      true
+    );
+    expect(policy.modelVisibleMcpToolResults.linkedResources.blob.image).toBe(
+      true
+    );
+    expect(policy.mcpToolResultImageRendering).toBe("inline");
     expect(policy.hostStyle).toBeUndefined();
     expect(policy.namedHostId).toBeUndefined();
   });
@@ -68,45 +75,62 @@ describe("extractHostExecutionPolicy", () => {
   });
 
   it("enables model-visible MCP image tool results by default for all host styles", () => {
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "claude" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "claude-code" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "chatgpt" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "mcpjam" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "cursor" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
-    expect(
-      extractHostExecutionPolicy({ hostStyle: "some-custom-host" })
-        .modelVisibleMcpImageToolResults
-    ).toBe(true);
+    for (const hostStyle of [
+      "claude",
+      "claude-code",
+      "chatgpt",
+      "mcpjam",
+      "cursor",
+      "some-custom-host",
+    ]) {
+      const policy = extractHostExecutionPolicy({ hostStyle });
+      expect(policy.modelVisibleMcpToolResults.directContent.image).toBe(true);
+      expect(
+        policy.modelVisibleMcpToolResults.embeddedResources.blob.image
+      ).toBe(true);
+      expect(policy.modelVisibleMcpToolResults.linkedResources.blob.image).toBe(
+        true
+      );
+    }
   });
 
-  it("allows hostContext to override model-visible MCP image tool results", () => {
+  it("allows host config to override model-visible MCP image policies", () => {
+    const policy = extractHostExecutionPolicy({
+      hostStyle: "cursor",
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      },
+    });
+    expect(policy.modelVisibleMcpToolResults.directContent.image).toBe(false);
+    expect(policy.modelVisibleMcpToolResults.embeddedResources.blob.image).toBe(
+      false
+    );
+    expect(policy.modelVisibleMcpToolResults.linkedResources.blob.image).toBe(
+      true
+    );
+  });
+
+  it("extracts MCP tool-result image rendering with inline default", () => {
+    expect(extractHostExecutionPolicy({}).mcpToolResultImageRendering).toBe(
+      "inline"
+    );
     expect(
       extractHostExecutionPolicy({
-        hostStyle: "cursor",
-        hostContext: { modelVisibleMcpImageToolResults: false },
-      }).modelVisibleMcpImageToolResults
-    ).toBe(false);
+        mcpToolResultImageRendering: "panel",
+      }).mcpToolResultImageRendering
+    ).toBe("panel");
     expect(
       extractHostExecutionPolicy({
-        hostStyle: "custom",
-        hostContext: { modelVisibleMcpImageToolResults: true },
-      }).modelVisibleMcpImageToolResults
-    ).toBe(true);
+        mcpToolResultImageRendering: "none",
+      }).mcpToolResultImageRendering
+    ).toBe("none");
+    expect(
+      extractHostExecutionPolicy({
+        mcpToolResultImageRendering: "bad",
+      }).mcpToolResultImageRendering
+    ).toBe("inline");
   });
 });
 
@@ -115,7 +139,36 @@ describe("buildHostIterationMetadata", () => {
     requireToolApproval: false,
     respectToolVisibility: undefined,
     progressiveDiscoveryEnabled: false,
-    modelVisibleMcpImageToolResults: false,
+    modelVisibleMcpToolResults: {
+      directContent: {
+        text: true,
+        image: false,
+        audio: false,
+      },
+      embeddedResources: {
+        text: false,
+        blob: {
+          enabled: true,
+          image: false,
+          audio: false,
+          document: false,
+          video: false,
+          otherBinary: false,
+        },
+      },
+      linkedResources: {
+        text: false,
+        blob: {
+          enabled: true,
+          image: false,
+          audio: false,
+          document: false,
+          video: false,
+          otherBinary: false,
+        },
+      },
+    },
+    mcpToolResultImageRendering: "inline",
     hostStyle: undefined,
     namedHostId: undefined,
   };
@@ -170,13 +223,44 @@ describe("buildHostIterationMetadata", () => {
     expect(meta.progressive_discovery_enabled).toBe(true);
   });
 
-  it("stamps model_visible_mcp_image_tool_results when true", () => {
+  it("stamps MCP image policy metadata when true", () => {
     const policy: HostExecutionPolicy = {
       ...basePolicy,
-      modelVisibleMcpImageToolResults: true,
+      modelVisibleMcpToolResults: {
+        ...basePolicy.modelVisibleMcpToolResults,
+        directContent: {
+          ...basePolicy.modelVisibleMcpToolResults.directContent,
+          image: true,
+        },
+        embeddedResources: {
+          ...basePolicy.modelVisibleMcpToolResults.embeddedResources,
+          blob: {
+            ...basePolicy.modelVisibleMcpToolResults.embeddedResources.blob,
+            image: true,
+          },
+        },
+        linkedResources: {
+          ...basePolicy.modelVisibleMcpToolResults.linkedResources,
+          blob: {
+            ...basePolicy.modelVisibleMcpToolResults.linkedResources.blob,
+            image: true,
+          },
+        },
+      },
     };
     const meta = buildHostIterationMetadata(policy, baseSignals, 0, false);
-    expect(meta.model_visible_mcp_image_tool_results).toBe(true);
+    expect(meta.model_visible_mcp_direct_content_image).toBe(true);
+    expect(meta.model_visible_mcp_embedded_resource_blob_image).toBe(true);
+    expect(meta.model_visible_mcp_linked_resource_blob_image).toBe(true);
+  });
+
+  it("stamps non-default MCP tool-result image rendering metadata", () => {
+    const policy: HostExecutionPolicy = {
+      ...basePolicy,
+      mcpToolResultImageRendering: "panel",
+    };
+    const meta = buildHostIterationMetadata(policy, baseSignals, 0, false);
+    expect(meta.mcp_tool_result_image_rendering).toBe("panel");
   });
 
   it("stamps openai_compat_injected when true", () => {
@@ -241,7 +325,9 @@ describe("buildHostSnapshotMetadata", () => {
     // `claude` has no progressive discovery / named host id, but it does
     // carry a host style and default image-result policy.
     expect(meta.host_style).toBe("claude");
-    expect(meta.model_visible_mcp_image_tool_results).toBe(true);
+    expect(meta.model_visible_mcp_direct_content_image).toBe(true);
+    expect(meta.model_visible_mcp_embedded_resource_blob_image).toBe(true);
+    expect(meta.model_visible_mcp_linked_resource_blob_image).toBe(true);
     expect(meta.host_id).toBeUndefined();
     expect(meta.progressive_discovery_enabled).toBeUndefined();
   });

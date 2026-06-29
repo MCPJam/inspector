@@ -41,6 +41,23 @@ const {
   },
 }));
 
+const imagePolicy = (image: boolean) => ({
+  directContent: { image },
+  embeddedResources: { blob: { image } },
+  linkedResources: { blob: { image } },
+});
+
+const resolvedImagePolicyMatcher = (image: boolean) =>
+  expect.objectContaining({
+    directContent: expect.objectContaining({ image }),
+    embeddedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+    linkedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+  });
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -514,7 +531,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(await response.text()).toBe("ok");
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelVisibleMcpImageToolResults: true,
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(true),
       })
     );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
@@ -551,7 +568,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct-images-off",
         directVisibility: "project",
-        modelVisibleMcpImageToolResults: false,
+        modelVisibleMcpToolResults: imagePolicy(false),
         messages: [{ role: "user", content: "hello" }],
         model: {
           id: "openai/gpt-5-mini",
@@ -566,16 +583,16 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(await response.text()).toBe("ok");
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelVisibleMcpImageToolResults: false,
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
       })
     );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         hostConfig: expect.objectContaining({
-          modelVisibleMcpImageToolResults: false,
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
         resumeConfig: expect.objectContaining({
-          modelVisibleMcpImageToolResults: false,
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
       })
     );
@@ -603,7 +620,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
-        modelVisibleMcpImageToolResults: true,
+        modelVisibleMcpToolResults: imagePolicy(true),
         messages: [
           {
             role: "assistant",

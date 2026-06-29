@@ -120,23 +120,50 @@ describe("hostConfigInputsEqual", () => {
     expect(hostConfigInputsEqual(a, b)).toBe(false);
   });
 
-  it("distinguishes unset, enabled, and disabled model-visible MCP image policy", () => {
+  it("distinguishes unset, enabled, and disabled MCP image policies", () => {
     expect(
       hostConfigInputsEqual(
-        makeInput({ modelVisibleMcpImageToolResults: undefined }),
-        makeInput({ modelVisibleMcpImageToolResults: undefined })
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({ modelVisibleMcpToolResults: undefined })
       )
     ).toBe(true);
     expect(
       hostConfigInputsEqual(
-        makeInput({ modelVisibleMcpImageToolResults: undefined }),
-        makeInput({ modelVisibleMcpImageToolResults: true })
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        })
       )
     ).toBe(false);
     expect(
       hostConfigInputsEqual(
-        makeInput({ modelVisibleMcpImageToolResults: true }),
-        makeInput({ modelVisibleMcpImageToolResults: false })
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: false } },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("detects MCP tool-result image rendering changes", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: "inline" })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: "panel" }),
+        makeInput({ mcpToolResultImageRendering: "none" })
       )
     ).toBe(false);
   });
@@ -368,32 +395,25 @@ describe("hostConfigDtoToInput", () => {
     expect(input.hostCapabilitiesOverride).toBeUndefined();
   });
 
-  it("migrates legacy hostContext image policy to the top-level host config field", () => {
+  it("copies explicit MCP image policies to input", () => {
     const input = hostConfigDtoToInput(
       makeDto({
-        hostContext: {
-          modelVisibleMcpImageToolResults: false,
-          other: "keep",
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: false } },
         },
+        mcpToolResultImageRendering: "panel",
+        hostContext: { other: "keep" },
       })
     );
 
-    expect(input.modelVisibleMcpImageToolResults).toBe(false);
-    expect(input.hostContext).toEqual({ other: "keep" });
-  });
-
-  it("prefers the top-level image policy over a legacy hostContext value", () => {
-    const input = hostConfigDtoToInput(
-      makeDto({
-        modelVisibleMcpImageToolResults: false,
-        hostContext: {
-          modelVisibleMcpImageToolResults: true,
-          other: "keep",
-        },
-      })
-    );
-
-    expect(input.modelVisibleMcpImageToolResults).toBe(false);
+    expect(input.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(input.mcpToolResultImageRendering).toBe("panel");
     expect(input.hostContext).toEqual({ other: "keep" });
   });
 });

@@ -20,7 +20,7 @@ describe("createDeterministicToolMessages", () => {
       "list_users",
       {},
       result,
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -43,13 +43,73 @@ describe("createDeterministicToolMessages", () => {
           },
         ],
       },
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
     expect(messages[1].parts[2]).toMatchObject({
       type: "data-result",
       data: { users: [{ id: "1", name: "Ada" }] },
+      autoHeight: true,
+    });
+  });
+
+  it("does not add a duplicate json result part for inline MCP image results", () => {
+    const result = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+    const { messages } = createDeterministicToolMessages(
+      "return_image",
+      {},
+      result,
+      undefined,
+      { mcpToolResultImageRendering: "inline" }
+    );
+
+    expect(messages[1].parts).toHaveLength(2);
+  });
+
+  it("keeps raw MCP result in the tool part when model output is provided", () => {
+    const result = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+    const modelOutput = {
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    };
+    const { messages } = createDeterministicToolMessages(
+      "return_image",
+      {},
+      result,
+      undefined,
+      { modelOutput, mcpToolResultImageRendering: "inline" }
+    );
+
+    const toolPart = messages[1].parts.find(
+      (part): part is DynamicToolUIPart => part.type === "dynamic-tool"
+    );
+    expect(toolPart?.state).toBe("output-available");
+    if (toolPart?.state === "output-available") {
+      expect(toolPart.output).toEqual(result);
+    }
+  });
+
+  it("keeps the sibling json result part for panel MCP image results", () => {
+    const result = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+    const { messages } = createDeterministicToolMessages(
+      "return_image",
+      {},
+      result,
+      undefined,
+      { mcpToolResultImageRendering: "panel" }
+    );
+
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "data-result",
+      data: result,
       autoHeight: true,
     });
   });
@@ -64,7 +124,7 @@ describe("createDeterministicToolMessages", () => {
           { type: "text", text: "Second line" },
         ],
       },
-      undefined,
+      undefined
     );
 
     expect(messages).toHaveLength(2);
@@ -81,7 +141,7 @@ describe("createDeterministicToolMessages", () => {
       "echo",
       {},
       "hello world",
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -96,7 +156,7 @@ describe("createDeterministicToolMessages", () => {
       "echo",
       {},
       "123",
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -111,7 +171,7 @@ describe("createDeterministicToolMessages", () => {
       "summarize",
       {},
       { text: "Summary here" },
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -126,7 +186,7 @@ describe("createDeterministicToolMessages", () => {
       "noop",
       {},
       { content: [] },
-      undefined,
+      undefined
     );
 
     // Only invocation text + tool part, no text extraction
@@ -138,7 +198,7 @@ describe("createDeterministicToolMessages", () => {
       "fire_and_forget",
       {},
       null,
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(2);
@@ -149,7 +209,7 @@ describe("createDeterministicToolMessages", () => {
       "fire_and_forget",
       {},
       undefined,
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(2);
@@ -160,7 +220,7 @@ describe("createDeterministicToolMessages", () => {
       "empty",
       {},
       "",
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -175,7 +235,7 @@ describe("createDeterministicToolMessages", () => {
       "empty",
       {},
       "   ",
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -196,7 +256,7 @@ describe("createDeterministicToolMessages", () => {
           { type: "resource", uri: "file:///tmp/data" },
         ],
       },
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -217,7 +277,7 @@ describe("createDeterministicToolMessages", () => {
           { type: "text", text: "" },
         ],
       },
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -238,7 +298,7 @@ describe("createDeterministicToolMessages", () => {
       },
       {
         "openai/outputTemplate": "ui://widget/template.html",
-      },
+      }
     );
 
     expect(messages).toHaveLength(2);
@@ -256,7 +316,7 @@ describe("createDeterministicToolMessages", () => {
       {
         // ui.resourceUri triggers MCP_APPS detection
         ui: { resourceUri: "ui://chart/render.html" },
-      },
+      }
     );
 
     expect(messages[1].parts).toHaveLength(2);
@@ -273,7 +333,7 @@ describe("createDeterministicToolMessages", () => {
       {
         state: "output-error",
         errorText: "Permission denied",
-      },
+      }
     );
 
     expect(messages).toHaveLength(2);
@@ -296,7 +356,7 @@ describe("createDeterministicToolMessages", () => {
       undefined,
       {
         state: "output-error",
-      },
+      }
     );
 
     expect(messages[1].parts[2]).toMatchObject({
@@ -314,7 +374,7 @@ describe("createDeterministicToolMessages", () => {
       {
         state: "output-error",
         errorText: "Render failed",
-      },
+      }
     );
 
     // Only invocation text + tool part (error surfaced via widget)
@@ -328,7 +388,7 @@ describe("createDeterministicToolMessages", () => {
       "my_tool",
       { key: "val" },
       { text: "result" },
-      undefined,
+      undefined
     );
 
     expect(toolCallId).toBe("playground-fixed-id");
@@ -348,7 +408,7 @@ describe("createDeterministicToolMessages", () => {
       "my_tool",
       {},
       { text: "ok" },
-      { "openai/toolInvocation/invoked": "Running custom action..." },
+      { "openai/toolInvocation/invoked": "Running custom action..." }
     );
 
     expect(messages[1].parts[0]).toMatchObject({
@@ -362,7 +422,7 @@ describe("createDeterministicToolMessages", () => {
       "my_tool",
       {},
       { text: "ok" },
-      undefined,
+      undefined
     );
 
     expect(messages[1].parts[0]).toMatchObject({
@@ -373,7 +433,7 @@ describe("createDeterministicToolMessages", () => {
 
   it("throws when toolName is empty", () => {
     expect(() =>
-      createDeterministicToolMessages("", {}, null, undefined),
+      createDeterministicToolMessages("", {}, null, undefined)
     ).toThrow("toolName is required");
   });
 
@@ -385,7 +445,7 @@ describe("createDeterministicToolMessages", () => {
       "fetch",
       { url: "https://example.com" },
       result,
-      undefined,
+      undefined
     );
 
     const toolPart = messages[1].parts[1] as DynamicToolUIPart;
@@ -396,7 +456,7 @@ describe("createDeterministicToolMessages", () => {
     expect((toolPart as any).output).toBe(result);
   });
 
-  it("uses modelOutput for the tool part while preserving raw result display", () => {
+  it("keeps raw result in the tool part when modelOutput is provided", () => {
     const rawResult = { hello: "raw" };
     const modelOutput = {
       type: "content",
@@ -407,11 +467,11 @@ describe("createDeterministicToolMessages", () => {
       {},
       rawResult,
       undefined,
-      { modelOutput },
+      { modelOutput }
     );
 
     const toolPart = messages[1].parts[1] as DynamicToolUIPart;
-    expect((toolPart as any).output).toBe(modelOutput);
+    expect((toolPart as any).output).toBe(rawResult);
     expect(messages[1].parts).toContainEqual({
       type: "data-result",
       data: rawResult,
@@ -433,11 +493,26 @@ describe("createDeterministicToolMessages", () => {
         ],
       },
       { _serverId: "qa-server" },
+      { mcpToolResultImageRendering: "panel" }
     );
 
     const toolPart = messages[1].parts[1] as DynamicToolUIPart;
     expect((toolPart as any).callProviderMetadata).toEqual({
       mcpjam: { serverId: "qa-server" },
+    });
+    expect(messages[1].parts).toContainEqual({
+      type: "data-result",
+      data: {
+        content: [
+          {
+            type: "resource_link",
+            uri: "example://linked-image.png",
+            mimeType: "image/png",
+          },
+        ],
+      },
+      autoHeight: true,
+      serverId: "qa-server",
     });
   });
 });

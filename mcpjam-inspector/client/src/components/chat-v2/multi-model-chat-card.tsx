@@ -138,7 +138,7 @@ export function MultiModelChatCard({
   });
 
   const isThreadEmpty = !messages.some(
-    (message) => message.role === "user" || message.role === "assistant",
+    (message) => message.role === "user" || message.role === "assistant"
   );
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: ChatTraceViewMode = showTraceTabs
@@ -177,13 +177,13 @@ export function MultiModelChatCard({
       status: error
         ? "error"
         : isStreaming
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+        ? "running"
+        : isThreadEmpty
+        ? "idle"
+        : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [error, isStreaming, isThreadEmpty, latestTurn, model.id],
+    [error, isStreaming, isThreadEmpty, latestTurn, model.id]
   );
 
   useEffect(() => {
@@ -254,7 +254,7 @@ export function MultiModelChatCard({
             message.role === "system" &&
             (message as { metadata?: { source?: string } })?.metadata
               ?.source === "server-instruction"
-          ),
+          )
       );
 
       const instructionMessages = Object.entries(selectedServerInstructions)
@@ -278,7 +278,7 @@ export function MultiModelChatCard({
   const applyWidgetStateUpdates = useCallback(
     (
       previousMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[],
+      updates: { toolCallId: string; state: unknown }[]
     ) => {
       let nextMessages = previousMessages;
 
@@ -287,14 +287,16 @@ export function MultiModelChatCard({
 
         if (state === null) {
           nextMessages = nextMessages.filter(
-            (message) => message.id !== messageId,
+            (message) => message.id !== messageId
           );
           continue;
         }
 
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
+        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
+          state
+        )}`;
         const existingIndex = nextMessages.findIndex(
-          (message) => message.id === messageId,
+          (message) => message.id === messageId
         );
 
         if (existingIndex !== -1) {
@@ -330,20 +332,20 @@ export function MultiModelChatCard({
 
       return nextMessages;
     },
-    [],
+    []
   );
 
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
         setMessages((previousMessages) =>
-          applyWidgetStateUpdates(previousMessages, [{ toolCallId, state }]),
+          applyWidgetStateUpdates(previousMessages, [{ toolCallId, state }])
         );
       } else {
         setWidgetStateQueue((previous) => [...previous, { toolCallId, state }]);
       }
     },
-    [applyWidgetStateUpdates, setMessages, status],
+    [applyWidgetStateUpdates, setMessages, status]
   );
 
   useEffect(() => {
@@ -352,7 +354,7 @@ export function MultiModelChatCard({
     }
 
     setMessages((previousMessages) =>
-      applyWidgetStateUpdates(previousMessages, widgetStateQueue),
+      applyWidgetStateUpdates(previousMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
   }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
@@ -410,7 +412,7 @@ export function MultiModelChatCard({
       });
       setModelContextQueue([]);
     },
-    [modelContextQueue, sendMessage, outgoingSenderMetadata],
+    [modelContextQueue, sendMessage, outgoingSenderMetadata]
   );
 
   const handleModelContextUpdate = useCallback(
@@ -419,13 +421,13 @@ export function MultiModelChatCard({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      },
+      }
     ) => {
       setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
       );
     },
-    [],
+    []
   );
 
   useEffect(() => {
@@ -567,7 +569,9 @@ export function MultiModelChatCard({
                 {activeTraceViewMode === "timeline" &&
                 !hasLiveTimelineContent ? (
                   <LiveTraceTimelineEmptyState
-                    testId={`multi-model-live-trace-pending-${String(model.id)}`}
+                    testId={`multi-model-live-trace-pending-${String(
+                      model.id
+                    )}`}
                   />
                 ) : (
                   <TraceViewer
@@ -623,6 +627,9 @@ export function MultiModelChatCard({
                   onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  mcpToolResultImageRendering={
+                    executionConfig?.mcpToolResultImageRendering
+                  }
                   showSenderAvatars={showSenderAvatars}
                   resolveSenderAvatar={resolveSenderAvatar}
                 />

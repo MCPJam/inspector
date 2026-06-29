@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -14,6 +14,12 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import {
   DEFAULT_TEMPERATURE_V2,
+  isMcpDirectContentImageVisible,
+  isMcpEmbeddedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageVisible,
+  setMcpDirectContentImageVisible,
+  setMcpEmbeddedResourceBlobImageVisible,
+  setMcpLinkedResourceBlobImageVisible,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
@@ -48,24 +54,39 @@ function triToProgressiveValue(
   return undefined;
 }
 
-function resolveModelVisibleMcpImages(draft: HostConfigInputV2): boolean {
-  if (typeof draft.modelVisibleMcpImageToolResults === "boolean") {
-    return draft.modelVisibleMcpImageToolResults;
-  }
-  const legacy = draft.hostContext?.modelVisibleMcpImageToolResults;
-  return typeof legacy === "boolean" ? legacy : true;
-}
+function InfoHoverLabel({
+  label,
+  tooltip,
+}: {
+  label: ReactNode;
+  tooltip?: ReactNode;
+}) {
+  if (!tooltip) return <>{label}</>;
 
-function updateModelVisibleMcpImages(
-  draft: HostConfigInputV2,
-  checked: boolean
-): Partial<HostConfigInputV2> {
-  const hostContext = { ...(draft.hostContext ?? {}) };
-  delete hostContext.modelVisibleMcpImageToolResults;
-  return {
-    modelVisibleMcpImageToolResults: checked,
-    hostContext,
-  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`About ${String(label)}`}
+            className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <Info className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="top"
+          sideOffset={4}
+          className="max-w-[260px] leading-snug"
+        >
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
 }
 
 interface BehaviorTabProps {
@@ -119,10 +140,18 @@ export function BehaviorTab({
   const fTemp = hostConfigField("temperature");
   const fApproval = hostConfigField("requireToolApproval");
   const fVisibility = hostConfigField("respectToolVisibility");
-  const fToolImages = hostConfigField("modelVisibleMcpImageToolResults");
+  const fDirectImages = hostConfigField(
+    "modelVisibleMcpToolResults.directContent.image"
+  );
+  const fEmbeddedImages = hostConfigField(
+    "modelVisibleMcpToolResults.embeddedResources.blob.image"
+  );
+  const fLinkedImages = hostConfigField(
+    "modelVisibleMcpToolResults.linkedResources.blob.image"
+  );
+  const fRenderImages = hostConfigField("mcpToolResultImageRendering");
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
-  const toolImagesEnabled = resolveModelVisibleMcpImages(draft);
 
   // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
   // cross into its runtime until the MCP proxy mediates them — and a few never
@@ -232,25 +261,11 @@ export function BehaviorTab({
 
         <FieldRow
           label={
-            <span className="inline-flex items-center gap-1.5">
-              {fToolImages.label}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="About exposing tool images to the model"
-                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <Info className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  side="top"
-                  sideOffset={4}
-                  className="max-w-[260px] leading-snug"
-                >
-                  Covers{" "}
+            <InfoHoverLabel
+              label={fDirectImages.label}
+              tooltip={
+                <>
+                  Pass{" "}
                   <a
                     href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#image-content"
                     target="_blank"
@@ -258,8 +273,38 @@ export function BehaviorTab({
                     className="underline underline-offset-2 hover:text-foreground"
                   >
                     direct image blocks
-                  </a>
-                  ,{" "}
+                  </a>{" "}
+                  returned by MCP tools to the model.
+                </>
+              }
+            />
+          }
+          control={
+            <Switch
+              checked={isMcpDirectContentImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
+              onCheckedChange={(checked) =>
+                update({
+                  modelVisibleMcpToolResults: setMcpDirectContentImageVisible(
+                    draft.modelVisibleMcpToolResults,
+                    checked
+                  ),
+                })
+              }
+              aria-label={fDirectImages.label}
+              disabled={readOnly}
+            />
+          }
+        />
+
+        <FieldRow
+          label={
+            <InfoHoverLabel
+              label={fEmbeddedImages.label}
+              tooltip={
+                <>
+                  Pass{" "}
                   <a
                     href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#embedded-resources"
                     target="_blank"
@@ -267,8 +312,39 @@ export function BehaviorTab({
                     className="underline underline-offset-2 hover:text-foreground"
                   >
                     embedded resource blobs
-                  </a>
-                  , and{" "}
+                  </a>{" "}
+                  with image MIME types to the model.
+                </>
+              }
+            />
+          }
+          control={
+            <Switch
+              checked={isMcpEmbeddedResourceBlobImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
+              onCheckedChange={(checked) =>
+                update({
+                  modelVisibleMcpToolResults:
+                    setMcpEmbeddedResourceBlobImageVisible(
+                      draft.modelVisibleMcpToolResults,
+                      checked
+                    ),
+                })
+              }
+              aria-label={fEmbeddedImages.label}
+              disabled={readOnly}
+            />
+          }
+        />
+
+        <FieldRow
+          label={
+            <InfoHoverLabel
+              label={fLinkedImages.label}
+              tooltip={
+                <>
+                  Resolve{" "}
                   <a
                     href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#resource-links"
                     target="_blank"
@@ -276,22 +352,72 @@ export function BehaviorTab({
                     className="underline underline-offset-2 hover:text-foreground"
                   >
                     image resource links
-                  </a>
-                  .
-                </TooltipContent>
-              </Tooltip>
-            </span>
+                  </a>{" "}
+                  through MCP <code>resources/read</code> and pass the image to
+                  the model.
+                </>
+              }
+            />
           }
-          description={fToolImages.description}
           control={
             <Switch
-              checked={toolImagesEnabled}
+              checked={isMcpLinkedResourceBlobImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
               onCheckedChange={(checked) =>
-                update(updateModelVisibleMcpImages(draft, checked))
+                update({
+                  modelVisibleMcpToolResults:
+                    setMcpLinkedResourceBlobImageVisible(
+                      draft.modelVisibleMcpToolResults,
+                      checked
+                    ),
+                })
               }
-              aria-label={fToolImages.label}
+              aria-label={fLinkedImages.label}
               disabled={readOnly}
             />
+          }
+        />
+
+        <FieldRow
+          label={
+            <InfoHoverLabel
+              label={fRenderImages.label}
+              tooltip="Controls where MCP tool-returned images appear in the UI: hidden, expanded panel only, or inline."
+            />
+          }
+          control={
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              value={draft.mcpToolResultImageRendering ?? "inline"}
+              onValueChange={(value) => {
+                if (!value) return;
+                if (
+                  value === "none" ||
+                  value === "panel" ||
+                  value === "inline"
+                ) {
+                  update({ mcpToolResultImageRendering: value });
+                }
+              }}
+              disabled={readOnly}
+              aria-label={fRenderImages.label}
+            >
+              <ToggleGroupItem value="none" aria-label="Do not render images">
+                None
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="panel"
+                aria-label="Render images in expanded panel"
+              >
+                Panel
+              </ToggleGroupItem>
+              <ToggleGroupItem value="inline" aria-label="Render images inline">
+                Inline
+              </ToggleGroupItem>
+            </ToggleGroup>
           }
         />
 

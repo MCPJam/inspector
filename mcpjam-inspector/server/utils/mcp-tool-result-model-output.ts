@@ -2,6 +2,7 @@ import { convertToModelMessages } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   type McpLinkedResourceReader,
+  type McpModelVisibleToolResultPolicy,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
 } from "@mcpjam/sdk";
@@ -10,19 +11,34 @@ import {
   stripMcpToolOriginMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 
-export type McpToolResultModelOutputOptions = {
-  modelVisibleMcpImageToolResults?: boolean;
-  readLinkedResource?: (params: {
-    serverId: string;
-    uri: string;
-    options?: { abortSignal?: AbortSignal };
-  }) => Promise<unknown>;
-  resolveLinkedResourceServerId?: (params: {
-    toolCallId?: string;
-    toolName?: string;
-  }) => string | undefined | Promise<string | undefined>;
-  abortSignal?: AbortSignal;
-};
+export type McpToolResultModelOutputOptions =
+  McpModelVisibleToolResultPolicy & {
+    readLinkedResource?: (params: {
+      serverId: string;
+      uri: string;
+      options?: { abortSignal?: AbortSignal };
+    }) => Promise<unknown>;
+    resolveLinkedResourceServerId?: (params: {
+      toolCallId?: string;
+      toolName?: string;
+    }) => string | undefined | Promise<string | undefined>;
+    abortSignal?: AbortSignal;
+  };
+
+function canReplaySourcelessImageMedia(
+  options: McpModelVisibleToolResultPolicy
+): boolean {
+  const policy = options.modelVisibleMcpToolResults;
+  const directImages = policy?.directContent?.image ?? true;
+  const embeddedImages =
+    (policy?.embeddedResources?.blob?.enabled ?? true) &&
+    (policy?.embeddedResources?.blob?.image ?? true);
+  const linkedImages =
+    (policy?.linkedResources?.blob?.enabled ?? true) &&
+    (policy?.linkedResources?.blob?.image ?? true);
+
+  return directImages && embeddedImages && linkedImages;
+}
 
 function linkedResourceReaderForPart(
   part: unknown,
@@ -92,6 +108,16 @@ function unwrapJsonToolOutput(output: unknown): unknown {
   return current;
 }
 
+function readRawMcpResultFromPart(part: unknown): unknown | undefined {
+  if (!part || typeof part !== "object" || Array.isArray(part)) {
+    return undefined;
+  }
+  const result = (part as { result?: unknown }).result;
+  return result && typeof result === "object" && !Array.isArray(result)
+    ? result
+    : undefined;
+}
+
 function hasImageResourceLinkCandidate(result: unknown): boolean {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return false;
@@ -106,7 +132,7 @@ function hasImageResourceLinkCandidate(result: unknown): boolean {
         !Array.isArray(block) &&
         (block as { type?: unknown }).type === "resource_link" &&
         typeof (block as { mimeType?: unknown }).mimeType === "string" &&
-        ((block as { mimeType: string }).mimeType).startsWith("image/")
+        (block as { mimeType: string }).mimeType.startsWith("image/")
     )
   );
 }
@@ -121,7 +147,10 @@ function isImageOmissionMarkerText(text: string): boolean {
   );
 }
 
-function readReplayableImageModelOutput(output: unknown): unknown | undefined {
+function readReplayableImageModelOutput(
+  output: unknown,
+  options: { allowMedia: boolean }
+): unknown | undefined {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return undefined;
   }
@@ -157,6 +186,14 @@ function readReplayableImageModelOutput(output: unknown): unknown | undefined {
       ) {
         return undefined;
       }
+      sawImageCandidate = true;
+      if (!options.allowMedia) {
+        value.push({
+          type: "text",
+          text: "[image omitted: replayed image policy disabled]",
+        });
+        continue;
+      }
       const validated = mcpCallToolResultToModelOutput({
         content: [
           {
@@ -168,7 +205,6 @@ function readReplayableImageModelOutput(output: unknown): unknown | undefined {
       } as never);
       const validatedPart = validated?.value[0];
       if (!validatedPart) return undefined;
-      sawImageCandidate = true;
       value.push(validatedPart);
       continue;
     }
@@ -188,7 +224,9 @@ export function createLinkedResourceServerIdResolver(args: {
   listTools: (serverId: string) => Promise<{
     tools?: Array<{ name?: unknown }>;
   }>;
-}): NonNullable<McpToolResultModelOutputOptions["resolveLinkedResourceServerId"]> {
+}): NonNullable<
+  McpToolResultModelOutputOptions["resolveLinkedResourceServerId"]
+> {
   const cache = new Map<string, Promise<string | undefined>>();
   return ({ toolName }) => {
     if (!toolName) return undefined;
@@ -258,9 +296,10 @@ export async function mapMcpImageToolOutputs(
         continue;
       }
 
+      const rawResultValue = readRawMcpResultFromPart(part);
       if (
         part.type !== "tool-result" ||
-        part.output?.type !== "json"
+        (!rawResultValue && part.output?.type !== "json")
       ) {
         const stripped = stripInternalProviderOptions(part);
         if (stripped !== part) didChange = true;
@@ -268,7 +307,8 @@ export async function mapMcpImageToolOutputs(
         continue;
       }
 
-      const rawOutputValue = unwrapJsonToolOutput(part.output);
+      const rawOutputValue =
+        rawResultValue ?? unwrapJsonToolOutput(part.output);
       const strippedPart = stripInternalProviderOptions(part);
       if (rawOutputValue == null || typeof rawOutputValue !== "object") {
         if (strippedPart !== part) didChange = true;
@@ -276,14 +316,10 @@ export async function mapMcpImageToolOutputs(
         continue;
       }
 
-      if (!options.modelVisibleMcpImageToolResults) {
-        if (strippedPart !== part) didChange = true;
-        content.push(strippedPart);
-        continue;
-      }
-
-      const replayedModelOutput =
-        readReplayableImageModelOutput(rawOutputValue);
+      const replayedModelOutput = readReplayableImageModelOutput(
+        rawOutputValue,
+        { allowMedia: canReplaySourcelessImageMedia(options) }
+      );
       if (replayedModelOutput) {
         didChange = true;
         content.push({
@@ -314,11 +350,14 @@ export async function mapMcpImageToolOutputs(
         ? await mcpCallToolResultToModelOutputWithLinkedResources(
             rawOutputValue as any,
             {
+              modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
               readResource,
               abortSignal: options.abortSignal,
             }
           )
-        : mcpCallToolResultToModelOutput(rawOutputValue as any);
+        : mcpCallToolResultToModelOutput(rawOutputValue as any, {
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+          });
       if (!modelOutput) {
         if (strippedPart !== part) didChange = true;
         content.push(strippedPart);

@@ -30,6 +30,7 @@ import {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
@@ -78,8 +79,8 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
-  /** Host/client capability for eligible MCP image-bearing tool results. */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
    * Approval mode forwarded into the wrapped MCPJam handler. Synthetic
    * callers pass `"auto-deny"` so approval-required tool calls auto-deny
@@ -725,7 +726,7 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
-    modelVisibleMcpImageToolResults: options.modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }
       : {}),

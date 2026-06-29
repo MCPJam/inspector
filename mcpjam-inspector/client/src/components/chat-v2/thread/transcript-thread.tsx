@@ -251,6 +251,7 @@ export function TranscriptThread({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,
@@ -272,13 +273,13 @@ export function TranscriptThread({
   // assistant bubble (the "footer" treatment). MCPJam shares the claude
   // visual family for bubbles but owns its own footer indicator.
   const resolvedIndicatorHostStyle = useResolvedHostStyleForIndicator(
-    model.provider,
+    model.provider
   );
   const isClaudeFamily = usesClaudeInlineStreamingFooter(
-    resolvedIndicatorHostStyle,
+    resolvedIndicatorHostStyle
   );
   const isMcpjamHost = usesMcpjamInlineStreamingFooter(
-    resolvedIndicatorHostStyle,
+    resolvedIndicatorHostStyle
   );
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
@@ -570,6 +571,7 @@ export function TranscriptThread({
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
+              mcpToolResultImageRendering={mcpToolResultImageRendering}
               claudeFooterMode={claudeFooterMode}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}

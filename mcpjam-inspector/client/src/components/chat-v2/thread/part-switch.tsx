@@ -127,6 +127,7 @@ export function PartSwitch({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering = "inline",
   recordCapable,
   recordingTarget,
   resolvePromptIndex,
@@ -166,6 +167,7 @@ export function PartSwitch({
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   // Tier 3 recorder (default off — see recorder-types.ts).
   recordCapable?: boolean;
   recordingTarget?: RecordingTarget | null;
@@ -430,6 +432,8 @@ export function PartSwitch({
             saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
             isSaving={isSaving}
             minimalMode={minimalMode}
+            serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering}
             {...approvalProps}
           />
           {renderOverride?.frozenScreenshotUrl ? (
@@ -575,6 +579,8 @@ export function PartSwitch({
         saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
         isSaving={isSaving}
         minimalMode={minimalMode}
+        serverId={serverId}
+        mcpToolResultImageRendering={mcpToolResultImageRendering}
         {...approvalProps}
       />
     );
@@ -586,6 +592,8 @@ export function PartSwitch({
         label={getDataLabel(part.type)}
         value={(part as any).data}
         autoHeight={Boolean((part as any).autoHeight)}
+        serverId={(part as any).serverId}
+        mcpToolResultImageRendering={mcpToolResultImageRendering}
       />
     );
   }
@@ -610,6 +618,12 @@ export function PartSwitch({
     case "step-start":
       return null;
     default:
-      return <JsonPart label="Unknown part" value={part} />;
+      return (
+        <JsonPart
+          label="Unknown part"
+          value={part}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
+        />
+      );
   }
 }

@@ -149,44 +149,51 @@ describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
     );
   });
 
-  it("distinguishes modelVisibleMcpImageToolResults undefined from explicit values", async () => {
-    const omitted = JSON.parse(JSON.stringify(canonicalizeHostConfigV2(base())));
-    expect("modelVisibleMcpImageToolResults" in omitted).toBe(false);
+  it("distinguishes MCP tool-result policy undefined from explicit values", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("modelVisibleMcpToolResults" in omitted).toBe(false);
     expect(await hash(base())).not.toBe(
-      await hash(base({ modelVisibleMcpImageToolResults: false }))
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+          },
+        })
+      )
     );
     expect(await hash(base())).not.toBe(
-      await hash(base({ modelVisibleMcpImageToolResults: true }))
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: true },
+          },
+        })
+      )
     );
   });
 
-  it("migrates legacy hostContext image policy to the top-level field", () => {
-    const canonical = canonicalizeHostConfigV2(
-      base({
-        hostContext: {
-          modelVisibleMcpImageToolResults: false,
-          other: "keep",
-        },
-      })
+  it("distinguishes MCP tool-result image rendering undefined from explicit modes", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
     );
-
-    expect(canonical.modelVisibleMcpImageToolResults).toBe(false);
-    expect(canonical.hostContext).toEqual({ other: "keep" });
+    expect("mcpToolResultImageRendering" in omitted).toBe(false);
+    for (const mode of ["none", "panel", "inline"] as const) {
+      expect(await hash(base())).not.toBe(
+        await hash(base({ mcpToolResultImageRendering: mode }))
+      );
+    }
   });
 
-  it("prefers top-level image policy over legacy hostContext policy", () => {
-    const canonical = canonicalizeHostConfigV2(
-      base({
-        modelVisibleMcpImageToolResults: true,
-        hostContext: {
-          modelVisibleMcpImageToolResults: false,
-          other: "keep",
-        },
-      })
+  it("rejects unknown MCP tool-result image rendering modes", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ mcpToolResultImageRendering: "floating" as never })
+      )
+    ).toThrow(
+      /mcpToolResultImageRendering must be "none", "panel", or "inline"/
     );
-
-    expect(canonical.modelVisibleMcpImageToolResults).toBe(true);
-    expect(canonical.hostContext).toEqual({ other: "keep" });
   });
 });
 
@@ -568,7 +575,7 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     // Untyped (JS) callers must not persist a value the runtime can't honor.
     // `pi` is a plausible-but-unregistered runtime — not in HARNESS_IDS.
     expect(() =>
-      canonicalizeHostConfigV2(base({ harness: "pi" as never })),
+      canonicalizeHostConfigV2(base({ harness: "pi" as never }))
     ).toThrow(/harness must be/);
   });
 
@@ -577,7 +584,7 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     (harness) => {
       const canonical = canonicalizeHostConfigV2(base({ harness }));
       expect(canonical.harness).toBe(harness);
-    },
+    }
   );
 
   it("absent harness drops from canonical JSON and hashes distinctly from when set", async () => {
@@ -586,11 +593,11 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     // Absent ⇒ no key in canonical JSON (JSON.stringify drops the undefined
     // property), so pre-feature rows hash byte-identically.
     expect(JSON.stringify(canonicalizeHostConfigV2(without))).not.toContain(
-      "harness",
+      "harness"
     );
     // Setting it writes the key and changes the hash (distinct from emulated).
     expect(JSON.stringify(canonicalizeHostConfigV2(withHarness))).toContain(
-      '"harness":"claude-code"',
+      '"harness":"claude-code"'
     );
     expect(await hash(withHarness)).not.toBe(await hash(without));
   });

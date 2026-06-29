@@ -961,6 +961,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     hostContext: dto.hostContext,
     ...opt("progressiveToolDiscovery"),
     ...opt("respectToolVisibility"),
+    ...opt("modelVisibleMcpToolResults"),
     ...opt("harness"),
     ...opt("computer"),
     ...opt("serverIds"),
@@ -1581,7 +1582,9 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
 
   let run: RunDoc | null;
   try {
-    run = await readClient.query("testSuites:getTestSuiteRun" as any, { runId });
+    run = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
@@ -1731,10 +1734,7 @@ evals.get(
       ]);
       requireProjectMatch(run, projectId, "Eval run");
       iteration = iter as IterationDoc | null;
-      if (
-        !iteration ||
-        String(iteration.suiteRunId ?? "") !== runId
-      ) {
+      if (!iteration || String(iteration.suiteRunId ?? "") !== runId) {
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
@@ -1775,7 +1775,9 @@ evals.get(
 
     const assembled = assembleStepResults(
       steps,
-      iteration.metadata as { stepResults?: any[]; skippedSteps?: any[] } | undefined,
+      iteration.metadata as
+        | { stepResults?: any[]; skippedSteps?: any[] }
+        | undefined,
       envelope as Parameters<typeof assembleStepResults>[2]
     );
     return v1PageJson(c, assembled.map(toStepResultDto));

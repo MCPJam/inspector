@@ -9,7 +9,10 @@ import type {
   LiveChatTraceToolCall,
 } from "@/shared/live-chat-trace";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk/browser";
+import {
+  mcpCallToolResultToModelOutput,
+  type McpModelVisibleToolResultPolicy,
+} from "@mcpjam/sdk/browser";
 
 export interface PreludeTraceExecution {
   toolCallId: string;
@@ -21,14 +24,18 @@ export interface PreludeTraceExecution {
   errorText?: string;
 }
 
-export interface PreludeTraceOptions {
-  modelVisibleMcpImageToolResults?: boolean;
-}
+export type PreludeTraceOptions = McpModelVisibleToolResultPolicy;
 
-export function hostStyleSupportsModelVisibleMcpImageToolResults(
+export function hostStyleSupportsModelVisibleMcpToolImages(
   _hostStyle: string | null | undefined
-): boolean {
-  return true;
+): McpModelVisibleToolResultPolicy {
+  return {
+    modelVisibleMcpToolResults: {
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    },
+  };
 }
 
 function toTraceJsonValue(value: unknown): JSONValue {
@@ -43,10 +50,14 @@ function toTraceJsonValue(value: unknown): JSONValue {
   }
 }
 
-function toMcpImageModelOutput(result: unknown): LanguageModelV2ToolResultOutput | undefined {
+function toMcpImageModelOutput(
+  result: unknown,
+  options: PreludeTraceOptions
+): LanguageModelV2ToolResultOutput | undefined {
   try {
     return mcpCallToolResultToModelOutput(
-      result as Parameters<typeof mcpCallToolResultToModelOutput>[0]
+      result as Parameters<typeof mcpCallToolResultToModelOutput>[0],
+      options
     );
   } catch {
     return undefined;
@@ -68,9 +79,7 @@ function toTraceToolResultOutput(
     return execution.modelOutput as LanguageModelV2ToolResultOutput;
   }
 
-  const modelOutput = options.modelVisibleMcpImageToolResults !== false
-    ? toMcpImageModelOutput(execution.result)
-    : undefined;
+  const modelOutput = toMcpImageModelOutput(execution.result, options);
   if (modelOutput) {
     return modelOutput;
   }

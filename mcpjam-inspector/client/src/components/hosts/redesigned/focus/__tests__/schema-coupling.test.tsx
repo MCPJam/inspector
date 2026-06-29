@@ -38,9 +38,7 @@ import { BehaviorTab } from "../BehaviorTab";
 
 function StatefulBehaviorTab() {
   const [draft, setDraft] = useState(emptyHostConfigInputV2());
-  return (
-    <BehaviorTab draft={draft} onDraftChange={setDraft} attention={[]} />
-  );
+  return <BehaviorTab draft={draft} onDraftChange={setDraft} attention={[]} />;
 }
 
 /**
@@ -82,18 +80,40 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
   });
 
-  it("renders the schema label for `modelVisibleMcpImageToolResults`", () => {
+  it("renders schema labels for MCP image policy fields", () => {
     renderTab();
-    const label = hostConfigField("modelVisibleMcpImageToolResults").label;
-    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    for (const field of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
+    ] as const) {
+      const label = hostConfigField(field).label;
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
   });
 
-  it("toggles `modelVisibleMcpImageToolResults`", async () => {
+  it("keeps info hovers for MCP image policy fields", () => {
+    renderTab();
+    for (const field of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
+    ] as const) {
+      const label = hostConfigField(field).label;
+      expect(
+        screen.getByRole("button", { name: `About ${label}` })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("toggles MCP image policy fields", async () => {
     const user = userEvent.setup();
     render(<StatefulBehaviorTab />);
 
     const toggle = screen.getByRole("switch", {
-      name: /expose tool images to model/i,
+      name: /make tool image content visible to model/i,
     });
 
     expect(toggle).toBeChecked();

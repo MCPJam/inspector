@@ -1401,7 +1401,10 @@ export function ChatTabV2({
     const pendingUserMessage = evalChatHandoff.pendingUserMessage;
     if (pendingUserMessage) {
       void seedApplied.then(() => {
-        sendMessage({ text: pendingUserMessage, metadata: outgoingSenderMetadata });
+        sendMessage({
+          text: pendingUserMessage,
+          metadata: outgoingSenderMetadata,
+        });
       });
     }
 
@@ -2348,13 +2351,14 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
-                            modelVisibleMcpImageToolResults:
-                              executionConfig?.modelVisibleMcpImageToolResults,
+                            modelVisibleMcpToolResults:
+                              executionConfig?.modelVisibleMcpToolResults,
+                            mcpToolResultImageRendering:
+                              executionConfig?.mcpToolResultImageRendering,
                             // Same rationale: forward attached built-in
                             // tools so each per-model card resolves the
                             // same ToolSet the single-model path would.
-                            builtInToolIds:
-                              executionConfig?.builtInToolIds,
+                            builtInToolIds: executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2536,6 +2540,9 @@ export function ChatTabV2({
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          mcpToolResultImageRendering={
+                            executionConfig?.mcpToolResultImageRendering
+                          }
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {

@@ -72,6 +72,7 @@ interface ThreadProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
@@ -154,6 +155,7 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,
@@ -359,6 +361,7 @@ export function Thread({
           minimalMode={minimalMode}
           interactive={interactive}
           reasoningDisplayMode={reasoningDisplayMode}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
           focusMessageId={focusMessageId}
           highlightedMessageIds={highlightedMessageIds}
           navigationKey={navigationKey}

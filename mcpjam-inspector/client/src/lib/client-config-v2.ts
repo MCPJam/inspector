@@ -56,6 +56,7 @@ import type {
   HostConfigMcpProfileV1,
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -67,6 +68,7 @@ export type {
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpProtocolVersion,
+  ModelVisibleMcpToolResults,
 };
 
 export type HostStyleId = ChatboxHostStyle;
@@ -83,6 +85,8 @@ export type HostConfigComputerV2 = {
   /** Optional initial working directory for shell/terminal sessions. */
   workdir?: string;
 };
+
+export type McpToolResultImageRendering = "none" | "panel" | "inline";
 
 /**
  * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
@@ -133,11 +137,13 @@ export type HostConfigInputV2 = {
    */
   progressiveToolDiscovery?: boolean;
   /**
-   * Host/client policy for whether eligible MCP image-bearing tool results are
-   * passed to the model as media. Optional so older configs and new untouched
-   * hosts default to enabled at runtime without forcing a new snapshot.
+   * Host/client policies for which MCP tool-result content/resource shapes are
+   * exposed to the model. Optional so untouched hosts use runtime defaults
+   * without forcing a new snapshot.
    */
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -232,8 +238,10 @@ export type HostConfigDtoV2 = {
   respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
-  /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpImageToolResults. */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpToolResults. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Surfaced verbatim — see HostConfigInputV2.mcpToolResultImageRendering. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -284,26 +292,8 @@ export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 // CLI. Cast to the strict client aggregate — the runtime object is
 // field-identical (guarded by host-template-seed-parity.test.ts).
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
-  partial?: Partial<HostConfigInputV2>,
+  partial?: Partial<HostConfigInputV2>
 ) => HostConfigInputV2;
-
-const LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY =
-  "modelVisibleMcpImageToolResults";
-
-function normalizeHostContextForInput(dto: HostConfigDtoV2): {
-  hostContext: Record<string, unknown>;
-  legacyModelVisibleMcpImageToolResults: boolean | undefined;
-} {
-  const hostContext = deepCloneJsonRecord(dto.hostContext);
-  const legacyValue =
-    hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  delete hostContext[LEGACY_MODEL_VISIBLE_MCP_IMAGES_HOST_CONTEXT_KEY];
-  return {
-    hostContext,
-    legacyModelVisibleMcpImageToolResults:
-      typeof legacyValue === "boolean" ? legacyValue : undefined,
-  };
-}
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
@@ -312,11 +302,6 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // would leave the inner trees aliased to the source DTO; any nested
   // edit through the returned input would silently mutate the
   // baseline used for resets and dirty comparisons.
-  const {
-    hostContext,
-    legacyModelVisibleMcpImageToolResults,
-  } = normalizeHostContextForInput(dto);
-
   return {
     hostStyle: dto.hostStyle,
     modelId: dto.modelId,
@@ -327,9 +312,10 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
-    modelVisibleMcpImageToolResults:
-      dto.modelVisibleMcpImageToolResults ??
-      legacyModelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
+      ? cloneModelVisibleMcpToolResults(dto.modelVisibleMcpToolResults)
+      : undefined,
+    mcpToolResultImageRendering: dto.mcpToolResultImageRendering,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
@@ -348,7 +334,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
       requestTimeout: dto.connectionDefaults.requestTimeout,
     },
     clientCapabilities: deepCloneJsonRecord(dto.clientCapabilities),
-    hostContext,
+    hostContext: deepCloneJsonRecord(dto.hostContext),
     hostCapabilitiesOverride: dto.hostCapabilitiesOverride
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
@@ -748,6 +734,81 @@ function deepCloneJsonValue(value: unknown): unknown {
   return value;
 }
 
+export function cloneModelVisibleMcpToolResults(
+  value: ModelVisibleMcpToolResults
+): ModelVisibleMcpToolResults {
+  return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
+}
+
+export function isMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.embeddedResources?.blob?.enabled ?? true) &&
+    (policy?.embeddedResources?.blob?.image ?? true)
+  );
+}
+
+export function isMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.linkedResources?.blob?.enabled ?? true) &&
+    (policy?.linkedResources?.blob?.image ?? true)
+  );
+}
+
+export function setMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: visible,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
 /**
  * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.
@@ -772,9 +833,15 @@ export function hostConfigInputsEqual(
   // we never coerce undefined to false elsewhere in the input pipeline.
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
   if (
-    a.modelVisibleMcpImageToolResults !== b.modelVisibleMcpImageToolResults
+    !optionalModelVisibleMcpToolResultsEq(
+      a.modelVisibleMcpToolResults,
+      b.modelVisibleMcpToolResults
+    )
   )
     return false;
+  if (a.mcpToolResultImageRendering !== b.mcpToolResultImageRendering) {
+    return false;
+  }
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   // Order-insensitive, same semantics as server ids — toggling a built-in
@@ -884,6 +951,15 @@ function optionalMcpProfileEq(
   // nested (initialize, apps.sandbox.{csp,permissions}, extensions); the
   // shared stableStringifyJson sorts keys at every level so semantically
   // equal envelopes built in different orders compare equal.
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
+function optionalModelVisibleMcpToolResultsEq(
+  a: ModelVisibleMcpToolResults | undefined,
+  b: ModelVisibleMcpToolResults | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
   return stableStringifyJson(a) === stableStringifyJson(b);
 }
 

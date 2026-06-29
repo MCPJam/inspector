@@ -188,8 +188,8 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
-        modelVisibleMcpImageToolResults:
-          body.modelVisibleMcpImageToolResults,
+        modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
+        mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
@@ -227,9 +227,12 @@ chatV2.post("/", async (c) => {
             host: entry.hostValue,
           }
         );
-      } else if (entry.field === "modelVisibleMcpImageToolResults") {
+      } else if (
+        entry.field === "modelVisibleMcpToolResults" ||
+        entry.field === "mcpToolResultImageRendering"
+      ) {
         logger.warn(
-          "[chat-v2] client modelVisibleMcpImageToolResults differs from host; using host value",
+          `[chat-v2] client ${entry.field} differs from host; using host value`,
           {
             chatboxId,
             body: entry.overrideValue,
@@ -274,8 +277,7 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
-    const modelVisibleMcpImageToolResults =
-      resolvedExecution.hostPolicy.modelVisibleMcpImageToolResults;
+    const { modelVisibleMcpToolResults } = resolvedExecution.hostPolicy;
     // Host-config tools (web_search, bash, …) — one resolver owns which
     // config field produces which tool and with which gates (see
     // built-in-tools/registry.ts). `computer` comes exclusively from the
@@ -432,7 +434,7 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           respectToolVisibility,
-          modelVisibleMcpImageToolResults,
+          modelVisibleMcpToolResults,
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -484,7 +486,9 @@ chatV2.post("/", async (c) => {
                   resolvedTemperature,
                   requireToolApproval,
                   respectToolVisibility,
-                  modelVisibleMcpImageToolResults,
+                  modelVisibleMcpToolResults,
+                  mcpToolResultImageRendering:
+                    resolvedExecution.mcpToolResultImageRendering,
                   selectedServerIds,
                 })
             : null,

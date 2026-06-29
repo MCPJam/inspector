@@ -1,6 +1,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
@@ -172,6 +173,11 @@ export interface RunSimulationOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Host/client policy for eligible MCP tool-result content/resources.
+   * Undefined keeps prepareChatV2's default behavior.
+   */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
    * Host harness selector mirrored from the chatbox's pinned HostConfigV2.
    * When "claude-code" the synthetic visitor's turns run the real Claude Code
    * runtime; absent ⇒ emulated. Forward-compatible: only activates once the
@@ -308,6 +314,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    modelVisibleMcpToolResults,
     harness,
     accessVersion,
     convexHttpUrl,
@@ -358,6 +365,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           respectToolVisibility,
           progressiveToolDiscovery,
           builtInToolIds,
+          modelVisibleMcpToolResults,
           harness,
           accessVersion,
           convexHttpUrl,
@@ -448,6 +456,7 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   harness?: Harness;
   accessVersion?: number;
   convexHttpUrl: string;
@@ -470,6 +479,7 @@ async function runOneSession(args: {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    modelVisibleMcpToolResults,
     harness,
     accessVersion,
     convexHttpUrl,
@@ -505,6 +515,9 @@ async function runOneSession(args: {
       ...(temperature !== undefined ? { temperature } : {}),
       requireToolApproval,
       ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+      ...(modelVisibleMcpToolResults !== undefined
+        ? { modelVisibleMcpToolResults }
+        : {}),
       selectedServers:
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
@@ -532,6 +545,7 @@ async function runOneSession(args: {
       temperature,
       requireToolApproval,
       respectToolVisibility,
+      modelVisibleMcpToolResults,
       ...(progressiveToolDiscovery !== undefined
         ? {
             progressiveToolDiscovery: {
@@ -1207,11 +1221,8 @@ export async function drainAssistantTurn(
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
-    ...(args.modelVisibleMcpImageToolResults !== undefined
-      ? {
-          modelVisibleMcpImageToolResults:
-            args.modelVisibleMcpImageToolResults,
-        }
+    ...(args.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
       : {}),
     // Harness selector: when the chatbox host runs harness: "claude-code",
     // synthetic turns run the real Claude Code runtime. requireToolApproval is

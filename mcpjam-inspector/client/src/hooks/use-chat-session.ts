@@ -113,6 +113,7 @@ import {
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { ModelVisibleMcpToolResults } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import {
   buildResolvedServerBatchRequest,
@@ -221,11 +222,10 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
-  /**
-   * Host-level MCP tool-result image policy. `false` keeps eligible MCP
-   * tool-returned images out of model-visible media for this turn.
-   */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host-level MCP tool-result content/resource visibility policy. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Host-level UI rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   /**
    * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
    * model should see this turn. Sourced from the caller's resolved host
@@ -335,6 +335,8 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+        mcpToolResultImageRendering?: "none" | "panel" | "inline";
         selectedServers?: string[];
       };
       version: number;
@@ -1214,12 +1216,18 @@ export function useChatSession(
     options.respectToolVisibility ??
     options.executionConfig?.respectToolVisibility ??
     respectToolVisibility;
-  const modelVisibleMcpImageToolResultsRef = useRef<boolean | undefined>(
-    undefined
-  );
-  modelVisibleMcpImageToolResultsRef.current =
-    options.modelVisibleMcpImageToolResults ??
-    options.executionConfig?.modelVisibleMcpImageToolResults;
+  const modelVisibleMcpToolResultsRef = useRef<
+    ModelVisibleMcpToolResults | undefined
+  >(undefined);
+  modelVisibleMcpToolResultsRef.current =
+    options.modelVisibleMcpToolResults ??
+    options.executionConfig?.modelVisibleMcpToolResults;
+  const mcpToolResultImageRenderingRef = useRef<
+    "none" | "panel" | "inline" | undefined
+  >(undefined);
+  mcpToolResultImageRenderingRef.current =
+    options.mcpToolResultImageRendering ??
+    options.executionConfig?.mcpToolResultImageRendering;
   // Host-managed built-in tools. Top-level option wins (mirrors the
   // progressiveToolDiscovery / respectToolVisibility pattern), then
   // executionConfig as a fallback for surfaces that thread everything
@@ -1610,10 +1618,16 @@ export function useChatSession(
               }),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
-          ...(modelVisibleMcpImageToolResultsRef.current !== undefined
+          ...(modelVisibleMcpToolResultsRef.current !== undefined
             ? {
-                modelVisibleMcpImageToolResults:
-                  modelVisibleMcpImageToolResultsRef.current,
+                modelVisibleMcpToolResults:
+                  modelVisibleMcpToolResultsRef.current,
+              }
+            : {}),
+          ...(mcpToolResultImageRenderingRef.current !== undefined
+            ? {
+                mcpToolResultImageRendering:
+                  mcpToolResultImageRenderingRef.current,
               }
             : {}),
           // Only send when the user explicitly set the host-level toggle.
@@ -1834,7 +1848,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog,
+          useTrafficLogStore.getState().addLog
         );
         addToolOutput({
           tool: tc.toolName,
@@ -2242,6 +2256,8 @@ export function useChatSession(
           temperature?: number;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+          mcpToolResultImageRendering?: "none" | "panel" | "inline";
           selectedServers?: string[];
         };
         version: number;

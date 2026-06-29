@@ -23,6 +23,7 @@ import type { HostExecutor, PromptOptions } from "../HostExecutor.js";
 import type { PromptResult } from "../PromptResult.js";
 import type { CustomProvider } from "../types.js";
 import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
+import type { ModelVisibleMcpToolResults } from "./types.js";
 import {
   assertHostServersKnown,
   resolveKnownServerIds,
@@ -51,8 +52,8 @@ export type HostRuntimeManager = HostServerRegistry & {
     options?: {
       includeAppOnly?: boolean;
       needsApproval?: boolean;
-      modelVisibleMcpImageToolResults?: boolean;
-    },
+      modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+    }
   ): Promise<AiSdkToolRecord>;
   /**
    * Optional. When the runtime is bound to a manager that exposes
@@ -108,7 +109,7 @@ export class HostRuntime implements HostExecutor {
   constructor(
     host: Host,
     manager: HostRuntimeManager,
-    defaults: HostRuntimeDefaults,
+    defaults: HostRuntimeDefaults
   ) {
     this.host = host;
     this.manager = manager;
@@ -124,21 +125,17 @@ export class HostRuntime implements HostExecutor {
    * Conversation continuity stays explicit — caller passes `context: r1`
    * via `options` for follow-up turns.
    */
-  async run(
-    input: string,
-    options?: PromptOptions,
-  ): Promise<PromptResult> {
+  async run(input: string, options?: PromptOptions): Promise<PromptResult> {
     const hostSnapshot = this.host.toJSON();
     assertHostServersKnown(hostSnapshot, this.manager);
 
     const policy = extractHostExecutionPolicy(
-      hostSnapshot as unknown as Record<string, unknown>,
+      hostSnapshot as unknown as Record<string, unknown>
     );
     const serverIds = resolveKnownServerIds(hostSnapshot, this.manager);
     const tools = await this.manager.getToolsForAiSdk(serverIds, {
       includeAppOnly: policy.respectToolVisibility === false,
-      modelVisibleMcpImageToolResults:
-        policy.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults: hostSnapshot.modelVisibleMcpToolResults,
     });
 
     // Dynamic import keeps `host-config` browser-safe: `HostRunner` pulls
@@ -171,7 +168,7 @@ export class HostRuntime implements HostExecutor {
    * history, matching `HostRunner.withOptions(...)` semantics.
    */
   withOptions(
-    options: Partial<HostRuntimeDefaults> | Record<string, any>,
+    options: Partial<HostRuntimeDefaults> | Record<string, any>
   ): HostRuntime {
     return new HostRuntime(this.host, this.manager, {
       ...this.defaults,

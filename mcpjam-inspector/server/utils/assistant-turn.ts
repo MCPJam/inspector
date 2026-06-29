@@ -24,6 +24,7 @@ import type {
   UIMessageChunk,
 } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
 import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
@@ -111,8 +112,8 @@ export interface RunAssistantTurnOptions {
    * approval gate at mcpjam-stream-handler.ts:834–843 fires when set.
    */
   requireToolApproval?: boolean;
-  /** Host/client capability for eligible MCP image-bearing tool results. */
-  modelVisibleMcpImageToolResults?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
 
   /**
    * Which real agent harness runs this turn. Absent ⇒ MCPJam's emulated engine
@@ -353,10 +354,8 @@ function buildHandlerOptions(
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),
-    ...(opts.modelVisibleMcpImageToolResults !== undefined
-      ? {
-          modelVisibleMcpImageToolResults: opts.modelVisibleMcpImageToolResults,
-        }
+    ...(opts.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: opts.modelVisibleMcpToolResults }
       : {}),
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }

@@ -28,6 +28,7 @@ import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -142,7 +143,7 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
-  modelVisibleMcpImageToolResults?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -207,7 +208,7 @@ export async function streamWebChatTurn(
   const modelMessages = await convertToMcpjamModelMessages(
     prepare.uiMessages as never,
     {
-      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
     }
   );
@@ -222,7 +223,7 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
-      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.progressiveToolDiscovery !== undefined
@@ -343,8 +344,8 @@ export async function streamWebChatTurn(
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
-                modelVisibleMcpImageToolResults:
-                  prepare.modelVisibleMcpImageToolResults,
+                modelVisibleMcpToolResults:
+                  prepare.modelVisibleMcpToolResults,
                 selectedServers:
                   Array.isArray(persist.selectedServerNames) &&
                   persist.selectedServerNames.length ===
@@ -450,7 +451,7 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) =>
@@ -486,7 +487,7 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    modelVisibleMcpImageToolResults: prepare.modelVisibleMcpImageToolResults,
+    modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins

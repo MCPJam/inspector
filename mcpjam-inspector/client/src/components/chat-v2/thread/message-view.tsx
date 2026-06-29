@@ -64,6 +64,7 @@ interface MessageViewProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: "none" | "panel" | "inline";
   claudeFooterMode?: ClaudeFooterMode;
   /** MCPJam host: pulsing dots beneath the streaming assistant bubble. */
   mcpjamFooterActive?: boolean;
@@ -178,6 +179,7 @@ function areMessageViewPropsEqual(
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
+    prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
@@ -216,6 +218,7 @@ function MessageViewImpl({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering = "inline",
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,
@@ -286,6 +289,7 @@ function MessageViewImpl({
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
+                mcpToolResultImageRendering={mcpToolResultImageRendering}
               />
             ))}
           </div>
@@ -320,6 +324,7 @@ function MessageViewImpl({
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
+                mcpToolResultImageRendering={mcpToolResultImageRendering}
               />
             ))}
           </UserMessageBubble>
@@ -406,6 +411,7 @@ function MessageViewImpl({
                   minimalMode={minimalMode}
                   interactive={interactive}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  mcpToolResultImageRendering={mcpToolResultImageRendering}
                   {...recorder}
                 />
               ))}
@@ -413,10 +419,7 @@ function MessageViewImpl({
           ))}
         </div>
         {mcpjamFooterActive ? (
-          <div
-            data-testid="mcpjam-message-footer"
-            className="pt-4"
-          >
+          <div data-testid="mcpjam-message-footer" className="pt-4">
             <MCPJamMarkIndicator />
           </div>
         ) : null}

@@ -474,7 +474,7 @@ export function buildCapEntriesFromPersistedCases(
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
-    const steps = (
+    const steps =
       // Resolve real steps for cap math so the count matches what executes:
       //  - explicit `steps` (or legacy `widget_probe`+`probeConfig`, which is
       //    MODEL-FREE → 0 LLM calls) via resolveAuthoringSteps;
@@ -484,11 +484,10 @@ export function buildCapEntriesFromPersistedCases(
       // Without the probe branch, a legacy widget probe would synthesize a
       // `prompt` placeholder and be over-counted as a model call, so big/iterated
       // probe suites could be wrongly rejected over MAX_TOTAL_LLM_CALLS.
-      resolveAuthoringSteps(testCase) ??
-      legacyCaseStepsFallback(testCase) ?? [
-        { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
-      ]
-    ) as RunEvalsRequest["tests"][number]["steps"];
+      (resolveAuthoringSteps(testCase) ??
+        legacyCaseStepsFallback(testCase) ?? [
+          { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
+        ]) as RunEvalsRequest["tests"][number]["steps"];
     // Model-free cases (no `prompt` step) need one cap entry; model cases fan
     // out per model. The cap reducer counts `prompt` steps, so a model-free
     // case contributes 0 LLM calls regardless of fanout — the entry carries
@@ -2176,9 +2175,8 @@ export async function streamEvalTestCaseWithManager(
     suiteHostPolicy
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
           includeAppOnly: true,
-          ...(suiteHostPolicy.modelVisibleMcpImageToolResults
-            ? { modelVisibleMcpImageToolResults: true }
-            : {}),
+          modelVisibleMcpToolResults:
+            suiteHostPolicy.modelVisibleMcpToolResults,
         })
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
