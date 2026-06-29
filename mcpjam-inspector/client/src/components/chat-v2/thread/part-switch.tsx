@@ -567,6 +567,9 @@ export function PartSwitch({
               toolInput={effectiveInput}
               toolOutput={effectiveOutput}
               rawOutput={effectiveRawOutput}
+              // Pass the already-resolved server id so WidgetReplay doesn't
+              // rediscover it from a swapped Run result that lacks `_serverId`.
+              resolvedServerId={serverId ?? undefined}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
               toolsMetadata={toolsMetadata}

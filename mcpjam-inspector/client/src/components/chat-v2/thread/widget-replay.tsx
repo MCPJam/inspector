@@ -30,6 +30,14 @@ export interface WidgetReplayProps {
   toolMetadata?: Record<string, unknown>;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
+  /**
+   * Server id already resolved by the caller. Preferred over rediscovering it
+   * from `rawOutput`, which matters when `rawOutput` is swapped to a fresh Run
+   * result that lacks MCPJam's `_serverId` annotation — without this the widget
+   * would lose its server id on surfaces that resolved it via the raw-result
+   * fallback (no `toolServerMap` entry).
+   */
+  resolvedServerId?: string;
   renderOverride?: ToolRenderOverride;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
@@ -94,6 +102,7 @@ export function WidgetReplay({
   toolMetadata,
   toolsMetadata = {},
   toolServerMap = {},
+  resolvedServerId,
   renderOverride,
   onSendFollowUp,
   onCallTool,
@@ -126,6 +135,7 @@ export function WidgetReplay({
   const uiResourceUri =
     renderOverride?.resourceUri ?? getUIResourceUri(uiType, effectiveToolMeta);
   const serverId =
+    resolvedServerId ??
     renderOverride?.serverId ??
     getToolServerId(toolName, toolServerMap) ??
     readToolResultServerId(rawOutput);
