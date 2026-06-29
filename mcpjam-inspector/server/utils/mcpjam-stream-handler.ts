@@ -3076,7 +3076,7 @@ export async function handleMCPJamFreeChatModel(
     : runChatEngineLoop(options, "ui"));
   if (!result.response) {
     throw new Error(
-      "runChatEngineLoop(streamSink: 'ui') returned no Response — internal invariant violated"
+      `${options.harness ? "runHarnessTurn" : "runChatEngineLoop"}(streamSink: 'ui') returned no Response — internal invariant violated`
     );
   }
   return result.response;

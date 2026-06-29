@@ -37,6 +37,7 @@ import {
 } from "./mcpjam-stream-handler.js";
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import { getHarnessAdapter } from "./harness/registry.js";
 import { logger } from "./logger.js";
 
 /**
@@ -446,18 +447,27 @@ export async function runAssistantTurn(
   // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
   // traces rather than misread as "observed the real harness".
   const harnessRequested = !!opts.harness;
-  const modelEligible = isMCPJamProvidedModel(
-    String(opts.modelDefinition.id),
-    opts.modelDefinition.provider,
-  );
+  const harnessModelId = String(opts.modelDefinition.id);
+  // Eligibility is BOTH "MCPJam-provided" AND "the runtime can actually run this
+  // model". The interactive routes check supportsModel in their preflight, but
+  // eval/synthetic don't — without this a codex turn on an MCPJam-provided but
+  // non-Codex model (e.g. anthropic/claude-haiku-4.5) would reach createCodex()
+  // with no native model and silently use Codex's default. Mirror the preflight.
+  const harnessAdapter = harnessRequested
+    ? getHarnessAdapter(opts.harness as string)
+    : undefined;
+  const modelEligible =
+    isMCPJamProvidedModel(harnessModelId, opts.modelDefinition.provider) &&
+    (harnessAdapter ? harnessAdapter.supportsModel(harnessModelId) : true);
   const useHarness = harnessRequested && modelEligible;
   if (harnessRequested && !modelEligible) {
     logger.warn(
-      "[assistant-turn] harness requested but model ineligible — falling back " +
-        "to the emulated engine (surfaced, not silent)",
+      "[assistant-turn] harness requested but model ineligible (not MCPJam-" +
+        "provided, or unsupported by the runtime) — falling back to the emulated " +
+        "engine (surfaced, not silent)",
       {
         harness: opts.harness,
-        modelId: String(opts.modelDefinition.id),
+        modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
       },

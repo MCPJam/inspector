@@ -349,6 +349,29 @@ export async function runHarnessTurn(
       let tConnect = tStart;
       let resumedSession = false;
 
+      // 0. Capability prechecks — BEFORE any credential/sandbox work (defense in
+      // depth for eval/synthetic/unified paths that don't hit the route preflight).
+      // Cheap + pure, so a misconfigured turn fails before we fetch/audit/rate-
+      // limit the Gateway credential or wake the box.
+      //   (a) the runtime must be able to run this model — else createX() would
+      //       silently substitute its own default model.
+      if (!harnessAdapter.supportsModel(modelId)) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+        );
+      }
+      //   (b) a harness that can't deliver the host's selected MCP servers must
+      //       NOT silently run without them.
+      if (
+        !harnessAdapter.supportsSelectedMcpServers &&
+        (selectedServers?.length ?? 0) > 0
+      ) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+        );
+      }
+
       // 1. Resolve the model credential FIRST — fetched from Convex (the
       // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
       // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
@@ -377,20 +400,8 @@ export async function runHarnessTurn(
       // own discovery. Re-applying the emulation would double it, defeat the
       // "observe the real runtime" purpose, and isn't expressible anyway —
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
-      // Only adapters that deliver MCP servers (Claude Code) build the config.
-      // FAIL CLOSED (defense in depth): a harness that can't deliver the host's
-      // selected servers must NOT silently run without them. The route preflight
-      // already rejects this, but eval/synthetic/unified paths don't hit that
-      // preflight — so guard here too rather than dropping the servers.
-      if (
-        !harnessAdapter.supportsSelectedMcpServers &&
-        (selectedServers?.length ?? 0) > 0
-      ) {
-        throw new Error(
-          `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
-            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
-        );
-      }
+      // Only adapters that deliver MCP servers (Claude Code) build the config;
+      // the undeliverable-servers case already failed closed in step 0(b) above.
       const { mcpJson, keyToServerId } = harnessAdapter.supportsSelectedMcpServers
         ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
