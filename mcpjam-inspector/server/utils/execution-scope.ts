@@ -17,23 +17,38 @@
 
 import { z } from "zod";
 
+/** Opaque downstream scope echoed back to execution endpoints, never trusted. */
+export type ExecutionScope =
+  | { kind: "project"; projectId: string }
+  | {
+      kind: "swarm";
+      swarmId: string;
+      accessVersion: number;
+      projectId: string;
+      workspaceId: string;
+    };
+
 /**
- * Opaque downstream scope echoed back to execution endpoints, never trusted by
- * the client. The schema validates SHAPE only (so the data-plane exec route can
- * accept a forwarded scope); the backend re-resolves and authorizes it.
+ * Boundary validator for a FORWARDED scope (the data-plane exec route). The
+ * scope is OPAQUE — the backend re-resolves and authorizes it — so this checks
+ * the discriminant + the V1 fields but `.passthrough()`es any extra/future
+ * backend-only keys rather than stripping them, preserving the value verbatim.
+ * The clean `ExecutionScope` type above is what client code constructs/reads.
  */
 export const executionScopeSchema = z.union([
-  z.object({ kind: z.literal("project"), projectId: z.string().min(1) }),
-  z.object({
-    kind: z.literal("swarm"),
-    swarmId: z.string().min(1),
-    accessVersion: z.number(),
-    projectId: z.string().min(1),
-    workspaceId: z.string().min(1),
-  }),
+  z
+    .object({ kind: z.literal("project"), projectId: z.string().min(1) })
+    .passthrough(),
+  z
+    .object({
+      kind: z.literal("swarm"),
+      swarmId: z.string().min(1),
+      accessVersion: z.number(),
+      projectId: z.string().min(1),
+      workspaceId: z.string().min(1),
+    })
+    .passthrough(),
 ]);
-
-export type ExecutionScope = z.infer<typeof executionScopeSchema>;
 
 export type ExecutionAccessKind =
   | "project_member"
