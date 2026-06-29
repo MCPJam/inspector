@@ -2992,58 +2992,15 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-
-        runSucceeded = true;
-      } catch (error) {
-        // Abort is the cooperative cancellation signal — silent path:
-        // no error chunk, no synthetic finish, no turn_finish, no
-        // failure spans, no conversation persistence. The downstream
-        // controller is already being torn down by the client.
-        if (isAbortError(error) || abortSignal?.aborted) {
-          aborted = true;
-        } else {
-          logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
-          const failAbs = Date.now();
-          const errorText =
-            error instanceof Error ? error.message : String(error);
-          pushAiSdkTrailingErrorSpan(
-            traceTurn.turnSpans,
-            traceTurn.turnStartedAt,
-            traceTurn.turnStartedAt,
-            failAbs,
-            traceTurn.promptIndex
-          );
-          emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
-          writeTraceEvent(safeWriter, {
-            type: "error",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            errorText,
-          });
-          writeTraceEvent(safeWriter, {
-            type: "turn_finish",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            usage: traceTurn.turnUsage,
-          });
-          emitError(safeWriter, errorText);
-          // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-          // Site (3) — outer agentic-loop catch. No structured body,
-          // no stepIndex.
-          safelyEmitEngineError(onEngineError, {
-            message: errorText,
-            rawText: errorText,
-            promptIndex: traceTurn.promptIndex,
-          });
-        }
-      } finally {
-        streamClosed = true;
-        if (heartbeatTimer !== undefined) {
-          clearInterval(heartbeatTimer);
-        }
-        if (abortListener && abortSignal) {
-          abortSignal.removeEventListener("abort", abortListener);
-        }
+        emitError(safeWriter, errorText);
+        // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
+        // Site (3) — outer agentic-loop catch. No structured body,
+        // no stepIndex.
+        safelyEmitEngineError(onEngineError, {
+          message: errorText,
+          rawText: errorText,
+          promptIndex: traceTurn.promptIndex,
+        });
       }
     } finally {
       streamClosed = true;
