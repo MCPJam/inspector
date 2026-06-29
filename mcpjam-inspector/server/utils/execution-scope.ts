@@ -15,16 +15,25 @@
  * starts serving it.
  */
 
-/** Opaque downstream scope echoed back to execution endpoints, never trusted. */
-export type ExecutionScope =
-  | { kind: "project"; projectId: string }
-  | {
-      kind: "swarm";
-      swarmId: string;
-      accessVersion: number;
-      projectId: string;
-      workspaceId: string;
-    };
+import { z } from "zod";
+
+/**
+ * Opaque downstream scope echoed back to execution endpoints, never trusted by
+ * the client. The schema validates SHAPE only (so the data-plane exec route can
+ * accept a forwarded scope); the backend re-resolves and authorizes it.
+ */
+export const executionScopeSchema = z.union([
+  z.object({ kind: z.literal("project"), projectId: z.string().min(1) }),
+  z.object({
+    kind: z.literal("swarm"),
+    swarmId: z.string().min(1),
+    accessVersion: z.number(),
+    projectId: z.string().min(1),
+    workspaceId: z.string().min(1),
+  }),
+]);
+
+export type ExecutionScope = z.infer<typeof executionScopeSchema>;
 
 export type ExecutionAccessKind =
   | "project_member"

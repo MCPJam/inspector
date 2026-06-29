@@ -27,6 +27,7 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { isComputersDataPlaneConfigured } from "../../utils/computers/control-plane-client.js";
 import { getComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
 import {
@@ -40,6 +41,10 @@ import { assertBearerToken } from "./errors.js";
 
 const execSchema = z.object({
   projectId: z.string().min(1),
+  // Phase 3: a delegating server forwards the opaque execution scope so this
+  // data plane's reserve re-resolves live access. Shape-validated only; the
+  // backend authorizes it. Absent ⇒ legacy projectId reserve.
+  executionScope: executionScopeSchema.optional(),
   command: z.string().min(1).max(10_000),
   /** Idempotency key for the durable command log (the tool call id). */
   commandId: z.string().min(1).max(200),
@@ -65,6 +70,9 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         {
           authHeader: `Bearer ${bearerToken}`,
           projectId: body.projectId,
+          ...(body.executionScope
+            ? { executionScope: body.executionScope }
+            : {}),
           command: body.command,
           commandId: body.commandId,
           source: "chat",
