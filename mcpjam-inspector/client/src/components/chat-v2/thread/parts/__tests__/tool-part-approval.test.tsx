@@ -307,7 +307,7 @@ describe("ToolPart approval expansion", () => {
           } as any
         }
         uiType="mcp-apps"
-        mcpToolResultImageRendering="panel"
+        mcpToolResultImageRendering={{ placement: "collapsed" }}
       />
     );
 
@@ -348,7 +348,7 @@ describe("ToolPart approval expansion", () => {
           } as any
         }
         uiType="mcp-apps"
-        mcpToolResultImageRendering="none"
+        mcpToolResultImageRendering={{ placement: "none" }}
       />
     );
 

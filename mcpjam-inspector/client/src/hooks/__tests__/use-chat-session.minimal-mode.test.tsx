@@ -492,6 +492,59 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
+  it("uses saved MCP image policies when continuing a resumed session", async () => {
+    const selectedServers = ["server-1"];
+    const currentHostPolicy = {
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    };
+    const resumedPolicy = {
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    };
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        modelVisibleMcpToolResults: currentHostPolicy,
+        mcpToolResultImageRendering: { placement: "inline" },
+      })
+    );
+
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "restored-session",
+        messagesBlobUrl: null,
+        resumeConfig: {
+          respectToolVisibility: false,
+          modelVisibleMcpToolResults: resumedPolicy,
+          mcpToolResultImageRendering: { placement: "none" },
+        },
+        version: 3,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("restored-session");
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "continue" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toContainEqual(
+        expect.objectContaining({
+          respectToolVisibility: false,
+          modelVisibleMcpToolResults: resumedPolicy,
+          mcpToolResultImageRendering: { placement: "none" },
+        })
+      );
+    });
+  });
+
   it("soft-fails shared metadata auth denial without noisy warning", async () => {
     mockGetToolsMetadata.mockRejectedValue({
       status: 403,

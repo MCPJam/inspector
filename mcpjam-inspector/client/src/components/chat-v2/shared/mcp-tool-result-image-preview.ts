@@ -3,8 +3,10 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  type McpToolResultImageRenderingPolicy,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/browser";
 import { readResource as readResourceApi } from "@/lib/apis/mcp-resources-api";
 
@@ -16,6 +18,7 @@ export interface McpToolResultImagePreview {
 
 export interface ResolveMcpToolResultImagePreviewsOptions {
   readResource?: (uri: string) => Promise<unknown>;
+  renderingPolicy?: McpToolResultImageRenderingPolicy;
 }
 
 export type McpToolResultImagePreviewState =
@@ -26,6 +29,7 @@ export type McpToolResultImagePreviewState =
 
 export interface UseMcpToolResultImagePreviewsOptions {
   serverId?: string;
+  renderingPolicy?: McpToolResultImageRenderingPolicy;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,7 +44,49 @@ function getEmbeddedResource(block: Record<string, unknown>) {
   return isRecord(block.resource) ? block.resource : undefined;
 }
 
-function hasImageResourceLinkCandidate(result: unknown): boolean {
+function rendersDirectImages(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+function rendersEmbeddedImages(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.embeddedResources?.blob?.image ?? true;
+}
+
+function rendersLinkedImages(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.linkedResources?.blob?.image ?? true;
+}
+
+function hasAnyEnabledImageSource(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return (
+    rendersDirectImages(policy) ||
+    rendersEmbeddedImages(policy) ||
+    rendersLinkedImages(policy)
+  );
+}
+
+function renderPolicyToModelVisibilityPolicy(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): ModelVisibleMcpToolResults {
+  return {
+    directContent: { image: rendersDirectImages(policy) },
+    embeddedResources: { blob: { image: rendersEmbeddedImages(policy) } },
+    linkedResources: { blob: { image: rendersLinkedImages(policy) } },
+  };
+}
+
+function hasImageResourceLinkCandidate(
+  result: unknown,
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  if (!rendersLinkedImages(policy)) return false;
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some(
     (block) =>
@@ -67,21 +113,37 @@ function hasModelOutputImageCandidate(value: unknown): boolean {
   );
 }
 
-export function hasMcpToolResultImageCandidate(result: unknown): boolean {
-  if (hasModelOutputImageCandidate(result)) return true;
+export function hasMcpToolResultImageCandidate(
+  result: unknown,
+  policy?: McpToolResultImageRenderingPolicy
+): boolean {
+  if (hasModelOutputImageCandidate(result)) {
+    return hasAnyEnabledImageSource(policy);
+  }
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some((block) => {
     if (!isRecord(block)) return false;
-    if (block.type === "image" && isImageMimeType(block.mimeType)) return true;
+    if (
+      rendersDirectImages(policy) &&
+      block.type === "image" &&
+      isImageMimeType(block.mimeType)
+    ) {
+      return true;
+    }
     const resource = getEmbeddedResource(block);
     if (
+      rendersEmbeddedImages(policy) &&
       block.type === "resource" &&
       resource &&
       isImageMimeType(resource.mimeType)
     ) {
       return true;
     }
-    return block.type === "resource_link" && isImageMimeType(block.mimeType);
+    return (
+      rendersLinkedImages(policy) &&
+      block.type === "resource_link" &&
+      isImageMimeType(block.mimeType)
+    );
   });
 }
 
@@ -108,7 +170,9 @@ export async function resolveMcpToolResultImagePreviews(
   result: unknown,
   options: ResolveMcpToolResultImagePreviewsOptions = {}
 ): Promise<McpToolResultImagePreview[]> {
-  if (!hasMcpToolResultImageCandidate(result)) return [];
+  if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
+    return [];
+  }
 
   if (isModelOutputContent(result)) {
     return mediaPartsToPreviews(result);
@@ -116,12 +180,19 @@ export async function resolveMcpToolResultImagePreviews(
 
   try {
     const mcpResult = result as CallToolResult;
+    const modelVisibleMcpToolResults = renderPolicyToModelVisibilityPolicy(
+      options.renderingPolicy
+    );
     const modelOutput =
-      options.readResource && hasImageResourceLinkCandidate(mcpResult)
+      options.readResource &&
+      hasImageResourceLinkCandidate(mcpResult, options.renderingPolicy)
         ? await mcpCallToolResultToModelOutputWithLinkedResources(mcpResult, {
+            modelVisibleMcpToolResults,
             readResource: async ({ uri }) => options.readResource!(uri),
           })
-        : mcpCallToolResultToModelOutput(mcpResult);
+        : mcpCallToolResultToModelOutput(mcpResult, {
+            modelVisibleMcpToolResults,
+          });
 
     return mediaPartsToPreviews(modelOutput);
   } catch {
@@ -133,7 +204,10 @@ export function useMcpToolResultImagePreviews(
   result: unknown,
   options: UseMcpToolResultImagePreviewsOptions = {}
 ): McpToolResultImagePreviewState & { hasCandidate: boolean } {
-  const hasCandidate = hasMcpToolResultImageCandidate(result);
+  const hasCandidate = hasMcpToolResultImageCandidate(
+    result,
+    options.renderingPolicy
+  );
   const [state, setState] = useState<McpToolResultImagePreviewState>({
     status: "idle",
     previews: [],
@@ -142,7 +216,7 @@ export function useMcpToolResultImagePreviews(
   useEffect(() => {
     let cancelled = false;
 
-    if (!hasMcpToolResultImageCandidate(result)) {
+    if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
       setState({ status: "idle", previews: [] });
       return () => {
         cancelled = true;
@@ -154,6 +228,7 @@ export function useMcpToolResultImagePreviews(
       readResource: options.serverId
         ? (uri) => readResourceApi(options.serverId!, uri)
         : undefined,
+      renderingPolicy: options.renderingPolicy,
     })
       .then((previews) => {
         if (cancelled) return;
@@ -171,7 +246,7 @@ export function useMcpToolResultImagePreviews(
     return () => {
       cancelled = true;
     };
-  }, [result, options.serverId]);
+  }, [result, options.serverId, options.renderingPolicy]);
 
   return { ...state, hasCandidate };
 }

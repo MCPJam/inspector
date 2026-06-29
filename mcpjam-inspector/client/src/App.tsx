@@ -801,6 +801,9 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
+          mcpToolResultImageRendering={
+            activeHost?.config?.mcpToolResultImageRendering
+          }
         />
       </div>
     </ActiveHostCapsResolverScope>

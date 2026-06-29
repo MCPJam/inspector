@@ -20,7 +20,12 @@ describe("extractHostExecutionPolicy", () => {
     expect(policy.modelVisibleMcpToolResults.linkedResources.blob.image).toBe(
       true
     );
-    expect(policy.mcpToolResultImageRendering).toBe("inline");
+    expect(policy.mcpToolResultImageRendering).toEqual({
+      placement: "inline",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    });
     expect(policy.hostStyle).toBeUndefined();
     expect(policy.namedHostId).toBeUndefined();
   });
@@ -113,24 +118,37 @@ describe("extractHostExecutionPolicy", () => {
   });
 
   it("extracts MCP tool-result image rendering with inline default", () => {
-    expect(extractHostExecutionPolicy({}).mcpToolResultImageRendering).toBe(
-      "inline"
-    );
+    expect(extractHostExecutionPolicy({}).mcpToolResultImageRendering).toEqual({
+      placement: "inline",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    });
     expect(
       extractHostExecutionPolicy({
-        mcpToolResultImageRendering: "panel",
+        mcpToolResultImageRendering: {
+          placement: "collapsed",
+          directContent: { image: false },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: false } },
+        },
       }).mcpToolResultImageRendering
-    ).toBe("panel");
-    expect(
-      extractHostExecutionPolicy({
-        mcpToolResultImageRendering: "none",
-      }).mcpToolResultImageRendering
-    ).toBe("none");
+    ).toEqual({
+      placement: "collapsed",
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
     expect(
       extractHostExecutionPolicy({
         mcpToolResultImageRendering: "bad",
       }).mcpToolResultImageRendering
-    ).toBe("inline");
+    ).toEqual({
+      placement: "inline",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    });
   });
 });
 
@@ -168,7 +186,12 @@ describe("buildHostIterationMetadata", () => {
         },
       },
     },
-    mcpToolResultImageRendering: "inline",
+    mcpToolResultImageRendering: {
+      placement: "inline",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    },
     hostStyle: undefined,
     namedHostId: undefined,
   };
@@ -257,10 +280,13 @@ describe("buildHostIterationMetadata", () => {
   it("stamps non-default MCP tool-result image rendering metadata", () => {
     const policy: HostExecutionPolicy = {
       ...basePolicy,
-      mcpToolResultImageRendering: "panel",
+      mcpToolResultImageRendering: {
+        ...basePolicy.mcpToolResultImageRendering,
+        placement: "collapsed",
+      },
     };
     const meta = buildHostIterationMetadata(policy, baseSignals, 0, false);
-    expect(meta.mcp_tool_result_image_rendering).toBe("panel");
+    expect(meta.mcp_tool_result_image_rendering).toBe("collapsed");
   });
 
   it("stamps openai_compat_injected when true", () => {

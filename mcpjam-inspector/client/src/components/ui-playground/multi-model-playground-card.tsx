@@ -278,8 +278,7 @@ export function MultiModelPlaygroundCard({
   const lastCompareEnterVersionRef = useRef(0);
   const resolvedMcpToolResultImageRendering =
     hostCapsResolver?.mcpToolResultImageRendering ??
-    executionConfig?.mcpToolResultImageRendering ??
-    "inline";
+    executionConfig?.mcpToolResultImageRendering;
 
   const {
     messages,
@@ -535,8 +534,7 @@ export function MultiModelPlaygroundCard({
         : {
             toolCallId: deterministicExecutionRequest.toolCallId,
             modelOutput: deterministicExecutionRequest.modelOutput,
-            mcpToolResultImageRendering:
-              resolvedMcpToolResultImageRendering,
+            mcpToolResultImageRendering: resolvedMcpToolResultImageRendering,
           };
     const { messages: newMessages } = createDeterministicToolMessages(
       deterministicExecutionRequest.toolName,

@@ -13,7 +13,10 @@
  */
 
 import { logger } from "./logger.js";
-import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 
 export type ChatboxRedeemBootstrapServer = {
   serverId: string;
@@ -45,7 +48,7 @@ export type ChatboxRedeemBootstrap = {
   temperature: number;
   requireToolApproval: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   welcomeDialog: unknown | null;
   feedbackDialog: unknown | null;
   servers: ChatboxRedeemBootstrapServer[];

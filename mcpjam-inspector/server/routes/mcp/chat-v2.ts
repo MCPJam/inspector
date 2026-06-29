@@ -484,7 +484,8 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
-    const { modelVisibleMcpToolResults } = resolvedExecution.hostPolicy;
+    const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
+      resolvedExecution.hostPolicy;
     const inboundMcpToolResultModelOutputOptions = {
       modelVisibleMcpToolResults,
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
@@ -813,6 +814,7 @@ chatV2.post("/", async (c) => {
                         requireToolApproval,
                         respectToolVisibility,
                         modelVisibleMcpToolResults,
+                        mcpToolResultImageRendering,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -903,6 +905,7 @@ chatV2.post("/", async (c) => {
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,
+                      mcpToolResultImageRendering,
                       selectedServers,
                     },
                     ...(directHostConfig
@@ -1075,6 +1078,7 @@ chatV2.post("/", async (c) => {
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,
+                      mcpToolResultImageRendering,
                       selectedServers,
                     },
                     ...(directHostConfig

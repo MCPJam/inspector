@@ -12,7 +12,8 @@
 
 import type { ToolExposureSignals } from "./tool-visibility.js";
 import type {
-  McpToolResultImageRendering,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "./types.js";
 
@@ -96,6 +97,41 @@ export const DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS: ResolvedModelVisibleMcpTool
         document: false,
         video: false,
         otherBinary: false,
+      },
+    },
+  };
+
+export type ResolvedMcpToolResultImageRenderingPolicy = {
+  placement: McpToolResultImageRenderPlacement;
+  directContent: {
+    image: boolean;
+  };
+  embeddedResources: {
+    blob: {
+      image: boolean;
+    };
+  };
+  linkedResources: {
+    blob: {
+      image: boolean;
+    };
+  };
+};
+
+export const DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING: ResolvedMcpToolResultImageRenderingPolicy =
+  {
+    placement: "inline",
+    directContent: {
+      image: true,
+    },
+    embeddedResources: {
+      blob: {
+        image: true,
+      },
+    },
+    linkedResources: {
+      blob: {
+        image: true,
       },
     },
   };
@@ -197,11 +233,46 @@ export function resolveModelVisibleMcpToolResults(
 
 function readMcpToolResultImageRendering(
   hostConfig: Record<string, unknown>
-): McpToolResultImageRendering | undefined {
+): McpToolResultImageRenderingPolicy | undefined {
   const value = hostConfig.mcpToolResultImageRendering;
-  return value === "none" || value === "panel" || value === "inline"
-    ? value
+  return isRecord(value)
+    ? (value as McpToolResultImageRenderingPolicy)
     : undefined;
+}
+
+function isMcpToolResultImageRenderPlacement(
+  value: unknown
+): value is McpToolResultImageRenderPlacement {
+  return value === "none" || value === "collapsed" || value === "inline";
+}
+
+export function resolveMcpToolResultImageRendering(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): ResolvedMcpToolResultImageRenderingPolicy {
+  return {
+    placement: isMcpToolResultImageRenderPlacement(policy?.placement)
+      ? policy.placement
+      : DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING.placement,
+    directContent: {
+      image:
+        policy?.directContent?.image ??
+        DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING.directContent.image,
+    },
+    embeddedResources: {
+      blob: {
+        image:
+          policy?.embeddedResources?.blob?.image ??
+          DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING.embeddedResources.blob.image,
+      },
+    },
+    linkedResources: {
+      blob: {
+        image:
+          policy?.linkedResources?.blob?.image ??
+          DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING.linkedResources.blob.image,
+      },
+    },
+  };
 }
 
 export type HostExecutionPolicy = {
@@ -215,7 +286,7 @@ export type HostExecutionPolicy = {
    * are host/client capabilities, not storage or UI-rendering concerns.
    */
   modelVisibleMcpToolResults: ResolvedModelVisibleMcpToolResults;
-  mcpToolResultImageRendering: McpToolResultImageRendering;
+  mcpToolResultImageRendering: ResolvedMcpToolResultImageRenderingPolicy;
   hostStyle: string | undefined;
   namedHostId: string | undefined;
 };
@@ -230,7 +301,7 @@ export function extractHostExecutionPolicy(
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
       modelVisibleMcpToolResults: DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
-      mcpToolResultImageRendering: "inline",
+      mcpToolResultImageRendering: DEFAULT_MCP_TOOL_RESULT_IMAGE_RENDERING,
       hostStyle: undefined,
       namedHostId,
     };
@@ -256,8 +327,9 @@ export function extractHostExecutionPolicy(
   const modelVisibleMcpToolResults = resolveModelVisibleMcpToolResults(
     readModelVisibleMcpToolResults(hostConfig)
   );
-  const mcpToolResultImageRendering =
-    readMcpToolResultImageRendering(hostConfig) ?? "inline";
+  const mcpToolResultImageRendering = resolveMcpToolResultImageRendering(
+    readMcpToolResultImageRendering(hostConfig)
+  );
 
   return {
     requireToolApproval,
@@ -312,8 +384,9 @@ export function buildHostSnapshotMetadata(
   if (policy.modelVisibleMcpToolResults.linkedResources.blob.image) {
     meta.model_visible_mcp_linked_resource_blob_image = true;
   }
-  if (policy.mcpToolResultImageRendering !== "inline") {
-    meta.mcp_tool_result_image_rendering = policy.mcpToolResultImageRendering;
+  if (policy.mcpToolResultImageRendering.placement !== "inline") {
+    meta.mcp_tool_result_image_rendering =
+      policy.mcpToolResultImageRendering.placement;
   }
   if (policy.namedHostId) {
     meta.host_id = policy.namedHostId;
@@ -353,8 +426,9 @@ export function buildHostIterationMetadata(
   if (policy.modelVisibleMcpToolResults.linkedResources.blob.image) {
     meta.model_visible_mcp_linked_resource_blob_image = true;
   }
-  if (policy.mcpToolResultImageRendering !== "inline") {
-    meta.mcp_tool_result_image_rendering = policy.mcpToolResultImageRendering;
+  if (policy.mcpToolResultImageRendering.placement !== "inline") {
+    meta.mcp_tool_result_image_rendering =
+      policy.mcpToolResultImageRendering.placement;
   }
   if (injectOpenAiCompat) {
     meta.openai_compat_injected = true;

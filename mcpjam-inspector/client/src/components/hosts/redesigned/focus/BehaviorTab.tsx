@@ -14,12 +14,20 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import {
   DEFAULT_TEMPERATURE_V2,
+  getMcpToolResultImageRenderPlacement,
   isMcpDirectContentImageVisible,
+  isMcpDirectContentImageRendered,
   isMcpEmbeddedResourceBlobImageVisible,
+  isMcpEmbeddedResourceBlobImageRendered,
   isMcpLinkedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageRendered,
   setMcpDirectContentImageVisible,
+  setMcpDirectContentImageRendered,
   setMcpEmbeddedResourceBlobImageVisible,
+  setMcpEmbeddedResourceBlobImageRendered,
   setMcpLinkedResourceBlobImageVisible,
+  setMcpLinkedResourceBlobImageRendered,
+  setMcpToolResultImageRenderPlacement,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
@@ -150,6 +158,15 @@ export function BehaviorTab({
     "modelVisibleMcpToolResults.linkedResources.blob.image"
   );
   const fRenderImages = hostConfigField("mcpToolResultImageRendering");
+  const fRenderDirectImages = hostConfigField(
+    "mcpToolResultImageRendering.directContent.image"
+  );
+  const fRenderEmbeddedImages = hostConfigField(
+    "mcpToolResultImageRendering.embeddedResources.blob.image"
+  );
+  const fRenderLinkedImages = hostConfigField(
+    "mcpToolResultImageRendering.linkedResources.blob.image"
+  );
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
 
@@ -391,15 +408,23 @@ export function BehaviorTab({
               type="single"
               size="sm"
               variant="outline"
-              value={draft.mcpToolResultImageRendering ?? "inline"}
+              value={getMcpToolResultImageRenderPlacement(
+                draft.mcpToolResultImageRendering
+              )}
               onValueChange={(value) => {
                 if (!value) return;
                 if (
                   value === "none" ||
-                  value === "panel" ||
+                  value === "collapsed" ||
                   value === "inline"
                 ) {
-                  update({ mcpToolResultImageRendering: value });
+                  update({
+                    mcpToolResultImageRendering:
+                      setMcpToolResultImageRenderPlacement(
+                        draft.mcpToolResultImageRendering,
+                        value
+                      ),
+                  });
                 }
               }}
               disabled={readOnly}
@@ -409,7 +434,7 @@ export function BehaviorTab({
                 None
               </ToggleGroupItem>
               <ToggleGroupItem
-                value="panel"
+                value="collapsed"
                 aria-label="Render images in collapsed tool cards"
               >
                 Collapsed
@@ -418,6 +443,74 @@ export function BehaviorTab({
                 Inline
               </ToggleGroupItem>
             </ToggleGroup>
+          }
+        />
+
+        <FieldRow
+          label={fRenderDirectImages.label}
+          description={fRenderDirectImages.description}
+          control={
+            <Switch
+              checked={isMcpDirectContentImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onCheckedChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering: setMcpDirectContentImageRendered(
+                    draft.mcpToolResultImageRendering,
+                    checked
+                  ),
+                })
+              }
+              aria-label={fRenderDirectImages.label}
+              disabled={readOnly}
+            />
+          }
+        />
+
+        <FieldRow
+          label={fRenderEmbeddedImages.label}
+          description={fRenderEmbeddedImages.description}
+          control={
+            <Switch
+              checked={isMcpEmbeddedResourceBlobImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onCheckedChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering:
+                    setMcpEmbeddedResourceBlobImageRendered(
+                      draft.mcpToolResultImageRendering,
+                      checked
+                    ),
+                })
+              }
+              aria-label={fRenderEmbeddedImages.label}
+              disabled={readOnly}
+            />
+          }
+        />
+
+        <FieldRow
+          label={fRenderLinkedImages.label}
+          description={fRenderLinkedImages.description}
+          control={
+            <Switch
+              checked={isMcpLinkedResourceBlobImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onCheckedChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering:
+                    setMcpLinkedResourceBlobImageRendered(
+                      draft.mcpToolResultImageRendering,
+                      checked
+                    ),
+                })
+              }
+              aria-label={fRenderLinkedImages.label}
+              disabled={readOnly}
+            />
           }
         />
 

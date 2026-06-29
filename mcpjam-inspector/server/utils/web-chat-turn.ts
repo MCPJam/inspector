@@ -28,7 +28,10 @@ import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -117,6 +120,7 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
@@ -344,8 +348,9 @@ export async function streamWebChatTurn(
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
-                modelVisibleMcpToolResults:
-                  prepare.modelVisibleMcpToolResults,
+                modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+                mcpToolResultImageRendering:
+                  persist.mcpToolResultImageRendering,
                 selectedServers:
                   Array.isArray(persist.selectedServerNames) &&
                   persist.selectedServerNames.length ===

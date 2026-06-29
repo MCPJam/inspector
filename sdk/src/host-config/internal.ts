@@ -39,6 +39,8 @@ export type {
   CspDomainSet,
   McpProtocolVersion,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
 } from "./types.js";
 
@@ -57,9 +59,11 @@ export {
   extractHostExecutionPolicy,
   buildHostIterationMetadata,
   buildHostSnapshotMetadata,
+  resolveMcpToolResultImageRendering,
 } from "./host-policy.js";
 export type {
   HostExecutionPolicy,
+  ResolvedMcpToolResultImageRenderingPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
 export { hostConnectionProfile } from "./host-connection.js";

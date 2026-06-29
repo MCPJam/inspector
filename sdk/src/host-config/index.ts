@@ -41,6 +41,8 @@ export type {
   Harness,
   McpProtocolVersion,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,

@@ -606,6 +606,8 @@ export type {
   HostStyleId,
   Harness,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,

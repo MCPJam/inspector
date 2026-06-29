@@ -1,6 +1,9 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
-import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config";
 
 export interface ChatV2Request {
   messages: UIMessage[];
@@ -64,7 +67,7 @@ export interface ChatV2Request {
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —

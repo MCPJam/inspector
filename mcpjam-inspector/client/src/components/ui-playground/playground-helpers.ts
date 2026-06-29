@@ -10,6 +10,10 @@ import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { hasMcpToolResultImageCandidate } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 
 type DeterministicToolState = "output-available" | "output-error";
 
@@ -23,7 +27,7 @@ interface DeterministicToolOptions {
   /** Optional model-facing output used by trace/prelude callers, not UI storage. */
   modelOutput?: unknown;
   /** Host policy for human-facing tool-result image rendering. */
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
 
 function readServerIdFromToolMeta(
@@ -114,8 +118,13 @@ export function createDeterministicToolMessages(
       });
     } else {
       const suppressInlineImageDataResult =
-        (options?.mcpToolResultImageRendering ?? "inline") === "inline" &&
-        hasMcpToolResultImageCandidate(result);
+        getMcpToolResultImageRenderPlacement(
+          options?.mcpToolResultImageRendering
+        ) === "inline" &&
+        hasMcpToolResultImageCandidate(
+          result,
+          options?.mcpToolResultImageRendering
+        );
       const display = suppressInlineImageDataResult
         ? null
         : extractDisplayFromToolResult(result);

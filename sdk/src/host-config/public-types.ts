@@ -23,6 +23,8 @@ import type {
   McpAppsCapabilities,
   McpProtocolVersion,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
   OpenAiAppsCapabilities,
   ServerId,
@@ -31,6 +33,8 @@ import type {
 export type {
   McpProtocolVersion,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ServerId,
   HostStyleId,
   Harness,

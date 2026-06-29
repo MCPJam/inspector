@@ -74,7 +74,26 @@ export function isHarness(value: unknown): value is Harness {
   );
 }
 
-export type McpToolResultImageRendering = "none" | "panel" | "inline";
+export type McpToolResultImageRenderPlacement = "none" | "collapsed" | "inline";
+
+export type McpToolResultImageRenderingPolicy = {
+  placement?: McpToolResultImageRenderPlacement;
+  directContent?: {
+    image?: boolean;
+  };
+  embeddedResources?: {
+    blob?: {
+      image?: boolean;
+    };
+  };
+  linkedResources?: {
+    blob?: {
+      image?: boolean;
+    };
+  };
+};
+
+export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
  * Permissions Policy feature tokens corresponding to the four

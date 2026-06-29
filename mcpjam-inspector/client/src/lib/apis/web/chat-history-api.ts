@@ -1,6 +1,9 @@
 import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "./base";
-import type { ModelVisibleMcpToolResults } from "@/lib/client-config-v2";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
 
 /**
  * Per-message shape inside the JSON pointed at by `messagesBlobUrl`.
@@ -52,7 +55,7 @@ export interface ResumeConfig {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
 }
 

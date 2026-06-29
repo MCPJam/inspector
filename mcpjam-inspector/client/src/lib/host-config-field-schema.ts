@@ -11,9 +11,13 @@
  */
 
 import {
+  getMcpToolResultImageRenderPlacement,
   isMcpDirectContentImageVisible,
+  isMcpDirectContentImageRendered,
   isMcpEmbeddedResourceBlobImageVisible,
+  isMcpEmbeddedResourceBlobImageRendered,
   isMcpLinkedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageRendered,
   resolveEffectiveCompatRuntime,
   resolveEffectiveMcpAppsCapabilities,
 } from "@/lib/client-config-v2";
@@ -349,7 +353,8 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Model & sampling",
     label: "Make embedded resource images visible to model",
     path: "modelVisibleMcpToolResults.embeddedResources.blob.image",
-    description: "Pass MCP embedded resource images from tool results to the model.",
+    description:
+      "Pass MCP embedded resource images from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
       isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
@@ -370,13 +375,48 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     section: "agent",
     subsection: "Model & sampling",
     label: "Render tool images",
-    path: "mcpToolResultImageRendering",
+    path: "mcpToolResultImageRendering.placement",
     description: "Human-facing display mode for MCP tool-returned images.",
     kind: {
       kind: "enum",
-      options: ["none", "panel", "inline"],
+      options: ["none", "collapsed", "inline"],
     },
-    read: (cfg) => cfg.mcpToolResultImageRendering ?? "inline",
+    read: (cfg) =>
+      getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.directContent.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render tool image content",
+    path: "mcpToolResultImageRendering.directContent.image",
+    description: "Render direct MCP image content from tool results in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.embeddedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render embedded resource images",
+    path: "mcpToolResultImageRendering.embeddedResources.blob.image",
+    description:
+      "Render MCP embedded resource images from tool results in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.linkedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render resource link images",
+    path: "mcpToolResultImageRendering.linkedResources.blob.image",
+    description: "Resolve MCP resource link images and render them in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "progressiveToolDiscovery",

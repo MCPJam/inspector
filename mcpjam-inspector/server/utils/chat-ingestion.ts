@@ -1,5 +1,8 @@
 import type { Context } from "hono";
-import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger";
 import { getRequestLogger } from "./request-logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -41,6 +44,7 @@ interface ResumeConfig {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
 }
 
@@ -69,7 +73,7 @@ export interface DirectHostConfig {
    */
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds: string[];
 }
 
@@ -95,7 +99,7 @@ export function buildDirectHostConfig(input: {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {

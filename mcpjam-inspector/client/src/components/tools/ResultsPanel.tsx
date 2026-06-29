@@ -27,6 +27,10 @@ import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 
 interface ResultsPanelProps {
   error: string;
@@ -48,6 +52,7 @@ interface ResultsPanelProps {
    * the same effective capabilities as `initialize`.
    */
   serverName?: string;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
 
 type ResultViewMode = "images" | "raw";
@@ -60,6 +65,7 @@ export function ResultsPanel({
   toolMeta,
   responseDurationMs,
   serverName,
+  mcpToolResultImageRendering,
 }: ResultsPanelProps) {
   const [imageMode, setImageMode] = useState<ResultViewMode>("images");
   const rawResult = result as unknown as Record<string, unknown> | null;
@@ -88,9 +94,16 @@ export function ResultsPanel({
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
-  const imageState = useMcpToolResultImagePreviews(result, {
-    serverId: serverName,
-  });
+  const canRenderImages =
+    getMcpToolResultImageRenderPlacement(mcpToolResultImageRendering) !==
+    "none";
+  const imageState = useMcpToolResultImagePreviews(
+    canRenderImages ? result : undefined,
+    {
+      serverId: serverName,
+      renderingPolicy: mcpToolResultImageRendering,
+    }
+  );
   const formattedResponseTime =
     responseDurationMs == null
       ? null

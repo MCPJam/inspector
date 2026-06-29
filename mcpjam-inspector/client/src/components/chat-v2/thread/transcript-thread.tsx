@@ -251,7 +251,7 @@ export function TranscriptThread({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
-  mcpToolResultImageRendering = "inline",
+  mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,

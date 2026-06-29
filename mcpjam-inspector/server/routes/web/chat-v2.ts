@@ -277,7 +277,8 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
-    const { modelVisibleMcpToolResults } = resolvedExecution.hostPolicy;
+    const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
+      resolvedExecution.hostPolicy;
     // Host-config tools (web_search, bash, …) — one resolver owns which
     // config field produces which tool and with which gates (see
     // built-in-tools/registry.ts). `computer` comes exclusively from the
@@ -497,6 +498,7 @@ chatV2.post("/", async (c) => {
           systemPrompt,
           temperature,
           requireToolApproval,
+          mcpToolResultImageRendering,
           respectToolVisibility,
         },
         runtime: {

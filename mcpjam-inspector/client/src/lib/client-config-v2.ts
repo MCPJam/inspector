@@ -54,6 +54,8 @@ import type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
@@ -67,6 +69,8 @@ export type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
   ModelVisibleMcpToolResults,
 };
@@ -86,7 +90,7 @@ export type HostConfigComputerV2 = {
   workdir?: string;
 };
 
-export type McpToolResultImageRendering = "none" | "panel" | "inline";
+export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
  * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
@@ -315,7 +319,9 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
       ? cloneModelVisibleMcpToolResults(dto.modelVisibleMcpToolResults)
       : undefined,
-    mcpToolResultImageRendering: dto.mcpToolResultImageRendering,
+    mcpToolResultImageRendering: dto.mcpToolResultImageRendering
+      ? cloneMcpToolResultImageRendering(dto.mcpToolResultImageRendering)
+      : undefined,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
@@ -740,6 +746,12 @@ export function cloneModelVisibleMcpToolResults(
   return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
 }
 
+export function cloneMcpToolResultImageRendering(
+  value: McpToolResultImageRenderingPolicy
+): McpToolResultImageRenderingPolicy {
+  return deepCloneJsonValue(value) as McpToolResultImageRenderingPolicy;
+}
+
 export function isMcpDirectContentImageVisible(
   policy: ModelVisibleMcpToolResults | undefined
 ): boolean {
@@ -809,6 +821,85 @@ export function setMcpLinkedResourceBlobImageVisible(
   };
 }
 
+export function getMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): McpToolResultImageRenderPlacement {
+  return policy?.placement ?? "inline";
+}
+
+export function isMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.embeddedResources?.blob?.image ?? true;
+}
+
+export function isMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.linkedResources?.blob?.image ?? true;
+}
+
+export function setMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  placement: McpToolResultImageRenderPlacement
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    placement,
+  };
+}
+
+export function setMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: rendered,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
 /**
  * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.
@@ -839,7 +930,12 @@ export function hostConfigInputsEqual(
     )
   )
     return false;
-  if (a.mcpToolResultImageRendering !== b.mcpToolResultImageRendering) {
+  if (
+    !optionalMcpToolResultImageRenderingEq(
+      a.mcpToolResultImageRendering,
+      b.mcpToolResultImageRendering
+    )
+  ) {
     return false;
   }
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
@@ -957,6 +1053,15 @@ function optionalMcpProfileEq(
 function optionalModelVisibleMcpToolResultsEq(
   a: ModelVisibleMcpToolResults | undefined,
   b: ModelVisibleMcpToolResults | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
+function optionalMcpToolResultImageRenderingEq(
+  a: McpToolResultImageRenderingPolicy | undefined,
+  b: McpToolResultImageRenderingPolicy | undefined
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;

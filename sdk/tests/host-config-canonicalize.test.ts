@@ -174,26 +174,59 @@ describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
     );
   });
 
-  it("distinguishes MCP tool-result image rendering undefined from explicit modes", async () => {
+  it("distinguishes MCP tool-result image rendering undefined from explicit policies", async () => {
     const omitted = JSON.parse(
       JSON.stringify(canonicalizeHostConfigV2(base()))
     );
     expect("mcpToolResultImageRendering" in omitted).toBe(false);
-    for (const mode of ["none", "panel", "inline"] as const) {
-      expect(await hash(base())).not.toBe(
-        await hash(base({ mcpToolResultImageRendering: mode }))
-      );
-    }
+    expect(await hash(base())).not.toBe(
+      await hash(base({ mcpToolResultImageRendering: { placement: "none" } }))
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({ mcpToolResultImageRendering: { placement: "collapsed" } })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            placement: "inline",
+            directContent: { image: false },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
   });
 
   it("rejects unknown MCP tool-result image rendering modes", () => {
     expect(() =>
       canonicalizeHostConfigV2(
-        base({ mcpToolResultImageRendering: "floating" as never })
+        base({
+          mcpToolResultImageRendering: {
+            placement: "floating" as never,
+          },
+        })
       )
-    ).toThrow(
-      /mcpToolResultImageRendering must be "none", "panel", or "inline"/
-    );
+    ).toThrow(/placement must be "none", "collapsed", or "inline"/);
   });
 });
 

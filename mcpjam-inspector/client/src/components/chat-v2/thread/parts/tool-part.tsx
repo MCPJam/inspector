@@ -49,6 +49,10 @@ import {
 import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -85,7 +89,7 @@ export function ToolPart({
   isSaving,
   minimalMode = false,
   serverId,
-  mcpToolResultImageRendering = "inline",
+  mcpToolResultImageRendering,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -113,7 +117,7 @@ export function ToolPart({
   isSaving?: boolean;
   minimalMode?: boolean;
   serverId?: string;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }) {
   const posthog = usePostHog();
   const hasTrackedSkillLoad = useRef(false);
@@ -172,12 +176,15 @@ export function ToolPart({
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
-  const showInlineImagePreview = mcpToolResultImageRendering === "inline";
-  const showPanelImagePreview = mcpToolResultImageRendering === "panel";
+  const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
+    mcpToolResultImageRendering
+  );
+  const showInlineImagePreview = imageRenderPlacement === "inline";
+  const showPanelImagePreview = imageRenderPlacement === "collapsed";
   const canRenderToolImages = showInlineImagePreview || showPanelImagePreview;
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? outputData : undefined,
-    { serverId }
+    { serverId, renderingPolicy: mcpToolResultImageRendering }
   );
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =

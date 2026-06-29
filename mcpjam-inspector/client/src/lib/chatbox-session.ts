@@ -4,6 +4,7 @@ import {
 } from "@/lib/chatbox-client-style";
 import type {
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
@@ -76,7 +77,7 @@ export interface ChatboxBootstrapPayload {
   temperature: number;
   requireToolApproval: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
   chatUi?: ChatUiPayload | null;
@@ -204,6 +205,15 @@ function normalizeModelVisibleMcpToolResults(
   return input as ModelVisibleMcpToolResults;
 }
 
+function normalizeMcpToolResultImageRendering(
+  input: unknown
+): McpToolResultImageRenderingPolicy | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as McpToolResultImageRenderingPolicy;
+}
+
 /**
  * Defensive boundary check for `chatUiOverride` in redeem responses /
  * playground snapshots. Same untrusted-shape gate as
@@ -323,12 +333,9 @@ export function normalizeChatboxSession(
       modelVisibleMcpToolResults: normalizeModelVisibleMcpToolResults(
         payload.modelVisibleMcpToolResults
       ),
-      mcpToolResultImageRendering:
-        payload.mcpToolResultImageRendering === "none" ||
-        payload.mcpToolResultImageRendering === "panel" ||
-        payload.mcpToolResultImageRendering === "inline"
-          ? payload.mcpToolResultImageRendering
-          : undefined,
+      mcpToolResultImageRendering: normalizeMcpToolResultImageRendering(
+        payload.mcpToolResultImageRendering
+      ),
       servers: payload.servers
         .filter(
           (server): server is ChatboxBootstrapServer =>

@@ -475,7 +475,7 @@ describe("snapshotHostSource + isHostJson", () => {
         embeddedResources: { blob: { image: false } },
         linkedResources: { blob: { image: true } },
       },
-      mcpToolResultImageRendering: "panel",
+      mcpToolResultImageRendering: { placement: "collapsed" },
     }).toJSON();
 
     const normalized = snapshotHostSource(snap);
@@ -485,7 +485,9 @@ describe("snapshotHostSource + isHostJson", () => {
       embeddedResources: { blob: { image: false } },
       linkedResources: { blob: { image: true } },
     });
-    expect(normalized.mcpToolResultImageRendering).toBe("panel");
+    expect(normalized.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+    });
   });
 
   it("snapshotHostSource calls toJSON on a Host", () => {

@@ -577,10 +577,16 @@ describe("buildDirectHostConfig", () => {
     const config = buildDirectHostConfig({
       modelId: "anthropic/claude-haiku-4.5",
       resolvedTemperature: 0.7,
-      mcpToolResultImageRendering: "panel",
+      mcpToolResultImageRendering: {
+        placement: "collapsed",
+        linkedResources: { blob: { image: false } },
+      },
     });
 
-    expect(config.mcpToolResultImageRendering).toBe("panel");
+    expect(config.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+      linkedResources: { blob: { image: false } },
+    });
   });
 
   it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {

@@ -100,7 +100,7 @@ describe("Host — public surface", () => {
         embeddedResources: { blob: { image: true } },
         linkedResources: { blob: { image: false } },
       },
-      mcpToolResultImageRendering: "panel",
+      mcpToolResultImageRendering: { placement: "collapsed" },
     }).toJSON();
 
     expect(json.modelVisibleMcpToolResults).toEqual({
@@ -108,7 +108,9 @@ describe("Host — public surface", () => {
       embeddedResources: { blob: { image: true } },
       linkedResources: { blob: { image: false } },
     });
-    expect(json.mcpToolResultImageRendering).toBe("panel");
+    expect(json.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+    });
   });
 
   it("supports MCP image policy setters", () => {
@@ -121,7 +123,7 @@ describe("Host — public surface", () => {
         embeddedResources: { blob: { image: false } },
         linkedResources: { blob: { image: true } },
       })
-      .setMcpToolResultImageRendering("none");
+      .setMcpToolResultImageRendering({ placement: "none" });
 
     const json = host.toJSON();
     expect(json.modelVisibleMcpToolResults).toEqual({
@@ -129,7 +131,7 @@ describe("Host — public surface", () => {
       embeddedResources: { blob: { image: false } },
       linkedResources: { blob: { image: true } },
     });
-    expect(json.mcpToolResultImageRendering).toBe("none");
+    expect(json.mcpToolResultImageRendering).toEqual({ placement: "none" });
   });
 
   it("validates lazily at toJSON() (invalid profile throws)", () => {

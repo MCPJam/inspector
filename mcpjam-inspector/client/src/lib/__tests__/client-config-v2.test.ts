@@ -157,13 +157,25 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ mcpToolResultImageRendering: undefined }),
-        makeInput({ mcpToolResultImageRendering: "inline" })
+        makeInput({ mcpToolResultImageRendering: { placement: "inline" } })
       )
     ).toBe(false);
     expect(
       hostConfigInputsEqual(
-        makeInput({ mcpToolResultImageRendering: "panel" }),
-        makeInput({ mcpToolResultImageRendering: "none" })
+        makeInput({
+          mcpToolResultImageRendering: { placement: "collapsed" },
+        }),
+        makeInput({ mcpToolResultImageRendering: { placement: "none" } })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: true } },
+        }),
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: false } },
+        })
       )
     ).toBe(false);
   });
@@ -403,7 +415,10 @@ describe("hostConfigDtoToInput", () => {
           embeddedResources: { blob: { image: true } },
           linkedResources: { blob: { image: false } },
         },
-        mcpToolResultImageRendering: "panel",
+        mcpToolResultImageRendering: {
+          placement: "collapsed",
+          directContent: { image: false },
+        },
         hostContext: { other: "keep" },
       })
     );
@@ -413,7 +428,10 @@ describe("hostConfigDtoToInput", () => {
       embeddedResources: { blob: { image: true } },
       linkedResources: { blob: { image: false } },
     });
-    expect(input.mcpToolResultImageRendering).toBe("panel");
+    expect(input.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+      directContent: { image: false },
+    });
     expect(input.hostContext).toEqual({ other: "keep" });
   });
 });

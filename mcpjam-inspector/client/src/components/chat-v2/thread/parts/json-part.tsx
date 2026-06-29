@@ -8,6 +8,10 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import { buildLineLayouts } from "@/components/ui/json-editor/json-editor-edit";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 
 const MIN_JSON_PART_HEIGHT = 80;
 const MAX_JSON_PART_HEIGHT = 480;
@@ -41,20 +45,22 @@ export function JsonPart({
   value,
   autoHeight = false,
   serverId,
-  mcpToolResultImageRendering = "inline",
+  mcpToolResultImageRendering,
 }: {
   label: string;
   value: unknown;
   autoHeight?: boolean;
   serverId?: string;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }) {
   const [imageMode, setImageMode] = useState<"images" | "raw">("images");
   const height = useMemo(() => getJsonPartHeight(value), [value]);
-  const canRenderImages = mcpToolResultImageRendering !== "none";
+  const canRenderImages =
+    getMcpToolResultImageRenderPlacement(mcpToolResultImageRendering) !==
+    "none";
   const imageState = useMcpToolResultImagePreviews(
     canRenderImages ? value : undefined,
-    { serverId }
+    { serverId, renderingPolicy: mcpToolResultImageRendering }
   );
 
   useEffect(() => {

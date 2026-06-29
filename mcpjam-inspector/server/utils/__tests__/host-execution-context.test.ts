@@ -100,6 +100,28 @@ const IMAGE_POLICY_ENABLED = {
   linkedResources: { blob: { image: true } },
 } as const;
 
+const RENDER_POLICY_COLLAPSED = {
+  placement: "collapsed",
+  directContent: { image: false },
+  embeddedResources: { blob: { image: true } },
+  linkedResources: { blob: { image: false } },
+} as const;
+
+const RENDER_POLICY_NONE = {
+  placement: "none",
+} as const;
+
+const RENDER_POLICY_INLINE = {
+  placement: "inline",
+} as const;
+
+const RESOLVED_RENDER_POLICY_DEFAULT = {
+  placement: "inline",
+  directContent: { image: true },
+  embeddedResources: { blob: { image: true } },
+  linkedResources: { blob: { image: true } },
+} as const;
+
 const RESOLVED_IMAGE_POLICY_ENABLED = {
   directContent: {
     text: true,
@@ -159,7 +181,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         respectToolVisibility: false,
         progressiveToolDiscovery: true,
         modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
-        mcpToolResultImageRendering: "panel",
+        mcpToolResultImageRendering: RENDER_POLICY_COLLAPSED,
         modelId: "claude-haiku-4.5",
         selectedServerIds: ["srv-1", "srv-2"],
       },
@@ -170,7 +192,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         respectToolVisibility: true,
         progressiveToolDiscovery: false,
         modelVisibleMcpToolResults: IMAGE_POLICY_ENABLED,
-        mcpToolResultImageRendering: "inline",
+        mcpToolResultImageRendering: RENDER_POLICY_INLINE,
         modelId: "gpt-4-turbo",
         selectedServerIds: ["other-srv"],
       },
@@ -183,8 +205,10 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.respectToolVisibility).toBe(false);
     expect(result.progressiveToolDiscovery).toBe(true);
     expectImagePolicyLeaves(result.hostPolicy, false);
-    expect(result.mcpToolResultImageRendering).toBe("panel");
-    expect(result.hostPolicy.mcpToolResultImageRendering).toBe("panel");
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
+    expect(result.hostPolicy.mcpToolResultImageRendering).toEqual(
+      RENDER_POLICY_COLLAPSED
+    );
     expect(result.modelId).toBe("claude-haiku-4.5");
     expect(result.selectedServerIds).toEqual(["srv-1", "srv-2"]);
   });
@@ -205,7 +229,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         progressiveToolDiscovery: true,
         respectToolVisibility: false,
         modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
-        mcpToolResultImageRendering: "none",
+        mcpToolResultImageRendering: RENDER_POLICY_NONE,
       },
       precedence: "host-wins",
     });
@@ -213,7 +237,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.progressiveToolDiscovery).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
     expectImagePolicyLeaves(result.hostPolicy, false);
-    expect(result.mcpToolResultImageRendering).toBe("none");
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_NONE);
     expect(result.systemPrompt).toBe("host system prompt");
   });
 
@@ -228,7 +252,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         temperature: 0.3,
         requireToolApproval: false,
         modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
-        mcpToolResultImageRendering: "panel",
+        mcpToolResultImageRendering: RENDER_POLICY_COLLAPSED,
         selectedServerIds: ["srv-A"],
       },
       precedence: "host-wins",
@@ -238,7 +262,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.temperature).toBe(0.3);
     expect(result.requireToolApproval).toBe(false);
     expectImagePolicyLeaves(result.hostPolicy, false);
-    expect(result.mcpToolResultImageRendering).toBe("panel");
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
     expect(result.selectedServerIds).toEqual(["srv-A"]);
   });
 
@@ -591,7 +615,7 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       respectToolVisibility: false,
       progressiveDiscoveryEnabled: true,
       modelVisibleMcpToolResults: RESOLVED_IMAGE_POLICY_ENABLED,
-      mcpToolResultImageRendering: "inline",
+      mcpToolResultImageRendering: RESOLVED_RENDER_POLICY_DEFAULT,
       hostStyle: "claude",
       namedHostId: "host-abc",
     });
@@ -609,7 +633,7 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
       modelVisibleMcpToolResults: RESOLVED_IMAGE_POLICY_ENABLED,
-      mcpToolResultImageRendering: "inline",
+      mcpToolResultImageRendering: RESOLVED_RENDER_POLICY_DEFAULT,
       hostStyle: undefined,
       namedHostId: "host-xyz",
     });

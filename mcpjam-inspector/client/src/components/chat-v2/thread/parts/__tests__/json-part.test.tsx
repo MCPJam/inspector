@@ -94,7 +94,7 @@ describe("JsonPart", () => {
       <JsonPart
         label="Result"
         value={value}
-        mcpToolResultImageRendering="none"
+        mcpToolResultImageRendering={{ placement: "none" }}
       />
     );
 

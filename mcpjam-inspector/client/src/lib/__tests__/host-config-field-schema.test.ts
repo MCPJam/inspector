@@ -102,6 +102,9 @@ describe("groupHostConfigFields", () => {
       "modelVisibleMcpToolResults.embeddedResources.blob.image",
       "modelVisibleMcpToolResults.linkedResources.blob.image",
       "mcpToolResultImageRendering",
+      "mcpToolResultImageRendering.directContent.image",
+      "mcpToolResultImageRendering.embeddedResources.blob.image",
+      "mcpToolResultImageRendering.linkedResources.blob.image",
       "progressiveToolDiscovery",
     ]);
   });
@@ -159,11 +162,61 @@ describe("MCP image policy fields", () => {
     expect(rendering.label).toBe("Render tool images");
     expect(rendering.read(makeConfig())).toBe("inline");
     expect(
-      rendering.read(makeConfig({ mcpToolResultImageRendering: "panel" }))
-    ).toBe("panel");
+      rendering.read(
+        makeConfig({
+          mcpToolResultImageRendering: { placement: "collapsed" },
+        })
+      )
+    ).toBe("collapsed");
     expect(
-      rendering.read(makeConfig({ mcpToolResultImageRendering: "none" }))
+      rendering.read(
+        makeConfig({ mcpToolResultImageRendering: { placement: "none" } })
+      )
     ).toBe("none");
+  });
+
+  it("defaults MCP tool-result render sources to enabled and reads explicit opt-outs", () => {
+    const direct = fieldById("mcpToolResultImageRendering.directContent.image");
+    const embedded = fieldById(
+      "mcpToolResultImageRendering.embeddedResources.blob.image"
+    );
+    const linked = fieldById(
+      "mcpToolResultImageRendering.linkedResources.blob.image"
+    );
+
+    expect(direct.label).toBe("Render tool image content");
+    expect(embedded.label).toBe("Render embedded resource images");
+    expect(linked.label).toBe("Render resource link images");
+    expect(direct.read(makeConfig())).toBe(true);
+    expect(embedded.read(makeConfig())).toBe(true);
+    expect(linked.read(makeConfig())).toBe(true);
+    expect(
+      direct.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            directContent: { image: false },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      embedded.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      linked.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
   });
 });
 

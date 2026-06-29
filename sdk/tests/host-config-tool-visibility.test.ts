@@ -145,7 +145,7 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
         },
       },
     },
-    mcpToolResultImageRendering: "inline",
+    mcpToolResultImageRendering: { placement: "inline" },
     hostStyle: undefined,
     namedHostId: undefined,
   };

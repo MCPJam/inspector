@@ -23,6 +23,7 @@ import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import { MistralStaticAvatar } from "@/lib/client-styles/mistral-avatar";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -64,7 +65,7 @@ interface MessageViewProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   claudeFooterMode?: ClaudeFooterMode;
   /** MCPJam host: pulsing dots beneath the streaming assistant bubble. */
   mcpjamFooterActive?: boolean;
@@ -218,7 +219,7 @@ function MessageViewImpl({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
-  mcpToolResultImageRendering = "inline",
+  mcpToolResultImageRendering,
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,

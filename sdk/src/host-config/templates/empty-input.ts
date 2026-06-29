@@ -16,7 +16,10 @@
 
 import { DEFAULT_TEMPERATURE_V2 } from "../defaults.js";
 import { getDefaultClientCapabilities } from "../../mcp-client-manager/capabilities.js";
-import type { ModelVisibleMcpToolResults } from "../types.js";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "../types.js";
 
 /** Default host style for a brand-new config — MCPJam house chrome. */
 export const DEFAULT_HOST_STYLE_V2 = "mcpjam";
@@ -45,7 +48,7 @@ export type SeededHostConfigInput = {
   optionalServerIds: string[];
   builtInToolIds: string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: { kind: "personal"; workdir?: string };
   // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
   // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.

@@ -63,7 +63,7 @@ describe("createDeterministicToolMessages", () => {
       {},
       result,
       undefined,
-      { mcpToolResultImageRendering: "inline" }
+      { mcpToolResultImageRendering: { placement: "inline" } }
     );
 
     expect(messages[1].parts).toHaveLength(2);
@@ -82,7 +82,7 @@ describe("createDeterministicToolMessages", () => {
       {},
       result,
       undefined,
-      { modelOutput, mcpToolResultImageRendering: "inline" }
+      { modelOutput, mcpToolResultImageRendering: { placement: "inline" } }
     );
 
     const toolPart = messages[1].parts.find(
@@ -94,7 +94,7 @@ describe("createDeterministicToolMessages", () => {
     }
   });
 
-  it("keeps the sibling json result part for panel MCP image results", () => {
+  it("keeps the sibling json result part for collapsed MCP image results", () => {
     const result = {
       content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
     };
@@ -103,7 +103,7 @@ describe("createDeterministicToolMessages", () => {
       {},
       result,
       undefined,
-      { mcpToolResultImageRendering: "panel" }
+      { mcpToolResultImageRendering: { placement: "collapsed" } }
     );
 
     expect(messages[1].parts).toHaveLength(3);
@@ -493,7 +493,7 @@ describe("createDeterministicToolMessages", () => {
         ],
       },
       { _serverId: "qa-server" },
-      { mcpToolResultImageRendering: "panel" }
+      { mcpToolResultImageRendering: { placement: "collapsed" } }
     );
 
     const toolPart = messages[1].parts[1] as DynamicToolUIPart;

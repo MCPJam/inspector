@@ -212,7 +212,6 @@ export type {
   ResolveSandboxCspArgs,
   ResolveSandboxPermissionsArgs,
 } from "./sandbox-policy.js";
-
 // MCP protocol-version constants + predicates. Browser-safe by
 // construction (pure data + pure functions, no Node deps).
 export {
@@ -234,6 +233,8 @@ export type {
   HostConnectionDefaults,
   HostStyleId,
   McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,

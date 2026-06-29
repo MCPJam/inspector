@@ -19,6 +19,7 @@ import { TextPart } from "./parts/text-part";
 import { useViewQueries } from "@/hooks/useViews";
 import { useSaveView, type ToolDataForSave } from "@/hooks/useSaveView";
 import { type DisplayMode } from "@/stores/ui-playground-store";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import {
   callTool,
   getToolServerId,
@@ -127,7 +128,7 @@ export function PartSwitch({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
-  mcpToolResultImageRendering = "inline",
+  mcpToolResultImageRendering,
   recordCapable,
   recordingTarget,
   resolvePromptIndex,
@@ -167,7 +168,7 @@ export function PartSwitch({
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Tier 3 recorder (default off — see recorder-types.ts).
   recordCapable?: boolean;
   recordingTarget?: RecordingTarget | null;

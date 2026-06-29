@@ -38,6 +38,7 @@ import {
   isHarness,
   type Harness,
   type HostExecutionPolicy,
+  type McpToolResultImageRenderingPolicy,
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 
@@ -70,7 +71,7 @@ export interface ExecutionOverrides {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering?: "none" | "panel" | "inline";
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   hostStyle?: string;
   modelId?: string;
   selectedServerIds?: string[];
@@ -124,7 +125,7 @@ export interface ResolvedExecutionContext {
    */
   builtInToolIds: string[] | undefined;
   /** Human-facing MCP tool-result image rendering policy. */
-  mcpToolResultImageRendering: "none" | "panel" | "inline" | undefined;
+  mcpToolResultImageRendering: McpToolResultImageRenderingPolicy | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -169,10 +170,10 @@ function readStringArray(
 
 function readMcpToolResultImageRendering(
   hostConfig: Record<string, unknown>
-): "none" | "panel" | "inline" | undefined {
+): McpToolResultImageRenderingPolicy | undefined {
   const value = hostConfig.mcpToolResultImageRendering;
-  return value === "none" || value === "panel" || value === "inline"
-    ? value
+  return isRecord(value)
+    ? (value as McpToolResultImageRenderingPolicy)
     : undefined;
 }
 
@@ -207,6 +208,9 @@ function readProgressiveToolDiscovery(
 function areEqualValues(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  if (isRecord(a) && isRecord(b)) {
+    return JSON.stringify(a) === JSON.stringify(b);
   }
   return Object.is(a, b);
 }
@@ -271,7 +275,10 @@ export function resolveExecutionContext(args: {
         ? {
             ...(overrides.hostStyle ? { hostStyle: overrides.hostStyle } : {}),
             ...(overrides.modelVisibleMcpToolResults !== undefined
-              ? { modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults }
+              ? {
+                  modelVisibleMcpToolResults:
+                    overrides.modelVisibleMcpToolResults,
+                }
               : {}),
             ...(overrides.mcpToolResultImageRendering !== undefined
               ? {
