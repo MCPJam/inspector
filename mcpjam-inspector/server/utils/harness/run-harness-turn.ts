@@ -566,10 +566,16 @@ export async function runHarnessTurn(
           // starts, via the adapter's own strategy (Claude Code writes a
           // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
           // false`), so this is a no-op there.
-          if (
-            harnessAdapter.supportsSelectedMcpServers &&
-            harnessAdapter.deliverMcpServers
-          ) {
+          if (harnessAdapter.supportsSelectedMcpServers) {
+            // Capability invariant: an adapter that advertises MCP support MUST
+            // provide a delivery strategy. Treating a missing hook as a no-op
+            // would silently run without the host's servers — fail loud instead.
+            if (!harnessAdapter.deliverMcpServers) {
+              throw new Error(
+                `The ${harnessAdapter.displayName} harness advertises MCP support ` +
+                  "but has no deliverMcpServers strategy (adapter misconfigured).",
+              );
+            }
             await harnessAdapter.deliverMcpServers({
               // Bind to the live session here (it lives behind the dual-`ai`
               // boundary) so the adapter stays free of the harness session type.
