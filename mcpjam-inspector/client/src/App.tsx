@@ -26,7 +26,6 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
-import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
@@ -115,7 +114,7 @@ import type {
   ActiveServerSelectorProps,
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
-import { useViewQueries, useProjectServers } from "./hooks/useViews";
+import { useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -468,8 +467,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "playground":
       return <PlaygroundRoute />;
-    case "views":
-      return <ViewsRoute />;
     case "support":
       return <SupportRoute />;
     case "settings":
@@ -864,19 +861,6 @@ export function CiEvalsRoute() {
     <CiEvalsTab
       convexProjectId={convexProjectId}
       ensureServersReady={ensureServersReady}
-    />
-  );
-}
-
-export function ViewsRoute() {
-  const { appState, activeProjectId, handleUpdateHostContext } =
-    useAppRouteContext();
-
-  return (
-    <ViewsTab
-      selectedServer={appState.selectedServer}
-      activeProjectId={activeProjectId}
-      onSaveHostContext={handleUpdateHostContext}
     />
   );
 }
@@ -2152,12 +2136,6 @@ export default function App() {
     isLoadingRemoteProjects,
   ]);
 
-  // Fetch views for the project to determine which servers have saved views
-  const { viewsByServer } = useViewQueries({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
-
   // Fetch project servers to map server IDs to names
   const { serversById } = useProjectServers({
     isAuthenticated,
@@ -2265,18 +2243,6 @@ export default function App() {
     hasSession: !!workOsUser || isWorkOsLoading,
     enabled: !isHostedChatRoute,
   });
-
-  // Compute the set of server names that have saved views
-  const serversWithViews = useMemo(() => {
-    const serverNames = new Set<string>();
-    for (const serverId of viewsByServer.keys()) {
-      const serverName = serversById.get(serverId);
-      if (serverName) {
-        serverNames.add(serverName);
-      }
-    }
-    return serverNames;
-  }, [viewsByServer, serversById]);
 
   const navigateToTarget = useCallback(
     (target: string, options?: { replace?: boolean }) => {
@@ -3005,8 +2971,7 @@ export default function App() {
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
-    activeTab === "chat" ||
-    activeTab === "views";
+    activeTab === "chat";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -3053,8 +3018,7 @@ export default function App() {
           autoSelectFilteredServer:
             activeTab !== "oauth-flow" &&
             !(activeTab === "xaa-flow" && xaaEnabled === true),
-          showOnlyServersWithViews: activeTab === "views",
-          serversWithViews: serversWithViews,
+          showOnlyServersWithViews: false,
           hasMessages: false,
         }
       : undefined;

@@ -30,6 +30,13 @@ export interface WidgetReplayProps {
   toolMetadata?: Record<string, unknown>;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
+  /**
+   * Overrides the `toolResponseMetadata` (window.openai.toolResponseMetadata)
+   * the widget receives. Used when the visible result came from a re-Run, whose
+   * fresh `_meta` must reach the widget while `rawOutput` stays the original so
+   * serverId / uiType / binding derivation is unaffected.
+   */
+  toolResponseMetadataOverride?: Record<string, unknown>;
   renderOverride?: ToolRenderOverride;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
@@ -94,6 +101,7 @@ export function WidgetReplay({
   toolMetadata,
   toolsMetadata = {},
   toolServerMap = {},
+  toolResponseMetadataOverride,
   renderOverride,
   onSendFollowUp,
   onCallTool,
@@ -178,7 +186,8 @@ export function WidgetReplay({
   // Computed from `rawOutput` so the `{ value, _meta }` wrapper case
   // (where `toolOutput` is the unwrapped value and lacks `_meta`)
   // resolves correctly via readToolResultMeta's two-level check.
-  const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
+  const toolResponseMetadata = (toolResponseMetadataOverride ??
+    readToolResultMeta(rawOutput) ??
     readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
   // The relocated renderer reads its host via the package `useWidgetHost()`

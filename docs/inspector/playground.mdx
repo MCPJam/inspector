@@ -35,7 +35,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 - **JSON-RPC logger** — Real-time, filterable feed of every message between the inspector and your servers.
 - **Sessions rail** — Resume, archive, and search past conversations from the left rail.
 - **Skills and prompts** — Type `/` to inject skills or MCP prompts directly into the chat.
-- **Save as a View** — Snapshot any tool execution to [Views](/inspector/views) for offline browsing and team sharing.
+- **Edit tool input/output live** — Click **Edit** on any tool-result card to tweak the input or output JSON and watch the widget re-render instantly; **Run** re-executes the tool with your edited input.
 
 ## Getting Started
 
@@ -259,9 +259,9 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 
 The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
 
-### Save View
+### Edit input & output
 
-Snapshot the tool execution to the [Views](/inspector/views) tab for offline browsing, editing, and team sharing.
+Click **Edit** on a tool-result card to make the **Input** and **Result** JSON editable in place. Edits re-render the widget live with no reload; **Run** re-executes the tool with the edited input, and **Revert** restores the original. Edits are local to the session — nothing is persisted.
 
 ## JSON-RPC Logger
 
@@ -316,7 +316,6 @@ Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Typ
 
 ## Related Features
 
-- [Views](/inspector/views) — Save tool execution snapshots, edit inputs and outputs, preview widgets offline.
 - [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
 - [Skills](/inspector/skills) — Configure skills that the Playground can use.
 - [Projects](/inspector/projects) — Organize servers, sessions, and views into shared workspaces.

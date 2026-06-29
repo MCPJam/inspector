@@ -343,9 +343,6 @@ vi.mock("../components/EvalsTab", () => ({
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
-vi.mock("../components/ViewsTab", () => ({
-  ViewsTab: () => <div />,
-}));
 vi.mock("../components/ChatboxesTab", () => ({
   ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
 }));

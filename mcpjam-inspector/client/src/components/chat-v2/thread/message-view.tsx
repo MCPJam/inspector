@@ -60,7 +60,7 @@ interface MessageViewProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
-  showSaveViewButton?: boolean;
+  showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -174,7 +174,7 @@ function areMessageViewPropsEqual(
     prev.onDisplayModeChange === next.onDisplayModeChange &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
-    prev.showSaveViewButton === next.showSaveViewButton &&
+    prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
@@ -212,7 +212,7 @@ function MessageViewImpl({
   onDisplayModeChange,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -282,7 +282,7 @@ function MessageViewImpl({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
-                showSaveViewButton={showSaveViewButton}
+                showInlineEdit={showInlineEdit}
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
@@ -316,7 +316,7 @@ function MessageViewImpl({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
-                showSaveViewButton={showSaveViewButton}
+                showInlineEdit={showInlineEdit}
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
@@ -402,7 +402,7 @@ function MessageViewImpl({
                   onToolApprovalResponse={onToolApprovalResponse}
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}
-                  showSaveViewButton={showSaveViewButton}
+                  showInlineEdit={showInlineEdit}
                   minimalMode={minimalMode}
                   interactive={interactive}
                   reasoningDisplayMode={reasoningDisplayMode}
