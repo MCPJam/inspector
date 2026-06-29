@@ -40,7 +40,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       {
         label: "Included credits",
         free: t("200 / day"),
-        team: t("10,000 / seat / mo", true),
+        team: t("30,000 / seat / mo", true),
         enterprise: t("Custom", true),
       },
       {

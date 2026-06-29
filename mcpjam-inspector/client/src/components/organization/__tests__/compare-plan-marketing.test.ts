@@ -53,7 +53,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     });
     expect(creditsAndSeats?.rows[0]?.team).toEqual({
       kind: "text",
-      text: "10,000 / seat / mo",
+      text: "30,000 / seat / mo",
       emphasize: true,
     });
     expect(creditsAndSeats?.rows[1]?.team).toEqual({
