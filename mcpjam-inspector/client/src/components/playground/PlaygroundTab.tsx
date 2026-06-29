@@ -42,7 +42,10 @@ import type {
 } from "@/hooks/use-app-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  type HostConfigDtoV2,
+} from "@/lib/client-config-v2";
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
@@ -204,7 +207,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     modelVisibleMcpToolResults:
       effectiveHostConfig?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering:
-      effectiveHostConfig?.mcpToolResultImageRendering,
+      gateMcpToolResultImageRenderingByModelVisibility(
+        effectiveHostConfig?.mcpToolResultImageRendering,
+        effectiveHostConfig?.modelVisibleMcpToolResults
+      ),
     onOnboardingChange: props.onOnboardingChange,
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across

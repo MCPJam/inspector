@@ -128,6 +128,37 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
     expect(toggle).toBeChecked();
   });
 
+  it("forces matching UI image rendering off when model visibility is off", async () => {
+    const user = userEvent.setup();
+    render(<StatefulBehaviorTab />);
+
+    const modelToggle = screen.getByRole("switch", {
+      name: hostConfigField(
+        "modelVisibleMcpToolResults.embeddedResources.blob.image"
+      ).label,
+    });
+    const renderToggle = screen.getByRole("switch", {
+      name: hostConfigField(
+        "mcpToolResultImageRendering.embeddedResources.blob.image"
+      ).label,
+    });
+
+    expect(modelToggle).toBeChecked();
+    expect(renderToggle).toBeChecked();
+
+    await user.click(modelToggle);
+
+    expect(modelToggle).not.toBeChecked();
+    expect(renderToggle).not.toBeChecked();
+    expect(renderToggle).toBeDisabled();
+
+    await user.click(modelToggle);
+
+    expect(modelToggle).toBeChecked();
+    expect(renderToggle).not.toBeChecked();
+    expect(renderToggle).not.toBeDisabled();
+  });
+
   it("renders the schema label for `progressiveToolDiscovery`", () => {
     renderTab();
     const label = hostConfigField("progressiveToolDiscovery").label;

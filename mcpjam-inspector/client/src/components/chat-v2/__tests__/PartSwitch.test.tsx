@@ -23,8 +23,22 @@ vi.mock("../thread/parts/text-part", () => ({
 }));
 
 vi.mock("../thread/parts/tool-part", () => ({
-  ToolPart: ({ part }: { part: any }) => (
-    <div data-testid="tool-part">{part.toolName || "tool"}</div>
+  ToolPart: ({
+    part,
+    serverId,
+    rawOutput,
+  }: {
+    part: any;
+    serverId?: string;
+    rawOutput?: unknown;
+  }) => (
+    <div
+      data-testid="tool-part"
+      data-server-id={serverId ?? ""}
+      data-raw-output={JSON.stringify(rawOutput ?? null)}
+    >
+      {part.toolName || "tool"}
+    </div>
   ),
 }));
 
@@ -382,6 +396,84 @@ describe("PartSwitch", () => {
         expect.objectContaining({
           serverName: "server-1",
         })
+      );
+    });
+
+    it("passes provider metadata server id to tool parts", () => {
+      const part = {
+        type: "dynamic-tool",
+        toolName: "qa_return_linked_image_resource",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "resource_link",
+              uri: "example://linked-image.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+        callProviderMetadata: {
+          mcpjam: { serverId: "qa-server" },
+        },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{}}
+          toolServerMap={{}}
+        />
+      );
+
+      expect(screen.getByTestId("tool-part")).toHaveAttribute(
+        "data-server-id",
+        "qa-server"
+      );
+    });
+
+    it("passes raw MCP result to tool parts instead of model-visible output", () => {
+      const modelOutput = {
+        type: "content",
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      };
+      const rawResult = {
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: "example://embedded-image.png",
+              blob: "aGVsbG8=",
+              mimeType: "image/png",
+            },
+          },
+        ],
+      };
+      const part = {
+        type: "dynamic-tool",
+        toolName: "qa_return_embedded_image_resource",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: {},
+        output: modelOutput,
+        result: rawResult,
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{}}
+          toolServerMap={{}}
+        />
+      );
+
+      expect(screen.getByTestId("tool-part")).toHaveAttribute(
+        "data-raw-output",
+        JSON.stringify(rawResult)
       );
     });
 

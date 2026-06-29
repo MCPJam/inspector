@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
   mcpCallToolResultToModelOutput,
@@ -62,16 +62,6 @@ function rendersLinkedImages(
   return policy?.linkedResources?.blob?.image ?? true;
 }
 
-function hasAnyEnabledImageSource(
-  policy: McpToolResultImageRenderingPolicy | undefined
-): boolean {
-  return (
-    rendersDirectImages(policy) ||
-    rendersEmbeddedImages(policy) ||
-    rendersLinkedImages(policy)
-  );
-}
-
 function renderPolicyToModelVisibilityPolicy(
   policy: McpToolResultImageRenderingPolicy | undefined
 ): ModelVisibleMcpToolResults {
@@ -96,30 +86,25 @@ function hasImageResourceLinkCandidate(
   );
 }
 
-function isModelOutputContent(value: unknown): value is McpModelOutputContent {
-  return (
-    isRecord(value) && value.type === "content" && Array.isArray(value.value)
-  );
+function imageDataSignature(data: unknown): string {
+  if (typeof data !== "string") return "missing";
+  return `${data.length}:${data.slice(0, 32)}:${data.slice(-32)}`;
 }
 
-function hasModelOutputImageCandidate(value: unknown): boolean {
-  if (!isModelOutputContent(value)) return false;
-  return value.value.some(
-    (part) =>
-      isRecord(part) &&
-      part.type === "media" &&
-      isImageMimeType(part.mediaType) &&
-      typeof part.data === "string"
-  );
+function renderingPolicySignature(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): string {
+  return [
+    rendersDirectImages(policy) ? "direct:1" : "direct:0",
+    rendersEmbeddedImages(policy) ? "embedded:1" : "embedded:0",
+    rendersLinkedImages(policy) ? "linked:1" : "linked:0",
+  ].join("|");
 }
 
 export function hasMcpToolResultImageCandidate(
   result: unknown,
   policy?: McpToolResultImageRenderingPolicy
 ): boolean {
-  if (hasModelOutputImageCandidate(result)) {
-    return hasAnyEnabledImageSource(policy);
-  }
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some((block) => {
     if (!isRecord(block)) return false;
@@ -145,6 +130,64 @@ export function hasMcpToolResultImageCandidate(
       isImageMimeType(block.mimeType)
     );
   });
+}
+
+export function getMcpToolResultImagePreviewKey(
+  result: unknown,
+  options: UseMcpToolResultImagePreviewsOptions = {}
+): string | undefined {
+  if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
+    return undefined;
+  }
+
+  const keyParts = [
+    `server:${options.serverId ?? ""}`,
+    `policy:${renderingPolicySignature(options.renderingPolicy)}`,
+  ];
+
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    return keyParts.join("|");
+  }
+
+  result.content.forEach((block) => {
+    if (!isRecord(block)) return;
+
+    if (
+      rendersDirectImages(options.renderingPolicy) &&
+      block.type === "image" &&
+      isImageMimeType(block.mimeType)
+    ) {
+      keyParts.push(
+        `direct:${block.mimeType}:${imageDataSignature(block.data)}`
+      );
+      return;
+    }
+
+    const resource = getEmbeddedResource(block);
+    if (
+      rendersEmbeddedImages(options.renderingPolicy) &&
+      block.type === "resource" &&
+      resource &&
+      isImageMimeType(resource.mimeType)
+    ) {
+      keyParts.push(
+        `embedded:${String(resource.uri ?? "")}:${
+          resource.mimeType
+        }:${imageDataSignature(resource.blob)}`
+      );
+      return;
+    }
+
+    if (
+      rendersLinkedImages(options.renderingPolicy) &&
+      block.type === "resource_link" &&
+      isImageMimeType(block.mimeType)
+    ) {
+      keyParts.push(`linked:${String(block.uri ?? "")}:${block.mimeType}`);
+    }
+  });
+
+  return keyParts.join("|");
 }
 
 function mediaPartsToPreviews(
@@ -174,10 +217,6 @@ export async function resolveMcpToolResultImagePreviews(
     return [];
   }
 
-  if (isModelOutputContent(result)) {
-    return mediaPartsToPreviews(result);
-  }
-
   try {
     const mcpResult = result as CallToolResult;
     const modelVisibleMcpToolResults = renderPolicyToModelVisibilityPolicy(
@@ -204,34 +243,67 @@ export function useMcpToolResultImagePreviews(
   result: unknown,
   options: UseMcpToolResultImagePreviewsOptions = {}
 ): McpToolResultImagePreviewState & { hasCandidate: boolean } {
+  const previewKey = getMcpToolResultImagePreviewKey(result, options);
   const hasCandidate = hasMcpToolResultImageCandidate(
     result,
     options.renderingPolicy
+  );
+  const latestResolveArgsRef = useRef({
+    result,
+    serverId: options.serverId,
+    renderingPolicy: options.renderingPolicy,
+  });
+  const previewCacheRef = useRef(
+    new Map<string, McpToolResultImagePreview[]>()
   );
   const [state, setState] = useState<McpToolResultImagePreviewState>({
     status: "idle",
     previews: [],
   });
 
+  latestResolveArgsRef.current = {
+    result,
+    serverId: options.serverId,
+    renderingPolicy: options.renderingPolicy,
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
+    if (!previewKey) {
       setState({ status: "idle", previews: [] });
       return () => {
         cancelled = true;
       };
     }
 
+    const cachedPreviews = previewCacheRef.current.get(previewKey);
+    if (cachedPreviews) {
+      setState({ status: "ready", previews: cachedPreviews });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setState({ status: "loading", previews: [] });
-    resolveMcpToolResultImagePreviews(result, {
-      readResource: options.serverId
-        ? (uri) => readResourceApi(options.serverId!, uri)
+
+    const {
+      result: resultToResolve,
+      serverId,
+      renderingPolicy,
+    } = latestResolveArgsRef.current;
+
+    resolveMcpToolResultImagePreviews(resultToResolve, {
+      readResource: serverId
+        ? (uri) => readResourceApi(serverId, uri)
         : undefined,
-      renderingPolicy: options.renderingPolicy,
+      renderingPolicy,
     })
       .then((previews) => {
         if (cancelled) return;
+        if (previews.length > 0) {
+          previewCacheRef.current.set(previewKey, previews);
+        }
         setState(
           previews.length > 0
             ? { status: "ready", previews }
@@ -246,7 +318,7 @@ export function useMcpToolResultImagePreviews(
     return () => {
       cancelled = true;
     };
-  }, [result, options.serverId, options.renderingPolicy]);
+  }, [previewKey]);
 
   return { ...state, hasCandidate };
 }

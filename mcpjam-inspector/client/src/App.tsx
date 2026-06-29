@@ -200,7 +200,10 @@ import {
   isKnownProtocolVersion,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
-import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  resolveEffectiveMcpProtocolVersion,
+} from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   buildHostsPath,
@@ -802,7 +805,10 @@ export function ToolsRoute() {
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
           mcpToolResultImageRendering={
-            activeHost?.config?.mcpToolResultImageRendering
+            gateMcpToolResultImageRenderingByModelVisibility(
+              activeHost?.config?.mcpToolResultImageRendering,
+              activeHost?.config?.modelVisibleMcpToolResults
+            )
           }
         />
       </div>

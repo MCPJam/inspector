@@ -39,6 +39,7 @@ import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
 } from "@/contexts/chatbox-client-style-context";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
@@ -907,7 +908,10 @@ export function ChatboxChatPage({
             modelVisibleMcpToolResults:
               session.payload.modelVisibleMcpToolResults,
             mcpToolResultImageRendering:
-              session.payload.mcpToolResultImageRendering,
+              gateMcpToolResultImageRenderingByModelVisibility(
+                session.payload.mcpToolResultImageRendering,
+                session.payload.modelVisibleMcpToolResults
+              ),
           }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}

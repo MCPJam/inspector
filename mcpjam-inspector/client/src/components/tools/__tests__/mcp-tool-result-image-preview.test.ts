@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
 import {
   resolveMcpToolResultImagePreviews,
   hasMcpToolResultImageCandidate,
+  useMcpToolResultImagePreviews,
 } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 
 const PNG_DATA = "aGVsbG8=";
@@ -24,6 +26,34 @@ describe("mcp tool result image preview resolver", () => {
         alt: "Tool result image 1",
       },
     ]);
+  });
+
+  it("keeps resolved previews when equivalent image results rerender", async () => {
+    const firstResult = {
+      content: [{ type: "image", data: PNG_DATA, mimeType: "image/png" }],
+    };
+    const equivalentResult = {
+      content: [{ type: "image", data: PNG_DATA, mimeType: "image/png" }],
+    };
+
+    const { result, rerender } = renderHook(
+      ({ value }) => useMcpToolResultImagePreviews(value),
+      { initialProps: { value: firstResult } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current.previews[0]?.src).toBe(
+      `data:image/png;base64,${PNG_DATA}`
+    );
+
+    rerender({ value: equivalentResult });
+
+    expect(result.current.status).toBe("ready");
+    expect(result.current.previews[0]?.src).toBe(
+      `data:image/png;base64,${PNG_DATA}`
+    );
   });
 
   it("renders embedded image resources as data URLs", async () => {
@@ -49,19 +79,16 @@ describe("mcp tool result image preview resolver", () => {
     ]);
   });
 
-  it("renders already-converted model media outputs as data URLs", async () => {
-    const previews = await resolveMcpToolResultImagePreviews({
+  it("does not render already-converted model media outputs as UI previews", async () => {
+    const modelOutput = {
       type: "content",
       value: [{ type: "media", data: PNG_DATA, mediaType: "image/png" }],
-    });
+    };
 
-    expect(previews).toEqual([
-      {
-        src: `data:image/png;base64,${PNG_DATA}`,
-        mediaType: "image/png",
-        alt: "Tool result image 1",
-      },
-    ]);
+    expect(hasMcpToolResultImageCandidate(modelOutput)).toBe(false);
+    await expect(resolveMcpToolResultImagePreviews(modelOutput)).resolves.toEqual(
+      []
+    );
   });
 
   it("resolves linked image resources through the supplied resource reader", async () => {

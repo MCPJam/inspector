@@ -488,6 +488,9 @@ chatV2.post("/", async (c) => {
       resolvedExecution.hostPolicy;
     const inboundMcpToolResultModelOutputOptions = {
       modelVisibleMcpToolResults,
+      // Browser-sent history can replay already-resolved media, but must not
+      // trigger new linked resource reads. Fresh server-side tool execution
+      // resolves resource_link results through trusted tool-origin metadata.
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
     };
 

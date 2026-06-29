@@ -144,10 +144,10 @@ function ImagePolicyRow({
       </div>
       <div className="flex justify-end py-1.5">
         <Switch
-          checked={renderChecked}
+          checked={modelChecked && renderChecked}
           onCheckedChange={onRenderChange}
           aria-label={renderLabel}
-          disabled={renderDisabled}
+          disabled={disabled || renderDisabled || !modelChecked}
         />
       </div>
     </>
@@ -526,6 +526,15 @@ export function BehaviorTab({
                     draft.modelVisibleMcpToolResults,
                     checked
                   ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpDirectContentImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
                 })
               }
               onRenderChange={(checked) =>
@@ -572,6 +581,15 @@ export function BehaviorTab({
                       draft.modelVisibleMcpToolResults,
                       checked
                     ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpEmbeddedResourceBlobImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
                 })
               }
               onRenderChange={(checked) =>
@@ -619,6 +637,15 @@ export function BehaviorTab({
                       draft.modelVisibleMcpToolResults,
                       checked
                     ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpLinkedResourceBlobImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
                 })
               }
               onRenderChange={(checked) =>

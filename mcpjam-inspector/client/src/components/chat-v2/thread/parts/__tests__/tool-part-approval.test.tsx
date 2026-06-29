@@ -371,6 +371,79 @@ describe("ToolPart approval expansion", () => {
     );
   });
 
+  it("does not render generic media when the raw MCP source shape is disabled", async () => {
+    const modelOutput = {
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    };
+    const rawEmbeddedResult = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "example://embedded-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        },
+      ],
+    };
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            input: undefined,
+            output: modelOutput,
+          } as any
+        }
+        rawOutput={rawEmbeddedResult}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{
+          placement: "inline",
+          directContent: { image: true },
+          embeddedResources: { blob: { image: false } },
+          linkedResources: { blob: { image: true } },
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not render model-visible media without a raw MCP source shape", async () => {
+    const modelOutput = {
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    };
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            input: undefined,
+            output: modelOutput,
+          } as any
+        }
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{
+          placement: "inline",
+          directContent: { image: true },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: true } },
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+  });
+
   it("reuses attached readable output instead of rendering a duplicate result json block", async () => {
     const user = userEvent.setup();
 

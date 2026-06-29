@@ -900,6 +900,32 @@ export function setMcpLinkedResourceBlobImageRendered(
   };
 }
 
+export function gateMcpToolResultImageRenderingByModelVisibility(
+  renderingPolicy: McpToolResultImageRenderingPolicy | undefined,
+  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined
+): McpToolResultImageRenderingPolicy | undefined {
+  const directVisible = isMcpDirectContentImageVisible(modelVisiblePolicy);
+  const embeddedVisible =
+    isMcpEmbeddedResourceBlobImageVisible(modelVisiblePolicy);
+  const linkedVisible = isMcpLinkedResourceBlobImageVisible(modelVisiblePolicy);
+
+  if (directVisible && embeddedVisible && linkedVisible) {
+    return renderingPolicy;
+  }
+
+  let next = renderingPolicy;
+  if (!directVisible) {
+    next = setMcpDirectContentImageRendered(next, false);
+  }
+  if (!embeddedVisible) {
+    next = setMcpEmbeddedResourceBlobImageRendered(next, false);
+  }
+  if (!linkedVisible) {
+    next = setMcpLinkedResourceBlobImageRendered(next, false);
+  }
+  return next;
+}
+
 /**
  * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.

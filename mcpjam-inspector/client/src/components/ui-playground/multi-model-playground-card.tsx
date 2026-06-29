@@ -54,7 +54,10 @@ import {
   useActiveMcpProfile,
 } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  type HostConfigDtoV2,
+} from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   getChatboxChatBackground,
@@ -276,9 +279,28 @@ export function MultiModelPlaygroundCard({
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
   const lastCompareEnterVersionRef = useRef(0);
-  const resolvedMcpToolResultImageRendering =
-    hostCapsResolver?.mcpToolResultImageRendering ??
-    executionConfig?.mcpToolResultImageRendering;
+  const resolvedModelVisibleMcpToolResults = useMemo(
+    () =>
+      hostCapsResolver?.modelVisibleMcpToolResults ??
+      executionConfig?.modelVisibleMcpToolResults,
+    [
+      hostCapsResolver?.modelVisibleMcpToolResults,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
+  const resolvedMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        hostCapsResolver?.mcpToolResultImageRendering ??
+          executionConfig?.mcpToolResultImageRendering,
+        resolvedModelVisibleMcpToolResults
+      ),
+    [
+      hostCapsResolver?.mcpToolResultImageRendering,
+      executionConfig?.mcpToolResultImageRendering,
+      resolvedModelVisibleMcpToolResults,
+    ]
+  );
 
   const {
     messages,
@@ -314,7 +336,7 @@ export function MultiModelPlaygroundCard({
     // policy in that case.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
-    modelVisibleMcpToolResults: hostCapsResolver?.modelVisibleMcpToolResults,
+    modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

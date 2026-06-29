@@ -22,6 +22,7 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
@@ -106,6 +107,17 @@ export function MultiModelChatCard({
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
   const lastCompareEnterVersionRef = useRef(0);
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        executionConfig?.mcpToolResultImageRendering,
+        executionConfig?.modelVisibleMcpToolResults
+      ),
+    [
+      executionConfig?.mcpToolResultImageRendering,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
 
   const {
     messages,
@@ -130,6 +142,7 @@ export function MultiModelChatCard({
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),
+      mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     },
     onReset: () => {
       setWidgetStateQueue([]);
@@ -628,7 +641,7 @@ export function MultiModelChatCard({
                   onToolApprovalResponse={addToolApprovalResponse}
                   reasoningDisplayMode={reasoningDisplayMode}
                   mcpToolResultImageRendering={
-                    executionConfig?.mcpToolResultImageRendering
+                    effectiveMcpToolResultImageRendering
                   }
                   showSenderAvatars={showSenderAvatars}
                   resolveSenderAvatar={resolveSenderAvatar}

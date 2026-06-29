@@ -60,6 +60,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 function recorderDebug(message: string, details?: Record<string, unknown>) {
@@ -307,11 +308,12 @@ export function PartSwitch({
     const renderOverride = toolInfo.toolCallId
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
+    const rawToolOutput = (toolPart as any).result ?? toolInfo.rawOutput;
     const partToolMeta = toolsMetadata[toolInfo.toolName];
-    const streamedToolMeta = readToolResultMeta(toolInfo.rawOutput);
+    const streamedToolMeta = readToolResultMeta(rawToolOutput);
     const effectiveToolMeta =
       renderOverride?.toolMetadata ?? partToolMeta ?? streamedToolMeta;
-    const uiType = detectUIType(effectiveToolMeta, toolInfo.rawOutput);
+    const uiType = detectUIType(effectiveToolMeta, rawToolOutput);
     const uiResourceUri =
       renderOverride?.resourceUri ??
       getUIResourceUri(uiType, effectiveToolMeta);
@@ -319,10 +321,15 @@ export function PartSwitch({
     // removed during the renderer consolidation. Inline resources are no
     // longer rendered; tools that want a widget must declare it via
     // `_meta.ui.resourceUri` or `openai/outputTemplate`.
+    const providerMetadataServerId =
+      readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
+      readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
+      readMcpToolOriginServerId((toolPart as any).providerOptions);
     const serverId =
       renderOverride?.serverId ??
+      providerMetadataServerId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
-      readToolResultServerId(toolInfo.rawOutput);
+      readToolResultServerId(rawToolOutput);
     const hasRenderOverrideToolOutput =
       renderOverride !== undefined &&
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
@@ -333,7 +340,7 @@ export function PartSwitch({
     // Determine why save might be disabled
     const hasOutput =
       resolvedToolOutput !== undefined ||
-      toolInfo.rawOutput !== undefined ||
+      rawToolOutput !== undefined ||
       toolInfo.toolState === "output-available" ||
       toolInfo.toolState === "output-error";
 
@@ -435,6 +442,7 @@ export function PartSwitch({
             minimalMode={minimalMode}
             serverId={serverId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
+            rawOutput={rawToolOutput}
             {...approvalProps}
           />
           {renderOverride?.frozenScreenshotUrl ? (
@@ -521,7 +529,7 @@ export function PartSwitch({
               toolState={toolInfo.toolState}
               toolInput={toolInfo.input ?? null}
               toolOutput={resolvedToolOutput}
-              rawOutput={toolInfo.rawOutput}
+              rawOutput={rawToolOutput}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
               toolsMetadata={toolsMetadata}
@@ -582,6 +590,7 @@ export function PartSwitch({
         minimalMode={minimalMode}
         serverId={serverId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
+        rawOutput={rawToolOutput}
         {...approvalProps}
       />
     );

@@ -90,6 +90,7 @@ export function ToolPart({
   minimalMode = false,
   serverId,
   mcpToolResultImageRendering,
+  rawOutput,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -118,6 +119,7 @@ export function ToolPart({
   minimalMode?: boolean;
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  rawOutput?: unknown;
 }) {
   const posthog = usePostHog();
   const hasTrackedSkillLoad = useRef(false);
@@ -176,6 +178,7 @@ export function ToolPart({
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
+  const imagePreviewData = rawOutput ?? outputData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
     mcpToolResultImageRendering
   );
@@ -183,7 +186,7 @@ export function ToolPart({
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
   const canRenderToolImages = showInlineImagePreview || showPanelImagePreview;
   const resultImageState = useMcpToolResultImagePreviews(
-    canRenderToolImages ? outputData : undefined,
+    canRenderToolImages ? imagePreviewData : undefined,
     { serverId, renderingPolicy: mcpToolResultImageRendering }
   );
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -230,7 +233,7 @@ export function ToolPart({
 
   useEffect(() => {
     setResultImageMode("images");
-  }, [outputData]);
+  }, [imagePreviewData]);
 
   const displayModeOptions: {
     mode: DisplayMode;

@@ -665,6 +665,7 @@ describe("POST /api/mcp/chat-v2", () => {
                 toolCallId: "playground-L6XNQZ9X4Swm2LUv",
                 toolName: "qa_return_linked_image_resource",
                 input: {},
+                providerOptions: { mcpjam: { serverId: "qa-server" } },
               },
             ],
           },
@@ -675,6 +676,7 @@ describe("POST /api/mcp/chat-v2", () => {
                 type: "tool-result",
                 toolCallId: "playground-L6XNQZ9X4Swm2LUv",
                 toolName: "qa_return_linked_image_resource",
+                providerOptions: { mcpjam: { serverId: "qa-server" } },
                 output: {
                   type: "json",
                   value: {

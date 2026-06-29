@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
+  gateMcpToolResultImageRenderingByModelVisibility,
   hostCapabilitiesOverrideToMatrix,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
@@ -178,6 +179,29 @@ describe("hostConfigInputsEqual", () => {
         })
       )
     ).toBe(false);
+  });
+
+  it("masks MCP tool-result image rendering with model visibility", () => {
+    expect(
+      gateMcpToolResultImageRenderingByModelVisibility(
+        {
+          placement: "inline",
+          directContent: { image: true },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: true } },
+        },
+        {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: false } },
+          linkedResources: { blob: { image: true } },
+        }
+      )
+    ).toEqual({
+      placement: "inline",
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
   });
 });
 

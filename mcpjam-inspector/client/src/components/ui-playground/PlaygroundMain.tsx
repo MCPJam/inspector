@@ -103,7 +103,10 @@ import {
   type HostListItem,
   type HostDetail,
 } from "@/hooks/useClients";
-import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import {
+  emptyHostConfigInputV2,
+  gateMcpToolResultImageRenderingByModelVisibility,
+} from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
@@ -702,9 +705,21 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        previewedHost?.config?.mcpToolResultImageRendering,
+        previewedHost?.config?.modelVisibleMcpToolResults
+      ),
+    [
+      previewedHost?.config?.mcpToolResultImageRendering,
+      previewedHost?.config?.modelVisibleMcpToolResults,
+    ]
+  );
   // Native built-in tools for the previewed harness (if any) — fed into the Raw
   // tab so a harness host's empty `tools` is annotated rather than confusing.
-  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
+  const { tools: harnessBuiltinTools } =
+    useHarnessBuiltinTools(previewedHostId);
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -769,8 +784,7 @@ export function PlaygroundMain({
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
     modelVisibleMcpToolResults:
       previewedHost?.config?.modelVisibleMcpToolResults,
-    mcpToolResultImageRendering:
-      previewedHost?.config?.mcpToolResultImageRendering,
+    mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // previewed host's hostConfig. The server re-resolves via the shared
     // execution-context helper, so this also flows through chatbox sessions
@@ -2400,8 +2414,8 @@ export function PlaygroundMain({
     }
 
     const { toolName, params, result, toolMeta } = pendingExecution;
-    const deterministicOptions =
-      pendingExecution.state === "output-error"
+    const deterministicOptions = {
+      ...(pendingExecution.state === "output-error"
         ? {
             state: "output-error" as const,
             errorText: pendingExecution.errorText,
@@ -2414,7 +2428,9 @@ export function PlaygroundMain({
           }
         : pendingExecution.modelOutput
         ? { modelOutput: pendingExecution.modelOutput }
-        : undefined;
+        : {}),
+      mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
+    };
     const { messages: newMessages, toolCallId } =
       createDeterministicToolMessages(
         toolName,
@@ -2478,7 +2494,13 @@ export function PlaygroundMain({
       return [...prev, nextExecution];
     });
     onExecutionInjected(toolCallId);
-  }, [isCompareMode, onExecutionInjected, pendingExecution, setMessages]);
+  }, [
+    isCompareMode,
+    onExecutionInjected,
+    pendingExecution,
+    effectiveMcpToolResultImageRendering,
+    setMessages,
+  ]);
 
   useEffect(() => {
     if (!isCompareMode && hasTraceSnapshot) {
@@ -3090,7 +3112,7 @@ export function PlaygroundMain({
       } else {
         queueBroadcastRequest(
           { text, prependMessages: [] },
-          { single_model_send: true },
+          { single_model_send: true }
         );
         sendMessage({
           text,
@@ -3112,7 +3134,7 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
       modelContextQueue,
       onFirstMessageSent,
-    ],
+    ]
   );
 
   const pendingAgentToolPrompt = useAgentToolPromptBridge((s) => s.pending);
@@ -3390,7 +3412,7 @@ export function PlaygroundMain({
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
                 mcpToolResultImageRendering={
-                  previewedHost?.config?.mcpToolResultImageRendering
+                  effectiveMcpToolResultImageRendering
                 }
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
@@ -3794,8 +3816,7 @@ export function PlaygroundMain({
                                 previewedHost?.config
                                   ?.modelVisibleMcpToolResults,
                               mcpToolResultImageRendering:
-                                previewedHost?.config
-                                  ?.mcpToolResultImageRendering,
+                                effectiveMcpToolResultImageRendering,
                               builtInToolIds:
                                 previewedHost?.config?.builtInToolIds,
                             }}
