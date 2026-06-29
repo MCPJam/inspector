@@ -8,6 +8,7 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
+  getCanonicalModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -565,15 +566,30 @@ chatV2.post("/", async (c) => {
     }
 
     // Harness preflight: fail closed with a clear message when a host-resolved
-    // Claude Code harness can't run on this server (never silent-fallback).
-    if (resolvedExecution.harness === "claude-code") {
+    // harness (claude-code | codex) can't run on this server (never silent-
+    // fallback). Capability-driven (computer / approval / MCP / model eligibility).
+    if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
+        harnessId: resolvedExecution.harness,
         requireToolApproval: resolvedExecution.requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Provider-aware: a bare model id (no creator prefix) needs the provider
+        // to resolve its canonical id, else a hosted MCPJam model is misjudged.
+        modelEligible: isMCPJamProvidedModel(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+        // Canonical id so the adapter's supportsModel check sees the prefixed
+        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
+        modelId: getCanonicalModelId(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
       });
       if (!availability.ok) {
         return c.json(
           {
-            error: `This host runs the Claude Code harness, which isn't available: ${availability.reason}.`,
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
           503
         );

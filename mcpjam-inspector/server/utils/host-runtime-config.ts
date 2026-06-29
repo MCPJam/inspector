@@ -13,6 +13,7 @@
  * via `internalGetHostRuntimeConfig` (project-membership gated).
  */
 
+import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger.js";
 
 export type HostRuntimeConfig = {
@@ -28,7 +29,7 @@ export type HostRuntimeConfig = {
   // Host harness selector from the pinned HostConfigV2. Optional so a backend
   // that predates the endpoint returns omitted → emulated path. Omitted by the
   // backend for guest actors.
-  harness?: "claude-code";
+  harness?: Harness;
   // Personal-computer attachment (resource only; capabilities ride
   // builtInToolIds). `toolset` is a tolerated legacy key. Omitted for guests.
   computer?: {

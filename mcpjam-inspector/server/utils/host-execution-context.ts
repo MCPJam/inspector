@@ -35,6 +35,8 @@
 
 import {
   extractHostExecutionPolicy,
+  isHarness,
+  type Harness,
   type HostExecutionPolicy,
 } from "@mcpjam/sdk/host-config/internal";
 
@@ -108,7 +110,7 @@ export interface ResolvedExecutionContext {
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
-  harness: "claude-code" | undefined;
+  harness: Harness | undefined;
   selectedServerIds: string[] | undefined;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
@@ -222,12 +224,11 @@ function pickField<T>(
   return drift ? { value: winner, drift } : { value: winner };
 }
 
-/** Read the host-level `harness` selector. Only the known value is surfaced;
- *  anything else (or absent) ⇒ undefined (emulated). */
-function readHarness(
-  hostConfig: Record<string, unknown>,
-): "claude-code" | undefined {
-  return hostConfig.harness === "claude-code" ? "claude-code" : undefined;
+/** Read the host-level `harness` selector. Only a REGISTERED harness id is
+ *  surfaced (membership via the SDK's `isHarness`, the persistence-contract
+ *  source of truth); anything else (or absent) ⇒ undefined (emulated). */
+function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
+  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
 }
 
 export function resolveExecutionContext(args: {

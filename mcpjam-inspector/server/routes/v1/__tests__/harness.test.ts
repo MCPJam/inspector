@@ -112,11 +112,21 @@ describe("v1 harness routes", () => {
       expect((bash?.inputSchema as { type?: string }).type).toBe("object");
     });
 
+    it("returns the codex built-in tools (bash, webSearch)", async () => {
+      const res = await request("GET", "/api/v1/harness/codex/builtin-tools");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: ToolInfo[] };
+      expect(Array.isArray(body.items)).toBe(true);
+      const keys = new Set(body.items.map((t) => t.key));
+      for (const expected of ["bash", "webSearch"]) {
+        expect(keys).toContain(expected);
+      }
+      for (const t of body.items) expect(t.name.length).toBeGreaterThan(0);
+    });
+
     it("404s for an unknown / not-yet-installed harness id", async () => {
-      const res = await request(
-        "GET",
-        "/api/v1/harness/codex/builtin-tools",
-      );
+      // `pi` is a plausible-but-unregistered runtime (codex is now installed).
+      const res = await request("GET", "/api/v1/harness/pi/builtin-tools");
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
     });

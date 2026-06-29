@@ -44,10 +44,11 @@ export type SeededHostConfigInput = {
   optionalServerIds: string[];
   builtInToolIds: string[];
   computer?: { kind: "personal"; workdir?: string };
-  // Real agent harness for this host. `"claude-code"` runs the real Claude
-  // Code runtime (requires an attached computer); absent ⇒ MCPJam's emulated
-  // engine. Kept as a literal here so this module stays free of cross-imports.
-  harness?: "claude-code";
+  // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
+  // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.
+  // Kept as a local literal (mirrors the `Harness` union / HARNESS_IDS in
+  // ../types.ts) so this module stays free of cross-imports.
+  harness?: "claude-code" | "codex";
   connectionDefaults: {
     headers: Record<string, string>;
     requestTimeout: number;

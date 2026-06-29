@@ -8,10 +8,18 @@ import { harnessRuntimeFingerprint } from "../run-harness-turn";
 // stable, resume-invalidating dimensions: model + server set + permission mode.
 describe("harnessRuntimeFingerprint", () => {
   const base = {
+    harnessId: "claude-code",
     modelId: "anthropic/claude-opus-4-6",
     selectedServers: ["srv-b", "srv-a"],
     permissionMode: "allow-all",
   };
+
+  it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {
+    // Identical model/servers/permission, different runtime ⇒ different lane.
+    expect(harnessRuntimeFingerprint(base)).not.toBe(
+      harnessRuntimeFingerprint({ ...base, harnessId: "codex" })
+    );
+  });
 
   it("is identical across turns with the same model + servers (server order-insensitive)", () => {
     const a = harnessRuntimeFingerprint(base);

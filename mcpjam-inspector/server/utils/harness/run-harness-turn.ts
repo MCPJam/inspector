@@ -58,6 +58,7 @@ import type {
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
+import { getCanonicalModelId } from "@/shared/types";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
@@ -77,8 +78,6 @@ import {
   buildHarnessMcpJson,
   harnessServerInputFromConfig,
   harnessServerKeyToName,
-  parseHarnessToolName,
-  serializeHarnessMcpJson,
   type HarnessMcpServerInput,
 } from "./mcp-config.js";
 
@@ -172,6 +171,10 @@ const HARNESS_HEARTBEAT_MS = 90_000;
  *  regardless, so the prompt isn't a safe fork trigger; model + server set are
  *  the stable, resume-invalidating dimensions. */
 export function harnessRuntimeFingerprint(parts: {
+  /** The harness id MUST be part of the fingerprint: two hosts that share
+   *  model/servers/permission but run different runtimes are NOT resume-
+   *  compatible, so a Codex turn must never reuse a Claude Code session lane. */
+  harnessId: string;
   modelId: string;
   selectedServers?: string[];
   permissionMode: string;
@@ -185,7 +188,7 @@ export function harnessRuntimeFingerprint(parts: {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return `${parts.modelId}|${(h >>> 0).toString(16)}`;
+  return `${parts.harnessId}|${parts.modelId}|${(h >>> 0).toString(16)}`;
 }
 
 export async function runHarnessTurn(
@@ -194,7 +197,8 @@ export async function runHarnessTurn(
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
-    modelId,
+    modelId: rawModelId,
+    provider,
     systemPrompt,
     authHeader,
     projectId,
@@ -216,9 +220,24 @@ export async function runHarnessTurn(
     harness,
     builtInTools,
   } = options;
-  // The harness adapter knows the Claude-specific bits (auth shape, native model
-  // mapping, harness construction). runHarnessTurn stays harness-agnostic.
-  const harnessAdapter = getHarnessAdapter(harness ?? "claude-code");
+  // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
+  // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
+  // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
+  // attribution, fingerprint — relies on the canonical form, so a bare id can't
+  // make Codex silently fall back to its default model.
+  const modelId = getCanonicalModelId(rawModelId, provider);
+  // The harness adapter declares the per-harness bits (auth, native model
+  // mapping, MCP delivery, tool-name attribution, file-change naming, approval,
+  // skills). runHarnessTurn stays harness-agnostic and reads capabilities off it.
+  //
+  // Defensive: this path is only reached when a harness is selected (the dispatch
+  // gates on a validated id), but eval/synthetic forward `harness` unconditionally
+  // — so require it here rather than silently defaulting to claude-code, and let
+  // getHarnessAdapter throw on an unknown id instead of mis-attributing the turn.
+  if (!harness) {
+    throw new Error("runHarnessTurn: harness id is required");
+  }
+  const harnessAdapter = getHarnessAdapter(harness);
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
@@ -338,6 +357,29 @@ export async function runHarnessTurn(
       let tConnect = tStart;
       let resumedSession = false;
 
+      // 0. Capability prechecks — BEFORE any credential/sandbox work (defense in
+      // depth for eval/synthetic/unified paths that don't hit the route preflight).
+      // Cheap + pure, so a misconfigured turn fails before we fetch/audit/rate-
+      // limit the Gateway credential or wake the box.
+      //   (a) the runtime must be able to run this model — else createX() would
+      //       silently substitute its own default model.
+      if (!harnessAdapter.supportsModel(modelId)) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+        );
+      }
+      //   (b) a harness that can't deliver the host's selected MCP servers must
+      //       NOT silently run without them.
+      if (
+        !harnessAdapter.supportsSelectedMcpServers &&
+        (selectedServers?.length ?? 0) > 0
+      ) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+        );
+      }
+
       // 1. Resolve the model credential FIRST — fetched from Convex (the
       // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
       // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
@@ -366,10 +408,11 @@ export async function runHarnessTurn(
       // own discovery. Re-applying the emulation would double it, defeat the
       // "observe the real runtime" purpose, and isn't expressible anyway —
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
-      const { mcpJson, keyToServerId } = buildMcpJsonFromManager(
-        mcpClientManager,
-        selectedServers ?? []
-      );
+      // Only adapters that deliver MCP servers (Claude Code) build the config;
+      // the undeliverable-servers case already failed closed in step 0(b) above.
+      const { mcpJson, keyToServerId } = harnessAdapter.supportsSelectedMcpServers
+        ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
+        : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -393,9 +436,10 @@ export async function runHarnessTurn(
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
+        harnessId: harnessAdapter.id,
         modelId,
         selectedServers: selectedServers ?? [],
-        permissionMode: "allow-all",
+        permissionMode: harnessAdapter.defaultPermissionMode,
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
@@ -424,6 +468,10 @@ export async function runHarnessTurn(
       ) {
         const owner: HarnessOwnerRef = {
           projectId,
+          // Lane key dimension: a Codex turn and a Claude Code turn for the same
+          // chat occupy SEPARATE lanes, so neither can resume the other's
+          // sidecar. The backend keys (projectId, harnessId, ownerType, ownerKey).
+          harnessId: harnessAdapter.id,
           ownerType,
           chatSessionId,
           ...(chatboxId ? { chatboxId } : {}),
@@ -442,9 +490,9 @@ export async function runHarnessTurn(
         if (!claim.ok) {
           // FAIL CLOSED for chat-backed owners (this block only runs for
           // direct-chat/chatbox-chat). Never silently start a fresh,
-          // non-persisted Claude Code session when continuity can't be
-          // guaranteed — that would mislead the user into thinking they're in a
-          // continuous conversation.
+          // non-persisted harness session when continuity can't be guaranteed —
+          // that would mislead the user into thinking they're in a continuous
+          // conversation.
           if (claim.status === 409) {
             throw new Error(
               "Another turn is already running for this chat — wait for it to finish."
@@ -455,8 +503,9 @@ export async function runHarnessTurn(
             error: claim.error,
           });
           throw new Error(
-            "Couldn't start a Claude Code session — the continuity service is " +
-              "unavailable right now. Please try again in a moment."
+            `Couldn't start a ${harnessAdapter.displayName} session — the ` +
+              "continuity service is unavailable right now. Please try again in " +
+              "a moment."
           );
         } else {
           continuity = {
@@ -489,9 +538,10 @@ export async function runHarnessTurn(
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
-      // Approval-required turns are refused above, so the remaining turns run
-      // with full tool access (the agentic default).
-      const permissionMode = "allow-all" as const;
+      // Approval-required turns are refused at the availability preflight (the
+      // adapter declares it can't pause for native/MCP tool approval), so the
+      // remaining turns run with the adapter's declared mode (allow-all today).
+      const permissionMode = harnessAdapter.defaultPermissionMode;
 
       // The adapter maps the host modelId to the harness's native model and
       // constructs it (for Claude Code: the gateway `creator/model` id becomes a
@@ -510,12 +560,11 @@ export async function runHarnessTurn(
         harness: harnessRuntime,
         sandbox,
         // Deliver skills via the adapter's own param (host-agnostic: it writes
-        // them natively at the real $HOME). This is the Claude Code path
-        // (runHarnessTurn only runs for harness === "claude-code"), whose adapter
-        // interpolates `description` into YAML frontmatter RAW — so pre-encode
-        // descriptions safely here. Wire `toHarnessSkills` for other adapters if
-        // they're ever routed through this function.
-        ...(runtimeSkills && runtimeSkills.length
+        // them natively at the real $HOME). Only for adapters that support skills
+        // (Claude Code today). The Claude Code adapter interpolates `description`
+        // into YAML frontmatter RAW, so pre-encode descriptions safely here. Codex
+        // v1 doesn't deliver skills (`supportsSkills: false`).
+        ...(harnessAdapter.supportsSkills && runtimeSkills && runtimeSkills.length
           ? {
               skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
@@ -532,17 +581,36 @@ export async function runHarnessTurn(
           : {}),
         permissionMode,
         onSandboxSession: async ({ session, sessionWorkDir }) => {
-          // Write the host's MCP servers into the session workdir before
-          // Claude Code starts, so it connects to them on launch.
-          await session.writeTextFile({
-            path: `${sessionWorkDir}/.mcp.json`,
-            content: serializeHarnessMcpJson(mcpJson),
-          });
+          // Deliver the host's MCP servers into the session before the runtime
+          // starts, via the adapter's own strategy (Claude Code writes a
+          // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
+          // false`), so this is a no-op there.
+          if (harnessAdapter.supportsSelectedMcpServers) {
+            // Capability invariant: an adapter that advertises MCP support MUST
+            // provide a delivery strategy. Treating a missing hook as a no-op
+            // would silently run without the host's servers — fail loud instead.
+            if (!harnessAdapter.deliverMcpServers) {
+              throw new Error(
+                `The ${harnessAdapter.displayName} harness advertises MCP support ` +
+                  "but has no deliverMcpServers strategy (adapter misconfigured).",
+              );
+            }
+            await harnessAdapter.deliverMcpServers({
+              // Bind to the live session here (it lives behind the dual-`ai`
+              // boundary) so the adapter stays free of the harness session type.
+              writeTextFile: async (a) => {
+                await session.writeTextFile(a);
+              },
+              sessionWorkDir,
+              mcpJson,
+            });
+          }
           // The adapter writes skill CONTENT (via the `skills` param above); this
           // pass only removes managed dirs deleted/renamed in Convex (the adapter
           // has no deletion semantics and the box persists). Skipped on a fetch
-          // failure (`runtimeSkills === null`) so a transient blip never deletes.
-          if (runtimeSkills !== null) {
+          // failure (`runtimeSkills === null`) so a transient blip never deletes,
+          // and only for skills-capable adapters.
+          if (harnessAdapter.supportsSkills && runtimeSkills !== null) {
             await reconcileSkillDirs({
               session,
               skills: runtimeSkills,
@@ -849,7 +917,7 @@ export async function runHarnessTurn(
             // callbacks, and persisted transcript carry MCPJam tool identity
             // (eval matching + MCP App rendering key off it). Native harness
             // tools (Bash, Read, …) have no prefix → serverId stays undefined.
-            const { serverId, toolName } = parseHarnessToolName(
+            const { serverId, toolName } = harnessAdapter.parseToolName(
               rawToolName,
               keyToServerId
             );
@@ -909,7 +977,7 @@ export async function runHarnessTurn(
             // omit the name); fall back to parsing the result's own toolName.
             const meta =
               toolMeta.get(toolCallId) ??
-              parseHarnessToolName(
+              harnessAdapter.parseToolName(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
@@ -953,6 +1021,88 @@ export async function runHarnessTurn(
               output,
               isError,
             });
+          } else if (type === "file-change") {
+            // Some runtimes (Codex) report file mutations as a `file-change`
+            // stream part that does NOT originate from a model-callable tool.
+            // Surface it as a synthetic NATIVE provider-executed tool (serverId
+            // undefined, like Bash) so it flows through the same UI emit + trace
+            // span + transcript path. No serverId ⇒ eval MCP-tool matching
+            // ignores it automatically. Only adapters that declare a
+            // `fileChangeToolName` emit these (Claude Code does not).
+            const fcName = harnessAdapter.fileChangeToolName;
+            if (fcName) {
+              // Begins a new step after prior results; close any open text block.
+              if (pendingResults.length > 0) {
+                flushSegment();
+                finishStep();
+              }
+              if (textId !== undefined) {
+                emitTextEnd(writer, textId);
+                textId = undefined;
+              }
+              const toolCallId = crypto.randomUUID();
+              const input = coerceToolInput({
+                event: (part as { event?: unknown }).event,
+                path: (part as { path?: unknown }).path,
+              });
+              const startMs = Date.now();
+              toolMeta.set(toolCallId, { toolName: fcName });
+              toolSetForTrace[fcName] = {};
+              emitToolInput(writer, {
+                toolCallId,
+                toolName: fcName,
+                input,
+                providerExecuted: true,
+              });
+              await onToolCall?.({
+                toolCallId,
+                toolName: fcName,
+                input,
+                stepIndex,
+                promptIndex,
+                // Native file mutation — not an MCP-server tool.
+                serverId: undefined,
+              });
+              assistantParts.push({
+                type: "tool-call",
+                toolCallId,
+                toolName: fcName,
+                input,
+              });
+              // The part is self-contained (no separate result frame) — emit a
+              // matching result immediately so the pair stays balanced.
+              emitToolOutput(writer, {
+                toolCallId,
+                output: input,
+                providerExecuted: true,
+              });
+              await onToolResult?.({
+                toolCallId,
+                toolName: fcName,
+                output: input,
+                isError: false,
+                stepIndex,
+                promptIndex,
+                serverId: undefined,
+              });
+              capturedSpans.push({
+                id: crypto.randomUUID(),
+                name: fcName,
+                category: "tool",
+                ...createOffsetInterval(traceBaseMs, startMs, Date.now()),
+                promptIndex,
+                stepIndex,
+                status: "ok",
+                toolCallId,
+                toolName: fcName,
+              });
+              pendingResults.push({
+                toolCallId,
+                toolName: fcName,
+                output: input,
+                isError: false,
+              });
+            }
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -1039,7 +1189,7 @@ export async function runHarnessTurn(
                 : {}),
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
-              harnessId: "claude-code",
+              harnessId: harnessAdapter.id,
               harnessSessionId: session.sessionId,
               resumeState,
               computerId,

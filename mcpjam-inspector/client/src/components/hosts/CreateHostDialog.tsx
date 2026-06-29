@@ -17,6 +17,7 @@ import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
   getHostTemplateLogoSrc,
@@ -47,13 +48,20 @@ export function CreateHostDialog({
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  // The Claude Code host template is gated behind a PostHog flag while the
-  // CLI host profile is iterated on. Off ⇒ drop it from the picker grid.
-  // claude-code is never a default or `initialTemplateId` (no caller seeds
-  // it), so hiding it here can't strand the selection on a missing tile.
+  // The Claude Code and Codex host templates each run a real CLI harness and are
+  // gated behind a PostHog flag while their host profiles are iterated on. Off ⇒
+  // drop from the picker grid. Neither is a default or `initialTemplateId` (no
+  // caller seeds them), so hiding them here can't strand the selection on a
+  // missing tile. The codex template now seeds harness:"codex"+computer, so its
+  // gate also covers that; existing saved codex hosts are unaffected.
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const harnessTemplateEnabled: Record<string, boolean> = {
+    "claude-code": claudeCodeEnabled,
+    codex: codexEnabled,
+  };
   const visibleTemplates = HOST_TEMPLATES.filter(
-    (t) => t.id !== "claude-code" || claudeCodeEnabled
+    (t) => harnessTemplateEnabled[t.id] ?? true
   );
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
@@ -73,7 +81,7 @@ export function CreateHostDialog({
     const requested = initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID;
     const allowed = visibleTemplates.some((t) => t.id === requested);
     setSelectedTemplateId(allowed ? requested : DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId, claudeCodeEnabled]);
+  }, [isOpen, initialTemplateId, claudeCodeEnabled, codexEnabled]);
 
   useEffect(() => {
     if (!isOpen) return;

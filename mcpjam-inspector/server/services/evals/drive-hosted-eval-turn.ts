@@ -28,7 +28,7 @@
  *    accompanying `iterationError` already gates the iteration).
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
@@ -120,9 +120,9 @@ export interface DriveHostedEvalTurnParams {
   /** Canonical model id override for the wire payload (wallet/quota keys). */
   modelId: string;
   selectedServers: string[];
-  /** Host harness selector (resolvedExecution.harness). When "claude-code" the
-   *  turn runs the real Claude Code runtime; absent ⇒ emulated (today's path). */
-  harness?: "claude-code";
+  /** Host harness selector (resolvedExecution.harness). When set (claude-code |
+   *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
+  harness?: Harness;
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
    *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
    *  (no interactive approval yet). The emulated eval path is unchanged (it

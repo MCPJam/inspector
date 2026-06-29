@@ -69,6 +69,15 @@ describe("resolveExecutionContext — harness (host-only, server-authoritative)"
     expect(result.harness).toBeUndefined();
   });
 
+  it("reads the codex harness (membership via the SDK source of truth)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { harness: "codex" },
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(result.harness).toBe("codex");
+  });
+
   it("yields harness undefined when hostConfig is null (plain direct chat)", () => {
     const result = resolveExecutionContext({
       hostConfig: null,

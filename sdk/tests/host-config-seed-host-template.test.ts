@@ -58,6 +58,15 @@ describe("seedHostTemplate", () => {
     expect(config.requireToolApproval).toBe(false);
   });
 
+  it("seeds the real Codex harness + a personal computer", () => {
+    const config = seedHostTemplate("codex", { theme: "dark" });
+    expect(config.hostStyle).toBe("codex");
+    expect(config.harness).toBe("codex");
+    expect(config.computer).toEqual({ kind: "personal" });
+    // Codex (like Claude Code) can't pause for interactive approval.
+    expect(config.requireToolApproval).toBe(false);
+  });
+
   it("threads appVersion into the mcpjam template (and only it)", () => {
     const mcpjam = seedHostTemplate("mcpjam", { appVersion: "9.9.9" });
     const profile = mcpjam.mcpProfile as Record<string, any>;

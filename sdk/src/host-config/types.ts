@@ -47,13 +47,32 @@ export type ServerId = string;
 export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
 
 /**
+ * Every harness id the persistence layer accepts. This is the portable
+ * **persistence-contract source of truth**: the inspector's server registry and
+ * the backend's hand-mirrored validator each assert parity with this list (so the
+ * copies can't silently drift), and the canonicalizer rejects anything not in it.
+ * Adding a runtime is a one-line addition here + a registry adapter + tests —
+ * never a schema migration (absent ⇒ emulated still hashes byte-identically).
+ */
+export const HARNESS_IDS = ["claude-code", "codex"] as const;
+
+/**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
- * turn inside a real Claude Code runtime via the AI SDK harness. Extensible to
- * additional runtimes (e.g. `"codex"`, `"pi"`) later without a schema migration.
+ * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
+ * OpenAI Codex. Extensible to additional runtimes (e.g. `"pi"`) later without a
+ * schema migration.
  */
-export type Harness = "claude-code";
+export type Harness = (typeof HARNESS_IDS)[number];
+
+/** Type guard — the single membership check every layer routes through. */
+export function isHarness(value: unknown): value is Harness {
+  return (
+    typeof value === "string" &&
+    (HARNESS_IDS as readonly string[]).includes(value)
+  );
+}
 
 /**
  * Permissions Policy feature tokens corresponding to the four

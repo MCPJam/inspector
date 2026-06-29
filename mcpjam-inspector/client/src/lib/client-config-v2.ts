@@ -85,12 +85,13 @@ export type HostConfigComputerV2 = {
 };
 
 /**
- * Real agent harness for this host. `"claude-code"` runs the real Claude Code
- * runtime (the `@ai-sdk/harness-claude-code` adapter) inside the attached
- * personal computer instead of MCPJam's emulated engine. Absent ⇒ emulated.
- * Mirrors the SDK's `Harness` type; the backend enforces `harness ⇒ computer`.
+ * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
+ * runtime (the `@ai-sdk/harness-claude-code` / `@ai-sdk/harness-codex` adapter)
+ * inside the attached personal computer instead of MCPJam's emulated engine.
+ * Absent ⇒ emulated. Mirrors the SDK's `Harness` type; the backend enforces
+ * `harness ⇒ computer`.
  */
-export type HostConfigHarnessV2 = "claude-code";
+export type HostConfigHarnessV2 = "claude-code" | "codex";
 
 /**
  * Mutable input shape. All fields are required at write time so the editor

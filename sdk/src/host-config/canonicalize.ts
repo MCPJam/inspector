@@ -16,7 +16,9 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
+  HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
+  isHarness,
   SEP_1865_PERMISSION_FEATURES,
   type CanonicalHostConfigV2,
   type CspDomainSet,
@@ -1049,11 +1051,15 @@ export function canonicalizeHostConfigV2(
     throw new Error("hostConfigV2: chatUiOverride must be a plain object");
   }
   // Closed enum: reject unknown harness ids so untyped (JS) callers can't
-  // persist a value the runtime can't honor. The "harness requires a computer"
-  // rule is enforced at the backend write-path (next to builtInTools'
-  // requiresComputer), not here — the canonicalizer stays a pure normalizer.
-  if (input.harness !== undefined && input.harness !== "claude-code") {
-    throw new Error('hostConfigV2: harness must be "claude-code" when set');
+  // persist a value the runtime can't honor. Membership is checked against the
+  // portable HARNESS_IDS source of truth (mirrored by the backend). The "harness
+  // requires a computer" rule is enforced at the backend write-path (next to
+  // builtInTools' requiresComputer), not here — the canonicalizer stays a pure
+  // normalizer.
+  if (input.harness !== undefined && !isHarness(input.harness)) {
+    throw new Error(
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`,
+    );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);

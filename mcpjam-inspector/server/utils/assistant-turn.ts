@@ -25,7 +25,7 @@ import type {
 } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -37,6 +37,8 @@ import {
 } from "./mcpjam-stream-handler.js";
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import { getHarnessAdapter } from "./harness/registry.js";
+import { logger } from "./logger.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -339,6 +341,11 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
+    // Carry the harness selector through to the handler — runHarnessTurn reads it
+    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
+    // unified harness turns reach runHarnessTurn with harness=undefined (the old
+    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),
@@ -423,7 +430,7 @@ export async function runAssistantTurn(
     capturedTrace = turnTrace;
   });
 
-  // A host with `harness: "claude-code"` runs the real Claude Code runtime
+  // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // inside its computer; otherwise the emulated engine. Both satisfy the same
   // ChatEngineLoopResult contract, so everything downstream is identical.
   //
@@ -431,15 +438,51 @@ export async function runAssistantTurn(
   // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
   // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
   // would use the wrong credentials and mis-account spend, so for BYOK models we
-  // fall back to the emulated engine (which honors the org-BYOK path). This
-  // mirrors live web chat, where only the MCPJam-free branch forwards harness;
-  // eval/synthetic forward it unconditionally, so this is the authoritative gate.
-  const useHarness =
-    opts.harness === "claude-code" &&
-    isMCPJamProvidedModel(
-      String(opts.modelDefinition.id),
-      opts.modelDefinition.provider,
+  // fall back to the emulated engine (which honors the org-BYOK path).
+  //
+  // The interactive web path fails closed at the chat-v2 preflight when a harness
+  // host's model is ineligible. This gate is the authoritative one for
+  // eval/synthetic (which forward `harness` unconditionally and shouldn't hard-
+  // fail a batch): when a harness was requested but the model isn't eligible, we
+  // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
+  // traces rather than misread as "observed the real harness".
+  const harnessRequested = !!opts.harness;
+  const harnessModelId = String(opts.modelDefinition.id);
+  // Eligibility is BOTH "MCPJam-provided" AND "the runtime can actually run this
+  // model". The interactive routes check supportsModel in their preflight, but
+  // eval/synthetic don't — without this a codex turn on an MCPJam-provided but
+  // non-Codex model (e.g. anthropic/claude-haiku-4.5) would reach createCodex()
+  // with no native model and silently use Codex's default. Mirror the preflight.
+  const harnessAdapter = harnessRequested
+    ? getHarnessAdapter(opts.harness as string)
+    : undefined;
+  // supportsModel needs the CANONICAL id (bare hosted ids like `gpt-5-nano` →
+  // `openai/gpt-5-nano`); isMCPJamProvidedModel canonicalizes internally, so a
+  // bare id would otherwise pass eligibility but fail supportsModel and wrongly
+  // fall back to emulated.
+  const canonicalHarnessModelId = getCanonicalModelId(
+    harnessModelId,
+    opts.modelDefinition.provider,
+  );
+  const modelEligible =
+    isMCPJamProvidedModel(harnessModelId, opts.modelDefinition.provider) &&
+    (harnessAdapter
+      ? harnessAdapter.supportsModel(canonicalHarnessModelId)
+      : true);
+  const useHarness = harnessRequested && modelEligible;
+  if (harnessRequested && !modelEligible) {
+    logger.warn(
+      "[assistant-turn] harness requested but model ineligible (not MCPJam-" +
+        "provided, or unsupported by the runtime) — falling back to the emulated " +
+        "engine (surfaced, not silent)",
+      {
+        harness: opts.harness,
+        modelId: harnessModelId,
+        provider: opts.modelDefinition.provider,
+        sourceType: opts.sourceType,
+      },
     );
+  }
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);
