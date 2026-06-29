@@ -55,8 +55,10 @@ import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
   lookupToolIdByModelName,
+  META_TOOL_SEARCH,
   resolveActiveToolNames,
   META_TOOL_NAMES,
+  shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
@@ -1808,6 +1810,12 @@ async function processOneStep(
     activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
   }
 
+  const forcedToolChoice =
+    shouldForceInitialToolSearch(progressivePlan, discoveryState, stepIndex) &&
+    activeToolDefs.some((def) => def.name === META_TOOL_SEARCH)
+      ? { type: "tool" as const, toolName: META_TOOL_SEARCH }
+      : undefined;
+
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
     throw abortSignal.reason instanceof Error
@@ -1916,6 +1924,7 @@ async function processOneStep(
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
+        ...(forcedToolChoice ? { toolChoice: forcedToolChoice } : {}),
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),

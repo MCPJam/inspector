@@ -367,12 +367,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "mcpjam",
     label: "MCPJam",
-    description: "SDK defaults. Pick a model later.",
+    description: "SDK defaults with hosted Claude Haiku.",
     // Explicit `hostStyle: "mcpjam"` so the template doesn't silently
     // inherit the registry default — keeps MCPJam hosts visually distinct
     // from Claude even if the default ever drifts.
     seed: (opts) => {
-      const base = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
+      const base = emptyHostConfigInputV2({
+        hostStyle: "mcpjam",
+        modelId: "anthropic/claude-haiku-4.5",
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // MCPJam is the "out of the box" default the rest of the product
       // assumes works for every UI Resource. Goal: advertise the

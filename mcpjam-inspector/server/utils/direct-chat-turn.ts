@@ -36,7 +36,9 @@ import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
+  META_TOOL_SEARCH,
   resolveActiveToolNames,
+  shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
@@ -655,9 +657,27 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
-      return activeToolNames !== undefined
-        ? { activeTools: activeToolNames }
-        : {};
+      const stepOptions: {
+        activeTools?: string[];
+        toolChoice?: ToolChoice<Record<string, AiTool>>;
+      } = {};
+      if (activeToolNames !== undefined) {
+        stepOptions.activeTools = activeToolNames;
+      }
+      if (
+        shouldForceInitialToolSearch(
+          progressivePlan,
+          discoveryState,
+          stepNumber,
+        ) &&
+        activeToolNames?.includes(META_TOOL_SEARCH)
+      ) {
+        stepOptions.toolChoice = {
+          type: "tool",
+          toolName: META_TOOL_SEARCH,
+        };
+      }
+      return stepOptions;
     },
     onChunk: async ({ chunk }) => {
       // First streamed chunk of this step → TTFC anchor (any chunk type).
