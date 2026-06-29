@@ -244,6 +244,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
     const builtInToolIds = runtime.config.builtInToolIds;
+    const computer = runtime.config.computer;
     const harness = runtime.config.harness;
     // `runtime.config.accessVersion` is the server-resolved value the
     // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
@@ -269,6 +270,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         respectToolVisibility,
         progressiveToolDiscovery,
         ...(builtInToolIds ? { builtInToolIds } : {}),
+        ...(computer ? { computer } : {}),
         ...(harness ? { harness } : {}),
         // Threaded into the runner's per-tool widget snapshot capture so
         // `chatSessions:createWidgetSnapshot` can authenticate against the

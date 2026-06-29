@@ -23,7 +23,11 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveHostTools,
+  type HostComputerResource,
+} from "../../utils/built-in-tools/registry.js";
+import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
@@ -172,6 +176,12 @@ export interface RunSimulationOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Personal-computer attachment from the chatbox's pinned HostConfigV2. This
+   * is the resource gate for computer-backed built-ins like `bash`; capabilities
+   * still ride `builtInToolIds`.
+   */
+  computer?: HostComputerResource;
+  /**
    * Host harness selector mirrored from the chatbox's pinned HostConfigV2.
    * When "claude-code" the synthetic visitor's turns run the real Claude Code
    * runtime; absent ⇒ emulated. Forward-compatible: only activates once the
@@ -308,6 +318,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    computer,
     harness,
     accessVersion,
     convexHttpUrl,
@@ -358,6 +369,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           respectToolVisibility,
           progressiveToolDiscovery,
           builtInToolIds,
+          computer,
           harness,
           accessVersion,
           convexHttpUrl,
@@ -448,6 +460,7 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  computer?: HostComputerResource;
   harness?: Harness;
   accessVersion?: number;
   convexHttpUrl: string;
@@ -470,6 +483,7 @@ async function runOneSession(args: {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    computer,
     harness,
     accessVersion,
     convexHttpUrl,
@@ -516,13 +530,33 @@ async function runOneSession(args: {
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
     const builtInTools = resolveHostTools(
-      { builtInToolIds },
+      { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
+        isChatboxSession: true,
+        requireToolApproval,
       }
     );
+
+    // Cloud Skills parity with a real chat-v2 visitor: a synthetic session is
+    // always member-initiated (the route authenticates the generator), so the
+    // guest gate never trips here. Skills are delivered the same two ways chat
+    // does — natively via the harness `skills` param when the turn runs the
+    // real Claude Code runtime, or as the emulated `listSkills`/`loadSkill`
+    // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
+    // harness path (it delivers skills itself), so this only wires the emulated
+    // tools, mirroring `web/chat-v2.ts`.
+    const cloudSkillsEnabled =
+      Boolean(authHeader) &&
+      Boolean(projectId) &&
+      shouldEnableCloudSkillTools({
+        isGuest: false,
+        harness,
+        modelId: String(modelDefinition.id),
+        hasProjectId: Boolean(projectId),
+      });
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -540,6 +574,9 @@ async function runOneSession(args: {
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
+      ...(cloudSkillsEnabled
+        ? { cloudSkills: { authHeader, projectId } }
+        : {}),
     });
 
     // One browser context per session: renders MCP App tool results in the

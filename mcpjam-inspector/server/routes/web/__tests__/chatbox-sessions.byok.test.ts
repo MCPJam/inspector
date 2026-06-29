@@ -122,4 +122,40 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
     expect(status).toBe(200);
     expect(data.runId).toBe("run-1");
   });
+
+  it("threads computer-backed built-ins into swarm simulation", async () => {
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-computer",
+        accessVersion: 0,
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: true,
+        hostStyle: "default",
+        builtInToolIds: ["bash"],
+        computer: { kind: "personal", workdir: "/workspace" },
+      },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chatboxes/cbx-computer/simulate-sessions/start",
+      validBody,
+      token,
+    );
+    const { status, data } = await expectJson<{ runId?: string }>(response);
+
+    expect(status).toBe(200);
+    expect(data.runId).toBe("run-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(startSimulationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        builtInToolIds: ["bash"],
+        computer: { kind: "personal", workdir: "/workspace" },
+        requireToolApproval: true,
+      })
+    );
+  });
 });

@@ -196,7 +196,7 @@ function baseOptions() {
     runId: "run-1",
     chatboxId: "chatbox-1",
     projectId: "proj-1",
-    personas: [{ id: "p1", name: "Persona One", role: "tester" }],
+    personas: [{ id: "p1", name: "Persona One", role: "tester", notes: "" }],
     sessionsPerPersona: 1,
     maxTurns: 3,
     modelId: "anthropic/claude-haiku-4.5",
@@ -400,6 +400,48 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(artifactCall).toBeDefined();
     expect((artifactCall![1] as any).widgetRenderObservations).toHaveLength(1);
     expect((artifactCall![1] as any).browserInteractionSteps).toBeUndefined();
+  });
+
+  it("passes chatbox computer resources to the built-in tool resolver", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({
+      ...baseOptions(),
+      builtInToolIds: ["bash"],
+      computer: { kind: "personal", workdir: "/workspace" },
+      requireToolApproval: true,
+    });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(Object.keys(prepareOpts.builtInTools ?? {})).toEqual(["bash"]);
+    expect(prepareOpts.builtInTools.bash).toBeDefined();
+  });
+
+  it("wires Cloud Skills on the emulated synthetic path (member, no harness)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({ ...baseOptions() });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toEqual({
+      authHeader: "Bearer token",
+      projectId: "proj-1",
+    });
+  });
+
+  it("omits Cloud Skills tools on the harness path (delivered natively)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
+    // which writes skills into the sandbox itself; the emulated listSkills/
+    // loadSkill tools must NOT also be advertised.
+    await startSimulation({ ...baseOptions(), harness: "claude-code" });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
   });
 
   it("disposes the context when the turn throws (session failure path)", async () => {
