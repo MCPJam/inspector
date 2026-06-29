@@ -383,7 +383,7 @@ export function BehaviorTab({
           label={
             <InfoHoverLabel
               label={fRenderImages.label}
-              tooltip="Controls where MCP tool-returned images appear in the UI: hidden, expanded panel only, or inline."
+              tooltip="Controls where MCP tool-returned images appear in the UI: hidden, collapsed tool cards, or inline."
             />
           }
           control={
@@ -410,9 +410,9 @@ export function BehaviorTab({
               </ToggleGroupItem>
               <ToggleGroupItem
                 value="panel"
-                aria-label="Render images in expanded panel"
+                aria-label="Render images in collapsed tool cards"
               >
-                Panel
+                Collapsed
               </ToggleGroupItem>
               <ToggleGroupItem value="inline" aria-label="Render images inline">
                 Inline
