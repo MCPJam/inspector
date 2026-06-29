@@ -70,6 +70,7 @@ describe("seedHostTemplate", () => {
   it("threads appVersion into the mcpjam template (and only it)", () => {
     const mcpjam = seedHostTemplate("mcpjam", { appVersion: "9.9.9" });
     const profile = mcpjam.mcpProfile as Record<string, any>;
+    expect(mcpjam.modelId).toBe("anthropic/claude-haiku-4.5");
     expect(profile.initialize.clientInfo.version).toBe("9.9.9");
     expect(profile.apps.uiInitialize.hostInfo.version).toBe("9.9.9");
 

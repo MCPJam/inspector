@@ -39,9 +39,7 @@ type HostConfigForPlayground = Pick<
  *
  * Fall through to the host style's template default only when the
  * configured id is empty/whitespace or doesn't resolve at all. BYO
- * host ids with no template entry land on MCPJam, whose `modelId` is
- * empty — returns `undefined`, which the caller treats as "leave the
- * picker alone."
+ * host ids with no template entry land on MCPJam's hosted Haiku default.
  */
 export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,

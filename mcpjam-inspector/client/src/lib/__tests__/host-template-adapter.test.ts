@@ -23,8 +23,10 @@ describe("client host-template adapter", () => {
 
   it("threads the inspector build version into the mcpjam template", () => {
     const config = seedFromHostTemplate("mcpjam") as {
+      modelId?: string;
       mcpProfile?: { initialize?: { clientInfo?: { version?: string } } };
     };
+    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
     expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe(
       __APP_VERSION__,
     );

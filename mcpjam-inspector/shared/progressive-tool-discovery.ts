@@ -564,6 +564,30 @@ export function resolveActiveToolNames(
   return [...names];
 }
 
+export function shouldForceInitialToolSearch(
+  plan: ProgressiveToolPlan | undefined,
+  state: ToolDiscoveryState | undefined,
+  stepIndex: number,
+): boolean {
+  if (plan?.enabled !== true || state === undefined || stepIndex !== 0) {
+    return false;
+  }
+
+  const knownToolIds = new Set(plan.catalog.map((entry) => entry.toolId));
+  const hasKnownToolId = (ids: ReadonlySet<string>) => {
+    for (const id of ids) {
+      if (knownToolIds.has(id)) return true;
+    }
+    return false;
+  };
+
+  return (
+    !hasKnownToolId(state.loadedToolIds) &&
+    !hasKnownToolId(state.newlyLoadedToolIds) &&
+    !hasKnownToolId(state.pendingApprovalToolIds)
+  );
+}
+
 /**
  * Wrap a tools map so that out-of-subset tools throw a structured "not
  * loaded" error when invoked, while in-subset tools (meta-tools, loaded,

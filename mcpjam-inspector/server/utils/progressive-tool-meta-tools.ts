@@ -37,13 +37,7 @@ const searchSchema = z.object({
   query: z
     .string()
     .describe(
-      "Free-text search across tool names, descriptions, and field names.",
-    ),
-  serverIds: z
-    .array(z.string())
-    .optional()
-    .describe(
-      "Restrict matches to these server ids. Omit to search across all connected servers.",
+      "Free-text search across tool names, descriptions, and field names."
     ),
   limit: z
     .number()
@@ -58,7 +52,7 @@ const loadSchema = z.object({
     .array(z.string())
     .min(1)
     .describe(
-      "Stable tool ids (from search_mcp_tools) to make callable on the next step.",
+      "Stable tool ids (from search_mcp_tools) to make callable on the next step."
     ),
 });
 
@@ -90,14 +84,14 @@ export interface ProgressiveMetaToolsConfig {
  * when the user has approval enabled — see the module docstring.
  */
 export function createProgressiveMetaTools(
-  config: ProgressiveMetaToolsConfig,
+  config: ProgressiveMetaToolsConfig
 ): ToolSet {
   const { getCatalog, state, policy } = config;
   const result: ToolSet = {};
   result[META_TOOL_SEARCH] = tool({
     description: SEARCH_DESCRIPTION,
     inputSchema: searchSchema,
-    execute: async ({ query, serverIds, limit }): Promise<SearchMcpToolsResult> => {
+    execute: async ({ query, limit }): Promise<SearchMcpToolsResult> => {
       // Clamp caller-supplied limit. Zod only checks positive-int; a model
       // (or a tampered/injected one) can ask for `limit: 10_000` and force
       // serialization of an oversized tool-result payload. We allow up to
@@ -107,7 +101,7 @@ export function createProgressiveMetaTools(
       const MAX_SEARCH_LIMIT = Math.max(policy.searchLimit * 4, 32);
       const effectiveLimit = Math.min(
         limit ?? policy.searchLimit,
-        MAX_SEARCH_LIMIT,
+        MAX_SEARCH_LIMIT
       );
       const catalog = getCatalog();
       // Rank the full match list first so `totalMatches` reflects the true
@@ -115,7 +109,6 @@ export function createProgressiveMetaTools(
       // Otherwise the model sees `totalMatches === matches.length` and can't
       // tell whether to refine the query.
       const allMatches = searchToolCatalog(catalog, query, {
-        serverIds,
         limit: Number.MAX_SAFE_INTEGER,
       });
       const matches = allMatches.slice(0, effectiveLimit);

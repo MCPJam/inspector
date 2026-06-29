@@ -165,6 +165,73 @@ describe("mcpjam-stream-handler", () => {
     expect(Object.keys(requestPayload.payload.tools)).toEqual(["search"]);
   });
 
+  it("forces search_mcp_tools on the first progressive-discovery request", async () => {
+    const toolDef = (description: string) => ({
+      description,
+      inputSchema: { type: "object" } as any,
+    });
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "search_mcp_tools", inputSchema: { type: "object" } },
+      { name: "load_mcp_tools", inputSchema: { type: "object" } },
+      { name: "show_squad", inputSchema: { type: "object" } },
+    ]);
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show squad" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        search_mcp_tools: toolDef("Search MCP tools"),
+        load_mcp_tools: toolDef("Load MCP tools"),
+        show_squad: toolDef("Show squad"),
+      },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      progressivePlan: {
+        enabled: true,
+        reasons: ["test"],
+        policy: {
+          thresholdPct: 0.03,
+          maxToolTokens: 10_000,
+          maxToolCount: 30,
+          searchLimit: 8,
+        },
+        catalog: [
+          {
+            toolId: "sports::show_squad",
+            modelName: "show_squad",
+            serverId: "sports",
+            originalName: "show_squad",
+            description: "Show squad",
+            fields: [],
+            inputSchema: {},
+            tokenEstimate: 10,
+          },
+        ],
+        totalTokenEstimate: 10,
+      } as any,
+      discoveryState: {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+    );
+    expect(fetchBody.toolChoice).toEqual({
+      type: "tool",
+      toolName: "search_mcp_tools",
+    });
+    expect(
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
+    ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
+  });
+
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {
     const onConversationComplete = vi.fn();
     const messages = [

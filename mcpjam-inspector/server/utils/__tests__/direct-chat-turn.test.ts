@@ -219,6 +219,124 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray(prepareStepReturn.activeTools)).toBe(true);
   });
 
+  it("forces the initial progressive-discovery step to search tools", async () => {
+    let prepareStepReturn: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      prepareStepReturn = options.prepareStep({ stepNumber: 0 });
+      return defaultStreamTextReturn();
+    });
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "show squad" } as any],
+      systemPrompt: "s",
+      tools: {
+        search_mcp_tools: { description: "", execute: async () => ({}) },
+        load_mcp_tools: { description: "", execute: async () => ({}) },
+        show_squad: { description: "", execute: async () => ({}) },
+      } as any,
+      progressivePlan: {
+        enabled: true,
+        reasons: [],
+        policy: {
+          thresholdPct: 0.03,
+          maxToolTokens: 10_000,
+          maxToolCount: 30,
+          searchLimit: 8,
+        },
+        catalog: [
+          {
+            toolId: "sports::show_squad",
+            modelName: "show_squad",
+            serverId: "sports",
+            originalName: "show_squad",
+            description: "",
+            fields: [],
+            inputSchema: {},
+            tokenEstimate: 100,
+          },
+        ],
+        totalTokenEstimate: 100,
+      } as any,
+      discoveryState: {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      } as any,
+    });
+
+    await consumeDirectChatTurnHeadless(handle);
+
+    expect(prepareStepReturn).toMatchObject({
+      activeTools: expect.arrayContaining([
+        "search_mcp_tools",
+        "load_mcp_tools",
+      ]),
+      toolChoice: { type: "tool", toolName: "search_mcp_tools" },
+    });
+    expect(prepareStepReturn.activeTools).not.toContain("show_squad");
+  });
+
+  it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {
+    let streamTextOptions: any;
+    let prepareStepReturn: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      streamTextOptions = options;
+      prepareStepReturn = options.prepareStep({ stepNumber: 0 });
+      return defaultStreamTextReturn();
+    });
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "show squad" } as any],
+      systemPrompt: "s",
+      tools: {
+        search_mcp_tools: { description: "", execute: async () => ({}) },
+        load_mcp_tools: { description: "", execute: async () => ({}) },
+        show_squad: { description: "", execute: async () => ({}) },
+      } as any,
+      progressivePlan: {
+        enabled: true,
+        reasons: [],
+        policy: {
+          thresholdPct: 0.03,
+          maxToolTokens: 10_000,
+          maxToolCount: 30,
+          searchLimit: 8,
+        },
+        catalog: [
+          {
+            toolId: "sports::show_squad",
+            modelName: "show_squad",
+            serverId: "sports",
+            originalName: "show_squad",
+            description: "",
+            fields: [],
+            inputSchema: {},
+            tokenEstimate: 100,
+          },
+        ],
+        totalTokenEstimate: 100,
+      } as any,
+      discoveryState: {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      } as any,
+      toolChoice: "none" as any,
+    });
+
+    await consumeDirectChatTurnHeadless(handle);
+
+    expect(streamTextOptions.toolChoice).toBe("none");
+    expect(prepareStepReturn.activeTools).toEqual(
+      expect.arrayContaining(["search_mcp_tools", "load_mcp_tools"]),
+    );
+    expect(prepareStepReturn).not.toHaveProperty("toolChoice");
+  });
+
   it("keeps non-cataloged injected tools advertisable under progressive discovery", async () => {
     // Regression: progressive discovery narrows the default set to the cataloged
     // active subset, which never contains tools injected after plan-build (the
