@@ -336,14 +336,17 @@ export function PartSwitch({
       // the original tool result.
       return metaAnchor;
     })();
-    // WidgetReplay derives toolResponseMetadata from rawOutput first, so the
-    // metadata anchor must also be the raw-output meta source — otherwise a run
-    // result (or a tweak of it) would pair with the original's metadata.
-    // Binding (resourceUri) stays stable because WidgetReplay receives the
-    // original `effectiveToolMeta` via its toolMetadata prop.
-    const effectiveRawOutput = lastRunOutput
-      ? lastRunOutput.value
-      : toolInfo.rawOutput;
+    // After a Run, only the widget's toolResponseMetadata should reflect the
+    // latest result — override that value rather than swapping `rawOutput`, so
+    // serverId / uiType / effectiveToolMeta keep deriving from the original
+    // result. A rerun is the same tool; its binding must not change. (The
+    // server execute result also lacks MCPJam's `_serverId` annotation, so
+    // swapping rawOutput would drop serverId on raw-result-resolved cards.)
+    const toolResponseMetadataOverride = lastRunOutput
+      ? (readToolResultMeta(lastRunOutput.value) as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
     const hasEdits =
       editedInput !== null || editedOutput !== null || lastRunOutput !== null;
 
@@ -566,10 +569,8 @@ export function PartSwitch({
               toolState={toolInfo.toolState}
               toolInput={effectiveInput}
               toolOutput={effectiveOutput}
-              rawOutput={effectiveRawOutput}
-              // Pass the already-resolved server id so WidgetReplay doesn't
-              // rediscover it from a swapped Run result that lacks `_serverId`.
-              resolvedServerId={serverId ?? undefined}
+              rawOutput={toolInfo.rawOutput}
+              toolResponseMetadataOverride={toolResponseMetadataOverride}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
               toolsMetadata={toolsMetadata}

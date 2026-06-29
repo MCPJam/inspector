@@ -31,13 +31,12 @@ export interface WidgetReplayProps {
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
   /**
-   * Server id already resolved by the caller. Preferred over rediscovering it
-   * from `rawOutput`, which matters when `rawOutput` is swapped to a fresh Run
-   * result that lacks MCPJam's `_serverId` annotation — without this the widget
-   * would lose its server id on surfaces that resolved it via the raw-result
-   * fallback (no `toolServerMap` entry).
+   * Overrides the `toolResponseMetadata` (window.openai.toolResponseMetadata)
+   * the widget receives. Used when the visible result came from a re-Run, whose
+   * fresh `_meta` must reach the widget while `rawOutput` stays the original so
+   * serverId / uiType / binding derivation is unaffected.
    */
-  resolvedServerId?: string;
+  toolResponseMetadataOverride?: Record<string, unknown>;
   renderOverride?: ToolRenderOverride;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
@@ -102,7 +101,7 @@ export function WidgetReplay({
   toolMetadata,
   toolsMetadata = {},
   toolServerMap = {},
-  resolvedServerId,
+  toolResponseMetadataOverride,
   renderOverride,
   onSendFollowUp,
   onCallTool,
@@ -135,7 +134,6 @@ export function WidgetReplay({
   const uiResourceUri =
     renderOverride?.resourceUri ?? getUIResourceUri(uiType, effectiveToolMeta);
   const serverId =
-    resolvedServerId ??
     renderOverride?.serverId ??
     getToolServerId(toolName, toolServerMap) ??
     readToolResultServerId(rawOutput);
@@ -188,7 +186,8 @@ export function WidgetReplay({
   // Computed from `rawOutput` so the `{ value, _meta }` wrapper case
   // (where `toolOutput` is the unwrapped value and lacks `_meta`)
   // resolves correctly via readToolResultMeta's two-level check.
-  const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
+  const toolResponseMetadata = (toolResponseMetadataOverride ??
+    readToolResultMeta(rawOutput) ??
     readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
   // The relocated renderer reads its host via the package `useWidgetHost()`
