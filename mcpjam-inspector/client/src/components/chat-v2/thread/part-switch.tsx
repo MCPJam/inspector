@@ -221,9 +221,13 @@ export function PartSwitch({
   );
   const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
   const handleRevert = useCallback(() => {
+    // Bumping runSeqRef invalidates any in-flight Run, whose guarded `finally`
+    // will then skip setIsRunning(false) — so clear it here too, or the card
+    // would stay stuck in the running state with Run disabled.
     runSeqRef.current += 1;
     setEditedInput(null);
     setEditedOutput(null);
+    setIsRunning(false);
     setEditVersion((v) => v + 1);
   }, []);
 
