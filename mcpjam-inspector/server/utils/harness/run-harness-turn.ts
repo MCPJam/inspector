@@ -1139,6 +1139,13 @@ export async function runHarnessTurn(
         // `text-delta` parts. Drain it before building the persisted transcript.
         const finalText = await res.text;
 
+        // Settle cumulative usage + finish reason on the driver NOW — usage is
+        // known from the finish part. Set before the completeness fallback below
+        // so the synthesized tool step's finishStep() (and every step settling
+        // after this point) reports the known cumulative turnUsage, not undefined.
+        activeDriver.usage = usage;
+        activeDriver.finishReason = turnFinishReason;
+
         // Completeness reconciliation against the authoritative result: if the
         // live stream yielded no assistant text (answer arrived as a final
         // result, not deltas), the hand-built transcript + UI projection would
@@ -1173,11 +1180,6 @@ export async function runHarnessTurn(
             assistantParts.push({ type: "text", text: finalText });
           }
         }
-
-        // Settle cumulative usage + finish reason on the driver so the final
-        // step-finish, turn_finish, and PersistedTurnTrace carry them.
-        activeDriver.usage = usage;
-        activeDriver.finishReason = turnFinishReason;
 
         // Flush the final step's assistant message + its tool results. Earlier
         // steps were flushed as new assistant content arrived after results, so
