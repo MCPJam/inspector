@@ -48,6 +48,10 @@ export interface PendingDashboardOAuthState {
 
 const PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS = 30 * 1000;
 
+// Session flag so the "seat still being set up" invite notice is shown at most
+// once per browser session instead of on every render/reload while pending.
+const INVITE_PENDING_TOAST_SESSION_KEY = "mcpjam:invite-pending-toast-shown";
+
 interface ActiveOrganizationSelection {
   organizationId?: string;
   userId: string | null;
@@ -324,9 +328,10 @@ export function useAppState({
     routeOrganizationId,
   ]);
 
-  // Land newly-signed-up invited users in the org they were invited to. The
-  // signup email carries `?invite_org`, stashed at boot; apply it once the user
-  // is authenticated and a confirmed member, then clear it so it fires once.
+  // Nudge a user invited to an org to switch into it once they're a confirmed
+  // member. The invited org is stashed from `?invite_org` at boot. While they
+  // aren't a member yet (e.g. a paid team seat still resolving) we tell them
+  // once; when membership lands we offer a one-click switch. We never force it.
   useEffect(() => {
     if (!hasHydratedStoredActiveOrganization) {
       return;
@@ -345,16 +350,32 @@ export function useAppState({
       (organization) => organization._id === pendingInviteOrgId
     );
     if (!isMemberOfInviteOrg) {
-      // Not a member yet (e.g. a paid seat still pending) — leave it stashed
-      // so a later load (once membership lands) can apply it.
+      // Not a member yet — keep the stash and let them know once per session.
+      if (
+        typeof window !== "undefined" &&
+        !window.sessionStorage.getItem(INVITE_PENDING_TOAST_SESSION_KEY)
+      ) {
+        window.sessionStorage.setItem(INVITE_PENDING_TOAST_SESSION_KEY, "1");
+        toast.info(
+          "You've been invited to an organization. You'll get access once your seat is set up."
+        );
+      }
       return;
     }
     clearPendingInviteOrgId();
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(INVITE_PENDING_TOAST_SESSION_KEY);
+    }
     if (activeOrganizationSelection.organizationId !== pendingInviteOrgId) {
-      setActiveOrganizationSelection({
-        organizationId: pendingInviteOrgId,
-        userId: currentUserId,
-      });
+      toast.success(
+        "You're in! Switch to the organization you were invited to.",
+        {
+          action: {
+            label: "Switch organization",
+            onClick: () => setActiveOrganizationId(pendingInviteOrgId),
+          },
+        }
+      );
     }
   }, [
     activeOrganizationSelection.organizationId,
@@ -362,6 +383,7 @@ export function useAppState({
     currentUserId,
     hasHydratedStoredActiveOrganization,
     isLoadingOrganizations,
+    setActiveOrganizationId,
     validOrganizations,
   ]);
 
