@@ -264,9 +264,13 @@ The debug panel includes a **Mounts** section that appears only when a widget if
 
 Click **Edit** on a tool-result card to make the **Input** and **Result** JSON editable in place. Edits re-render the widget live with no reload; **Run** re-executes the tool with the edited input, and **Revert** restores the original. Edits are local to the session — nothing is persisted.
 
-## JSON-RPC Logger
+## Right Rail
 
-The right rail streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+
+### Logs tab
+
+Streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
 
 Logged messages include:
 
@@ -284,6 +288,12 @@ Controls in the logger header:
 - **Download** the buffer as a file
 - **Clear** the buffer
 - **Collapse** the rail
+
+### Shell tab
+
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+
+Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
 ## Input Bar
 
