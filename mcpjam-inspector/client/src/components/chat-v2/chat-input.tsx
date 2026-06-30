@@ -296,10 +296,10 @@ export function ChatInput({
   // so the popover's fetch effects don't re-run every render.
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && clientSelector?.projectId
-        ? { kind: "cloud", projectId: clientSelector.projectId }
+      HOSTED_MODE && clientSelector?.cloudProjectId
+        ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.projectId],
+    [clientSelector?.cloudProjectId],
   );
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
