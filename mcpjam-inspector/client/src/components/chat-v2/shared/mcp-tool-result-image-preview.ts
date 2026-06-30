@@ -44,6 +44,48 @@ function getEmbeddedResource(block: Record<string, unknown>) {
   return isRecord(block.resource) ? block.resource : undefined;
 }
 
+// Tool outputs may be wrapped as `{ type: "json", value: ... }` one or more
+// times before the model-facing content shape. Mirrors the transcript
+// reader's unwrap; kept local so this shared renderer doesn't pull in the
+// heavy transcript-conversion module.
+function unwrapJsonEnvelope(value: unknown): unknown {
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!isRecord(current)) return current;
+    if (current.type !== "json" || !("value" in current)) return current;
+    current = current.value;
+  }
+  return current;
+}
+
+// A persisted tool result that has been round-tripped through the AI SDK
+// loses its raw MCP `result` and keeps only the model-facing output shape
+// (`{ type: "content", value: [{ type: "media", ... }] }`). When the model
+// was allowed to see the image, that surviving copy still carries the base64,
+// so we can render straight from it. Returns the unwrapped content when it
+// holds at least one image media part, otherwise undefined.
+function asModelOutputImageContent(
+  value: unknown
+): McpModelOutputContent | undefined {
+  const unwrapped = unwrapJsonEnvelope(value);
+  if (
+    !isRecord(unwrapped) ||
+    unwrapped.type !== "content" ||
+    !Array.isArray(unwrapped.value)
+  ) {
+    return undefined;
+  }
+  const hasImageMedia = unwrapped.value.some(
+    (part) =>
+      isRecord(part) &&
+      part.type === "media" &&
+      isImageMimeType(part.mediaType)
+  );
+  return hasImageMedia
+    ? (unwrapped as unknown as McpModelOutputContent)
+    : undefined;
+}
+
 function rendersDirectImages(
   policy: McpToolResultImageRenderingPolicy | undefined
 ): boolean {
@@ -105,6 +147,9 @@ export function hasMcpToolResultImageCandidate(
   result: unknown,
   policy?: McpToolResultImageRenderingPolicy
 ): boolean {
+  // Reloaded transcripts carry only the model-facing output shape (the raw
+  // MCP `result` was dropped on re-persist); render straight from it.
+  if (asModelOutputImageContent(result)) return true;
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some((block) => {
     if (!isRecord(block)) return false;
@@ -144,6 +189,16 @@ export function getMcpToolResultImagePreviewKey(
     `server:${options.serverId ?? ""}`,
     `policy:${renderingPolicySignature(options.renderingPolicy)}`,
   ];
+
+  const modelOutputContent = asModelOutputImageContent(result);
+  if (modelOutputContent) {
+    modelOutputContent.value.forEach((part) => {
+      if (part.type === "media" && isImageMimeType(part.mediaType)) {
+        keyParts.push(`media:${part.mediaType}:${imageDataSignature(part.data)}`);
+      }
+    });
+    return keyParts.join("|");
+  }
 
   if (!isRecord(result) || !Array.isArray(result.content)) {
     return keyParts.join("|");
@@ -215,6 +270,13 @@ export async function resolveMcpToolResultImagePreviews(
 ): Promise<McpToolResultImagePreview[]> {
   if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
     return [];
+  }
+
+  // Reloaded transcripts arrive already in the model-facing output shape —
+  // render directly from the surviving media parts (no SDK round-trip).
+  const modelOutputContent = asModelOutputImageContent(result);
+  if (modelOutputContent) {
+    return mediaPartsToPreviews(modelOutputContent);
   }
 
   try {

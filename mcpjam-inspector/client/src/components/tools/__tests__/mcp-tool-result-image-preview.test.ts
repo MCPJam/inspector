@@ -79,16 +79,47 @@ describe("mcp tool result image preview resolver", () => {
     ]);
   });
 
-  it("does not render already-converted model media outputs as UI previews", async () => {
+  it("renders already-converted model media outputs (reloaded transcripts) as UI previews", async () => {
+    // After a transcript is re-persisted, the raw MCP `result` is dropped by
+    // the AI SDK round-trip and only the model-facing output survives. The UI
+    // must still render the image from that surviving copy (when the model was
+    // allowed to see it), otherwise tool images vanish as a chat ages.
     const modelOutput = {
       type: "content",
       value: [{ type: "media", data: PNG_DATA, mediaType: "image/png" }],
     };
 
-    expect(hasMcpToolResultImageCandidate(modelOutput)).toBe(false);
-    await expect(resolveMcpToolResultImagePreviews(modelOutput)).resolves.toEqual(
-      []
-    );
+    expect(hasMcpToolResultImageCandidate(modelOutput)).toBe(true);
+    await expect(
+      resolveMcpToolResultImagePreviews(modelOutput)
+    ).resolves.toEqual([
+      {
+        src: `data:image/png;base64,${PNG_DATA}`,
+        mediaType: "image/png",
+        alt: "Tool result image 1",
+      },
+    ]);
+  });
+
+  it("renders model media outputs wrapped in a json envelope", async () => {
+    const enveloped = {
+      type: "json",
+      value: {
+        type: "content",
+        value: [{ type: "media", data: PNG_DATA, mediaType: "image/png" }],
+      },
+    };
+
+    expect(hasMcpToolResultImageCandidate(enveloped)).toBe(true);
+    await expect(
+      resolveMcpToolResultImagePreviews(enveloped)
+    ).resolves.toEqual([
+      {
+        src: `data:image/png;base64,${PNG_DATA}`,
+        mediaType: "image/png",
+        alt: "Tool result image 1",
+      },
+    ]);
   });
 
   it("resolves linked image resources through the supplied resource reader", async () => {
