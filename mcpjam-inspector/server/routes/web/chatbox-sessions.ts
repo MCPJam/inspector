@@ -244,6 +244,10 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
     const builtInToolIds = runtime.config.builtInToolIds;
+    const modelVisibleMcpToolResults =
+      runtime.config.modelVisibleMcpToolResults;
+    const mcpToolResultImageRendering =
+      runtime.config.mcpToolResultImageRendering;
     const computer = runtime.config.computer;
     const harness = runtime.config.harness;
     // `runtime.config.accessVersion` is the server-resolved value the
@@ -269,6 +273,8 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         requireToolApproval,
         respectToolVisibility,
         progressiveToolDiscovery,
+        modelVisibleMcpToolResults,
+        mcpToolResultImageRendering,
         ...(builtInToolIds ? { builtInToolIds } : {}),
         ...(computer ? { computer } : {}),
         ...(harness ? { harness } : {}),

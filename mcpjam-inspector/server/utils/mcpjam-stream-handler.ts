@@ -65,6 +65,50 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 
+function unwrapJsonEnvelope(value: unknown): unknown {
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return current;
+    }
+    const record = current as Record<string, unknown>;
+    if (record.type !== "json" || !("value" in record)) {
+      return current;
+    }
+    current = record.value;
+  }
+  return current;
+}
+
+function isModelVisibleImageOutput(value: unknown): boolean {
+  const output = unwrapJsonEnvelope(value);
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return false;
+  }
+  const record = output as Record<string, unknown>;
+  if (record.type !== "content" || !Array.isArray(record.value)) {
+    return false;
+  }
+  return record.value.some((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      return false;
+    }
+    const partRecord = part as Record<string, unknown>;
+    if (partRecord.type === "text" && typeof partRecord.text === "string") {
+      return (
+        partRecord.text.startsWith("[image omitted:") ||
+        partRecord.text.startsWith("[resource link omitted:") ||
+        partRecord.text.startsWith("[embedded image resource omitted:")
+      );
+    }
+    return (
+      (partRecord.type === "media" || partRecord.type === "image-data") &&
+      typeof partRecord.mediaType === "string" &&
+      partRecord.mediaType.startsWith("image/")
+    );
+  });
+}
+
 /**
  * Approval-free check for a tool-call name.
  *
@@ -1314,17 +1358,16 @@ async function emitToolResults(
             typeof (part as any).serverId === "string"
               ? ((part as any).serverId as string)
               : undefined;
-          // MCP App tools scrub structuredContent from the model-facing
-          // `output`; their widgets need the raw result, which
-          // `executeToolCallsFromMessages` stamps on `result` when it carries
-          // structuredContent. Prefer it so the widget receives
-          // structuredContent. All other tools keep the existing
-          // `output`-first behavior.
+          // Some tool outputs have a model-facing `output` and a raw MCP
+          // `result`. UI must use the raw result when the model-facing copy
+          // drops fields widgets need (structuredContent) or turns images into
+          // media parts for the model.
           const rawResult = (part as any).result;
           const rawOutput =
             rawResult &&
             typeof rawResult === "object" &&
-            "structuredContent" in rawResult
+            ("structuredContent" in rawResult ||
+              isModelVisibleImageOutput(part.output))
               ? rawResult
               : part.output ?? rawResult;
 

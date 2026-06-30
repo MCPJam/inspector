@@ -544,6 +544,9 @@ async function runOneSession(args: {
       ...(modelVisibleMcpToolResults !== undefined
         ? { modelVisibleMcpToolResults }
         : {}),
+      ...(mcpToolResultImageRendering !== undefined
+        ? { mcpToolResultImageRendering }
+        : {}),
       selectedServers:
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length

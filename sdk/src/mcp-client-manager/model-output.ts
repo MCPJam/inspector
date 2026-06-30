@@ -216,7 +216,6 @@ function mapImageData(
       `image omitted: image count exceeds ${budget.maxImageCount} limit`
     );
   }
-  budget.imageCount += 1;
 
   const validated = validateBase64ImageData(data, budget.maxImageBytes);
   if (validated.kind === "invalid") {
@@ -238,7 +237,11 @@ function mapImageData(
       )} limit`
     );
   }
+  // Commit both budgets only once the image is actually included — an
+  // invalid, too-large, or byte-budget-exceeded blob above returns without
+  // consuming a count slot, mirroring how `totalImageBytes` is handled.
   budget.totalImageBytes += validated.bytes;
+  budget.imageCount += 1;
 
   return {
     type: "media",

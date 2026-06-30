@@ -289,6 +289,38 @@ describe("mcpCallToolResultToModelOutput", () => {
     ]);
   });
 
+  it("does not let invalid images consume the image count budget", () => {
+    // Two malformed blobs precede two valid images under a count cap of 2.
+    // The bad blobs must be omitted WITHOUT burning a count slot, so both
+    // valid images still fit. Regression: the count was previously
+    // incremented before validation, letting invalid/oversized blobs crowd
+    // out valid images in the same tool result.
+    const result = mcpCallToolResultToModelOutput(
+      {
+        content: [
+          { type: "image", data: "AAAA=", mimeType: "image/png" },
+          { type: "image", data: "AAAA=", mimeType: "image/png" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+      } as unknown as CallToolResult,
+      { maxImageCount: 2 }
+    );
+
+    expect(result?.value).toEqual([
+      {
+        type: "text",
+        text: "[image omitted: invalid base64 data (image/png)]",
+      },
+      {
+        type: "text",
+        text: "[image omitted: invalid base64 data (image/png)]",
+      },
+      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+    ]);
+  });
+
   it("rejects non-canonical malformed base64 image data", () => {
     const malformed = mcpCallToolResultToModelOutput({
       content: [{ type: "image", data: "AAAA=", mimeType: "image/png" }],

@@ -962,6 +962,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     ...opt("progressiveToolDiscovery"),
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
+    ...opt("mcpToolResultImageRendering"),
     ...opt("harness"),
     ...opt("computer"),
     ...opt("serverIds"),

@@ -51,7 +51,10 @@ import {
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import type {
+  HostConfigDtoV2,
+  McpToolResultImageRendering,
+} from "@/lib/client-config-v2";
 
 // Default host-style template id used when the caller passes
 // `activeHost` but no explicit `hostStyle`. Mirrors
@@ -193,6 +196,14 @@ interface TraceViewerProps {
    * outer scope's user-edited caps.
    */
   hostStyle?: string;
+  /**
+   * Human-facing render policy for MCP tool-result images, mirroring the
+   * chat surfaces (App.tsx / ChatTabV2). When omitted, the trace `Thread`
+   * falls back to the default "inline" placement. Pass the value already
+   * gated by model visibility via
+   * `gateMcpToolResultImageRenderingByModelVisibility`.
+   */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
 }
 
 function getTraceMessages(
@@ -306,6 +317,7 @@ export function TraceViewer({
   rawGrowWithContent = false,
   activeHost,
   hostStyle,
+  mcpToolResultImageRendering,
 }: TraceViewerProps) {
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
@@ -902,6 +914,7 @@ export function TraceViewer({
                     isLoading={isLoading}
                     toolsMetadata={toolsMetadata}
                     toolServerMap={toolServerMap}
+                    mcpToolResultImageRendering={mcpToolResultImageRendering}
                     onWidgetStateChange={onWidgetStateChange}
                     onModelContextUpdate={onModelContextUpdate}
                     displayMode={displayMode}
