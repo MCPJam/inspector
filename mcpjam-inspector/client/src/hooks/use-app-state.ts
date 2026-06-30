@@ -200,7 +200,11 @@ export function useAppState({
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
-  validOrganizations: Array<{ _id: string; myRole?: string }>;
+  validOrganizations: Array<{
+    _id: string;
+    myRole?: string;
+    isPendingInvite?: boolean;
+  }>;
   requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
@@ -346,10 +350,10 @@ export function useAppState({
     if (!pendingInviteOrgId) {
       return;
     }
-    const isMemberOfInviteOrg = validOrganizations.some(
+    const inviteOrganization = validOrganizations.find(
       (organization) => organization._id === pendingInviteOrgId
     );
-    if (!isMemberOfInviteOrg) {
+    if (!inviteOrganization || inviteOrganization.isPendingInvite) {
       // Not a member yet — keep the stash and let them know once per session.
       if (
         typeof window !== "undefined" &&

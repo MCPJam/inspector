@@ -9,6 +9,8 @@ const {
   useProjectStateMock,
   useServerStateMock,
   disconnectAllRuntimeServersMock,
+  toastInfoMock,
+  toastSuccessMock,
   convexAuthState,
   projectStateValue,
   serverStateValue,
@@ -18,6 +20,8 @@ const {
   useProjectStateMock: vi.fn(),
   useServerStateMock: vi.fn(),
   disconnectAllRuntimeServersMock: vi.fn(),
+  toastInfoMock: vi.fn(),
+  toastSuccessMock: vi.fn(),
   convexAuthState: {
     isAuthenticated: true,
     isLoading: false,
@@ -79,6 +83,13 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: {
+    info: toastInfoMock,
+    success: toastSuccessMock,
+  },
 }));
 
 vi.mock("../use-logger", () => ({
@@ -171,6 +182,7 @@ describe("useAppState active organization recovery", () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
     disconnectAllRuntimeServersMock.mockResolvedValue({
@@ -273,6 +285,76 @@ describe("useAppState active organization recovery", () => {
     });
 
     expect(localStorage.getItem("active-organization-id:user-1")).toBe("org-b");
+  });
+
+  it("keeps an invited org stashed while the org membership is still pending", async () => {
+    localStorage.setItem("mcpjam:pending-invite-org", "org-invite");
+
+    renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        currentActorKey: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-personal", myRole: "owner" },
+          { _id: "org-invite", myRole: "member", isPendingInvite: true },
+        ],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledWith(
+        "You've been invited to an organization. You'll get access once your seat is set up.",
+      );
+    });
+
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem("mcpjam:pending-invite-org")).toBe(
+      "org-invite",
+    );
+  });
+
+  it("clears an invited org stash once the membership is confirmed", async () => {
+    localStorage.setItem("mcpjam:pending-invite-org", "org-invite");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        currentActorKey: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-personal", myRole: "owner" },
+          { _id: "org-invite", myRole: "member" },
+        ],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "You're in! Switch to the organization you were invited to.",
+        expect.objectContaining({
+          action: expect.objectContaining({
+            label: "Switch organization",
+          }),
+        }),
+      );
+    });
+
+    expect(toastInfoMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem("mcpjam:pending-invite-org")).toBeNull();
+
+    const toastAction = toastSuccessMock.mock.calls[0]?.[1]?.action;
+    act(() => {
+      toastAction?.onClick();
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeOrganizationId).toBe("org-invite");
+    });
   });
 
   it("clears a stale stored org when no valid organizations remain", async () => {
