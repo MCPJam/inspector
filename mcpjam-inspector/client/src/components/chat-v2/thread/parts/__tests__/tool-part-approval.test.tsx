@@ -296,6 +296,56 @@ describe("ToolPart approval expansion", () => {
     );
   });
 
+  it("renders raw embedded MCP image resources in the expanded panel even when part output is absent", async () => {
+    const user = userEvent.setup();
+    const rawEmbeddedResult = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "example://embedded-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        },
+      ],
+    };
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            input: undefined,
+            output: undefined,
+          } as any
+        }
+        rawOutput={rawEmbeddedResult}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{ placement: "collapsed" }}
+      />
+    );
+
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    const image = await screen.findByRole("img", {
+      name: "Tool result image 1",
+    });
+    expect(image).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
+
+    await user.click(screen.getByRole("radio", { name: "Raw" }));
+
+    expect(screen.getByTestId("json-editor")).toHaveTextContent(
+      JSON.stringify(rawEmbeddedResult)
+    );
+  });
+
   it("keeps MCP image tool results raw when rendering is disabled", async () => {
     const user = userEvent.setup();
     const output = {

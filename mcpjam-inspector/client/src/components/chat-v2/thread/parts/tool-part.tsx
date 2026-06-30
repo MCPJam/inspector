@@ -210,7 +210,10 @@ export function ToolPart({
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
-  const imagePreviewData = rawOutput ?? outputData;
+  const rawResultData = rawOutput ?? outputData;
+  const resultDisplayData =
+    outputValue !== undefined ? outputValue : rawResultData;
+  const imagePreviewData = rawResultData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
     mcpToolResultImageRendering
   );
@@ -225,7 +228,7 @@ export function ToolPart({
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
   const editInputValue = inputValue !== undefined ? inputValue : inputData;
-  const editOutputValue = outputValue !== undefined ? outputValue : outputData;
+  const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =
@@ -248,7 +251,8 @@ export function ToolPart({
     }
     return 1;
   }, [hasInput, inputData]);
-  const hasOutput = outputData !== undefined && outputData !== null;
+  const hasOutput =
+    resultDisplayData !== undefined && resultDisplayData !== null;
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
@@ -741,7 +745,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (outputData as { authUrls?: unknown })?.authUrls
+      (resultDisplayData as { authUrls?: unknown })?.authUrls
     );
     if (urls.length === 0) return null;
     return (
