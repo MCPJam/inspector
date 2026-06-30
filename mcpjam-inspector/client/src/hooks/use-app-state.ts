@@ -22,6 +22,10 @@ import {
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
 import {
+  clearPendingInviteOrgId,
+  readPendingInviteOrgId,
+} from "@/lib/pending-invite-org";
+import {
   clearHostedOAuthPendingState,
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
@@ -318,6 +322,47 @@ export function useAppState({
     isLoadingOrganizations,
     isRouteOrganizationValid,
     routeOrganizationId,
+  ]);
+
+  // Land newly-signed-up invited users in the org they were invited to. The
+  // signup email carries `?invite_org`, stashed at boot; apply it once the user
+  // is authenticated and a confirmed member, then clear it so it fires once.
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (!currentUserId || isLoadingOrganizations) {
+      return;
+    }
+    const pendingInviteOrgId = readPendingInviteOrgId();
+    if (!pendingInviteOrgId) {
+      return;
+    }
+    const isMemberOfInviteOrg = validOrganizations.some(
+      (organization) => organization._id === pendingInviteOrgId
+    );
+    if (!isMemberOfInviteOrg) {
+      // Not a member yet (e.g. a paid seat still pending) — leave it stashed
+      // so a later load (once membership lands) can apply it.
+      return;
+    }
+    clearPendingInviteOrgId();
+    if (activeOrganizationSelection.organizationId !== pendingInviteOrgId) {
+      setActiveOrganizationSelection({
+        organizationId: pendingInviteOrgId,
+        userId: currentUserId,
+      });
+    }
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    validOrganizations,
   ]);
 
   useEffect(() => {

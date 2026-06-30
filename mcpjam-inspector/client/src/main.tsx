@@ -10,6 +10,7 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import { capturePendingInviteOrgFromUrl } from "./lib/pending-invite-org";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE } from "./lib/config";
 import {
@@ -29,6 +30,10 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+// Capture an `?invite_org` invite deep link before the WorkOS auth redirect can
+// drop the URL; it is applied as the active org post-signup (see use-app-state).
+capturePendingInviteOrgFromUrl();
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
