@@ -350,6 +350,179 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `compat` command
+
+Check whether an MCP server's tools and widgets work on each AI host. Uses shared server connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Only report this host ID. Repeat for several. Default: all. Valid IDs: `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and others. |
+
+```bash
+mcpjam compat --url https://your-server.com/mcp
+mcpjam compat --url https://your-server.com/mcp --host claude --host chatgpt
+```
+
+The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `unknown`), a `findings` list explaining each verdict, and a top-level `summary` count. When the tool list is truncated (more than 50 pages), verdicts that would otherwise be `works` are downgraded to `unknown`.
+
+---
+
+## `hosts` commands
+
+Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `hosts templates`
+
+List the built-in host templates usable with `hosts create --template`. No additional flags.
+
+### `hosts list`
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `hosts get`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--host <id-or-name>` | Yes | Host name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `hosts create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes | Display name for the new host |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--template <id>` | No | Built-in template ID (see `hosts templates`), e.g. `claude`, `chatgpt`, `cursor` |
+| `--theme <theme>` | No | Theme for the seeded config: `light` or `dark` (template only) |
+| `--file <path>` | No | Host config v2 JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline host config v2 JSON (or `@file`, or `-`) |
+
+Provide either `--template` or `--file`/`--json`, not both.
+
+### `hosts update`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--host <id-or-name>` | Yes | Host name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name |
+| `--file <path>` | No | Replacement host config v2 JSON (or `-` for stdin) |
+| `--json <json>` | No | Inline replacement host config v2 JSON (or `@file`, or `-`) |
+
+### `hosts delete`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--host <id-or-name>` | Yes | Host name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
+## `env` commands
+
+Manage custom computer environments (Dockerfile images) in your hosted MCPJam projects. All `env` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `env list`
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `env get`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes | Display name for the new environment |
+| `--file <path>` | Yes | Dockerfile path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env edit`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name |
+| `--file <path>` | No | Replacement Dockerfile path (or `-` for stdin) |
+
+### `env build`
+
+Trigger an image build for the environment (async). Poll `env logs` to check build status.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env logs`
+
+Show an environment's builds (newest first) with their log preview.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env use`
+
+Boot your computer from this environment. This rebuilds the computer — installed files are wiped.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env reset`
+
+Reset your computer to its current image, wiping mutable state.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env promote`
+
+Share a personal-draft environment with the whole project. Requires project admin permissions.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env delete`
+
+Permanently delete an environment from a project.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
