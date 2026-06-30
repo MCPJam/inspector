@@ -589,17 +589,6 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // Apps · MCP Apps spec bridge (config)
   // ============================================================
   {
-    id: "mcpAppsOverrides",
-    section: "apps",
-    subsection: "MCP Apps spec bridge",
-    label: "Spec-bridge overrides",
-    path: "mcpProfile.apps.mcpAppsOverrides",
-    description:
-      "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
-    kind: { kind: "object", itemNoun: "dimension" },
-    read: (cfg) => mcpProfile(cfg)?.apps?.mcpAppsOverrides,
-  },
-  {
     id: "uiInitialize.hostInfo",
     section: "apps",
     subsection: "MCP Apps spec bridge",
