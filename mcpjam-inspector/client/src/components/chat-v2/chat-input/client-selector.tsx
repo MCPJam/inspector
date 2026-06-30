@@ -72,8 +72,10 @@ export interface ClientSelectorData {
   /** The project's CONVEX id (`sharedProjectId`), or null when the project has
    *  no Convex backing yet (e.g. the synthetic "Default" project). Cloud,
    *  Convex-scoped reads (cloud skills) MUST use this, never `projectId` — a
-   *  client-local UUID fails the `v.id("projects")` validator with a 500. */
-  cloudProjectId?: string | null;
+   *  client-local UUID fails the `v.id("projects")` validator with a 500.
+   *  Required (not optional) so every caller decides explicitly; pass `null`
+   *  when there's no Convex project rather than omitting it. */
+  cloudProjectId: string | null;
   /** Lead host id — the single active client / first compare column. */
   currentHostId: string | null;
   /** Persisted compare lineup (from `usePersistedHost`). */
