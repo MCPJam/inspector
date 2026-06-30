@@ -62,8 +62,9 @@ function unwrapJsonEnvelope(value: unknown): unknown {
 // loses its raw MCP `result` and keeps only the model-facing output shape
 // (`{ type: "content", value: [{ type: "media", ... }] }`). When the model
 // was allowed to see the image, that surviving copy still carries the base64,
-// so we can render straight from it. Returns the unwrapped content when it
-// holds at least one image media part, otherwise undefined.
+// so we can render straight from it. Returns a content object narrowed to the
+// well-formed image media parts (dropping omission markers, non-image media,
+// and malformed entries), or undefined when there are none.
 function asModelOutputImageContent(
   value: unknown
 ): McpModelOutputContent | undefined {
@@ -75,15 +76,21 @@ function asModelOutputImageContent(
   ) {
     return undefined;
   }
-  const hasImageMedia = unwrapped.value.some(
+  // Never trust the whole persisted array off a single match — filter to the
+  // parts we can actually render so a malformed sibling can't crash the map or
+  // emit a broken `data:` src.
+  const imageParts = unwrapped.value.filter(
     (part) =>
       isRecord(part) &&
       part.type === "media" &&
-      isImageMimeType(part.mediaType)
+      isImageMimeType(part.mediaType) &&
+      typeof part.data === "string"
   );
-  return hasImageMedia
-    ? (unwrapped as unknown as McpModelOutputContent)
-    : undefined;
+  if (imageParts.length === 0) return undefined;
+  return {
+    type: "content",
+    value: imageParts,
+  } as unknown as McpModelOutputContent;
 }
 
 function rendersDirectImages(
@@ -102,6 +109,16 @@ function rendersLinkedImages(
   policy: McpToolResultImageRenderingPolicy | undefined
 ): boolean {
   return policy?.linkedResources?.blob?.image ?? true;
+}
+
+function rendersAnyToolImages(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return (
+    rendersDirectImages(policy) ||
+    rendersEmbeddedImages(policy) ||
+    rendersLinkedImages(policy)
+  );
 }
 
 function renderPolicyToModelVisibilityPolicy(
@@ -148,8 +165,11 @@ export function hasMcpToolResultImageCandidate(
   policy?: McpToolResultImageRenderingPolicy
 ): boolean {
   // Reloaded transcripts carry only the model-facing output shape (the raw
-  // MCP `result` was dropped on re-persist); render straight from it.
-  if (asModelOutputImageContent(result)) return true;
+  // MCP `result` was dropped on re-persist). That shape no longer carries
+  // direct/embedded/linked origin, so honor the policy at the coarsest safe
+  // granularity — render only when tool-image rendering is enabled at all,
+  // otherwise a disabled policy would still leak images.
+  if (asModelOutputImageContent(result)) return rendersAnyToolImages(policy);
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some((block) => {
     if (!isRecord(block)) return false;

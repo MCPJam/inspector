@@ -122,6 +122,47 @@ describe("mcp tool result image preview resolver", () => {
     ]);
   });
 
+  it("hides reloaded model media outputs when tool-image rendering is disabled", async () => {
+    const modelOutput = {
+      type: "content",
+      value: [{ type: "media", data: PNG_DATA, mediaType: "image/png" }],
+    };
+    const disabled = {
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    };
+
+    expect(hasMcpToolResultImageCandidate(modelOutput, disabled)).toBe(false);
+    await expect(
+      resolveMcpToolResultImagePreviews(modelOutput, {
+        renderingPolicy: disabled,
+      })
+    ).resolves.toEqual([]);
+  });
+
+  it("drops malformed sibling parts in model media outputs without throwing", async () => {
+    const modelOutput = {
+      type: "content",
+      value: [
+        { type: "media", mediaType: 123 }, // malformed: non-string mediaType, no data
+        { type: "text", text: "[image omitted: image/png]" },
+        { type: "media", data: PNG_DATA, mediaType: "image/png" }, // valid
+      ],
+    };
+
+    expect(hasMcpToolResultImageCandidate(modelOutput)).toBe(true);
+    await expect(
+      resolveMcpToolResultImagePreviews(modelOutput)
+    ).resolves.toEqual([
+      {
+        src: `data:image/png;base64,${PNG_DATA}`,
+        mediaType: "image/png",
+        alt: "Tool result image 1",
+      },
+    ]);
+  });
+
   it("resolves linked image resources through the supplied resource reader", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
