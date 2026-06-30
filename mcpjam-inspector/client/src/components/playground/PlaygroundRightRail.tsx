@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import {
   FileText,
-  FolderTree,
   Loader2,
   PanelRightClose,
   TerminalSquare,
@@ -15,7 +14,6 @@ import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
 import { ComputerTerminalPane } from "@/components/computer/ComputerTerminalPane";
 import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
 import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
-import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -28,16 +26,11 @@ import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 export function PlaygroundRightRail({
   onClose,
   hostConfig,
-  hostId,
   projectId,
   isAuthenticated,
 }: {
   onClose: () => void;
   hostConfig: HostConfigDtoV2 | null;
-  /** Convex host document id (previewedHostId) — the SAME id the chat stream
-   *  keys the harness workdir cache by. NOT hostConfig.id (a content-addressed
-   *  config id), which would never match the write side. */
-  hostId: string | null;
   projectId: string | null;
   isAuthenticated: boolean;
 }) {
@@ -52,8 +45,6 @@ export function PlaygroundRightRail({
       onClose={onClose}
       projectId={projectId}
       isAuthenticated={isAuthenticated}
-      hostConfig={hostConfig}
-      hostId={hostId}
     />
   );
 }
@@ -64,38 +55,22 @@ function RightRailTabbed({
   onClose,
   projectId,
   isAuthenticated,
-  hostConfig,
-  hostId,
 }: {
   onClose: () => void;
   projectId: string | null;
   isAuthenticated: boolean;
-  hostConfig: HostConfigDtoV2 | null;
-  hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
-  // Bumped to remount (and thus reconnect) the terminal into the latest harness
-  // workdir on demand — cwd only applies at connect time.
-  const [reloadKey, setReloadKey] = useState(0);
   const posthog = usePostHog();
   // One controller for the rail so the terminal session survives Logs ⇄ Shell
   // toggles (both bodies stay mounted; we only show/hide).
   const ct = useComputerTerminal({ projectId, isAuthenticated });
-  // Open the terminal in the harness session workdir — but only for harness
-  // hosts (plain computer hosts have no such dir → home).
-  // NOTE: the PRODUCER (the chat stream writing the harness `sessionWorkDir`
-  // into this store) lands in a FOLLOW-UP — it needs the harness-session /
-  // create-pty changes that conflict with main's newer commits and were
-  // intentionally scoped out of this restore. Until then `streamedWorkdir`
-  // stays undefined, so the Shell opens at the computer's default dir and the
-  // "Reload in harness dir" affordance below stays hidden. This is graceful
-  // degradation by design — the read site is kept so the follow-up only has to
-  // wire the producer.
-  const isHarnessHost = hostConfig?.harness === "claude-code";
-  // Read with the SAME key the chat stream writes (previewedHostId), not
-  // hostConfig.id — those are different identifiers and would never match.
-  const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
-  const harnessCwd = isHarnessHost ? streamedWorkdir : undefined;
+  // The Shell opens in the computer's default directory. Opening it in the
+  // harness session workdir (cd into the agent's cwd) is a FOLLOW-UP: it needs
+  // both a producer (the chat stream emitting `sessionWorkDir`) and cwd
+  // threading through the terminal WebSocket, neither of which is in this
+  // restore (they depend on the harness-session/create-pty changes that
+  // conflict with main's newer commits).
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
@@ -165,30 +140,9 @@ function RightRailTabbed({
               )}
               Open terminal
             </Button>
-          ) : ct.terminalOpen && harnessCwd ? (
-            // cwd is applied at connect time; remount to reconnect into the
-            // latest harness workdir (e.g. after a new turn ran).
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setReloadKey((k) => k + 1)}
-              title={`Reconnect in ${harnessCwd}`}
-            >
-              <FolderTree className="mr-1.5 h-3.5 w-3.5" />
-              Reload in harness dir
-            </Button>
           ) : null}
         </div>
-        {/* Key on reloadKey ONLY (explicit reconnect) — NOT on cwd, so a newer
-            harness workdir streaming in mid-session doesn't yank the user's open
-            terminal. Reopening the terminal already picks up the latest cwd
-            (ComputerTerminal remounts when terminalOpen flips). */}
-        <ComputerTerminalPane
-          key={reloadKey}
-          controller={ct}
-          className="px-3 pb-3"
-          {...(harnessCwd ? { cwd: harnessCwd } : {})}
-        />
+        <ComputerTerminalPane controller={ct} className="px-3 pb-3" />
       </div>
     </div>
   );

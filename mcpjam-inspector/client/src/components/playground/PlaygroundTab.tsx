@@ -343,7 +343,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                               <PlaygroundRightRail
                                 onClose={() => setIsRightRailVisible(false)}
                                 hostConfig={effectiveHostConfig}
-                                hostId={previewedHostId ?? null}
                                 projectId={
                                   props.sharedProjectId ??
                                   props.activeProjectId ??
