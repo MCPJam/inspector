@@ -56,8 +56,8 @@ export function JsonPart({
   const [imageMode, setImageMode] = useState<"images" | "raw">("images");
   const height = useMemo(() => getJsonPartHeight(value), [value]);
   const canRenderImages =
-    getMcpToolResultImageRenderPlacement(mcpToolResultImageRendering) !==
-    "none";
+    getMcpToolResultImageRenderPlacement(mcpToolResultImageRendering) ===
+    "inline";
   const imageState = useMcpToolResultImagePreviews(
     canRenderImages ? value : undefined,
     { serverId, renderingPolicy: mcpToolResultImageRendering }

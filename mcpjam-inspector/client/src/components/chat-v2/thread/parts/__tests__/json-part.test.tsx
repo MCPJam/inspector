@@ -109,4 +109,30 @@ describe("JsonPart", () => {
       JSON.stringify(value)
     );
   });
+
+  it("keeps MCP image results raw when rendering is collapsed", () => {
+    const value = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+
+    render(
+      <JsonPart
+        label="Result"
+        value={value}
+        mcpToolResultImageRendering={{ placement: "collapsed" }}
+      />
+    );
+
+    expect(screen.queryByText("Resolving images...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: "Images" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: "Raw" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("json-editor")).toHaveTextContent(
+      JSON.stringify(value)
+    );
+  });
 });
