@@ -1150,6 +1150,16 @@ export async function runHarnessTurn(
           typeof finalText === "string" &&
           finalText.length > 0
         ) {
+          // Final assistant text after tool results begins the next step — flush
+          // the pending tool segment FIRST (mirrors the `text-delta` path),
+          // otherwise the synthesized text would be appended to the same
+          // assistant message as the preceding tool-call, persisting
+          // assistant(tool-call + text) → tool instead of the correct
+          // assistant(tool-call) → tool → assistant(text) ordering.
+          if (pendingResults.length > 0) {
+            flushSegment();
+            finishStep();
+          }
           const finalTextId = crypto.randomUUID();
           emitTextStart(writer, finalTextId);
           emitTextDelta(writer, finalTextId, finalText);
