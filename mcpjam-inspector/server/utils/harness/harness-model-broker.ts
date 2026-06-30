@@ -101,12 +101,18 @@ export async function startHarnessModelBroker(args: {
     };
   }
 
-  if (
-    !response.ok ||
-    payload?.ok !== true ||
-    typeof payload?.proxyBaseUrl !== "string" ||
-    typeof payload?.runId !== "string"
-  ) {
+  const validShape =
+    response.ok &&
+    payload?.ok === true &&
+    typeof payload?.runId === "string" &&
+    payload.runId.length > 0 &&
+    typeof payload?.proxyBaseUrl === "string" &&
+    payload.proxyBaseUrl.length > 0 &&
+    typeof payload?.expiresAt === "number" &&
+    Number.isFinite(payload.expiresAt) &&
+    (payload?.protocol === "anthropic" || payload?.protocol === "openai") &&
+    payload?.delivery === "e2b-network-transform";
+  if (!validShape) {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,

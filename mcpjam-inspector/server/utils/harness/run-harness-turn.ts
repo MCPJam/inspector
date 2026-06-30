@@ -289,6 +289,7 @@ export async function runHarnessTurn(
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
   let brokerComputerId: string | undefined;
+  let brokerRevoked = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
@@ -565,19 +566,25 @@ export async function runHarnessTurn(
       // with dummy creds pointed at the returned proxy. Fail-fast on install
       // error (the box is awake but no real credential exists anywhere).
       if (useBroker) {
+        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+        // If the backend installs the E2B rule but the response is lost/aborted,
+        // teardown can still revoke by this id (the backend keys revoke on runId).
+        brokerRunId = crypto.randomUUID();
+        brokerComputerId = String(computerId);
         const broker = await startHarnessModelBroker({
           projectId,
           computerId: String(computerId),
           harnessId: harnessAdapter.id,
           modelId,
+          runId: brokerRunId,
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!broker.ok) {
+          // The backend may have installed before the response was lost — leave
+          // brokerRunId set so onFinishEngine revokes it; then fail the turn.
           throw new Error(broker.error);
         }
-        brokerRunId = broker.runId;
-        brokerComputerId = String(computerId);
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       }
       if (!auth) {
@@ -1343,6 +1350,19 @@ export async function runHarnessTurn(
         cleanupError
       );
     }
+    // Broker teardown lives HERE — the shared finish path that runs on BOTH the
+    // UI path (via the stream's `onFinish`) and the inline `none` path — so
+    // browser-streaming turns revoke too. Idempotent (guarded) + best-effort; a
+    // miss is backstopped by lease TTL + the backend cleanup cron.
+    if (!brokerRevoked && brokerRunId && authHeader) {
+      brokerRevoked = true;
+      await revokeHarnessModelBroker({
+        runId: brokerRunId,
+        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
+        ...(projectId ? { projectId } : {}),
+        bearer: authHeader,
+      }).catch(() => {});
+    }
   };
 
   if (streamSink === "ui") {
@@ -1360,18 +1380,8 @@ export async function runHarnessTurn(
   try {
     await executeEngine({ writer: noopWriter });
   } finally {
+    // onFinishEngine runs the broker teardown for this path too (see above).
     await onFinishEngine();
-    // Broker teardown: revoke the lease + clear the E2B egress rule. Best-effort
-    // and idempotent server-side; a miss is backstopped by lease TTL + the
-    // backend cleanup cron, and the proxy fails closed once the lease expires.
-    if (brokerRunId && authHeader) {
-      await revokeHarnessModelBroker({
-        runId: brokerRunId,
-        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
-        ...(projectId ? { projectId } : {}),
-        bearer: authHeader,
-      }).catch(() => {});
-    }
   }
   return {
     messageHistory,

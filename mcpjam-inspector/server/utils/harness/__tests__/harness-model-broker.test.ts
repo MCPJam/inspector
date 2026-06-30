@@ -16,7 +16,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
-  process.env.CONVEX_HTTP_URL = ORIGINAL_URL;
+  if (ORIGINAL_URL === undefined) delete process.env.CONVEX_HTTP_URL;
+  else process.env.CONVEX_HTTP_URL = ORIGINAL_URL;
   vi.restoreAllMocks();
 });
 
