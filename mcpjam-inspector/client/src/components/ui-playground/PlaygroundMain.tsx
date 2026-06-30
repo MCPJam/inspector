@@ -3170,6 +3170,10 @@ export function PlaygroundMain({
       : {
           hosts: hostList,
           projectId: multiHostProjectId,
+          // Cloud skills are Convex-scoped: use the real Convex project id
+          // (null for the synthetic "Default" project), never the UUID fallback
+          // baked into `multiHostProjectId`, which 500s the listSkills query.
+          cloudProjectId: convexProjectId,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
           multiHostEnabled,

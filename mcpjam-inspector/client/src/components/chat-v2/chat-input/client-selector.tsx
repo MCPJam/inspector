@@ -66,8 +66,14 @@ const QUICK_ADD_VISIBLE = 6;
  */
 export interface ClientSelectorData {
   hosts: HostListItem[];
-  /** Project the hosts belong to — required to create new hosts. */
+  /** Project the hosts belong to — required to create new hosts. May be a
+   *  client-local project id (UUID) before the project is synced to Convex. */
   projectId: string | null;
+  /** The project's CONVEX id (`sharedProjectId`), or null when the project has
+   *  no Convex backing yet (e.g. the synthetic "Default" project). Cloud,
+   *  Convex-scoped reads (cloud skills) MUST use this, never `projectId` — a
+   *  client-local UUID fails the `v.id("projects")` validator with a 500. */
+  cloudProjectId?: string | null;
   /** Lead host id — the single active client / first compare column. */
   currentHostId: string | null;
   /** Persisted compare lineup (from `usePersistedHost`). */
