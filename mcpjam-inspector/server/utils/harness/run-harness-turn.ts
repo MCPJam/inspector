@@ -565,30 +565,43 @@ export async function runHarnessTurn(
       // E2B's egress transform — the inspector never sees the lease. Run the CLI
       // with dummy creds pointed at the returned proxy. Fail-fast on install
       // error (the box is awake but no real credential exists anywhere).
-      if (useBroker) {
-        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-        // If the backend installs the E2B rule but the response is lost/aborted,
-        // teardown can still revoke by this id (the backend keys revoke on runId).
-        brokerRunId = crypto.randomUUID();
-        brokerComputerId = String(computerId);
-        const broker = await startHarnessModelBroker({
-          projectId,
-          computerId: String(computerId),
-          harnessId: harnessAdapter.id,
-          modelId,
-          runId: brokerRunId,
-          bearer: authHeader,
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
-        if (!broker.ok) {
-          // The backend may have installed before the response was lost — leave
-          // brokerRunId set so onFinishEngine revokes it; then fail the turn.
-          throw new Error(broker.error);
+      try {
+        if (useBroker) {
+          // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+          // If the backend installs the E2B rule but the response is lost/aborted,
+          // teardown can still revoke by this id (backend keys revoke on runId).
+          brokerRunId = crypto.randomUUID();
+          brokerComputerId = String(computerId);
+          const broker = await startHarnessModelBroker({
+            projectId,
+            computerId: String(computerId),
+            harnessId: harnessAdapter.id,
+            modelId,
+            runId: brokerRunId,
+            bearer: authHeader,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+          if (!broker.ok) {
+            throw new Error(broker.error);
+          }
+          auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         }
-        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
-      }
-      if (!auth) {
-        throw new Error("harness turn: model auth was not resolved");
+        if (!auth) {
+          throw new Error("harness turn: model auth was not resolved");
+        }
+      } catch (postClaimErr) {
+        // We're past claimHarnessSessionState but before the session finalizer is
+        // wired, and onFinishEngine only releases the claimed continuity lane on
+        // the SUCCESS path — so free it here or the next chat turn is blocked with
+        // "Another turn is already running" until the lease TTL. brokerRunId stays
+        // set, so onFinishEngine still revokes any broker lease the backend
+        // installed before the response was lost.
+        try {
+          await releaseHarnessLease?.();
+        } catch {
+          // best-effort — releasing the lane must not mask the original failure
+        }
+        throw postClaimErr;
       }
 
       // 4. Assemble the harness over the host's E2B computer.
