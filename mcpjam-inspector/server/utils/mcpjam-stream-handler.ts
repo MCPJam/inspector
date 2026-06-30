@@ -101,6 +101,7 @@ import {
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { StreamTurnDriver } from "./stream-turn-driver.js";
 import {
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
@@ -2627,6 +2628,17 @@ export async function runChatEngineLoop(
     turnStartedAt: Date.now(),
     turnSpans: [],
   };
+  // Shared per-turn ritual (turn_start / onStepFinish / turn_finish /
+  // PersistedTurnTrace), sharing `traceTurn`'s span array + clock so the live
+  // snapshots (still emitted against `traceTurn`) and the driver stay in lockstep.
+  const driver = new StreamTurnDriver({
+    turnId: traceTurn.turnId,
+    promptIndex: traceTurn.promptIndex,
+    modelId,
+    traceBaseMs: traceTurn.turnStartedAt,
+    spans: traceTurn.turnSpans,
+    onStepFinish,
+  });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
     traceTurn.promptMessageStartIndex
@@ -2740,12 +2752,7 @@ export async function runChatEngineLoop(
           return;
         }
 
-        writeTraceEvent(safeWriter, {
-          type: "turn_start",
-          turnId: traceTurn.turnId,
-          promptIndex: traceTurn.promptIndex,
-          startedAtMs: traceTurn.turnStartedAt,
-        });
+        driver.emitTurnStart(safeWriter);
 
         startHeartbeat();
 
@@ -2823,49 +2830,16 @@ export async function runChatEngineLoop(
           // PR 5b-pre: step-level callback. Fires after each
           // `processOneStep` returns and the step counter increments,
           // so the runner sees one event per completed step in order.
-          // `turnUsage` reads from `traceTurn` so callers can compute
-          // per-step deltas. Wrapped in try/catch to match the chunk
-          // callbacks' shape.
-          if (onStepFinish) {
-            try {
-              // Marcelo's PR 5b-pre review caveat: the engine's
-              // failure branches return `shouldContinue: false` +
-              // `didEmitFinish: false` after emitting an error UI
-              // chunk. We surface this on `settledWithError` so PR 5b's
-              // wire-up can decide whether to map to eval's
-              // `step_finish` SSE event (success-only) or treat the
-              // settle as terminal. The shape: a step that produced a
-              // UI `finish` chunk OR `shouldContinue: true` is a
-              // success; the only failure shape today is
-              // `shouldContinue: false && !didEmitFinish`.
-              const settledWithError = !didEmitFinish && !shouldContinue;
-              onStepFinish({
-                stepIndex: effectiveSteps() - 1,
-                promptIndex: traceTurn.promptIndex,
-                turnUsage: traceTurn.turnUsage
-                  ? {
-                      inputTokens: traceTurn.turnUsage.inputTokens,
-                      outputTokens: traceTurn.turnUsage.outputTokens,
-                      totalTokens: traceTurn.turnUsage.totalTokens,
-                    }
-                  : undefined,
-                settledWithError,
-                // PR 5b-followup-2: defensive copy so callers can
-                // retain the snapshot across step boundaries without
-                // racing against engine mutation of traceTurn.turnSpans
-                // on the next step.
-                turnSpans: [...traceTurn.turnSpans],
-              });
-            } catch (error) {
-              logger.warn(
-                "[mcpjam-stream-handler] onStepFinish callback failed",
-                {
-                  error:
-                    error instanceof Error ? error.message : String(error),
-                },
-              );
-            }
-          }
+          // Routed through the shared driver (cumulative `turnUsage` from the
+          // shared span/usage state, defensive `turnSpans` copy). The engine's
+          // failure branches return `shouldContinue: false` + `didEmitFinish:
+          // false` after emitting an error UI chunk; `settledWithError`
+          // surfaces that so the runner can map it to eval's `step_finish`.
+          driver.usage = traceTurn.turnUsage;
+          driver.fireStepFinish(
+            effectiveSteps() - 1,
+            !didEmitFinish && !shouldContinue
+          );
 
           if (!shouldContinue) {
             break;
@@ -2912,13 +2886,11 @@ export async function runChatEngineLoop(
           finishEmitted = true;
         }
 
-        writeTraceEvent(safeWriter, {
-          type: "turn_finish",
-          turnId: traceTurn.turnId,
-          promptIndex: traceTurn.promptIndex,
-          finishReason: hitStepCap() ? "length" : "stop",
-          usage: traceTurn.turnUsage,
-        });
+        // Shared ritual: turn_finish + success flag (finish chunk already
+        // emitted by the step or the safety block above).
+        driver.usage = traceTurn.turnUsage;
+        driver.finishReason = hitStepCap() ? "length" : "stop";
+        driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
 
         runSucceeded = true;
       } catch (error) {
@@ -2985,19 +2957,7 @@ export async function runChatEngineLoop(
         // partial by definition — recording it as a completed conversation
         // would corrupt history and reverse the cost-safety win.
         if (runSucceeded && !aborted) {
-          const trace: PersistedTurnTrace = {
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            startedAt: traceTurn.turnStartedAt,
-            endedAt: Date.now(),
-            spans: [...traceTurn.turnSpans],
-            usage: traceTurn.turnUsage,
-            finishReason:
-              promptStepBaseIndex + steps >= resolvedMaxSteps
-                ? "length"
-                : "stop",
-            modelId,
-          };
+          const trace: PersistedTurnTrace = driver.buildPersistedTrace();
           capturedTurnTrace = trace;
           try {
             await onConversationComplete?.([...messageHistory], trace);
