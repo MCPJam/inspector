@@ -32,10 +32,48 @@ import {
  *  match `HARNESS_IDS` at runtime too. */
 export type HarnessId = Harness;
 
-/** Gateway-shaped credential the inspector maps to the adapter's `auth.gateway`. */
-export type HarnessGatewayAuth = {
-  gateway: { apiKey: string; baseUrl?: string };
+/** Auth the inspector hands an adapter. CLIENT path uses `gateway` (real key
+ *  from Convex). BROKER path uses dummy `anthropic`/`openaiCompatible` creds
+ *  pointed at the model proxy — the REAL lease is injected by E2B OUTSIDE the VM,
+ *  so these placeholders only satisfy the CLI's auth env. All-optional so a single
+ *  value type is accepted by both `createClaudeCode` and `createCodex`. */
+export type HarnessAuth = {
+  gateway?: { apiKey: string; baseUrl?: string };
+  anthropic?: { apiKey: string; authToken: string; baseUrl: string };
+  openaiCompatible?: { apiKey: string; baseUrl: string };
 };
+/** @deprecated use HarnessAuth — kept for existing references. */
+export type HarnessGatewayAuth = HarnessAuth;
+
+/** Placeholder credential value handed to the in-sandbox CLI on the broker path.
+ *  It is never used for auth (the proxy ignores VM-supplied Authorization/
+ *  x-api-key and trusts only E2B's injected `x-mcpjam-harness-lease`); it just
+ *  has to be present so the CLI makes the request. */
+const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
+
+/** Build the dummy broker auth pointed at the proxy base URL. Claude Code reads
+ *  `ANTHROPIC_AUTH_TOKEN` (Bearer) + `ANTHROPIC_BASE_URL`; Codex reads
+ *  `CODEX_API_KEY` + `OPENAI_BASE_URL`. */
+export function buildBrokerDummyAuth(
+  harnessId: HarnessId,
+  proxyBaseUrl: string
+): HarnessAuth {
+  if (harnessId === "codex") {
+    return {
+      openaiCompatible: {
+        apiKey: BROKER_DUMMY_CREDENTIAL,
+        baseUrl: proxyBaseUrl,
+      },
+    };
+  }
+  return {
+    anthropic: {
+      apiKey: "",
+      authToken: BROKER_DUMMY_CREDENTIAL,
+      baseUrl: proxyBaseUrl,
+    },
+  };
+}
 
 /** `{ serverId?, toolName }` — the MCPJam tool identity a harness tool name maps
  *  to. MCP server tools carry a `serverId`; native harness tools (Bash, Read,
@@ -132,7 +170,7 @@ export type HarnessRuntimeAdapter = {
    *  per-adapter rather than pinned to Claude's scheme. */
   parseToolName(
     rawToolName: string,
-    keyToServerId: Record<string, string>,
+    keyToServerId: Record<string, string>
   ): HarnessToolAttribution;
   /** Write the host's MCP servers into a fresh sandbox session. Present only when
    *  `supportsSelectedMcpServers`. */
@@ -145,7 +183,7 @@ export type HarnessRuntimeAdapter = {
  *  `creator/model` form (passing it makes the CLI do zero inference). Unknown ⇒
  *  undefined (let the CLI use its default). */
 function toClaudeCodeModel(
-  modelId: string,
+  modelId: string
 ): "haiku" | "sonnet" | "opus" | undefined {
   const m = modelId.toLowerCase();
   if (m.includes("haiku")) return "haiku";
@@ -169,7 +207,7 @@ function toCodexModel(modelId: string): string | undefined {
  *  inspector's own `zod@4` `z.toJSONSchema` can't read — so use `ai`'s
  *  `asSchema`, which handles both Zod versions and yields a JSON Schema. */
 function builtinInputJsonSchema(
-  schema: unknown,
+  schema: unknown
 ): Record<string, unknown> | undefined {
   if (!schema || typeof schema !== "object") return undefined;
   try {
@@ -185,7 +223,7 @@ function builtinInputJsonSchema(
 /** Normalize a harness's static `builtinTools` ToolSet into the display catalog.
  *  Shared by every adapter so a new harness reuses the exact same shaping. */
 function normalizeHarnessBuiltinTools(
-  builtinTools: Record<string, unknown>,
+  builtinTools: Record<string, unknown>
 ): HarnessBuiltinToolInfo[] {
   const str = (v: unknown): string | undefined =>
     typeof v === "string" && v.length > 0 ? v : undefined;
@@ -215,13 +253,13 @@ function normalizeHarnessBuiltinTools(
  *  process, and constructing the adapter (no auth, no sandbox) just to read its
  *  static `builtinTools` once is enough. */
 function memoizedBuiltinTools(
-  build: () => { builtinTools: unknown },
+  build: () => { builtinTools: unknown }
 ): () => HarnessBuiltinToolInfo[] {
   let cache: HarnessBuiltinToolInfo[] | undefined;
   return () => {
     if (!cache) {
       cache = normalizeHarnessBuiltinTools(
-        build().builtinTools as Record<string, unknown>,
+        build().builtinTools as Record<string, unknown>
       );
     }
     return cache;
