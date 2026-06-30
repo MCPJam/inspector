@@ -83,6 +83,14 @@ function RightRailTabbed({
   const ct = useComputerTerminal({ projectId, isAuthenticated });
   // Open the terminal in the harness session workdir — but only for harness
   // hosts (plain computer hosts have no such dir → home).
+  // NOTE: the PRODUCER (the chat stream writing the harness `sessionWorkDir`
+  // into this store) lands in a FOLLOW-UP — it needs the harness-session /
+  // create-pty changes that conflict with main's newer commits and were
+  // intentionally scoped out of this restore. Until then `streamedWorkdir`
+  // stays undefined, so the Shell opens at the computer's default dir and the
+  // "Reload in harness dir" affordance below stays hidden. This is graceful
+  // degradation by design — the read site is kept so the follow-up only has to
+  // wire the producer.
   const isHarnessHost = hostConfig?.harness === "claude-code";
   // Read with the SAME key the chat stream writes (previewedHostId), not
   // hostConfig.id — those are different identifiers and would never match.
