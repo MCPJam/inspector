@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/resizable";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { LoggerView } from "@/components/logger-view";
+import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -340,8 +340,16 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             className="min-h-0 overflow-hidden"
                           >
                             <div className="h-full min-h-0 overflow-hidden">
-                              <LoggerView
+                              <PlaygroundRightRail
                                 onClose={() => setIsRightRailVisible(false)}
+                                hostConfig={effectiveHostConfig}
+                                hostId={previewedHostId ?? null}
+                                projectId={
+                                  props.sharedProjectId ??
+                                  props.activeProjectId ??
+                                  null
+                                }
+                                isAuthenticated={isConvexAuthenticated}
                               />
                             </div>
                           </ResizablePanel>
