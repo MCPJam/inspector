@@ -7,20 +7,16 @@ import type { ComputerTerminalController } from "./useComputerTerminal";
 /**
  * The terminal body — the state machine that decides between the idle prompt,
  * the connecting/starting spinners, the live `<ComputerTerminal/>`, and the
- * error/gone messages. Shared by the full-page `ComputerView` and the
- * Playground right-rail Shell tab; both pass a single `useComputerTerminal`
- * controller so status + the open/terminal session stay in sync with their
- * surrounding chrome.
+ * error/gone messages. Driven by a `useComputerTerminal` controller, consumed
+ * by the Playground right-rail Shell tab. (The full-page `ComputerView` renders
+ * its own terminal body today — a candidate to migrate onto this pane.)
  */
 export function ComputerTerminalPane({
   controller,
   className,
-  cwd,
 }: {
   controller: ComputerTerminalController;
   className?: string;
-  /** Starting directory for the terminal (harness workdir); home if unset. */
-  cwd?: string;
 }) {
   const {
     status,
@@ -80,7 +76,6 @@ export function ComputerTerminalPane({
           themeMode={terminalTheme}
           className="h-full"
           {...(terminalBaseUrl ? { baseUrl: terminalBaseUrl } : {})}
-          {...(cwd ? { cwd } : {})}
         />
       );
     }

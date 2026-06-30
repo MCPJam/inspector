@@ -71,6 +71,14 @@ function RightRailTabbed({
   // threading through the terminal WebSocket, neither of which is in this
   // restore (they depend on the harness-session/create-pty changes that
   // conflict with main's newer commits).
+  // Only offer "Open terminal" once the data-plane config has resolved to a
+  // usable plane — opening while it's still loading mounts the terminal at the
+  // page origin; opening with no plane reserves a computer it can't reach.
+  const canOpenTerminal =
+    ct.dataPlaneResolved &&
+    !ct.dataPlaneUnavailable &&
+    isAuthenticated &&
+    !!projectId;
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
@@ -127,7 +135,7 @@ function RightRailTabbed({
       >
         <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
           <ComputerStatusChip status={ct.liveStatus} />
-          {!ct.terminalOpen && !ct.dataPlaneUnavailable ? (
+          {!ct.terminalOpen && canOpenTerminal ? (
             <Button
               size="sm"
               onClick={() => void ct.openTerminal()}

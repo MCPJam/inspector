@@ -19,8 +19,10 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 /**
  * Shared wiring for the project computer's live terminal — status, data-plane
  * resolution, token minting, and the provision-on-open / wake flow. No JSX: the
- * full-page `ComputerView` and the Playground right-rail Shell tab both consume
- * this and render their own chrome (`ComputerTerminalPane` renders the body).
+ * Playground right-rail Shell tab consumes this and renders its own chrome
+ * (`ComputerTerminalPane` renders the body). The full-page `ComputerView` still
+ * has its own duplicate copy of this wiring — a candidate to migrate onto this
+ * hook so there's one authoritative implementation.
  */
 export function useComputerTerminal({
   projectId,
@@ -72,7 +74,12 @@ export function useComputerTerminal({
   }, [effectiveProjectId, mintTerminalToken]);
 
   const openTerminal = useCallback(async () => {
-    if (!effectiveProjectId) return;
+    // Don't open/reserve until the data-plane config has resolved AND a usable
+    // plane exists. Opening while `dataPlane` is still loading would mount the
+    // terminal (first WebSocket aims at the page origin), and opening when no
+    // plane is configured would reserve a computer the terminal can never reach.
+    if (!effectiveProjectId || dataPlane === undefined || dataPlaneUnavailable)
+      return;
     posthog?.capture("computer_terminal_opened", {
       computer_status: liveStatus ?? "none",
     });
@@ -99,7 +106,14 @@ export function useComputerTerminal({
         setStarting(false);
       }
     }
-  }, [effectiveProjectId, liveStatus, posthog, reserve]);
+  }, [
+    effectiveProjectId,
+    dataPlane,
+    dataPlaneUnavailable,
+    liveStatus,
+    posthog,
+    reserve,
+  ]);
 
   const onDelete = useCallback(async () => {
     if (!effectiveProjectId) return;
