@@ -16,12 +16,28 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 - **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
 - **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
 
+## Connecting an XAA server from the Connect page
+
+You can connect to an XAA-protected MCP server directly from the **Servers** tab without going through the XAA Debugger first. When you add or edit a server, select **Cross-App Access (XAA)** from the authentication dropdown. This reveals the following fields:
+
+- **Identity provider** — locked to **MCPJam test identity provider** in this release.
+- **Client ID** (required) — the client ID registered with the server's authorization server.
+- **Client Secret** (optional) — for confidential clients.
+- **Scopes** — space-separated scopes to request.
+- **Advanced** (collapsed by default):
+  - **Authorization Server Issuer** — leave blank to auto-discover from the server's protected-resource metadata (RFC 9728). Set this explicitly if auto-discovery fails.
+  - **Simulated identity** — the subject (`sub`) and email the MCPJam test IdP mints for the mock login. Defaults to your signed-in account when left blank.
+
+When you click **Connect**, MCPJam mints the access token server-side and injects it as a Bearer header. If the server returns a 401, the token is re-minted once automatically; a second 401 surfaces an error with an **Open XAA Debugger** shortcut in the toast.
+
+A server configured this way also appears in the XAA Debugger's server selector, so you can step through the full handshake without re-entering its credentials.
+
 ## Getting Started
 
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Configure Target** - Provide your MCP server URL and authorization server details, or select a server already configured with the Cross-App Access auth type from the Servers tab
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
