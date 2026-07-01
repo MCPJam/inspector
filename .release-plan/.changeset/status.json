@@ -3,72 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Pin MCP v2 runtime packages during packed CLI smoke tests so published installs resolve the expected alpha versions.",
-      "id": "packed-mcp-v2-pins"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Release the latest computer environments, host compatibility, harness, skills, and playground updates.\n\n- Add computer environments across Inspector and the CLI, including `mcpjam env` commands, hosted environment selection, run-detail surfacing, and eval sandbox support.\n- Add host compatibility platform operations and CLI checks, plus SDK market-host profiles, capability presets, widget-usage scanning, and host connection helpers.\n- Add Claude Code and Codex harness support with capability-driven built-in tools and runtime skill handling.\n- Add hosted Cloud Skills support through project Computers, including server APIs, UI picker integration, and synthetic session execution.\n- Improve Playground and Tools workflows with inline tool result editing, copy-all actions, and host-scoped command execution.",
-      "id": "release-rollup-2026-06-30"
-    },
-    {
-      "releases": [],
-      "summary": "CI-only fix for the packed Inspector startup smoke test shutdown path; no package release required.",
-      "id": "release-smoke-inspector-shutdown"
+      "summary": "Remove the guest free daily credits block from the sidebar.",
+      "id": "sidebar-guest-credit-block"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.11.1",
-      "changesets": [
-        "packed-mcp-v2-pins",
-        "release-rollup-2026-06-30"
-      ],
-      "newVersion": "3.12.0"
-    },
-    {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.21.0",
+      "type": "patch",
+      "oldVersion": "2.22.0",
       "changesets": [
-        "release-rollup-2026-06-30"
+        "sidebar-guest-credit-block"
       ],
-      "newVersion": "2.22.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.26.0",
-      "changesets": [
-        "release-rollup-2026-06-30"
-      ],
-      "newVersion": "1.27.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.22.1"
     }
   ]
 }
