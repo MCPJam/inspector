@@ -289,6 +289,12 @@ export async function runHarnessTurn(
   let brokerRunId: string | undefined;
   let brokerComputerId: string | undefined;
   let brokerRevoked = false;
+  // Ownership handoff for the claimed continuity lane: false from the moment the
+  // lane is claimed until the harness session is established (the point the
+  // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
+  // broker start, runtime/agent construction, createSession) must release the
+  // lane in onFinishEngine, or the next chat turn is blocked until the lease TTL.
+  let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
@@ -565,43 +571,31 @@ export async function runHarnessTurn(
       // E2B's egress transform — the inspector never sees the lease. Run the CLI
       // with dummy creds pointed at the returned proxy. Fail-fast on install
       // error (the box is awake but no real credential exists anywhere).
-      try {
-        if (useBroker) {
-          // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-          // If the backend installs the E2B rule but the response is lost/aborted,
-          // teardown can still revoke by this id (backend keys revoke on runId).
-          brokerRunId = crypto.randomUUID();
-          brokerComputerId = String(computerId);
-          const broker = await startHarnessModelBroker({
-            projectId,
-            computerId: String(computerId),
-            harnessId: harnessAdapter.id,
-            modelId,
-            runId: brokerRunId,
-            bearer: authHeader,
-            ...(abortSignal ? { signal: abortSignal } : {}),
-          });
-          if (!broker.ok) {
-            throw new Error(broker.error);
-          }
-          auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      if (useBroker) {
+        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+        // If the backend installs the E2B rule but the response is lost/aborted,
+        // teardown can still revoke by this id (backend keys revoke on runId).
+        brokerRunId = crypto.randomUUID();
+        brokerComputerId = String(computerId);
+        const broker = await startHarnessModelBroker({
+          projectId,
+          computerId: String(computerId),
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: brokerRunId,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!broker.ok) {
+          // Throws propagate to the turn's outer catch; onFinishEngine frees the
+          // claimed lane (sessionEstablished still false) and revokes the broker
+          // lease (brokerRunId set) if the backend installed before a lost response.
+          throw new Error(broker.error);
         }
-        if (!auth) {
-          throw new Error("harness turn: model auth was not resolved");
-        }
-      } catch (postClaimErr) {
-        // We're past claimHarnessSessionState but before the session finalizer is
-        // wired, and onFinishEngine only releases the claimed continuity lane on
-        // the SUCCESS path — so free it here or the next chat turn is blocked with
-        // "Another turn is already running" until the lease TTL. brokerRunId stays
-        // set, so onFinishEngine still revokes any broker lease the backend
-        // installed before the response was lost.
-        try {
-          await releaseHarnessLease?.();
-        } catch {
-          // best-effort — releasing the lane must not mask the original failure
-        }
-        throw postClaimErr;
+        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      }
+      if (!auth) {
+        throw new Error("harness turn: model auth was not resolved");
       }
 
       // 4. Assemble the harness over the host's E2B computer.
@@ -725,6 +719,9 @@ export async function runHarnessTurn(
         session = await agent.createSession();
       }
       tConnect = Date.now();
+      // Session is up: the finalizer + heartbeat now own the continuity lane, so
+      // the pre-session cleanup in onFinishEngine no longer needs to free it.
+      sessionEstablished = true;
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
@@ -1378,6 +1375,16 @@ export async function runHarnessTurn(
       if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
         await releaseHarnessLease?.();
       }
+    }
+    // Pre-session cleanup: if the session was never established (the turn failed
+    // or aborted after claimHarnessSessionState but before createSession — sandbox
+    // wake, broker start, runtime/agent construction, or createSession threw), no
+    // finalizer owns the claimed lane, so free it here or the next chat turn is
+    // blocked with "Another turn is already running" until the lease TTL. This runs
+    // on BOTH stream paths (UI onFinish + inline finally). Idempotent, and a no-op
+    // on non-continuity turns (releaseHarnessLease is undefined).
+    if (!sessionEstablished) {
+      await releaseHarnessLease?.();
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
     // error must not reject stream finalization after an otherwise successful
