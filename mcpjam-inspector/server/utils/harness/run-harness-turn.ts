@@ -1352,6 +1352,20 @@ export async function runHarnessTurn(
   };
 
   const onFinishEngine = async () => {
+    // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
+    // + clear the E2B egress rule before the persistence/cleanup callbacks below,
+    // which could hang and would otherwise keep the credential live until TTL/cron.
+    // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
+    // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    if (!brokerRevoked && brokerRunId && authHeader) {
+      brokerRevoked = true;
+      await revokeHarnessModelBroker({
+        runId: brokerRunId,
+        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
+        ...(projectId ? { projectId } : {}),
+        bearer: authHeader,
+      }).catch(() => {});
+    }
     if (runSucceeded && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
@@ -1396,19 +1410,6 @@ export async function runHarnessTurn(
         "[harness] error while running stream cleanup",
         cleanupError
       );
-    }
-    // Broker teardown lives HERE — the shared finish path that runs on BOTH the
-    // UI path (via the stream's `onFinish`) and the inline `none` path — so
-    // browser-streaming turns revoke too. Idempotent (guarded) + best-effort; a
-    // miss is backstopped by lease TTL + the backend cleanup cron.
-    if (!brokerRevoked && brokerRunId && authHeader) {
-      brokerRevoked = true;
-      await revokeHarnessModelBroker({
-        runId: brokerRunId,
-        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
-        ...(projectId ? { projectId } : {}),
-        bearer: authHeader,
-      }).catch(() => {});
     }
   };
 
