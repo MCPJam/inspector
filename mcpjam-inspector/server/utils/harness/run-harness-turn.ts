@@ -99,6 +99,9 @@ import {
  *  what the no-op (`streamSink: "none"`) path supplies. */
 type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
+export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
+  "Claude Code completed the turn without returning a visible message.";
+
 /**
  * Resolve the model credential the harness hands to the in-sandbox CLI — from
  * Convex, like every other model key (keys live in Convex; the inspector holds
@@ -172,6 +175,10 @@ const HARNESS_INSTANCE_ID = crypto.randomUUID();
  *  run bound (we heartbeat well within it). */
 const HARNESS_LEASE_TTL_MS = 5 * 60_000;
 const HARNESS_HEARTBEAT_MS = 90_000;
+// v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
+// resumed sessions reconnect to a bridge process holding the OLD env, so force
+// fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
+const HARNESS_RUNTIME_COMPAT_VERSION = 7;
 
 /** Stable hash of the session-scoped runtime inputs. A change forces a fresh
  *  harness session (a resumed Claude Code thread keeps the model/tools it was
@@ -194,6 +201,7 @@ export function harnessRuntimeFingerprint(parts: {
   permissionMode: string;
 }): string {
   const s = [
+    String(HARNESS_RUNTIME_COMPAT_VERSION),
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
   ].join("");
@@ -338,6 +346,8 @@ export async function runHarnessTurn(
     // parts, this stays false and we synthesize chunks from `res.text` below so
     // the Chat pane never renders a blank reply on a successful turn.
     let emittedAnyText = false;
+    let emittedAnyVisiblePart = false;
+    const seenHarnessPartTypes = new Set<string>();
 
     try {
       if (!projectId) {
@@ -801,6 +811,21 @@ export async function runHarnessTurn(
           output: unknown;
           isError: boolean;
         }> = [];
+        const projectAssistantText = (text: string) => {
+          const finalTextId = crypto.randomUUID();
+          emitTextStart(writer, finalTextId);
+          emitTextDelta(writer, finalTextId, text);
+          emitTextEnd(writer, finalTextId);
+          emittedAnyText = true;
+          emittedAnyVisiblePart = true;
+          onLiveTextDelta?.(text);
+          const lastPart = assistantParts[assistantParts.length - 1];
+          if (lastPart && lastPart.type === "text") {
+            lastPart.text += text;
+          } else {
+            assistantParts.push({ type: "text", text });
+          }
+        };
         const flushSegment = () => {
           if (assistantParts.length > 0) {
             const assistantMsgIndex = messageHistory.length;
@@ -915,6 +940,8 @@ export async function runHarnessTurn(
           turnId,
           promptIndex,
           modelId,
+          engine: "harness",
+          harness,
           traceBaseMs,
           spans: capturedSpans,
           onStepFinish,
@@ -930,6 +957,7 @@ export async function runHarnessTurn(
             break;
           }
           const type = part.type;
+          if (typeof type === "string") seenHarnessPartTypes.add(type);
           if (type === "text-delta" || type === "text") {
             const delta = String(
               (part as { text?: unknown; delta?: unknown }).delta ??
@@ -956,6 +984,7 @@ export async function runHarnessTurn(
             }
             emitTextDelta(writer, textId, delta);
             emittedAnyText = true;
+            emittedAnyVisiblePart = true;
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -1009,6 +1038,7 @@ export async function runHarnessTurn(
               input,
               providerExecuted: true,
             });
+            emittedAnyVisiblePart = true;
             await onToolCall?.({
               toolCallId,
               toolName,
@@ -1119,6 +1149,7 @@ export async function runHarnessTurn(
                 input,
                 providerExecuted: true,
               });
+              emittedAnyVisiblePart = true;
               await onToolCall?.({
                 toolCallId,
                 toolName: fcName,
@@ -1234,18 +1265,18 @@ export async function runHarnessTurn(
             flushSegment();
             finishStep();
           }
-          const finalTextId = crypto.randomUUID();
-          emitTextStart(writer, finalTextId);
-          emitTextDelta(writer, finalTextId, finalText);
-          emitTextEnd(writer, finalTextId);
-          emittedAnyText = true;
-          onLiveTextDelta?.(finalText);
-          const lastPart = assistantParts[assistantParts.length - 1];
-          if (lastPart && lastPart.type === "text") {
-            lastPart.text += finalText;
-          } else {
-            assistantParts.push({ type: "text", text: finalText });
-          }
+          projectAssistantText(finalText);
+        }
+
+        if (!emittedAnyVisiblePart) {
+          const streamTypes =
+            [...seenHarnessPartTypes].sort().join(",") || "none";
+          const finalTextLength =
+            typeof finalText === "string" ? finalText.length : 0;
+          logger.warn(
+            `[harness] completed without visible chat parts; streamTypes=${streamTypes}; finalTextLength=${finalTextLength}`
+          );
+          projectAssistantText(HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT);
         }
 
         // Flush the final step's assistant message + its tool results. Earlier

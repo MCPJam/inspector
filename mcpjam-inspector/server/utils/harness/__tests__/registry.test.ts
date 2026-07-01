@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import {
   getHarnessAdapter,
   isHarnessId,
+  patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
+  toAnthropicGatewayBaseUrl,
+  toOpenAiCompatGatewayBaseUrl,
 } from "../registry";
 
 describe("harness registry", () => {
@@ -23,11 +27,21 @@ describe("harness registry", () => {
     expect(a.fileChangeToolName).toBe("fileChange");
   });
 
-  it("maps host model ids to Claude Code CLI-native aliases", () => {
+  it("maps Gateway Anthropic model ids to Claude Code selectable models", () => {
     const { toNativeModel } = getHarnessAdapter("claude-code");
     expect(toNativeModel?.("anthropic/claude-haiku-4.5")).toBe("haiku");
-    expect(toNativeModel?.("anthropic/claude-opus-4-6")).toBe("opus");
-    expect(toNativeModel?.("anthropic/claude-sonnet-4-6")).toBe("sonnet");
+    expect(toNativeModel?.("anthropic/claude-opus-4.7")).toBe(
+      "claude-opus-4-7"
+    );
+    expect(toNativeModel?.("anthropic/claude-opus-4-6")).toBe(
+      "claude-opus-4-6"
+    );
+    expect(toNativeModel?.("anthropic/claude-sonnet-4.6")).toBe(
+      "claude-sonnet-4-6"
+    );
+    expect(toNativeModel?.("anthropic/claude-sonnet-5")).toBe(
+      "claude-sonnet-5"
+    );
     expect(toNativeModel?.("openai/gpt-5")).toBeUndefined();
   });
 
@@ -41,6 +55,31 @@ describe("harness registry", () => {
     expect(toNativeModel?.("anthropic/claude-haiku-4.5")).toBeUndefined();
   });
 
+  it("normalizes the gateway base URL per wire protocol", () => {
+    // Claude Code's CLI joins `${ANTHROPIC_BASE_URL}/v1/messages` itself, so a
+    // /v1-suffixed base yields …/v1/v1/messages → live-gateway 404 on every
+    // model call. Its base must be the bare origin.
+    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh/v1")).toBe(
+      "https://ai-gateway.vercel.sh"
+    );
+    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh/v1/")).toBe(
+      "https://ai-gateway.vercel.sh"
+    );
+    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh")).toBe(
+      "https://ai-gateway.vercel.sh"
+    );
+    // Codex's CLI treats OPENAI_BASE_URL as an OpenAI-compatible /v1 root.
+    expect(toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh")).toBe(
+      "https://ai-gateway.vercel.sh/v1"
+    );
+    expect(
+      toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh/v1")
+    ).toBe("https://ai-gateway.vercel.sh/v1");
+    expect(
+      toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh/v1/")
+    ).toBe("https://ai-gateway.vercel.sh/v1");
+  });
+
   it("supportsModel: Claude Code runs anything, Codex only gpt-5", () => {
     const cc = getHarnessAdapter("claude-code");
     const codex = getHarnessAdapter("codex");
@@ -52,20 +91,124 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/o1")).toBe(false);
   });
 
+  it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
+    const harness = patchClaudeCodeHarnessBootstrap({
+      getBootstrap: async () => ({
+        harnessId: "claude-code",
+        bootstrapDir: "/tmp/harness/claude-code",
+        files: [
+          {
+            path: "/tmp/harness/claude-code/bridge.mjs",
+            content: `async function drive() {
+  let streamStarted = false;
+  const partialBlocks = new Map();
+  const permissionOptions = createPermissionOptions({
+    start,
+    turn,
+    emit,
+    nativeToolCallNames,
+    approvalRequestedToolUseIds
+  });
+  const q = claudeSdk.query({
+    options: {
+      ...start.model ? { model: start.model } : {},
+      ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
+    }
+  });
+  for await (const msg of q) {
+    const type = msg.type;
+    if (type === "stream_event") {
+        handleStreamEvent(msg.event, partialBlocks, emit);
+        continue;
+      }
+    if (type === "assistant" && msg.message?.content) {
+      for (const block of msg.message.content) {
+          if (block.type === "tool_use" && typeof block.id === "string") {
+          emit({ type: "tool-call" });
+        }
+      }
+    }
+    if (type === "result") {
+      const emptyResult = !msg.result?.trim?.();
+          if (emptyResult && observedTerminalError) {
+        emitTerminalError(observedTerminalError);
+      }
+    }
+  }
+}
+const toUserMessage = (text) => ({
+  type: "user",
+    message: {
+      role: "user"
+    }
+});`,
+          },
+        ],
+        commands: [],
+      }),
+    } as any);
+
+    const bootstrap = await harness.getBootstrap?.();
+    const bridge = bootstrap?.files.find((file) =>
+      file.path.endsWith("/bridge.mjs")
+    );
+    expect(bridge?.content).toContain("parent_tool_use_id: null");
+    expect(bridge?.content).toContain("emitAssistantTextFallback");
+    expect(bridge?.content).toContain("streamedAssistantText = true");
+    expect(bridge?.content).toContain("emitAssistantTextFallback(block.text)");
+    expect(bridge?.content).toContain("emitAssistantTextFallback(msg.result)");
+    expect(bridge?.content).toContain("gatewayModelOverrideSettings");
+    expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("anthropic/claude-");
+    expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
+    // Gateway compat: the CLI must omit output_config.effort (the gateway's
+    // Anthropic-compat schema 400s on it).
+    expect(bridge?.content).toContain(
+      'process.env.CLAUDE_CODE_EFFORT_LEVEL ??= "unset"'
+    );
+  });
+
+  it("patches the installed Claude Code bridge bootstrap", async () => {
+    const harness = patchClaudeCodeHarnessBootstrap(
+      createClaudeCode({
+        model: "haiku",
+        auth: {
+          gateway: {
+            apiKey: "test",
+            baseUrl: "https://ai-gateway.vercel.sh/v1",
+          },
+        },
+      }) as any
+    );
+
+    const bootstrap = await harness.getBootstrap?.();
+    const bridge = bootstrap?.files.find((file) =>
+      file.path.endsWith("/bridge.mjs")
+    );
+    expect(bridge?.content).toContain("parent_tool_use_id: null");
+    expect(bridge?.content).toContain("emitAssistantTextFallback");
+    expect(bridge?.content).toContain("gatewayModelOverrideSettings");
+    expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
+    expect(bridge?.content).toContain(
+      'process.env.CLAUDE_CODE_EFFORT_LEVEL ??= "unset"'
+    );
+  });
+
   it("Claude Code attributes mcp__ tool names; Codex passes them through", () => {
     const keyToServerId = { weather: "srv_123" };
     expect(
       getHarnessAdapter("claude-code").parseToolName(
         "mcp__weather__forecast",
-        keyToServerId,
-      ),
+        keyToServerId
+      )
     ).toEqual({ serverId: "srv_123", toolName: "forecast" });
     // Codex v1 has no MCP namespacing — names pass through as native tools.
     expect(
       getHarnessAdapter("codex").parseToolName(
         "mcp__weather__forecast",
-        keyToServerId,
-      ),
+        keyToServerId
+      )
     ).toEqual({ toolName: "mcp__weather__forecast" });
   });
 
