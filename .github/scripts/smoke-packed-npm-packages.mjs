@@ -201,8 +201,17 @@ function collectDependencyVersions(node, packageName, versions = []) {
 
 async function smokeInspectorStartup(installDir) {
   const port = String(62000 + Math.floor(Math.random() * 1000));
-  const child = spawn("npx", ["--no-install", "inspector", "--port", port], {
+  const inspectorBin = path.join(
+    installDir,
+    "node_modules",
+    "@mcpjam",
+    "inspector",
+    "bin",
+    "start.js",
+  );
+  const child = spawn(process.execPath, [inspectorBin, "--port", port], {
     cwd: installDir,
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
       MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK: "1",
@@ -225,8 +234,7 @@ async function smokeInspectorStartup(installDir) {
     throw new Error(`Inspector smoke exited early with code ${earlyExit.code}:\n${output}`);
   }
 
-  child.kill("SIGTERM");
-  await waitForExit(child, 5000);
+  await terminateChildProcess(child, 5000);
   console.log("Inspector startup smoke stayed alive long enough to pass.");
 }
 
@@ -251,19 +259,55 @@ function waitForEarlyExit(child, ms) {
 function waitForExit(child, ms) {
   return new Promise((resolve) => {
     if (child.exitCode !== null) {
-      resolve();
+      resolve(true);
       return;
     }
 
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve();
+      cleanup();
+      resolve(false);
     }, ms);
-    child.once("exit", () => {
+    const onExit = () => {
+      cleanup();
+      resolve(true);
+    };
+    const cleanup = () => {
       clearTimeout(timer);
-      resolve();
-    });
+      child.off("exit", onExit);
+    };
+    child.once("exit", onExit);
   });
+}
+
+async function terminateChildProcess(child, gracefulMs) {
+  sendSignal(child, "SIGTERM");
+
+  if (!await waitForExit(child, gracefulMs)) {
+    sendSignal(child, "SIGKILL");
+    await waitForExit(child, 2000);
+  }
+
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
+}
+
+function sendSignal(child, signal) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  try {
+    if (process.platform !== "win32" && child.pid) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      throw error;
+    }
+  }
 }
 
 function run(command, args, options = {}) {
