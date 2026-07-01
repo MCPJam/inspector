@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ListToolsResult } from "@modelcontextprotocol/client";
 import {
   convertMCPToolsToVercelTools,
+  describeOutputSchemaForModel,
   isAppOnlyTool,
 } from "../src/mcp-client-manager/tool-converters.js";
 
@@ -91,5 +92,88 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     expect(tools.model_only).toBeDefined();
     expect(tools.model_and_app).toBeDefined();
     expect(tools.default_visibility).toBeDefined();
+  });
+});
+
+const weatherToolFixture: ListToolsResult = {
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get weather for a city",
+      inputSchema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          temperature: {
+            type: "number",
+            description: "Temperature in Celsius",
+          },
+          condition: { type: "string" },
+          x: { type: "integer", description: "Density of seagulls in the sky" },
+        },
+        required: ["temperature", "condition", "x"],
+      },
+    },
+    {
+      name: "no_output_schema",
+      description: "Plain tool",
+      inputSchema: { type: "object", properties: {} },
+    },
+  ],
+} as unknown as ListToolsResult;
+
+describe("describeOutputSchemaForModel", () => {
+  it("lists fields with type, required flag, and descriptions", () => {
+    const summary = describeOutputSchemaForModel({
+      type: "object",
+      properties: {
+        temperature: { type: "number", description: "Temperature in Celsius" },
+        x: { type: "integer", description: "Density of seagulls in the sky" },
+      },
+      required: ["temperature"],
+    });
+
+    expect(summary).toContain(
+      "temperature (number, required): Temperature in Celsius"
+    );
+    expect(summary).toContain("x (integer): Density of seagulls in the sky");
+  });
+
+  it("returns undefined when there is no usable schema", () => {
+    expect(describeOutputSchemaForModel(undefined)).toBeUndefined();
+    expect(describeOutputSchemaForModel(null)).toBeUndefined();
+    expect(describeOutputSchemaForModel({})).toBeUndefined();
+    expect(
+      describeOutputSchemaForModel({ type: "object", properties: {} })
+    ).toBeUndefined();
+  });
+});
+
+describe("convertMCPToolsToVercelTools — outputSchema in description", () => {
+  it("folds the output schema into the model-facing description", async () => {
+    const tools = await convertMCPToolsToVercelTools(weatherToolFixture, {
+      callTool,
+    });
+
+    const description = (tools.get_weather as { description?: string })
+      .description;
+    expect(description).toContain("Get weather for a city");
+    expect(description).toContain("Returns structured output");
+    // The field the model previously ignored is now documented for it.
+    expect(description).toContain("Density of seagulls in the sky");
+  });
+
+  it("leaves descriptions untouched when no outputSchema is present", async () => {
+    const tools = await convertMCPToolsToVercelTools(weatherToolFixture, {
+      callTool,
+    });
+
+    expect(
+      (tools.no_output_schema as { description?: string }).description
+    ).toBe("Plain tool");
   });
 });
