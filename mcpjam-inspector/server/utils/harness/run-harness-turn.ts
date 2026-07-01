@@ -100,7 +100,7 @@ import {
 type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
 export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
-  "Claude Code completed the turn without returning a visible message.";
+  "The harness completed the turn without returning a visible message.";
 
 /**
  * Resolve the model credential the harness hands to the in-sandbox CLI — from

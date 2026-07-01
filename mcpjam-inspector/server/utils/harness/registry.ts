@@ -373,8 +373,13 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   const withoutProvider = m.startsWith("anthropic/")
     ? m.slice("anthropic/".length)
     : m;
+  // Trailing (?:-\d+)? absorbs an optional dated/pinned snapshot suffix
+  // (e.g. "claude-haiku-4-5-20251001", the exact shape Claude Code's own
+  // internal alias resolution can produce on the wire — see the bridge's
+  // modelOverrides keys below) without being captured; the return value only
+  // ever depends on family/major/minor, same as the undated shape.
   const match = withoutProvider.match(
-    /^claude-(haiku|sonnet|opus)-(\d+)(?:[.-](\d+))?$/
+    /^claude-(haiku|sonnet|opus)-(\d+)(?:[.-](\d+))?(?:-\d+)?$/
   );
   if (match) {
     const [, family, major, minor] = match;

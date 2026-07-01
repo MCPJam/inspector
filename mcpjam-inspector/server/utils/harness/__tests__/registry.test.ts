@@ -42,6 +42,20 @@ describe("harness registry", () => {
     expect(toNativeModel?.("anthropic/claude-sonnet-5")).toBe(
       "claude-sonnet-5"
     );
+    // Dated/pinned snapshot suffix (the exact shape Claude Code's own alias
+    // resolution can produce on the wire — see the bridge's modelOverrides
+    // keys) must still resolve to the haiku alias, not fall through to
+    // undefined (which would silently drop the model pin).
+    expect(toNativeModel?.("anthropic/claude-haiku-4-5-20251001")).toBe(
+      "haiku"
+    );
+    expect(toNativeModel?.("anthropic/claude-sonnet-4-5-20250929")).toBe(
+      "claude-sonnet-4-5"
+    );
+    // A bare substring match must NOT route a non-Anthropic/malformed id to
+    // Claude Code's haiku alias (the regex-gated shortcut, not a loose
+    // .includes check).
+    expect(toNativeModel?.("openai/my-haiku-experiment")).toBeUndefined();
     expect(toNativeModel?.("openai/gpt-5")).toBeUndefined();
   });
 
