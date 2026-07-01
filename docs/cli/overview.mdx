@@ -40,6 +40,7 @@ npx -y @mcpjam/cli@latest --help
 | [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
 | [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
 | [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
+| [`compat`](/cli/host-compatibility) | Check whether a server's tools and widgets work on each AI host | `compat` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
@@ -193,6 +194,7 @@ Connections to servers under test stay open between tool calls, so agents can al
 - [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
 - [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
 - [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
+- [Host compatibility](/cli/host-compatibility) — check whether your server works on Claude, ChatGPT, Cursor, and other AI hosts
 - [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
 - [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
 - [Full command reference](/cli/reference) — every flag for every command
