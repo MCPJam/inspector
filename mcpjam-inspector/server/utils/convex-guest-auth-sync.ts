@@ -37,18 +37,36 @@ function isOccFailureMessage(message: string): boolean {
   return /OptimisticConcurrencyControlFailure/i.test(message);
 }
 
+let convexCliPath: string | null = null;
+
+// Resolve the convex CLI's entry script on disk and invoke it directly with
+// `node`, rather than shelling out through `npx`/`npx.cmd`. On Windows,
+// execFile-ing `npx.cmd` without a shell hits a Node bug (EINVAL) when args
+// contain newlines (e.g. our PEM-formatted keys), and routing through a shell
+// instead would require fragile re-quoting of those same multi-line values.
+async function getConvexCliPath(): Promise<string> {
+  if (!convexCliPath) {
+    const { createRequire } = await import("module");
+    const { dirname, join } = await import("path");
+    const require = createRequire(import.meta.url);
+    const packageJsonPath = require.resolve("convex/package.json");
+    convexCliPath = join(dirname(packageJsonPath), "bin", "main.js");
+  }
+  return convexCliPath;
+}
+
 async function execConvexEnvSet(
   convexEnv: NodeJS.ProcessEnv,
   name: string,
   value: string,
 ): Promise<void> {
-  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
   const { execFile } = await import("child_process");
+  const cliPath = await getConvexCliPath();
 
   await new Promise<void>((resolve, reject) => {
     execFile(
-      npxCommand,
-      ["convex", "env", "set", name, "--", value],
+      process.execPath,
+      [cliPath, "env", "set", name, "--", value],
       {
         env: convexEnv,
         timeout: 15_000,
