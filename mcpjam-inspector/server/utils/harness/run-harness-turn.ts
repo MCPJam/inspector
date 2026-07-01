@@ -35,11 +35,25 @@ import { HarnessAgent } from "@ai-sdk/harness/agent";
 import {
   emitTraceSnapshot,
   getPromptIndex,
-  getPromptMessageStartIndex,
   setToolSpanMessageRangesFromResults,
-  writeTraceEvent,
 } from "../live-chat-trace-stream.js";
-import { getHarnessAdapter } from "./registry.js";
+import { StreamTurnDriver } from "../stream-turn-driver.js";
+import {
+  getHarnessAdapter,
+  buildBrokerDummyAuth,
+  type HarnessAuth,
+} from "./registry.js";
+import {
+  startHarnessModelBroker,
+  revokeHarnessModelBroker,
+} from "./harness-model-broker.js";
+
+/** Inspector-side gate for E2B header-broker credential delivery. Default OFF —
+ *  until enabled, harness runs use the existing client-lease path unchanged, so
+ *  this PR is safe to merge dark. Requires the backend broker routes + flags. */
+function harnessBrokerDeliveryEnabled(): boolean {
+  return process.env.MCPJAM_HARNESS_BROKER_DELIVERY === "true";
+}
 import {
   emitError,
   emitFinish,
@@ -271,6 +285,17 @@ export async function runHarnessTurn(
   // closure free the lane if the commit can't happen (stop/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
+  // Broker-delivery run identity, set after the lease is installed into E2B's
+  // egress transform; used to revoke + clear the rule on teardown.
+  let brokerRunId: string | undefined;
+  let brokerComputerId: string | undefined;
+  let brokerRevoked = false;
+  // Ownership handoff for the claimed continuity lane: false from the moment the
+  // lane is claimed until the harness session is established (the point the
+  // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
+  // broker start, runtime/agent construction, createSession) must release the
+  // lane in onFinishEngine, or the next chat turn is blocked until the lease TTL.
+  let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
@@ -291,17 +316,13 @@ export async function runHarnessTurn(
   // before every turn's bar; the emulated engine clocks from stream start too,
   // so this keeps the harness trace gapless and on parity. Setup time still
   // shows in the [harness][timing] phase log.
-  let traceTurnStarted = false;
   let traceBaseMs = turnStartedAt;
   let stepStartedAt = turnStartedAt;
   const toolSetForTrace: Record<string, { _serverId?: string }> = {};
-  const snapshotTurnContext = () => ({
-    turnId,
-    promptIndex,
-    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
-    turnSpans: capturedSpans,
-    ...(usage ? { turnUsage: usage } : {}),
-  });
+  // The shared per-turn ritual (turn_start / onStepFinish / turn_finish /
+  // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
+  // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.
+  let driver: StreamTurnDriver | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -313,6 +334,11 @@ export async function runHarnessTurn(
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
     let textId: string | undefined;
+    // True once any assistant text reached the writer this turn. If the harness
+    // delivers its answer as a final result instead of streamed `text-delta`
+    // parts, this stays false and we synthesize chunks from `res.text` below so
+    // the Chat pane never renders a blank reply on a successful turn.
+    let emittedAnyText = false;
 
     try {
       if (!projectId) {
@@ -366,7 +392,7 @@ export async function runHarnessTurn(
       //       silently substitute its own default model.
       if (!harnessAdapter.supportsModel(modelId)) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
         );
       }
       //   (b) a harness that can't deliver the host's selected MCP servers must
@@ -377,21 +403,24 @@ export async function runHarnessTurn(
       ) {
         throw new Error(
           `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
-            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`
         );
       }
 
-      // 1. Resolve the model credential FIRST — fetched from Convex (the
-      // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
-      // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
-      // user's computer (and bumps its activity), so a misconfigured turn never
-      // touches the box.
-      const auth = await harnessAdapter.resolveAuth({
-        projectId,
-        modelId,
-        bearer: authHeader,
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
+      // 1. Resolve the model credential. CLIENT path: fetch the gateway key from
+      // Convex FIRST — fail-fast before resolveHarnessSandbox wakes the box, so a
+      // misconfigured turn never touches it. BROKER path: the lease is installed
+      // into E2B's egress transform AFTER the sandbox id is known (step 3b) and
+      // the CLI runs with dummy creds, so auth is deferred.
+      const useBroker = harnessBrokerDeliveryEnabled();
+      let auth: HarnessAuth | undefined = useBroker
+        ? undefined
+        : await harnessAdapter.resolveAuth({
+            projectId,
+            modelId,
+            bearer: authHeader,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
       tAuth = Date.now();
 
       // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
@@ -411,9 +440,10 @@ export async function runHarnessTurn(
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
       // Only adapters that deliver MCP servers (Claude Code) build the config;
       // the undeliverable-servers case already failed closed in step 0(b) above.
-      const { mcpJson, keyToServerId } = harnessAdapter.supportsSelectedMcpServers
-        ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
-        : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+      const { mcpJson, keyToServerId } =
+        harnessAdapter.supportsSelectedMcpServers
+          ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
+          : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -537,6 +567,38 @@ export async function runHarnessTurn(
       });
       tSandbox = Date.now();
 
+      // 3b. BROKER delivery: the sandbox id is now known, so have Convex mint the
+      // lease, lock the sandbox's egress to the proxy, and install the lease into
+      // E2B's egress transform — the inspector never sees the lease. Run the CLI
+      // with dummy creds pointed at the returned proxy. Fail-fast on install
+      // error (the box is awake but no real credential exists anywhere).
+      if (useBroker) {
+        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+        // If the backend installs the E2B rule but the response is lost/aborted,
+        // teardown can still revoke by this id (backend keys revoke on runId).
+        brokerRunId = crypto.randomUUID();
+        brokerComputerId = String(computerId);
+        const broker = await startHarnessModelBroker({
+          projectId,
+          computerId: String(computerId),
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: brokerRunId,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!broker.ok) {
+          // Throws propagate to the turn's outer catch; onFinishEngine frees the
+          // claimed lane (sessionEstablished still false) and revokes the broker
+          // lease (brokerRunId set) if the backend installed before a lost response.
+          throw new Error(broker.error);
+        }
+        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      }
+      if (!auth) {
+        throw new Error("harness turn: model auth was not resolved");
+      }
+
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
       // Approval-required turns are refused at the availability preflight (the
@@ -565,7 +627,9 @@ export async function runHarnessTurn(
         // (Claude Code today). The Claude Code adapter interpolates `description`
         // into YAML frontmatter RAW, so pre-encode descriptions safely here. Codex
         // v1 doesn't deliver skills (`supportsSkills: false`).
-        ...(harnessAdapter.supportsSkills && runtimeSkills && runtimeSkills.length
+        ...(harnessAdapter.supportsSkills &&
+        runtimeSkills &&
+        runtimeSkills.length
           ? {
               skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
@@ -593,7 +657,7 @@ export async function runHarnessTurn(
             if (!harnessAdapter.deliverMcpServers) {
               throw new Error(
                 `The ${harnessAdapter.displayName} harness advertises MCP support ` +
-                  "but has no deliverMcpServers strategy (adapter misconfigured).",
+                  "but has no deliverMcpServers strategy (adapter misconfigured)."
               );
             }
             await harnessAdapter.deliverMcpServers({
@@ -656,6 +720,9 @@ export async function runHarnessTurn(
         session = await agent.createSession();
       }
       tConnect = Date.now();
+      // Session is up: the finalizer + heartbeat now own the continuity lane, so
+      // the pre-session cleanup in onFinishEngine no longer needs to free it.
+      sessionEstablished = true;
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
@@ -837,22 +904,16 @@ export async function runHarnessTurn(
         >();
         const toolStartMs = new Map<string, number>();
         const finishStep = () => {
-          onStepFinish?.({
-            stepIndex,
-            promptIndex,
-            // Usage is only known at the harness `finish`, so intermediate steps
-            // carry what's settled (matches the engine's cumulative semantics).
-            ...(usage ? { turnUsage: usage } : {}),
-            settledWithError: false,
-            turnSpans: [...capturedSpans],
-          });
+          // Usage is only known at the harness `finish`, so intermediate steps
+          // carry what's settled (driver reads its cumulative `usage`).
+          activeDriver.fireStepFinish(stepIndex, false);
           // Stream the cumulative spans + messages to the live Trace tab. This
           // is the event that flips the tab off its "Sample trace" placeholder.
           emitTraceSnapshot(
             writer,
             messageHistory,
             toolSetForTrace as unknown as ToolSet,
-            snapshotTurnContext()
+            activeDriver.snapshotContext(messageHistory)
           );
           stepIndex += 1;
           stepStartedAt = Date.now();
@@ -861,13 +922,16 @@ export async function runHarnessTurn(
         // (credential/box/connect) never creates a phantom turn in the trace.
         // Anchor the trace clock to stream start so setup latency isn't a gap.
         traceBaseMs = Date.now();
-        writeTraceEvent(writer, {
-          type: "turn_start",
+        const activeDriver = new StreamTurnDriver({
           turnId,
           promptIndex,
-          startedAtMs: traceBaseMs,
+          modelId,
+          traceBaseMs,
+          spans: capturedSpans,
+          onStepFinish,
         });
-        traceTurnStarted = true;
+        driver = activeDriver;
+        activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
@@ -902,6 +966,7 @@ export async function runHarnessTurn(
               assistantParts.push({ type: "text", text: delta });
             }
             emitTextDelta(writer, textId, delta);
+            emittedAnyText = true;
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -1156,8 +1221,53 @@ export async function runHarnessTurn(
         // session, stopping the in-sandbox Claude Code run.
         if (aborted) return;
 
-        // Settle usage/finish on res.
-        await res.text;
+        // The AI SDK terminal result is authoritative for the final assistant
+        // answer + usage. `res.text` settles the complete answer even when the
+        // bridge delivered it as a final result rather than streamed
+        // `text-delta` parts. Drain it before building the persisted transcript.
+        const finalText = await res.text;
+
+        // Settle cumulative usage + finish reason on the driver NOW — usage is
+        // known from the finish part. Set before the completeness fallback below
+        // so the synthesized tool step's finishStep() (and every step settling
+        // after this point) reports the known cumulative turnUsage, not undefined.
+        activeDriver.usage = usage;
+        activeDriver.finishReason = turnFinishReason;
+
+        // Completeness reconciliation against the authoritative result: if the
+        // live stream yielded no assistant text (answer arrived as a final
+        // result, not deltas), the hand-built transcript + UI projection would
+        // be blank on an otherwise-successful turn. Project the authoritative
+        // `res.text` into both the UI stream and the persisted assistant
+        // message so live render + persistence match the terminal result.
+        if (
+          !emittedAnyText &&
+          typeof finalText === "string" &&
+          finalText.length > 0
+        ) {
+          // Final assistant text after tool results begins the next step — flush
+          // the pending tool segment FIRST (mirrors the `text-delta` path),
+          // otherwise the synthesized text would be appended to the same
+          // assistant message as the preceding tool-call, persisting
+          // assistant(tool-call + text) → tool instead of the correct
+          // assistant(tool-call) → tool → assistant(text) ordering.
+          if (pendingResults.length > 0) {
+            flushSegment();
+            finishStep();
+          }
+          const finalTextId = crypto.randomUUID();
+          emitTextStart(writer, finalTextId);
+          emitTextDelta(writer, finalTextId, finalText);
+          emitTextEnd(writer, finalTextId);
+          emittedAnyText = true;
+          onLiveTextDelta?.(finalText);
+          const lastPart = assistantParts[assistantParts.length - 1];
+          if (lastPart && lastPart.type === "text") {
+            lastPart.text += finalText;
+          } else {
+            assistantParts.push({ type: "text", text: finalText });
+          }
+        }
 
         // Flush the final step's assistant message + its tool results. Earlier
         // steps were flushed as new assistant content arrived after results, so
@@ -1169,13 +1279,9 @@ export async function runHarnessTurn(
           finishReason: turnFinishReason,
           messageMetadata: usage,
         });
-        writeTraceEvent(writer, {
-          type: "turn_finish",
-          turnId,
-          promptIndex,
-          finishReason: turnFinishReason,
-          ...(usage ? { usage } : {}),
-        });
+        // Shared ritual: write turn_finish + mark success (finish chunk already
+        // emitted above).
+        activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
         const tStream = Date.now();
         // Values inlined into the message — this logger drops the 2nd arg.
@@ -1246,20 +1352,17 @@ export async function runHarnessTurn(
       emitError(writer, errorText);
       // A mid-stream failure still gets a final snapshot + turn_finish so the
       // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
-      // by traceTurnStarted so a pre-stream failure emits no phantom turn.
-      if (traceTurnStarted) {
+      // by the driver's `traceStarted` so a pre-stream failure emits no phantom
+      // turn.
+      if (driver?.traceStarted) {
+        driver.usage = usage;
         emitTraceSnapshot(
           writer,
           messageHistory,
           toolSetForTrace as unknown as ToolSet,
-          snapshotTurnContext()
+          driver.snapshotContext(messageHistory)
         );
-        writeTraceEvent(writer, {
-          type: "turn_finish",
-          turnId,
-          promptIndex,
-          ...(usage ? { usage } : {}),
-        });
+        driver.emitErrorTurnFinish(writer);
       }
       onEngineError?.({
         message: errorText,
@@ -1270,19 +1373,24 @@ export async function runHarnessTurn(
   };
 
   const onFinishEngine = async () => {
-    if (runSucceeded && !aborted) {
-      const trace: PersistedTurnTrace = {
-        turnId,
-        // Stream start (matches the span offset base) so rehydrated traces align
-        // with the live ones — see traceBaseMs.
-        startedAt: traceBaseMs,
-        promptIndex,
-        endedAt: Date.now(),
-        spans: [...capturedSpans],
-        ...(usage ? { usage } : {}),
-        finishReason: turnFinishReason,
-        modelId,
-      };
+    // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
+    // + clear the E2B egress rule before the persistence/cleanup callbacks below,
+    // which could hang and would otherwise keep the credential live until TTL/cron.
+    // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
+    // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    if (!brokerRevoked && brokerRunId && authHeader) {
+      brokerRevoked = true;
+      await revokeHarnessModelBroker({
+        runId: brokerRunId,
+        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
+        ...(projectId ? { projectId } : {}),
+        bearer: authHeader,
+      }).catch(() => {});
+    }
+    if (runSucceeded && !aborted && driver) {
+      // Stream start (matches the span offset base) so rehydrated traces align
+      // with the live ones — see traceBaseMs.
+      const trace: PersistedTurnTrace = driver.buildPersistedTrace();
       capturedTurnTrace = trace;
       // §3: hand the resume-state commit to onConversationComplete so it rides
       // /ingest-chat atomically with the transcript. On success the backend
@@ -1302,6 +1410,16 @@ export async function runHarnessTurn(
       if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
         await releaseHarnessLease?.();
       }
+    }
+    // Pre-session cleanup: if the session was never established (the turn failed
+    // or aborted after claimHarnessSessionState but before createSession — sandbox
+    // wake, broker start, runtime/agent construction, or createSession threw), no
+    // finalizer owns the claimed lane, so free it here or the next chat turn is
+    // blocked with "Another turn is already running" until the lease TTL. This runs
+    // on BOTH stream paths (UI onFinish + inline finally). Idempotent, and a no-op
+    // on non-continuity turns (releaseHarnessLease is undefined).
+    if (!sessionEstablished) {
+      await releaseHarnessLease?.();
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
     // error must not reject stream finalization after an otherwise successful
@@ -1331,6 +1449,7 @@ export async function runHarnessTurn(
   try {
     await executeEngine({ writer: noopWriter });
   } finally {
+    // onFinishEngine runs the broker teardown for this path too (see above).
     await onFinishEngine();
   }
   return {

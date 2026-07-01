@@ -12,6 +12,10 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "stripeprice",
   "x-mcp-session-auth",
   "x-api-key",
+  // Header-broker model lease (E2B network-transform delivery). A signed model
+  // lease — never log it, even though the inspector never handles it directly
+  // (defense in depth).
+  "x-mcpjam-harness-lease",
 ];
 
 const ALLOWLISTED_KEYS = new Set(["emaildomain"]);

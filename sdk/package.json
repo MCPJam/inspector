@@ -117,9 +117,9 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@modelcontextprotocol/node": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/node": "2.0.0-alpha.2",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "@modelcontextprotocol/server-everything": "^2026.1.26",
     "@sentry/cli": "^2.58.4",
     "@sentry/node": "^8.55.0",
