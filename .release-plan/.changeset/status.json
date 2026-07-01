@@ -4,68 +4,22 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/widget-react",
           "type": "patch"
         }
       ],
-      "summary": "Release the latest host compatibility, eval export, and dependency updates.\n\n- Add `@mcpjam/sdk/host-compat` for deriving server requirements, evaluating host compatibility, and scanning widget bridge usage.\n- Add the Inspector Compatibility destination with conformance gates, host matrices, live observed widget rendering, and caniuse.dev showcase support.\n- Add OTLP/OpenInference trace export from eval run detail pages.\n- Pin `@modelcontextprotocol/client` to the stable alpha version used by the workspace.",
-      "id": "release-rollup-2026-06-26"
+      "summary": "Remove the guest free daily credits block from the sidebar.",
+      "id": "sidebar-guest-credit-block"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.20.0",
-      "changesets": [
-        "release-rollup-2026-06-26"
-      ],
-      "newVersion": "2.21.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.25.0",
-      "changesets": [
-        "release-rollup-2026-06-26"
-      ],
-      "newVersion": "1.26.0"
-    },
-    {
-      "name": "@mcpjam/cli",
       "type": "patch",
-      "oldVersion": "3.11.0",
+      "oldVersion": "2.22.0",
       "changesets": [
-        "release-rollup-2026-06-26"
+        "sidebar-guest-credit-block"
       ],
-      "newVersion": "3.11.1"
-    },
-    {
-      "name": "@mcpjam/widget-react",
-      "type": "patch",
-      "oldVersion": "0.1.0",
-      "changesets": [
-        "release-rollup-2026-06-26"
-      ],
-      "newVersion": "0.1.1"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.22.1"
     }
   ]
 }
