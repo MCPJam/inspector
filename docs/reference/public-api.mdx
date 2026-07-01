@@ -45,6 +45,10 @@ What you can do with it today:
   template like `claude`/`chatgpt`/`cursor`, or from a full host config),
   rename, and delete the named model + capability profiles you run chats and
   eval suites against
+- **Manage custom Computer environments** — list, create, edit, build, and
+  delete digest-pinned Dockerfile images your project's computers can boot
+  from; promote a personal draft to the whole project; attach an environment
+  to your computer or reset it to its current image
 - **List a project's chatboxes** — name, access mode, attached servers, and
   share link — and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
@@ -211,6 +215,13 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET`, `POST /projects/{projectId}/hosts` | List hosts, or create one from a template or full config |
 | `GET`, `PATCH`, `DELETE /projects/{projectId}/hosts/{hostId}` | Read, rename/edit, or delete a host |
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
+| `GET`, `POST /projects/{projectId}/computer-environments` | List environments, or create one from a Dockerfile |
+| `GET`, `PATCH`, `DELETE /projects/{projectId}/computer-environments/{environmentId}` | Read, edit, or delete an environment |
+| `GET /projects/{projectId}/computer-environments/{environmentId}/builds` | List an environment's builds (newest first) with status and log preview |
+| `POST /projects/{projectId}/computer-environments/{environmentId}/build` | Trigger an async image build (responds `202`); poll the builds list for status |
+| `POST /projects/{projectId}/computer-environments/{environmentId}/promote` | Share a personal-draft environment with the whole project (requires project admin) |
+| `POST /projects/{projectId}/computer-environments/{environmentId}/use` | Attach the environment to your computer, re-provisioning it from the pinned image |
+| `POST /projects/{projectId}/computer/reset` | Reset your computer to its current image, wiping mutable state |
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 

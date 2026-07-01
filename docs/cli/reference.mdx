@@ -379,6 +379,104 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `env` commands
+
+Manage custom Computer environments (digest-pinned Dockerfile images) in your hosted MCPJam projects. All `env` commands accept the shared platform flags below.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `env list`
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `env get`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes | Display name for the new environment |
+| `--file <path>` | Yes | Dockerfile path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env edit`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--name <name>` | No | New display name |
+| `--file <path>` | No | Replacement Dockerfile path, or `-` for stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+At least one of `--name` or `--file` is required.
+
+### `env build`
+
+Trigger an async image build. Poll `env logs` for status.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env logs`
+
+List an environment's builds (newest first) with their status and log preview.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env use`
+
+Attach an environment to your computer, which re-provisions it from the pinned image (installed files are wiped). The environment must have a `ready` build.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env reset`
+
+Reset your computer to its current image, wiping mutable state.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env promote`
+
+Share a personal-draft environment with the whole project. Requires project admin.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `env delete`
+
+Permanently delete an environment from a project.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `tunnel`
 
 Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and chatboxes can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
