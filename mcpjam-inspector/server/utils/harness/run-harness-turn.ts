@@ -817,7 +817,13 @@ export async function runHarnessTurn(
           emitTextDelta(writer, finalTextId, text);
           emitTextEnd(writer, finalTextId);
           emittedAnyText = true;
-          emittedAnyVisiblePart = true;
+          // Whitespace-only text renders as a blank message to the user, so it
+          // must not count toward the "produced visible output" completeness
+          // check below (else a whitespace-only harness answer would silently
+          // skip the HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT fallback).
+          if (text.trim().length > 0) {
+            emittedAnyVisiblePart = true;
+          }
           onLiveTextDelta?.(text);
           const lastPart = assistantParts[assistantParts.length - 1];
           if (lastPart && lastPart.type === "text") {
@@ -984,7 +990,10 @@ export async function runHarnessTurn(
             }
             emitTextDelta(writer, textId, delta);
             emittedAnyText = true;
-            emittedAnyVisiblePart = true;
+            // See the whitespace-only note on projectAssistantText above.
+            if (delta.trim().length > 0) {
+              emittedAnyVisiblePart = true;
+            }
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -1253,7 +1262,7 @@ export async function runHarnessTurn(
         if (
           !emittedAnyText &&
           typeof finalText === "string" &&
-          finalText.length > 0
+          finalText.trim().length > 0
         ) {
           // Final assistant text after tool results begins the next step — flush
           // the pending tool segment FIRST (mirrors the `text-delta` path),

@@ -158,4 +158,40 @@ describe("runHarnessTurn empty output projection", () => {
       content: [{ type: "text", text: "Created empty.txt" }],
     });
   });
+
+  it("treats a whitespace-only final text as non-visible and still falls back", async () => {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+    harnessState.finalText = "   \n  ";
+
+    const result = await runHarnessTurn(baseOptions() as any, "none");
+
+    expect(result.messageHistory.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT }],
+    });
+  });
+
+  it("treats a whitespace-only streamed text-delta as non-visible and still falls back", async () => {
+    harnessState.streamParts = [
+      { type: "text-delta", delta: " \n " },
+      { type: "finish", finishReason: "stop" },
+    ];
+    harnessState.finalText = "";
+
+    const result = await runHarnessTurn(baseOptions() as any, "none");
+
+    const lastMessage = result.messageHistory.at(-1) as {
+      role: string;
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(lastMessage.role).toBe("assistant");
+    // The empty-output fallback appends onto the same open text part (it's
+    // what the harness actually said, plus the fallback notice) rather than
+    // being dropped for having "already produced text" — whitespace alone
+    // must not satisfy the "visible part" check.
+    expect(lastMessage.content[0]).toMatchObject({
+      type: "text",
+      text: " \n " + HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT,
+    });
+  });
 });

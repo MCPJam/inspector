@@ -184,15 +184,15 @@ const CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE =
   "let streamStarted = false;\n  const partialBlocks";
 const CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `let streamStarted = false;
   let streamedAssistantText = false;
-  const emittedAssistantTextFallbacks = new Set();
+  let lastEmittedFallbackText;
   const emitAssistantTextFallback = (text) => {
     const normalized = typeof text === "string" ? text : "";
-    if (!normalized || streamedAssistantText || emittedAssistantTextFallbacks.has(normalized)) return;
+    if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
     const id = randomUUID();
     emit({ type: "text-start", id });
     emit({ type: "text-delta", id, delta: normalized });
     emit({ type: "text-end", id });
-    emittedAssistantTextFallbacks.add(normalized);
+    lastEmittedFallbackText = normalized;
   };
   const partialBlocks`;
 const CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `if (type === "stream_event") {
@@ -373,12 +373,16 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   const withoutProvider = m.startsWith("anthropic/")
     ? m.slice("anthropic/".length)
     : m;
-  if (withoutProvider.includes("haiku")) return "haiku";
   const match = withoutProvider.match(
     /^claude-(haiku|sonnet|opus)-(\d+)(?:[.-](\d+))?$/
   );
   if (match) {
     const [, family, major, minor] = match;
+    // Claude Code accepts "haiku" as a selectable main model but rejects the
+    // native shape ("claude-haiku-4-5") — only THIS shortcut needs the alias;
+    // gated on the regex match so it can't fire for a non-Anthropic or
+    // malformed id that merely contains "haiku" as a substring.
+    if (family === "haiku") return "haiku";
     return `claude-${family}-${major}${minor ? `-${minor}` : ""}`;
   }
   if (

@@ -161,6 +161,17 @@ const toUserMessage = (text) => ({
     expect(bridge?.content).toContain("modelOverrides");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
+    // Fallback dedup only suppresses an EXACT repeat of the immediately prior
+    // fallback (e.g. msg.result echoing the last text block) — never a full
+    // history Set, which would drop legitimate non-adjacent repeats, and
+    // never a "first-emission-only" flag, which would silently swallow a
+    // distinct trailing msg.result (the real final answer) after any earlier
+    // fallback fired.
+    expect(bridge?.content).toContain("let lastEmittedFallbackText");
+    expect(bridge?.content).toContain(
+      "normalized === lastEmittedFallbackText"
+    );
+    expect(bridge?.content).not.toContain("emittedAssistantTextFallbacks");
     // Gateway compat: the CLI must omit output_config.effort (the gateway's
     // Anthropic-compat schema 400s on it).
     expect(bridge?.content).toContain(
