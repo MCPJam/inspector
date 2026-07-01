@@ -1,0 +1,81 @@
+---
+title: "Compatibility"
+description: "Check whether your MCP server works on Claude, ChatGPT, Cursor, Copilot, and other hosts — spec conformance first, then per-host gaps."
+icon: "boxes"
+---
+
+The Compatibility page answers the question: **does my server work on these hosts?** It runs two layers of checks against the currently-selected server and shows the results in one place.
+
+<Note>
+  The Compatibility page is available to MCPJam team members behind the
+  `mcpjam-compatibility` feature flag. It is off by default.
+</Note>
+
+## How it works
+
+Compatibility checks are organized into two layers:
+
+1. **Spec conformance (Tier 0)** — A spec failure breaks on *every* host, so it's checked first and shown above the per-host matrix. Run it on demand; it hits the live server.
+2. **Per-host matrix** — Static checks derived from connect-time data (tools list, negotiated protocol version) compared against each host's known profile.
+
+### Spec conformance gate
+
+The conformance gate runs the same protocol and apps suites as the [Conformance](/inspector/guided-oauth) tab, reusing the existing `/api/mcp/conformance/{protocol,apps}` endpoints. Click **Run checks** to start.
+
+| Result | Meaning |
+| --- | --- |
+| **Passes spec checks** | All runnable suites passed. The gaps below are host-specific, not spec problems. |
+| **Fix these spec failures first** | One or more suites failed. These break on every host — fix them before reading the per-host matrix. |
+| **Not runnable here** | The suite can't run over this transport (e.g. the protocol suite is HTTP-only; over stdio it's skipped, never marked failed). |
+
+Results reset automatically when you switch to a different server so stale results from a prior server never bleed through.
+
+### Per-host matrix
+
+The matrix evaluates the selected server against every host in the registry using static data available at connect time. Findings are grouped into two lanes:
+
+| Lane | What it checks |
+| --- | --- |
+| **Apps** | Widget rendering — does the host render this server's widgets? Does it expose the host APIs the widgets call? |
+| **Server** | Capability negotiation — does the server's negotiated MCP protocol version match what the host advertises? |
+
+Each host row shows a verdict dot and, when expanded, the individual findings with severity and remediation hints.
+
+#### Verdicts
+
+| Verdict | Meaning |
+| --- | --- |
+| **Works** | No gaps found for this host. |
+| **Degraded** | The server works but some widgets fall back to plain text. |
+| **Blocked** | One or more app-only tools are unusable on this host. |
+| **Unknown** | Not enough data to determine compatibility (e.g. tools not yet loaded, or an unanalyzed dimension). |
+
+#### Provenance
+
+Each finding carries a provenance label indicating how confident the data is:
+
+| Label | Source |
+| --- | --- |
+| `vendor-doc` | Verified from vendor documentation. |
+| `probe` | Captured from a real host via a live probe. |
+| `assumed` | Best-effort preset — unverified. |
+
+The top-level verdict is never more authoritative than its weakest source.
+
+## Getting started
+
+1. **Connect a server** — Select a connected server from the server picker at the top of the page.
+2. **Run spec checks** — Click **Run checks** in the conformance gate to verify the spec floor. Fix any failures before reading the matrix.
+3. **Read the matrix** — Expand any host row to see lane-level findings and remediation hints.
+
+<Tip>
+  The "Test in host" CTA is available from the server detail modal (not this
+  page). Open the modal from the Clients tab to create a host for a specific
+  server.
+</Tip>
+
+## Related pages
+
+- [Clients](/inspector/clients) — Connect servers and open the server detail modal (which includes the Compatibility tab and the "Test in host" CTA).
+- [Playground](/inspector/playground) — Render widgets under different host configurations side by side.
+- [Host Templates](/inspector/host-templates) — Contribute a new host preset to the registry.
