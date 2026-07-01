@@ -35,10 +35,9 @@ import { HarnessAgent } from "@ai-sdk/harness/agent";
 import {
   emitTraceSnapshot,
   getPromptIndex,
-  getPromptMessageStartIndex,
   setToolSpanMessageRangesFromResults,
-  writeTraceEvent,
 } from "../live-chat-trace-stream.js";
+import { StreamTurnDriver } from "../stream-turn-driver.js";
 import { getHarnessAdapter } from "./registry.js";
 import {
   emitError,
@@ -290,17 +289,13 @@ export async function runHarnessTurn(
   // before every turn's bar; the emulated engine clocks from stream start too,
   // so this keeps the harness trace gapless and on parity. Setup time still
   // shows in the [harness][timing] phase log.
-  let traceTurnStarted = false;
   let traceBaseMs = turnStartedAt;
   let stepStartedAt = turnStartedAt;
   const toolSetForTrace: Record<string, { _serverId?: string }> = {};
-  const snapshotTurnContext = () => ({
-    turnId,
-    promptIndex,
-    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
-    turnSpans: capturedSpans,
-    ...(usage ? { turnUsage: usage } : {}),
-  });
+  // The shared per-turn ritual (turn_start / onStepFinish / turn_finish /
+  // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
+  // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.
+  let driver: StreamTurnDriver | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -312,6 +307,11 @@ export async function runHarnessTurn(
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
     let textId: string | undefined;
+    // True once any assistant text reached the writer this turn. If the harness
+    // delivers its answer as a final result instead of streamed `text-delta`
+    // parts, this stays false and we synthesize chunks from `res.text` below so
+    // the Chat pane never renders a blank reply on a successful turn.
+    let emittedAnyText = false;
 
     try {
       if (!projectId) {
@@ -826,22 +826,16 @@ export async function runHarnessTurn(
         >();
         const toolStartMs = new Map<string, number>();
         const finishStep = () => {
-          onStepFinish?.({
-            stepIndex,
-            promptIndex,
-            // Usage is only known at the harness `finish`, so intermediate steps
-            // carry what's settled (matches the engine's cumulative semantics).
-            ...(usage ? { turnUsage: usage } : {}),
-            settledWithError: false,
-            turnSpans: [...capturedSpans],
-          });
+          // Usage is only known at the harness `finish`, so intermediate steps
+          // carry what's settled (driver reads its cumulative `usage`).
+          activeDriver.fireStepFinish(stepIndex, false);
           // Stream the cumulative spans + messages to the live Trace tab. This
           // is the event that flips the tab off its "Sample trace" placeholder.
           emitTraceSnapshot(
             writer,
             messageHistory,
             toolSetForTrace as unknown as ToolSet,
-            snapshotTurnContext()
+            activeDriver.snapshotContext(messageHistory)
           );
           stepIndex += 1;
           stepStartedAt = Date.now();
@@ -850,13 +844,16 @@ export async function runHarnessTurn(
         // (credential/box/connect) never creates a phantom turn in the trace.
         // Anchor the trace clock to stream start so setup latency isn't a gap.
         traceBaseMs = Date.now();
-        writeTraceEvent(writer, {
-          type: "turn_start",
+        const activeDriver = new StreamTurnDriver({
           turnId,
           promptIndex,
-          startedAtMs: traceBaseMs,
+          modelId,
+          traceBaseMs,
+          spans: capturedSpans,
+          onStepFinish,
         });
-        traceTurnStarted = true;
+        driver = activeDriver;
+        activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
         for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
@@ -891,6 +888,7 @@ export async function runHarnessTurn(
               assistantParts.push({ type: "text", text: delta });
             }
             emitTextDelta(writer, textId, delta);
+            emittedAnyText = true;
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
             // A tool-call after tool results begins the next step.
@@ -1135,8 +1133,53 @@ export async function runHarnessTurn(
         // session, stopping the in-sandbox Claude Code run.
         if (aborted) return;
 
-        // Settle usage/finish on res.
-        await res.text;
+        // The AI SDK terminal result is authoritative for the final assistant
+        // answer + usage. `res.text` settles the complete answer even when the
+        // bridge delivered it as a final result rather than streamed
+        // `text-delta` parts. Drain it before building the persisted transcript.
+        const finalText = await res.text;
+
+        // Settle cumulative usage + finish reason on the driver NOW — usage is
+        // known from the finish part. Set before the completeness fallback below
+        // so the synthesized tool step's finishStep() (and every step settling
+        // after this point) reports the known cumulative turnUsage, not undefined.
+        activeDriver.usage = usage;
+        activeDriver.finishReason = turnFinishReason;
+
+        // Completeness reconciliation against the authoritative result: if the
+        // live stream yielded no assistant text (answer arrived as a final
+        // result, not deltas), the hand-built transcript + UI projection would
+        // be blank on an otherwise-successful turn. Project the authoritative
+        // `res.text` into both the UI stream and the persisted assistant
+        // message so live render + persistence match the terminal result.
+        if (
+          !emittedAnyText &&
+          typeof finalText === "string" &&
+          finalText.length > 0
+        ) {
+          // Final assistant text after tool results begins the next step — flush
+          // the pending tool segment FIRST (mirrors the `text-delta` path),
+          // otherwise the synthesized text would be appended to the same
+          // assistant message as the preceding tool-call, persisting
+          // assistant(tool-call + text) → tool instead of the correct
+          // assistant(tool-call) → tool → assistant(text) ordering.
+          if (pendingResults.length > 0) {
+            flushSegment();
+            finishStep();
+          }
+          const finalTextId = crypto.randomUUID();
+          emitTextStart(writer, finalTextId);
+          emitTextDelta(writer, finalTextId, finalText);
+          emitTextEnd(writer, finalTextId);
+          emittedAnyText = true;
+          onLiveTextDelta?.(finalText);
+          const lastPart = assistantParts[assistantParts.length - 1];
+          if (lastPart && lastPart.type === "text") {
+            lastPart.text += finalText;
+          } else {
+            assistantParts.push({ type: "text", text: finalText });
+          }
+        }
 
         // Flush the final step's assistant message + its tool results. Earlier
         // steps were flushed as new assistant content arrived after results, so
@@ -1148,13 +1191,9 @@ export async function runHarnessTurn(
           finishReason: turnFinishReason,
           messageMetadata: usage,
         });
-        writeTraceEvent(writer, {
-          type: "turn_finish",
-          turnId,
-          promptIndex,
-          finishReason: turnFinishReason,
-          ...(usage ? { usage } : {}),
-        });
+        // Shared ritual: write turn_finish + mark success (finish chunk already
+        // emitted above).
+        activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
         const tStream = Date.now();
         // Values inlined into the message — this logger drops the 2nd arg.
@@ -1225,20 +1264,17 @@ export async function runHarnessTurn(
       emitError(writer, errorText);
       // A mid-stream failure still gets a final snapshot + turn_finish so the
       // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
-      // by traceTurnStarted so a pre-stream failure emits no phantom turn.
-      if (traceTurnStarted) {
+      // by the driver's `traceStarted` so a pre-stream failure emits no phantom
+      // turn.
+      if (driver?.traceStarted) {
+        driver.usage = usage;
         emitTraceSnapshot(
           writer,
           messageHistory,
           toolSetForTrace as unknown as ToolSet,
-          snapshotTurnContext()
+          driver.snapshotContext(messageHistory)
         );
-        writeTraceEvent(writer, {
-          type: "turn_finish",
-          turnId,
-          promptIndex,
-          ...(usage ? { usage } : {}),
-        });
+        driver.emitErrorTurnFinish(writer);
       }
       onEngineError?.({
         message: errorText,
@@ -1249,19 +1285,10 @@ export async function runHarnessTurn(
   };
 
   const onFinishEngine = async () => {
-    if (runSucceeded && !aborted) {
-      const trace: PersistedTurnTrace = {
-        turnId,
-        // Stream start (matches the span offset base) so rehydrated traces align
-        // with the live ones — see traceBaseMs.
-        startedAt: traceBaseMs,
-        promptIndex,
-        endedAt: Date.now(),
-        spans: [...capturedSpans],
-        ...(usage ? { usage } : {}),
-        finishReason: turnFinishReason,
-        modelId,
-      };
+    if (runSucceeded && !aborted && driver) {
+      // Stream start (matches the span offset base) so rehydrated traces align
+      // with the live ones — see traceBaseMs.
+      const trace: PersistedTurnTrace = driver.buildPersistedTrace();
       capturedTurnTrace = trace;
       // §3: hand the resume-state commit to onConversationComplete so it rides
       // /ingest-chat atomically with the transcript. On success the backend
