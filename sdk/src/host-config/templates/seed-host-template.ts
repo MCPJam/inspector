@@ -716,12 +716,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         roots: {},
         elicitation: {},
       };
-      // Progressive tool discovery ON. No-op while the harness runs (the real
-      // Claude Code owns its own tool discovery from the generated .mcp.json,
-      // and runHarnessTurn ignores this flag), but it stays the honest value
-      // for the emulated fallback path. Product choice, not probe data — tool
-      // disclosure isn't an MCP `initialize` capability.
-      base.progressiveToolDiscovery = true;
+      // The real Claude Code owns native tool discovery from the generated
+      // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
+      // so `search_mcp_tools` never looks like a Claude Code built-in.
+      base.progressiveToolDiscovery = false;
       // CLI client: no widget rendering, so `hostContext` stays the
       // empty object.
       //

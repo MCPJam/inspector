@@ -433,6 +433,9 @@ chatV2.post("/", async (c) => {
           respectToolVisibility,
           customProviders: body.customProviders,
           uiMessages: messages,
+          ...(resolvedExecution.harness
+            ? { harness: resolvedExecution.harness }
+            : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {

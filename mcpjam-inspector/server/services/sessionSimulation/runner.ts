@@ -575,6 +575,7 @@ async function runOneSession(args: {
       temperature,
       requireToolApproval,
       respectToolVisibility,
+      ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
             progressiveToolDiscovery: {

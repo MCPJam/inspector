@@ -236,6 +236,41 @@ function getRecordedSpans(
   return raw as EvalTraceSpan[];
 }
 
+type TraceTurnRuntime = {
+  engine?: "emulated" | "harness";
+  harness?: string;
+};
+
+function getTraceTurnRuntimeByPromptIndex(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): Map<number, TraceTurnRuntime> | undefined {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") {
+    return undefined;
+  }
+  const rawEvents = (trace as TraceEnvelope).events;
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return undefined;
+
+  const byPromptIndex = new Map<number, TraceTurnRuntime>();
+  for (const rawEvent of rawEvents) {
+    if (!rawEvent || typeof rawEvent !== "object") continue;
+    const event = rawEvent as Record<string, unknown>;
+    if (event.type !== "turn_start") continue;
+    if (typeof event.promptIndex !== "number") continue;
+    const engine =
+      event.engine === "emulated" || event.engine === "harness"
+        ? event.engine
+        : undefined;
+    const harness =
+      typeof event.harness === "string" && event.harness.trim()
+        ? event.harness
+        : undefined;
+    if (!engine && !harness) continue;
+    byPromptIndex.set(event.promptIndex, { engine, harness });
+  }
+
+  return byPromptIndex.size > 0 ? byPromptIndex : undefined;
+}
+
 // PR 7: pull the browser-rendered MCP App artifacts off the trace envelope.
 function getBrowserObservations(
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
@@ -361,6 +396,10 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  const turnRuntimeByPromptIndex = useMemo(
+    () => getTraceTurnRuntimeByPromptIndex(trace),
+    [trace]
+  );
   // PR 7: browser-rendered MCP App eval artifacts (render observations +
   // Computer Use steps). Only iterations driven through the headless-Chromium
   // harness carry these, so the Browser tab is gated on their presence.
@@ -864,6 +903,7 @@ export function TraceViewer({
                 viewportMaxMs={
                   hasRecordedSpans ? timelineViewportMaxMs : undefined
                 }
+                turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
               />
             </div>
