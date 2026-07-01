@@ -106,6 +106,20 @@ A run needs three things, all picked from the suite header:
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
 
+## Computer environment
+
+<Note>
+  The computer environment picker is only visible when the **computers** feature flag is enabled on your account and a project is selected for the suite.
+</Note>
+
+In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits — each iteration gets an identical starting state.
+
+- Choose an environment from the list. Environments that have not finished building are labelled **(not built)**; selecting one will cause the run to fail immediately.
+- Choose **None (default image)** to run without a pinned environment.
+- The agent receives a `bash` tool inside the sandbox.
+
+Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
