@@ -10,6 +10,7 @@
  *
  * Backed by `convex/http.ts:/web/harness/model-broker/{start,revoke}`.
  */
+import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 
 export type HarnessBrokerStartResult =
@@ -43,6 +44,9 @@ export async function startHarnessModelBroker(args: {
   modelId: string;
   runId?: string;
   maxOutputTokens?: number;
+  /** Phase 3 scope; when present the backend runs the host-funded guest path
+   *  (re-resolve access, require harness capability, per-swarm daily cap). */
+  executionScope?: ExecutionScope;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -50,7 +54,7 @@ export async function startHarnessModelBroker(args: {
   try {
     url = new URL(
       "/web/harness/model-broker/start",
-      getConvexHttpUrl()
+      getConvexHttpUrl(),
     ).toString();
   } catch (err) {
     logger.error("[harness-model-broker] missing endpoint config", err);
@@ -78,6 +82,7 @@ export async function startHarnessModelBroker(args: {
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
           : {}),
+        ...(args.executionScope ? { executionScope: args.executionScope } : {}),
       }),
       signal: args.signal,
     });
@@ -149,7 +154,7 @@ export async function revokeHarnessModelBroker(args: {
   try {
     url = new URL(
       "/web/harness/model-broker/revoke",
-      getConvexHttpUrl()
+      getConvexHttpUrl(),
     ).toString();
   } catch (err) {
     logger.error("[harness-model-broker] missing revoke endpoint config", err);

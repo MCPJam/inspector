@@ -26,7 +26,7 @@ afterEach(() => {
 
 function mockFetch(impl: (url: string, init: RequestInit) => Response) {
   globalThis.fetch = vi.fn(async (url: any, init: any) =>
-    impl(String(url), init as RequestInit)
+    impl(String(url), init as RequestInit),
   ) as unknown as typeof fetch;
 }
 
@@ -39,7 +39,11 @@ describe("claimHarnessSessionState", () => {
       body = JSON.parse(String(init.body));
       return Response.json({
         ok: true,
-        state: { harnessSessionId: "h1", resumeState: { a: 1 }, computerId: "comp" },
+        state: {
+          harnessSessionId: "h1",
+          resumeState: { a: 1 },
+          computerId: "comp",
+        },
         stateVersion: 3,
         fingerprintChanged: false,
       });
@@ -53,7 +57,7 @@ describe("claimHarnessSessionState", () => {
       bearer: "tok",
     });
     expect(seenUrl).toBe(
-      "https://convex.example.com/web/harness/session-state/claim"
+      "https://convex.example.com/web/harness/session-state/claim",
     );
     expect(body).toMatchObject({
       projectId: "p1",
@@ -67,19 +71,61 @@ describe("claimHarnessSessionState", () => {
     });
     expect(res).toEqual({
       ok: true,
-      state: { harnessSessionId: "h1", resumeState: { a: 1 }, computerId: "comp" },
+      state: {
+        harnessSessionId: "h1",
+        resumeState: { a: 1 },
+        computerId: "comp",
+      },
       stateVersion: 3,
       fingerprintChanged: false,
     });
+  });
+
+  // Secure Guest Harness Enablement — the owner's executionScope is spread into
+  // the claim body so the backend resolves the guest's own lane via
+  // resolveExecutionAccess (rather than the member-only project-role gate).
+  it("forwards the owner executionScope into the claim body when present", async () => {
+    let body: any;
+    mockFetch((_url, init) => {
+      body = JSON.parse(String(init.body));
+      return Response.json({ ok: true, state: null, stateVersion: 0 });
+    });
+    const scope = {
+      kind: "swarm" as const,
+      swarmId: "cb_1",
+      accessVersion: 3,
+      projectId: "p1",
+      workspaceId: "ws_1",
+    };
+    await claimHarnessSessionState({
+      owner: {
+        projectId: "p1",
+        harnessId: "claude-code",
+        ownerType: "chatbox-chat",
+        chatSessionId: "c1",
+        chatboxId: "cb_1",
+        executionScope: scope,
+      },
+      runtimeFingerprint: "fp",
+      leaseId: "lease-1",
+      leasedBy: "inst",
+      leaseTtlMs: 300000,
+      bearer: "tok",
+    });
+    expect(body.executionScope).toEqual(scope);
+    expect(body.chatboxId).toBe("cb_1");
   });
 
   it("surfaces a 409 (turn in progress) as ok:false with status", async () => {
     mockFetch(
       () =>
         new Response(
-          JSON.stringify({ ok: false, error: "A turn is already running for this chat." }),
-          { status: 409 }
-        )
+          JSON.stringify({
+            ok: false,
+            error: "A turn is already running for this chat.",
+          }),
+          { status: 409 },
+        ),
     );
     const res = await claimHarnessSessionState({
       owner: OWNER,
@@ -112,7 +158,7 @@ describe("heartbeatHarnessSessionState — tri-state liveness", () => {
       () =>
         new Response(JSON.stringify({ ok: false, error: "nope" }), {
           status: 403,
-        })
+        }),
     );
     expect(await heartbeatHarnessSessionState(args)).toBe("lost");
   });
@@ -122,7 +168,7 @@ describe("heartbeatHarnessSessionState — tri-state liveness", () => {
       () =>
         new Response(JSON.stringify({ ok: false, error: "boom" }), {
           status: 500,
-        })
+        }),
     );
     expect(await heartbeatHarnessSessionState(args)).toBe("retryable");
   });
@@ -140,9 +186,12 @@ describe("commitHarnessSessionState", () => {
     mockFetch(
       () =>
         new Response(
-          JSON.stringify({ ok: false, error: "harness_commit_version_conflict" }),
-          { status: 409 }
-        )
+          JSON.stringify({
+            ok: false,
+            error: "harness_commit_version_conflict",
+          }),
+          { status: 409 },
+        ),
     );
     const ok = await commitHarnessSessionState({
       owner: OWNER,

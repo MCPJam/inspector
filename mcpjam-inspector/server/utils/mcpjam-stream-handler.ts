@@ -27,6 +27,7 @@ import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import type { ExecutionScope } from "./execution-scope.js";
 import {
   buildFinishChunk,
   emitError,
@@ -142,7 +143,7 @@ let warnedMissingAbortSignal = false;
  */
 export function warnIfChatAbortSignalMissing(
   signal: AbortSignal | undefined,
-  source: string
+  source: string,
 ): void {
   if (signal || warnedMissingAbortSignal) return;
   warnedMissingAbortSignal = true;
@@ -151,7 +152,7 @@ export function warnIfChatAbortSignalMissing(
   logger.warn(
     "[mcpjam-stream-handler] inbound chat request has no AbortSignal; " +
       "client disconnect will not cancel the agentic loop",
-    { source }
+    { source },
   );
 }
 
@@ -318,6 +319,13 @@ export interface MCPJamHandlerOptions {
   projectId?: string;
   chatSessionId?: string;
   sourceType?: string;
+  /**
+   * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
+   * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
+   * broker start, session-state, ingest commit) so the backend re-resolves live
+   * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
+   */
+  executionScope?: ExecutionScope;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
@@ -340,7 +348,7 @@ export interface MCPJamHandlerOptions {
     turnTrace: PersistedTurnTrace,
     // §3: present only for chat-backed harness turns — the resume-state commit
     // to apply atomically with the transcript via /ingest-chat.
-    harnessSessionCommit?: HarnessSessionCommitPayload
+    harnessSessionCommit?: HarnessSessionCommitPayload,
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -606,9 +614,9 @@ function hasUnresolvedClientFulfilledToolCalls(
         continue;
       }
       const toolName = part.toolName;
-      const toolEntry = (tools as Record<string, { execute?: unknown } | undefined>)[
-        toolName
-      ];
+      const toolEntry = (
+        tools as Record<string, { execute?: unknown } | undefined>
+      )[toolName];
       if (
         APP_TOOL_ALIAS_REGEX.test(toolName) &&
         toolEntry &&
@@ -623,7 +631,7 @@ function hasUnresolvedClientFulfilledToolCalls(
 
 function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
-  prefix = "tc"
+  prefix = "tc",
 ): string {
   const MAX_ATTEMPTS = 100;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
@@ -641,7 +649,7 @@ function generateUniqueToolCallId(
 
 function createToolCallIdNormalizer(
   usedToolCallIds: Set<string>,
-  stepIndex: number
+  stepIndex: number,
 ): (rawToolCallId?: string) => string {
   const perStepMap = new Map<string, string>();
   let collisionCounter = 0;
@@ -670,7 +678,7 @@ function createToolCallIdNormalizer(
 
 function getPromptAssistantStepBaseIndex(
   messageHistory: ModelMessage[],
-  promptMessageStartIndex: number
+  promptMessageStartIndex: number,
 ): number {
   let assistantCount = 0;
   for (
@@ -686,7 +694,7 @@ function getPromptAssistantStepBaseIndex(
 }
 
 function readUsageFromFinishChunk(
-  finishChunk: UIMessageChunk | null
+  finishChunk: UIMessageChunk | null,
 ): LiveChatTraceUsage | undefined {
   if (!finishChunk || finishChunk.type !== "finish") {
     return undefined;
@@ -732,7 +740,7 @@ function readUsageFromFinishChunk(
  * capture never fabricates one.
  */
 function readFinishReasonFromChunk(
-  finishChunk: UIMessageChunk | null
+  finishChunk: UIMessageChunk | null,
 ): string | undefined {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -742,7 +750,7 @@ function readFinishReasonFromChunk(
 function createClientFinishChunk(
   finishChunk: UIMessageChunk | null,
   traceTurn: LiveTraceTurnContext | null,
-  fallbackReason: "length" | "stop"
+  fallbackReason: "length" | "stop",
 ): UIMessageChunk {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -761,7 +769,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -774,7 +782,7 @@ function setStepSpanMessageRanges(
   promptIndex: number,
   stepIndex: number,
   messageStartIndex: number | undefined,
-  messageEndIndex: number | undefined
+  messageEndIndex: number | undefined,
 ): void {
   if (
     typeof messageStartIndex !== "number" ||
@@ -807,9 +815,7 @@ function setStepSpanMessageRanges(
  * shape does not include it; passing it through is a runtime no-op but
  * shows up in the wire payload and can trip strict validators.
  */
-function normalizePreservedReasoning(
-  messages: ModelMessage[]
-): ModelMessage[] {
+function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
   return messages.map((msg) => {
     if (msg.role !== "assistant") return msg;
     const assistantMsg = msg as AssistantModelMessage;
@@ -844,7 +850,7 @@ function scrubMessagesForBackend(
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
-  preserveReasoningFromIndex?: number
+  preserveReasoningFromIndex?: number,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
   if (
@@ -875,7 +881,7 @@ function scrubMessagesForBackend(
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) return msg;
       const filtered = assistantMsg.content.filter(
-        (part) => part.type !== "tool-approval-request"
+        (part) => part.type !== "tool-approval-request",
       );
       if (filtered.length === assistantMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -884,7 +890,7 @@ function scrubMessagesForBackend(
     if (msg.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       const filtered = toolMsg.content.filter(
-        (part) => part.type !== "tool-approval-response"
+        (part) => part.type !== "tool-approval-response",
       );
       if (filtered.length === toolMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -895,24 +901,24 @@ function scrubMessagesForBackend(
 
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
-    Object.keys(tools as Record<string, unknown>)
+    Object.keys(tools as Record<string, unknown>),
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
       withoutUnavailableToolHistory,
       mcpClientManager,
-      selectedServers
+      selectedServers,
     ),
     mcpClientManager,
-    selectedServers
+    selectedServers,
   );
   return normalizeModelMessagesForConvex(scrubbed);
 }
 
 function safelyEmitLiveTextDelta(
   onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string
+  delta: string,
 ) {
   if (!onLiveTextDelta) return;
   safelyInvoke("[mcpjam-stream-handler] onLiveTextDelta", () =>
@@ -931,7 +937,7 @@ function safelyEmitLiveTextDelta(
  */
 function parseEngineErrorBody(
   status: number | undefined,
-  bodyText: string
+  bodyText: string,
 ): { message: string; code?: string; details?: string } {
   try {
     const body = JSON.parse(bodyText) as {
@@ -964,7 +970,7 @@ function parseEngineErrorBody(
  */
 function safelyEmitEngineError(
   onEngineError: ((event: MCPJamEngineErrorEvent) => void) | undefined,
-  event: MCPJamEngineErrorEvent
+  event: MCPJamEngineErrorEvent,
 ) {
   if (!onEngineError) return;
   safelyInvoke("[mcpjam-stream-handler] onEngineError", () =>
@@ -990,7 +996,7 @@ async function processStream(
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -1065,9 +1071,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -1200,7 +1206,9 @@ async function processStream(
             } catch (error) {
               logger.warn(
                 "[mcpjam-stream-handler] onToolCall callback failed",
-                { error: error instanceof Error ? error.message : String(error) },
+                {
+                  error: error instanceof Error ? error.message : String(error),
+                },
               );
             }
           }
@@ -1267,7 +1275,7 @@ async function emitToolResults(
   // synthetic don't supply this callback — the UI writer + trace event
   // still fire unchanged. PR 14: a returned promise is awaited so the
   // eval render hook completes before the engine's next step.
-  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
 ): Promise<void> {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -1294,7 +1302,7 @@ async function emitToolResults(
             typeof rawResult === "object" &&
             "structuredContent" in rawResult
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -1307,7 +1315,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -1398,7 +1407,7 @@ function emitInheritedToolCalls(
   tools?: ToolSet,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
 ) {
   // Collect existing tool result IDs
   const existingResultIds = new Set<string>();
@@ -1448,8 +1457,7 @@ function emitInheritedToolCalls(
               logger.warn(
                 "[mcpjam-stream-handler] onToolCall callback failed (inherited)",
                 {
-                  error:
-                    error instanceof Error ? error.message : String(error),
+                  error: error instanceof Error ? error.message : String(error),
                 },
               );
             }
@@ -1481,7 +1489,7 @@ async function handlePendingApprovals(
   // PR 5b-pre review fix (Cursor Medium): resumed-approval branch
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1602,8 +1610,7 @@ async function handlePendingApprovals(
             logger.warn(
               "[mcpjam-stream-handler] onToolResult callback failed (denial path)",
               {
-                error:
-                  error instanceof Error ? error.message : String(error),
+                error: error instanceof Error ? error.message : String(error),
               },
             );
           }
@@ -1646,7 +1653,7 @@ async function handlePendingApprovals(
   // executeToolCallsFromMessages skips tool-call IDs that already have results
   // (via existingToolResultIds), so the denied results prevent double-execution.
   const needsExecution = [...approvedToolCallIds].some(
-    (id) => !existingResultIds.has(id)
+    (id) => !existingResultIds.has(id),
   );
 
   if (needsExecution) {
@@ -1688,8 +1695,7 @@ async function handlePendingApprovals(
               logger.warn(
                 "[mcpjam-stream-handler] onToolCall callback failed (approval)",
                 {
-                  error:
-                    error instanceof Error ? error.message : String(error),
+                  error: error instanceof Error ? error.message : String(error),
                 },
               );
             }
@@ -1710,7 +1716,7 @@ async function handlePendingApprovals(
       newMessages,
       traceTurn,
       stepIndex,
-      onToolResult
+      onToolResult,
     );
     didHandle = true;
   }
@@ -1723,7 +1729,7 @@ async function handlePendingApprovals(
  * Calls Convex, streams the response, and executes tools if needed.
  */
 async function processOneStep(
-  ctx: StepContext
+  ctx: StepContext,
 ): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
   const {
     writer,
@@ -1773,10 +1779,10 @@ async function processOneStep(
       ? (() => {
           const activeNames = resolveActiveToolNames(
             progressivePlan,
-            discoveryState
+            discoveryState,
           );
           const cataloged = new Set(
-            progressivePlan.catalog.map((entry) => entry.modelName)
+            progressivePlan.catalog.map((entry) => entry.modelName),
           );
           const seen = new Set(activeNames);
           for (const def of toolDefs) {
@@ -1837,12 +1843,12 @@ async function processOneStep(
     tools,
     mcpClientManager,
     selectedServers,
-    traceTurn.promptMessageStartIndex
+    traceTurn.promptMessageStartIndex,
   );
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
-    stepIndex
+    stepIndex,
   );
 
   // The trace payload must reflect the *advertised* subset — `activeToolDefs`
@@ -1963,7 +1969,7 @@ async function processOneStep(
             ? traceTurn.promptMessageStartIndex
             : undefined,
         messageEndIndex: stepMessageEndIndex,
-      }
+      },
     );
     setStepSpanMessageRanges(
       traceTurn.turnSpans,
@@ -1972,7 +1978,7 @@ async function processOneStep(
       stepMessageEndIndex != null
         ? traceTurn.promptMessageStartIndex
         : undefined,
-      stepMessageEndIndex
+      stepMessageEndIndex,
     );
     emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     writeTraceEvent(writer, {
@@ -2015,12 +2021,12 @@ async function processOneStep(
     onLiveTextDelta,
     abortSignal,
     progressivePlan,
-    onToolCall
+    onToolCall,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
-    readUsageFromFinishChunk(finishChunk)
+    readUsageFromFinishChunk(finishChunk),
   );
 
   // Update message history with assistant response
@@ -2133,7 +2139,7 @@ async function processOneStep(
       if (deniedByAssistantIdx.size > 0) {
         const denialMessages: ModelMessage[] = [];
         const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
-          (a, b) => b - a
+          (a, b) => b - a,
         );
         for (const idx of sortedKeys) {
           const denialContent = deniedByAssistantIdx.get(idx)!;
@@ -2150,7 +2156,7 @@ async function processOneStep(
           denialMessages,
           traceTurn,
           stepIndex,
-          onToolResult
+          onToolResult,
         );
       }
       // Fall through to the normal tool-execution branch below so
@@ -2177,7 +2183,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        }
+        },
       );
       const metaMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: metaTracedTools as Record<string, any>,
@@ -2192,7 +2198,7 @@ async function processOneStep(
           metaMessages,
           traceTurn,
           stepIndex,
-          onToolResult
+          onToolResult,
         );
         // Promote any ids the model just loaded so a subsequent
         // resumed-after-approval step sees them as loaded.
@@ -2218,14 +2224,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndex,
           status: "ok",
           ...harnessSpanMeta,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex
+        stepMessageEndIndex,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
@@ -2254,7 +2260,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        }
+        },
       );
 
       // Progressive mode: gate execution to the active subset. Visibility
@@ -2312,7 +2318,7 @@ async function processOneStep(
         messageHistory,
         traceTurn.promptIndex,
         stepIndex,
-        newToolCallIds
+        newToolCallIds,
       );
       const stepMessageEndIndexAfterTools =
         messageHistory.length > traceTurn.promptMessageStartIndex
@@ -2344,14 +2350,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndexAfterTools,
           status: "ok",
           ...harnessSpanMeta,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndexAfterTools,
-        stepMessageEndIndexAfterTools
+        stepMessageEndIndexAfterTools,
       );
 
       // Emit results for newly executed tools
@@ -2361,7 +2367,7 @@ async function processOneStep(
         newMessages,
         traceTurn,
         stepIndex,
-        onToolResult
+        onToolResult,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2409,14 +2415,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex
+        stepMessageEndIndex,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2463,14 +2469,14 @@ async function processOneStep(
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
       ...harnessSpanMeta,
-    }
+    },
   );
   setStepSpanMessageRanges(
     traceTurn.turnSpans,
     traceTurn.promptIndex,
     stepIndex,
     stepMessageStartIndex,
-    stepMessageEndIndex
+    stepMessageEndIndex,
   );
   emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2530,7 +2536,7 @@ export interface ChatEngineLoopResult {
  */
 export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none"
+  streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -2641,7 +2647,7 @@ export async function runChatEngineLoop(
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
-    traceTurn.promptMessageStartIndex
+    traceTurn.promptMessageStartIndex,
   );
   let steps = 0;
   let runSucceeded = false;
@@ -2657,54 +2663,55 @@ export async function runChatEngineLoop(
   }: {
     writer: { write: (chunk: UIMessageChunk) => void };
   }) => {
-      let finishEmitted = false;
-      let streamClosed = false;
-      let lastWriteAt = Date.now();
-      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let finishEmitted = false;
+    let streamClosed = false;
+    let lastWriteAt = Date.now();
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
-      // Wrap the writer to track quiescence (for idle heartbeat) and to
-      // swallow write errors after the underlying stream has been torn
-      // down. The latter prevents a stray heartbeat or trace event from
-      // bringing down the agentic loop after a client disconnect.
-      // The narrowed `{ write }` shape matches StepContext.writer and
-      // MCPJamHandlerOptions.onStreamWriterReady, both of which only need
-      // the writer for chunk forwarding.
-      const safeWriter: { write: (chunk: UIMessageChunk) => void } = {
-        write: (chunk: UIMessageChunk) => {
-          lastWriteAt = Date.now();
-          if (streamClosed) return;
-          try {
-            writer.write(chunk);
-          } catch (writeError) {
-            // The SDK closes the underlying controller on client
-            // disconnect; subsequent writes throw. Treat this as a
-            // signal that the stream is gone and stop further writes.
-            streamClosed = true;
-            if (!aborted) {
-              logger.warn(
-                "[mcpjam-stream-handler] writer.write failed; marking stream closed",
-                {
-                  error:
-                    writeError instanceof Error
-                      ? writeError.message
-                      : String(writeError),
-                }
-              );
-            }
+    // Wrap the writer to track quiescence (for idle heartbeat) and to
+    // swallow write errors after the underlying stream has been torn
+    // down. The latter prevents a stray heartbeat or trace event from
+    // bringing down the agentic loop after a client disconnect.
+    // The narrowed `{ write }` shape matches StepContext.writer and
+    // MCPJamHandlerOptions.onStreamWriterReady, both of which only need
+    // the writer for chunk forwarding.
+    const safeWriter: { write: (chunk: UIMessageChunk) => void } = {
+      write: (chunk: UIMessageChunk) => {
+        lastWriteAt = Date.now();
+        if (streamClosed) return;
+        try {
+          writer.write(chunk);
+        } catch (writeError) {
+          // The SDK closes the underlying controller on client
+          // disconnect; subsequent writes throw. Treat this as a
+          // signal that the stream is gone and stop further writes.
+          streamClosed = true;
+          if (!aborted) {
+            logger.warn(
+              "[mcpjam-stream-handler] writer.write failed; marking stream closed",
+              {
+                error:
+                  writeError instanceof Error
+                    ? writeError.message
+                    : String(writeError),
+              },
+            );
           }
-        },
-      };
+        }
+      },
+    };
 
-      const effectiveSteps = () => promptStepBaseIndex + steps;
-      const hitStepCap = () => effectiveSteps() >= resolvedMaxSteps;
+    const effectiveSteps = () => promptStepBaseIndex + steps;
+    const hitStepCap = () => effectiveSteps() >= resolvedMaxSteps;
 
-      // Idle heartbeat: only fires when the stream has been quiet for at
-      // least `resolvedHeartbeatMs`. Skipped during teardown and during
-      // an active abort. Errors are swallowed — heartbeats must never
-      // surface as user-visible failures.
-      const startHeartbeat = () => {
-        if (resolvedHeartbeatMs <= 0) return;
-        heartbeatTimer = setInterval(() => {
+    // Idle heartbeat: only fires when the stream has been quiet for at
+    // least `resolvedHeartbeatMs`. Skipped during teardown and during
+    // an active abort. Errors are swallowed — heartbeats must never
+    // surface as user-visible failures.
+    const startHeartbeat = () => {
+      if (resolvedHeartbeatMs <= 0) return;
+      heartbeatTimer = setInterval(
+        () => {
           if (streamClosed || aborted) return;
           const sinceLastWrite = Date.now() - lastWriteAt;
           if (sinceLastWrite < resolvedHeartbeatMs) return;
@@ -2718,232 +2725,227 @@ export async function runChatEngineLoop(
             // Should not happen — safeWriter swallows write errors —
             // but a final guard here keeps a misbehaving writeTraceEvent
             // from killing the loop.
-            logger.warn(
-              "[mcpjam-stream-handler] heartbeat emit failed",
-              {
-                error:
-                  error instanceof Error ? error.message : String(error),
-              }
-            );
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
-        }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
-      };
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
+    };
 
-      // External abort listener: marks `aborted` so downstream catch
-      // branches take the silent-cancellation path. The actual stream
-      // reader cancellation happens inside processStream.
-      let abortListener: (() => void) | undefined;
-      if (abortSignal) {
-        if (abortSignal.aborted) {
+    // External abort listener: marks `aborted` so downstream catch
+    // branches take the silent-cancellation path. The actual stream
+    // reader cancellation happens inside processStream.
+    let abortListener: (() => void) | undefined;
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        aborted = true;
+      } else {
+        abortListener = () => {
           aborted = true;
-        } else {
-          abortListener = () => {
-            aborted = true;
-          };
-          abortSignal.addEventListener("abort", abortListener, { once: true });
+        };
+        abortSignal.addEventListener("abort", abortListener, { once: true });
+      }
+    }
+
+    try {
+      onStreamWriterReady?.(safeWriter);
+
+      if (aborted) {
+        // Already aborted before we even started — bail silently.
+        return;
+      }
+
+      driver.emitTurnStart(safeWriter);
+
+      startHeartbeat();
+
+      // Process any pending approval responses from a previous request
+      if (requireToolApproval) {
+        const handled = await handlePendingApprovals(
+          safeWriter,
+          messageHistory,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          effectiveSteps(),
+          abortSignal,
+          onToolResult,
+          onToolCall,
+        );
+        if (handled) {
+          // Approvals were processed — if there are still unresolved tool
+          // calls (shouldn't happen normally), fall through to the loop.
+          // Otherwise the loop will call Convex with the new tool results.
         }
       }
 
-      try {
-        onStreamWriterReady?.(safeWriter);
+      while (effectiveSteps() < resolvedMaxSteps) {
+        if (aborted) break;
+        const { shouldContinue, didEmitFinish } = await processOneStep({
+          writer: safeWriter,
+          messageHistory,
+          toolDefs,
+          toolDefsByName,
+          tools,
+          progressivePlan,
+          discoveryState,
+          authHeader,
+          chatboxId,
+          accessVersion,
+          projectId,
+          chatSessionId,
+          sourceType,
+          modelId,
+          provider,
+          systemPrompt,
+          temperature,
+          mcpClientManager,
+          selectedServers,
+          requireToolApproval,
+          approvalMode,
+          stepIndex: effectiveSteps(),
+          usedToolCallIds,
+          traceTurn,
+          endpointPath: resolvedEndpointPath,
+          extraHeaders,
+          extraBodyFields,
+          clientIp,
+          onLiveTextDelta,
+          // PR 5b-pre: chunk-level callbacks. Passed through to the
+          // step processor where the chunk-switch (onToolCall) +
+          // tool-result emission (onToolResult) sites fire them.
+          onToolCall,
+          onToolResult,
+          // PR 5b-followup-2: structured-error callback. Fires from
+          // the two `processOneStep` error sites (non-OK Convex
+          // response + processStream/tool catch).
+          onEngineError,
+          // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+          prepareAdvertisedTools,
+          abortSignal,
+        });
 
-        if (aborted) {
-          // Already aborted before we even started — bail silently.
-          return;
-        }
-
-        driver.emitTurnStart(safeWriter);
-
-        startHeartbeat();
-
-        // Process any pending approval responses from a previous request
-        if (requireToolApproval) {
-          const handled = await handlePendingApprovals(
-            safeWriter,
-            messageHistory,
-            tools,
-            mcpClientManager,
-            traceTurn,
-            effectiveSteps(),
-            abortSignal,
-            onToolResult,
-            onToolCall
-          );
-          if (handled) {
-            // Approvals were processed — if there are still unresolved tool
-            // calls (shouldn't happen normally), fall through to the loop.
-            // Otherwise the loop will call Convex with the new tool results.
-          }
-        }
-
-        while (effectiveSteps() < resolvedMaxSteps) {
-          if (aborted) break;
-          const { shouldContinue, didEmitFinish } = await processOneStep({
-            writer: safeWriter,
-            messageHistory,
-            toolDefs,
-            toolDefsByName,
-            tools,
-            progressivePlan,
-            discoveryState,
-            authHeader,
-            chatboxId,
-            accessVersion,
-            projectId,
-            chatSessionId,
-            sourceType,
-            modelId,
-            provider,
-            systemPrompt,
-            temperature,
-            mcpClientManager,
-            selectedServers,
-            requireToolApproval,
-            approvalMode,
-            stepIndex: effectiveSteps(),
-            usedToolCallIds,
-            traceTurn,
-            endpointPath: resolvedEndpointPath,
-            extraHeaders,
-            extraBodyFields,
-            clientIp,
-            onLiveTextDelta,
-            // PR 5b-pre: chunk-level callbacks. Passed through to the
-            // step processor where the chunk-switch (onToolCall) +
-            // tool-result emission (onToolResult) sites fire them.
-            onToolCall,
-            onToolResult,
-            // PR 5b-followup-2: structured-error callback. Fires from
-            // the two `processOneStep` error sites (non-OK Convex
-            // response + processStream/tool catch).
-            onEngineError,
-            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
-            prepareAdvertisedTools,
-            abortSignal,
-          });
-
-          steps++;
-          if (didEmitFinish) {
-            finishEmitted = true;
-          }
-
-          // PR 5b-pre: step-level callback. Fires after each
-          // `processOneStep` returns and the step counter increments,
-          // so the runner sees one event per completed step in order.
-          // Routed through the shared driver (cumulative `turnUsage` from the
-          // shared span/usage state, defensive `turnSpans` copy). The engine's
-          // failure branches return `shouldContinue: false` + `didEmitFinish:
-          // false` after emitting an error UI chunk; `settledWithError`
-          // surfaces that so the runner can map it to eval's `step_finish`.
-          driver.usage = traceTurn.turnUsage;
-          driver.fireStepFinish(
-            effectiveSteps() - 1,
-            !didEmitFinish && !shouldContinue
-          );
-
-          if (!shouldContinue) {
-            break;
-          }
-        }
-
-        // Silent cancellation gate: an abort that fired between steps
-        // exits the loop above via `if (aborted) break`, but the rest of
-        // the success epilogue (high-step log, synthetic finish,
-        // turn_finish, runSucceeded=true) would still run. Bail here so
-        // the writer sees no terminal chunk and `onFinish` keeps the
-        // turn out of persistence. `onStreamComplete` still runs via the
-        // `finally` below.
-        if (aborted || abortSignal?.aborted) {
-          aborted = true;
-          return;
-        }
-
-        // One structured log per turn that reached the historical "loose"
-        // cap so we can validate whether 30 is the right new default
-        // before tuning down. Fires only on success paths to avoid
-        // double-logging abort/error turns.
-        if (effectiveSteps() >= STEP_LOG_THRESHOLD) {
-          logger.info(
-            "[mcpjam-stream-handler] turn reached high step count",
-            {
-              effectiveSteps: effectiveSteps(),
-              maxSteps: resolvedMaxSteps,
-              modelId,
-              turnId: traceTurn.turnId,
-            }
-          );
-        }
-
-        // Safety: ensure we always emit a finish event
-        if (!finishEmitted) {
-          safeWriter.write(
-            createClientFinishChunk(
-              null,
-              traceTurn,
-              hitStepCap() ? "length" : "stop"
-            )
-          );
+        steps++;
+        if (didEmitFinish) {
           finishEmitted = true;
         }
 
-        // Shared ritual: turn_finish + success flag (finish chunk already
-        // emitted by the step or the safety block above).
+        // PR 5b-pre: step-level callback. Fires after each
+        // `processOneStep` returns and the step counter increments,
+        // so the runner sees one event per completed step in order.
+        // Routed through the shared driver (cumulative `turnUsage` from the
+        // shared span/usage state, defensive `turnSpans` copy). The engine's
+        // failure branches return `shouldContinue: false` + `didEmitFinish:
+        // false` after emitting an error UI chunk; `settledWithError`
+        // surfaces that so the runner can map it to eval's `step_finish`.
         driver.usage = traceTurn.turnUsage;
-        driver.finishReason = hitStepCap() ? "length" : "stop";
-        driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
+        driver.fireStepFinish(
+          effectiveSteps() - 1,
+          !didEmitFinish && !shouldContinue,
+        );
 
-        runSucceeded = true;
-      } catch (error) {
-        // Abort is the cooperative cancellation signal — silent path:
-        // no error chunk, no synthetic finish, no turn_finish, no
-        // failure spans, no conversation persistence. The downstream
-        // controller is already being torn down by the client.
-        if (isAbortError(error) || abortSignal?.aborted) {
-          aborted = true;
-        } else {
-          logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
-          const failAbs = Date.now();
-          const errorText =
-            error instanceof Error ? error.message : String(error);
-          pushAiSdkTrailingErrorSpan(
-            traceTurn.turnSpans,
-            traceTurn.turnStartedAt,
-            traceTurn.turnStartedAt,
-            failAbs,
-            traceTurn.promptIndex
-          );
-          emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
-          writeTraceEvent(safeWriter, {
-            type: "error",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            errorText,
-          });
-          writeTraceEvent(safeWriter, {
-            type: "turn_finish",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            usage: traceTurn.turnUsage,
-          });
-          emitError(safeWriter, errorText);
-          // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-          // Site (3) — outer agentic-loop catch. No structured body,
-          // no stepIndex.
-          safelyEmitEngineError(onEngineError, {
-            message: errorText,
-            rawText: errorText,
-            promptIndex: traceTurn.promptIndex,
-          });
-        }
-      } finally {
-        streamClosed = true;
-        if (heartbeatTimer !== undefined) {
-          clearInterval(heartbeatTimer);
-        }
-        if (abortListener && abortSignal) {
-          abortSignal.removeEventListener("abort", abortListener);
+        if (!shouldContinue) {
+          break;
         }
       }
+
+      // Silent cancellation gate: an abort that fired between steps
+      // exits the loop above via `if (aborted) break`, but the rest of
+      // the success epilogue (high-step log, synthetic finish,
+      // turn_finish, runSucceeded=true) would still run. Bail here so
+      // the writer sees no terminal chunk and `onFinish` keeps the
+      // turn out of persistence. `onStreamComplete` still runs via the
+      // `finally` below.
+      if (aborted || abortSignal?.aborted) {
+        aborted = true;
+        return;
+      }
+
+      // One structured log per turn that reached the historical "loose"
+      // cap so we can validate whether 30 is the right new default
+      // before tuning down. Fires only on success paths to avoid
+      // double-logging abort/error turns.
+      if (effectiveSteps() >= STEP_LOG_THRESHOLD) {
+        logger.info("[mcpjam-stream-handler] turn reached high step count", {
+          effectiveSteps: effectiveSteps(),
+          maxSteps: resolvedMaxSteps,
+          modelId,
+          turnId: traceTurn.turnId,
+        });
+      }
+
+      // Safety: ensure we always emit a finish event
+      if (!finishEmitted) {
+        safeWriter.write(
+          createClientFinishChunk(
+            null,
+            traceTurn,
+            hitStepCap() ? "length" : "stop",
+          ),
+        );
+        finishEmitted = true;
+      }
+
+      // Shared ritual: turn_finish + success flag (finish chunk already
+      // emitted by the step or the safety block above).
+      driver.usage = traceTurn.turnUsage;
+      driver.finishReason = hitStepCap() ? "length" : "stop";
+      driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
+
+      runSucceeded = true;
+    } catch (error) {
+      // Abort is the cooperative cancellation signal — silent path:
+      // no error chunk, no synthetic finish, no turn_finish, no
+      // failure spans, no conversation persistence. The downstream
+      // controller is already being torn down by the client.
+      if (isAbortError(error) || abortSignal?.aborted) {
+        aborted = true;
+      } else {
+        logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
+        const failAbs = Date.now();
+        const errorText =
+          error instanceof Error ? error.message : String(error);
+        pushAiSdkTrailingErrorSpan(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.turnStartedAt,
+          failAbs,
+          traceTurn.promptIndex,
+        );
+        emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
+        writeTraceEvent(safeWriter, {
+          type: "error",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          errorText,
+        });
+        writeTraceEvent(safeWriter, {
+          type: "turn_finish",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          usage: traceTurn.turnUsage,
+        });
+        emitError(safeWriter, errorText);
+        // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
+        // Site (3) — outer agentic-loop catch. No structured body,
+        // no stepIndex.
+        safelyEmitEngineError(onEngineError, {
+          message: errorText,
+          rawText: errorText,
+          promptIndex: traceTurn.promptIndex,
+        });
+      }
+    } finally {
+      streamClosed = true;
+      if (heartbeatTimer !== undefined) {
+        clearInterval(heartbeatTimer);
+      }
+      if (abortListener && abortSignal) {
+        abortSignal.removeEventListener("abort", abortListener);
+      }
+    }
   };
 
   // Engine `onFinish` closure. Same logic that used to live as the
@@ -2952,32 +2954,32 @@ export async function runChatEngineLoop(
   // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
   let capturedTurnTrace: PersistedTurnTrace | undefined;
   const onFinishEngine = async () => {
-      try {
-        // Persist only successful, non-aborted turns. An aborted turn is
-        // partial by definition — recording it as a completed conversation
-        // would corrupt history and reverse the cost-safety win.
-        if (runSucceeded && !aborted) {
-          const trace: PersistedTurnTrace = driver.buildPersistedTrace();
-          capturedTurnTrace = trace;
-          try {
-            await onConversationComplete?.([...messageHistory], trace);
-          } catch (persistenceError) {
-            logger.error(
-              "[mcpjam-stream-handler] Error while persisting conversation",
-              persistenceError
-            );
-          }
-        }
-      } finally {
+    try {
+      // Persist only successful, non-aborted turns. An aborted turn is
+      // partial by definition — recording it as a completed conversation
+      // would corrupt history and reverse the cost-safety win.
+      if (runSucceeded && !aborted) {
+        const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+        capturedTurnTrace = trace;
         try {
-          await onStreamComplete?.();
-        } catch (cleanupError) {
+          await onConversationComplete?.([...messageHistory], trace);
+        } catch (persistenceError) {
           logger.error(
-            "[mcpjam-stream-handler] Error while running stream cleanup",
-            cleanupError
+            "[mcpjam-stream-handler] Error while persisting conversation",
+            persistenceError,
           );
         }
       }
+    } finally {
+      try {
+        await onStreamComplete?.();
+      } catch (cleanupError) {
+        logger.error(
+          "[mcpjam-stream-handler] Error while running stream cleanup",
+          cleanupError,
+        );
+      }
+    }
   };
 
   if (streamSink === "ui") {
@@ -3033,7 +3035,7 @@ export async function runChatEngineLoop(
  * and `extraBodyFields: { providerKey }` without modification.
  */
 export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions
+  options: MCPJamHandlerOptions,
 ): Promise<Response> {
   // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // via runHarnessTurn; otherwise the emulated engine. `harness` is already a
@@ -3045,7 +3047,7 @@ export async function handleMCPJamFreeChatModel(
     : runChatEngineLoop(options, "ui"));
   if (!result.response) {
     throw new Error(
-      `${options.harness ? "runHarnessTurn" : "runChatEngineLoop"}(streamSink: 'ui') returned no Response — internal invariant violated`
+      `${options.harness ? "runHarnessTurn" : "runChatEngineLoop"}(streamSink: 'ui') returned no Response — internal invariant violated`,
     );
   }
   return result.response;

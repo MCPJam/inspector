@@ -17,7 +17,7 @@ describe("harnessRuntimeFingerprint", () => {
   it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {
     // Identical model/servers/permission, different runtime ⇒ different lane.
     expect(harnessRuntimeFingerprint(base)).not.toBe(
-      harnessRuntimeFingerprint({ ...base, harnessId: "codex" })
+      harnessRuntimeFingerprint({ ...base, harnessId: "codex" }),
     );
   });
 
@@ -35,13 +35,13 @@ describe("harnessRuntimeFingerprint", () => {
       harnessRuntimeFingerprint({
         ...base,
         modelId: "anthropic/claude-haiku-4.5",
-      })
+      }),
     );
   });
 
   it("changes when the server set changes (fork)", () => {
     expect(harnessRuntimeFingerprint(base)).not.toBe(
-      harnessRuntimeFingerprint({ ...base, selectedServers: ["srv-a"] })
+      harnessRuntimeFingerprint({ ...base, selectedServers: ["srv-a"] }),
     );
   });
 

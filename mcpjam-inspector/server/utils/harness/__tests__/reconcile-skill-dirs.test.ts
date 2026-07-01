@@ -33,7 +33,7 @@ function manifest(skills: Record<string, string>, skillsHash = "h") {
       Object.entries(skills).map(([skillId, name]) => [
         skillId,
         { skillId, name },
-      ])
+      ]),
     ),
   });
 }
@@ -114,7 +114,7 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
       run: async () => undefined,
     };
     await expect(
-      reconcileSkillDirs({ session, skills: [], skillsHash: "" })
+      reconcileSkillDirs({ session, skills: [], skillsHash: "" }),
     ).resolves.toBeDefined();
   });
 });

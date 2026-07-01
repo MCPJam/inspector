@@ -20,8 +20,10 @@
  */
 import {
   convexListSkillsForRuntime,
+  convexListSkillsForRuntimeExecution,
   type CloudSkillRuntimeItem,
 } from "../computers/convex-skills-client.js";
+import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 
 export type RuntimeSkill = CloudSkillRuntimeItem;
@@ -41,13 +43,20 @@ export type FetchRuntimeSkillsResult =
  * Fetch the project's runtime skills. Tri-state: `{ ok: false }` on ANY failure
  * (never throws, never returns `[]` to mean "failed"). Callers MUST treat
  * `{ ok: false }` as "leave skills state untouched" — see `run-harness-turn`.
+ *
+ * When an `executionScope` is supplied (guest / swarm grant), the scoped query
+ * is used so the backend re-resolves live access and returns shared-only skills;
+ * otherwise the legacy member `projectId` query runs unchanged.
  */
 export async function fetchRuntimeSkills(
   bearer: string,
-  projectId: string
+  projectId: string,
+  executionScope?: ExecutionScope,
 ): Promise<FetchRuntimeSkillsResult> {
   try {
-    const skills = await convexListSkillsForRuntime(bearer, projectId);
+    const skills = executionScope
+      ? await convexListSkillsForRuntimeExecution(bearer, executionScope)
+      : await convexListSkillsForRuntime(bearer, projectId);
     return { ok: true, skills };
   } catch (error) {
     logger.warn("[runtime-skills] fetch failed; preserving prior skill state", {
@@ -113,7 +122,7 @@ export function toYamlDoubleQuoted(value: string): string {
  * stays valid frontmatter. Other adapters must NOT use this.
  */
 export function claudeCodeSafeSkills(
-  skills: RuntimeSkill[]
+  skills: RuntimeSkill[],
 ): HarnessSkillPayload[] {
   return skills.map((s) => ({
     name: s.name,

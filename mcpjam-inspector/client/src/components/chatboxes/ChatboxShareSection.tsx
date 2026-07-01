@@ -15,7 +15,12 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { ChatboxGuestExecutionSection } from "./ChatboxGuestExecutionSection";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -44,11 +49,8 @@ export function ChatboxShareSection({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const {
-    setChatboxMode,
-    upsertChatboxMember,
-    removeChatboxMember,
-  } = useChatboxMutations();
+  const { setChatboxMode, upsertChatboxMember, removeChatboxMember } =
+    useChatboxMutations();
 
   const [settings, setSettings] = useState<ChatboxSettings>(chatbox);
   const [email, setEmail] = useState("");
@@ -81,9 +83,7 @@ export function ChatboxShareSection({
 
   const otherAccepted = useMemo(
     () =>
-      acceptedInvitees.filter(
-        (m) => m.email.toLowerCase() !== selfEmailLower,
-      ),
+      acceptedInvitees.filter((m) => m.email.toLowerCase() !== selfEmailLower),
     [acceptedInvitees, selfEmailLower],
   );
 
@@ -213,9 +213,7 @@ export function ChatboxShareSection({
           </div>
           <Button
             onClick={() => void handleInvite()}
-            disabled={
-              !normalizedEmail || !!emailValidationError || isInviting
-            }
+            disabled={!normalizedEmail || !!emailValidationError || isInviting}
           >
             {isInviting ? "..." : "Invite"}
           </Button>
@@ -256,8 +254,8 @@ export function ChatboxShareSection({
                     {projectLabel}
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this project can open the swarm
-                    with the link. Guests cannot.
+                    Signed-in members of this project can open the swarm with
+                    the link. Guests cannot.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -294,6 +292,14 @@ export function ChatboxShareSection({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Secure Guest Harness Enablement — admin-only host-funded guest
+          execution + Claude Code harness opt-in. Server-side project-admin
+          gated; a non-admin's save is rejected. */}
+      <ChatboxGuestExecutionSection
+        chatbox={settings}
+        onUpdated={updateSettings}
+      />
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Has access</label>
@@ -332,7 +338,9 @@ export function ChatboxShareSection({
                     src={member.user?.imageUrl || undefined}
                     alt={name}
                   />
-                  <AvatarFallback className="text-sm">{initials}</AvatarFallback>
+                  <AvatarFallback className="text-sm">
+                    {initials}
+                  </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">

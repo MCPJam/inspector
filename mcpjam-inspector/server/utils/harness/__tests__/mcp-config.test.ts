@@ -115,8 +115,14 @@ describe("harnessServerInputFromConfig", () => {
       args: ["x.js"],
     } as unknown as MCPServerConfig;
     expect(
-      harnessServerInputFromConfig("local", cfg, { tunnelUrl: "https://t/u?k=s" }),
-    ).toEqual({ name: "local", transport: "stdio", tunnelUrl: "https://t/u?k=s" });
+      harnessServerInputFromConfig("local", cfg, {
+        tunnelUrl: "https://t/u?k=s",
+      }),
+    ).toEqual({
+      name: "local",
+      transport: "stdio",
+      tunnelUrl: "https://t/u?k=s",
+    });
   });
 
   it("throws for a stdio config without a tunnel url", () => {
