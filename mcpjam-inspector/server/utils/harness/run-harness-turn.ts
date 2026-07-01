@@ -38,7 +38,22 @@ import {
   setToolSpanMessageRangesFromResults,
 } from "../live-chat-trace-stream.js";
 import { StreamTurnDriver } from "../stream-turn-driver.js";
-import { getHarnessAdapter } from "./registry.js";
+import {
+  getHarnessAdapter,
+  buildBrokerDummyAuth,
+  type HarnessAuth,
+} from "./registry.js";
+import {
+  startHarnessModelBroker,
+  revokeHarnessModelBroker,
+} from "./harness-model-broker.js";
+
+/** Inspector-side gate for E2B header-broker credential delivery. Default OFF —
+ *  until enabled, harness runs use the existing client-lease path unchanged, so
+ *  this PR is safe to merge dark. Requires the backend broker routes + flags. */
+function harnessBrokerDeliveryEnabled(): boolean {
+  return process.env.MCPJAM_HARNESS_BROKER_DELIVERY === "true";
+}
 import {
   emitError,
   emitFinish,
@@ -269,6 +284,17 @@ export async function runHarnessTurn(
   // closure free the lane if the commit can't happen (stop/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
+  // Broker-delivery run identity, set after the lease is installed into E2B's
+  // egress transform; used to revoke + clear the rule on teardown.
+  let brokerRunId: string | undefined;
+  let brokerComputerId: string | undefined;
+  let brokerRevoked = false;
+  // Ownership handoff for the claimed continuity lane: false from the moment the
+  // lane is claimed until the harness session is established (the point the
+  // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
+  // broker start, runtime/agent construction, createSession) must release the
+  // lane in onFinishEngine, or the next chat turn is blocked until the lease TTL.
+  let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
@@ -365,7 +391,7 @@ export async function runHarnessTurn(
       //       silently substitute its own default model.
       if (!harnessAdapter.supportsModel(modelId)) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
         );
       }
       //   (b) a harness that can't deliver the host's selected MCP servers must
@@ -376,21 +402,24 @@ export async function runHarnessTurn(
       ) {
         throw new Error(
           `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
-            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`
         );
       }
 
-      // 1. Resolve the model credential FIRST — fetched from Convex (the
-      // project org's BYOK Anthropic key). Fail-fast: a project with no Anthropic
-      // provider throws here, BEFORE resolveHarnessSandbox wakes/provisions the
-      // user's computer (and bumps its activity), so a misconfigured turn never
-      // touches the box.
-      const auth = await harnessAdapter.resolveAuth({
-        projectId,
-        modelId,
-        bearer: authHeader,
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
+      // 1. Resolve the model credential. CLIENT path: fetch the gateway key from
+      // Convex FIRST — fail-fast before resolveHarnessSandbox wakes the box, so a
+      // misconfigured turn never touches it. BROKER path: the lease is installed
+      // into E2B's egress transform AFTER the sandbox id is known (step 3b) and
+      // the CLI runs with dummy creds, so auth is deferred.
+      const useBroker = harnessBrokerDeliveryEnabled();
+      let auth: HarnessAuth | undefined = useBroker
+        ? undefined
+        : await harnessAdapter.resolveAuth({
+            projectId,
+            modelId,
+            bearer: authHeader,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
       tAuth = Date.now();
 
       // 2. Build the .mcp.json from the selected servers. Pure + fail-fast —
@@ -410,9 +439,10 @@ export async function runHarnessTurn(
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
       // Only adapters that deliver MCP servers (Claude Code) build the config;
       // the undeliverable-servers case already failed closed in step 0(b) above.
-      const { mcpJson, keyToServerId } = harnessAdapter.supportsSelectedMcpServers
-        ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
-        : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+      const { mcpJson, keyToServerId } =
+        harnessAdapter.supportsSelectedMcpServers
+          ? buildMcpJsonFromManager(mcpClientManager, selectedServers ?? [])
+          : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -536,6 +566,38 @@ export async function runHarnessTurn(
       });
       tSandbox = Date.now();
 
+      // 3b. BROKER delivery: the sandbox id is now known, so have Convex mint the
+      // lease, lock the sandbox's egress to the proxy, and install the lease into
+      // E2B's egress transform — the inspector never sees the lease. Run the CLI
+      // with dummy creds pointed at the returned proxy. Fail-fast on install
+      // error (the box is awake but no real credential exists anywhere).
+      if (useBroker) {
+        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+        // If the backend installs the E2B rule but the response is lost/aborted,
+        // teardown can still revoke by this id (backend keys revoke on runId).
+        brokerRunId = crypto.randomUUID();
+        brokerComputerId = String(computerId);
+        const broker = await startHarnessModelBroker({
+          projectId,
+          computerId: String(computerId),
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: brokerRunId,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!broker.ok) {
+          // Throws propagate to the turn's outer catch; onFinishEngine frees the
+          // claimed lane (sessionEstablished still false) and revokes the broker
+          // lease (brokerRunId set) if the backend installed before a lost response.
+          throw new Error(broker.error);
+        }
+        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      }
+      if (!auth) {
+        throw new Error("harness turn: model auth was not resolved");
+      }
+
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
       // Approval-required turns are refused at the availability preflight (the
@@ -564,7 +626,9 @@ export async function runHarnessTurn(
         // (Claude Code today). The Claude Code adapter interpolates `description`
         // into YAML frontmatter RAW, so pre-encode descriptions safely here. Codex
         // v1 doesn't deliver skills (`supportsSkills: false`).
-        ...(harnessAdapter.supportsSkills && runtimeSkills && runtimeSkills.length
+        ...(harnessAdapter.supportsSkills &&
+        runtimeSkills &&
+        runtimeSkills.length
           ? {
               skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
@@ -592,7 +656,7 @@ export async function runHarnessTurn(
             if (!harnessAdapter.deliverMcpServers) {
               throw new Error(
                 `The ${harnessAdapter.displayName} harness advertises MCP support ` +
-                  "but has no deliverMcpServers strategy (adapter misconfigured).",
+                  "but has no deliverMcpServers strategy (adapter misconfigured)."
               );
             }
             await harnessAdapter.deliverMcpServers({
@@ -655,6 +719,9 @@ export async function runHarnessTurn(
         session = await agent.createSession();
       }
       tConnect = Date.now();
+      // Session is up: the finalizer + heartbeat now own the continuity lane, so
+      // the pre-session cleanup in onFinishEngine no longer needs to free it.
+      sessionEstablished = true;
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
@@ -1285,6 +1352,20 @@ export async function runHarnessTurn(
   };
 
   const onFinishEngine = async () => {
+    // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
+    // + clear the E2B egress rule before the persistence/cleanup callbacks below,
+    // which could hang and would otherwise keep the credential live until TTL/cron.
+    // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
+    // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    if (!brokerRevoked && brokerRunId && authHeader) {
+      brokerRevoked = true;
+      await revokeHarnessModelBroker({
+        runId: brokerRunId,
+        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
+        ...(projectId ? { projectId } : {}),
+        bearer: authHeader,
+      }).catch(() => {});
+    }
     if (runSucceeded && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
@@ -1308,6 +1389,16 @@ export async function runHarnessTurn(
       if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
         await releaseHarnessLease?.();
       }
+    }
+    // Pre-session cleanup: if the session was never established (the turn failed
+    // or aborted after claimHarnessSessionState but before createSession — sandbox
+    // wake, broker start, runtime/agent construction, or createSession threw), no
+    // finalizer owns the claimed lane, so free it here or the next chat turn is
+    // blocked with "Another turn is already running" until the lease TTL. This runs
+    // on BOTH stream paths (UI onFinish + inline finally). Idempotent, and a no-op
+    // on non-continuity turns (releaseHarnessLease is undefined).
+    if (!sessionEstablished) {
+      await releaseHarnessLease?.();
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
     // error must not reject stream finalization after an otherwise successful
@@ -1337,6 +1428,7 @@ export async function runHarnessTurn(
   try {
     await executeEngine({ writer: noopWriter });
   } finally {
+    // onFinishEngine runs the broker teardown for this path too (see above).
     await onFinishEngine();
   }
   return {
