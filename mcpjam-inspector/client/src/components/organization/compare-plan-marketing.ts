@@ -39,7 +39,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Included credits",
-        free: t("200 / day"),
+        free: t("400 / day"),
         team: t("10,000 / seat / mo", true),
         enterprise: t("Custom", true),
       },
@@ -56,8 +56,8 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Eval iterations",
-        free: t("25 / day"),
-        team: t("5,000 / mo", true),
+        free: t("1,000 / day"),
+        team: t("Unlimited", true),
         enterprise: t("Custom", true),
       },
       {

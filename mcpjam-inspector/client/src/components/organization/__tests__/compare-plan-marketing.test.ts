@@ -49,7 +49,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     ]);
     expect(creditsAndSeats?.rows[0]?.free).toEqual({
       kind: "text",
-      text: "200 / day",
+      text: "400 / day",
     });
     expect(creditsAndSeats?.rows[0]?.team).toEqual({
       kind: "text",
@@ -72,11 +72,11 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     expect(evalIterations?.label).toBe("Eval iterations");
     expect(evalIterations?.free).toEqual({
       kind: "text",
-      text: "25 / day",
+      text: "1,000 / day",
     });
     expect(evalIterations?.team).toEqual({
       kind: "text",
-      text: "5,000 / mo",
+      text: "Unlimited",
       emphasize: true,
     });
     expect(evalIterations?.enterprise).toEqual({
