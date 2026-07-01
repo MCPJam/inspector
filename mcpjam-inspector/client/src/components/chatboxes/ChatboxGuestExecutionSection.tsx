@@ -63,9 +63,12 @@ function fromSettings(
     dailyComputerStartCap: ge?.dailyComputerStartCap ?? 10,
     maxConcurrentComputers: ge?.maxConcurrentComputers ?? 2,
     harnessEnabled: ge?.harnessEnabled ?? false,
-    dailyHarnessSpendUsd: ge?.dailyHarnessSpendCapMicros
-      ? ge.dailyHarnessSpendCapMicros / MICROS_PER_USD
-      : RECOMMENDED.dailyHarnessSpendUsd,
+    // Nullish (not truthy) so a backend-set 0 renders as $0 rather than
+    // silently falling back to the recommendation.
+    dailyHarnessSpendUsd:
+      ge?.dailyHarnessSpendCapMicros != null
+        ? ge.dailyHarnessSpendCapMicros / MICROS_PER_USD
+        : RECOMMENDED.dailyHarnessSpendUsd,
     dailyHarnessCallCap:
       ge?.dailyHarnessCallCap ?? RECOMMENDED.dailyHarnessCallCap,
     maxConcurrentHarnessRuns:
