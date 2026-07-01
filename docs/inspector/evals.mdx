@@ -88,7 +88,7 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
 - When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
 
-Open a completed run and find the **Goal completion** panel. Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
+Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
 ## Running
 
@@ -127,6 +127,10 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
 
 ## Reading results
 
+### Suite navigation
+
+Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
+
 ### Suite view
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
@@ -153,7 +157,7 @@ When two or more host configurations are attached to a suite, a **By case / By h
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
 - **Per-model breakdown** to compare how the same case behaves across models.
-- **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
+- **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
 #### Comparing two runs
