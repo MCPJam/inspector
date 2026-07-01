@@ -78,7 +78,7 @@ function readExpectedMcpV2Versions(packages) {
     for (const packageName of expectedMcpV2Packages) {
       for (const [section, runtime] of [
         ["dependencies", true],
-        ["peerDependencies", true],
+        ["peerDependencies", false],
         ["devDependencies", false],
       ]) {
         const spec = packageJson[section]?.[packageName];
