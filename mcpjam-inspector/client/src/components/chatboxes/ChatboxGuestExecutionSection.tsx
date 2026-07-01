@@ -129,12 +129,36 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
+    // Reset on chatbox switch too — two swarms can both have null/identical
+    // guestExecution, so keying only on the value would keep the prior draft.
     setForm(fromSettings(chatbox.guestExecution));
-  }, [chatbox.guestExecution]);
+  }, [chatbox.chatboxId, chatbox.guestExecution]);
 
   const error = useMemo(() => validate(form), [form]);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  // Cascade dependents off with their parent so the form can never sit in an
+  // unsavable state (e.g. computerEnabled checked while enabled is off) and the
+  // disabled controls stay visually aligned.
+  const setEnabled = (v: boolean) =>
+    setForm((prev) =>
+      v
+        ? { ...prev, enabled: true }
+        : {
+            ...prev,
+            enabled: false,
+            computerEnabled: false,
+            sharedSkillsEnabled: false,
+            harnessEnabled: false,
+          },
+    );
+  const setComputerEnabled = (v: boolean) =>
+    setForm((prev) =>
+      v
+        ? { ...prev, computerEnabled: true }
+        : { ...prev, computerEnabled: false, harnessEnabled: false },
+    );
 
   const applyRecommended = () =>
     setForm((prev) => ({
@@ -149,31 +173,34 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
     if (error) return;
     setIsSaving(true);
     try {
+      const guestExecution: GuestExecutionSettings = {
+        enabled: form.enabled,
+        computerEnabled: form.computerEnabled,
+        sharedSkillsEnabled: form.sharedSkillsEnabled,
+        dailyCreditCap: form.dailyCreditCap,
+        dailyComputerStartCap: form.dailyComputerStartCap,
+        maxConcurrentComputers: form.maxConcurrentComputers,
+        harnessEnabled: form.harnessEnabled,
+        // Only send harness caps when harness is on; the backend validates
+        // them as a set and they're advisory when disabled.
+        ...(form.harnessEnabled
+          ? {
+              dailyHarnessSpendCapMicros: Math.round(
+                form.dailyHarnessSpendUsd * MICROS_PER_USD,
+              ),
+              dailyHarnessCallCap: form.dailyHarnessCallCap,
+              maxConcurrentHarnessRuns: form.maxConcurrentHarnessRuns,
+            }
+          : {}),
+      };
       await setChatboxGuestExecution({
         chatboxId: chatbox.chatboxId,
-        guestExecution: {
-          enabled: form.enabled,
-          computerEnabled: form.computerEnabled,
-          sharedSkillsEnabled: form.sharedSkillsEnabled,
-          dailyCreditCap: form.dailyCreditCap,
-          dailyComputerStartCap: form.dailyComputerStartCap,
-          maxConcurrentComputers: form.maxConcurrentComputers,
-          harnessEnabled: form.harnessEnabled,
-          // Only send harness caps when harness is on; the backend validates
-          // them as a set and they're advisory when disabled.
-          ...(form.harnessEnabled
-            ? {
-                dailyHarnessSpendCapMicros: Math.round(
-                  form.dailyHarnessSpendUsd * MICROS_PER_USD,
-                ),
-                dailyHarnessCallCap: form.dailyHarnessCallCap,
-                maxConcurrentHarnessRuns: form.maxConcurrentHarnessRuns,
-              }
-            : {}),
-        },
+        guestExecution,
       });
       toast.success("Guest execution settings saved");
-      onUpdated?.(chatbox);
+      // Reflect the SAVED config to the parent (the mutation returns only a
+      // status), so the share UI doesn't keep rendering the pre-save state.
+      onUpdated?.({ ...chatbox, guestExecution });
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to save guest execution",
@@ -207,7 +234,7 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
         label="Enable guest execution"
         description="Master switch for host-funded guest tools + skills."
         checked={form.enabled}
-        onCheckedChange={(v) => set("enabled", v)}
+        onCheckedChange={setEnabled}
       />
 
       <ToggleRow
@@ -216,7 +243,7 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
         description="Provision a host-funded cloud computer for guests (bash + files)."
         checked={form.computerEnabled}
         disabled={!form.enabled}
-        onCheckedChange={(v) => set("computerEnabled", v)}
+        onCheckedChange={setComputerEnabled}
       />
 
       <ToggleRow
