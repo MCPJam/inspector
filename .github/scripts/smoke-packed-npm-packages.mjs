@@ -4,7 +4,12 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpClientPackage = "@modelcontextprotocol/client";
+const expectedMcpV2PackageVersion = "2.0.0-alpha.2";
+const expectedMcpV2Packages = [
+  "@modelcontextprotocol/client",
+  "@modelcontextprotocol/node",
+  "@modelcontextprotocol/server",
+];
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const packageSpecs = {
@@ -28,7 +33,7 @@ if (packagesToPack.length === 0) {
   process.exit(0);
 }
 
-const expectedClientVersion = readExpectedMcpClientVersion(packagesToPack);
+const expectedRuntimeMcpV2Versions = readExpectedMcpV2Versions(packagesToPack);
 const tmpRoot = mkdtempSync(path.join(tmpdir(), "mcpjam-pack-smoke-"));
 
 try {
@@ -42,7 +47,7 @@ try {
   run("npm", ["init", "-y"], { cwd: installDir });
   run("npm", ["install", "--legacy-peer-deps", ...tarballs], { cwd: installDir });
 
-  assertInstalledMcpClientVersion(installDir, expectedClientVersion);
+  assertInstalledPackageVersions(installDir, expectedRuntimeMcpV2Versions);
 
   if (packageSpecs.cli.publish) {
     run("npx", ["--no-install", "mcpjam", "--help"], {
@@ -62,40 +67,42 @@ function boolEnv(name) {
   return process.env[name] === "true";
 }
 
-function readExpectedMcpClientVersion(packages) {
-  const specs = new Set();
+function readExpectedMcpV2Versions(packages) {
+  const runtimeVersions = new Map();
 
   for (const pkg of packages) {
     const packageJson = JSON.parse(
       readFileSync(path.join(rootDir, pkg.dir, "package.json"), "utf8"),
     );
-    const spec =
-      packageJson.dependencies?.[expectedMcpClientPackage] ??
-      packageJson.devDependencies?.[expectedMcpClientPackage] ??
-      packageJson.peerDependencies?.[expectedMcpClientPackage];
 
-    if (!spec) {
-      continue;
+    for (const packageName of expectedMcpV2Packages) {
+      for (const [section, runtime] of [
+        ["dependencies", true],
+        ["peerDependencies", true],
+        ["devDependencies", false],
+      ]) {
+        const spec = packageJson[section]?.[packageName];
+
+        if (!spec) {
+          continue;
+        }
+
+        if (!exactVersionPattern.test(spec) || spec !== expectedMcpV2PackageVersion) {
+          throw new Error(
+            `${pkg.workspace} must pin ${packageName} to ${expectedMcpV2PackageVersion}, got ${JSON.stringify(
+              spec,
+            )}.`,
+          );
+        }
+
+        if (runtime) {
+          runtimeVersions.set(packageName, spec);
+        }
+      }
     }
-
-    if (!exactVersionPattern.test(spec)) {
-      throw new Error(
-        `${pkg.workspace} must pin ${expectedMcpClientPackage} exactly, got ${JSON.stringify(spec)}.`,
-      );
-    }
-
-    specs.add(spec);
   }
 
-  if (specs.size !== 1) {
-    throw new Error(
-      `Expected one ${expectedMcpClientPackage} version across packed packages, got: ${
-        [...specs].join(", ") || "<none>"
-      }`,
-    );
-  }
-
-  return [...specs][0];
+  return runtimeVersions;
 }
 
 function packWorkspace(pkg, packDir) {
@@ -115,10 +122,16 @@ function packWorkspace(pkg, packDir) {
   return tarball;
 }
 
-function assertInstalledMcpClientVersion(installDir, expectedVersion) {
+function assertInstalledPackageVersions(installDir, expectedVersions) {
+  for (const [packageName, expectedVersion] of expectedVersions) {
+    assertInstalledPackageVersion(installDir, packageName, expectedVersion);
+  }
+}
+
+function assertInstalledPackageVersion(installDir, packageName, expectedVersion) {
   const result = spawnSync(
     "npm",
-    ["ls", expectedMcpClientPackage, "--all", "--json"],
+    ["ls", packageName, "--all", "--json"],
     {
       cwd: installDir,
       encoding: "utf8",
@@ -127,13 +140,13 @@ function assertInstalledMcpClientVersion(installDir, expectedVersion) {
 
   if (result.error) {
     throw new Error(
-      `npm ls ${expectedMcpClientPackage} failed to start: ${result.error.message}`,
+      `npm ls ${packageName} failed to start: ${result.error.message}`,
     );
   }
 
   if (result.status !== 0) {
     throw new Error(
-      `npm ls ${expectedMcpClientPackage} failed with exit code ${result.status}:\n${
+      `npm ls ${packageName} failed with exit code ${result.status}:\n${
         result.stderr || result.stdout || "<no output>"
       }`,
     );
@@ -144,14 +157,14 @@ function assertInstalledMcpClientVersion(installDir, expectedVersion) {
     tree = JSON.parse(result.stdout || "{}");
   } catch (error) {
     throw new Error(
-      `npm ls ${expectedMcpClientPackage} did not return valid JSON: ${error.message}`,
+      `npm ls ${packageName} did not return valid JSON: ${error.message}`,
     );
   }
 
-  const versions = collectDependencyVersions(tree, expectedMcpClientPackage);
+  const versions = collectDependencyVersions(tree, packageName);
 
   if (versions.length === 0) {
-    throw new Error(`${expectedMcpClientPackage} was not installed in packed smoke project.`);
+    throw new Error(`${packageName} was not installed in packed smoke project.`);
   }
 
   const unexpectedVersions = [...new Set(versions)].filter(
@@ -160,13 +173,13 @@ function assertInstalledMcpClientVersion(installDir, expectedVersion) {
 
   if (unexpectedVersions.length > 0) {
     throw new Error(
-      `${expectedMcpClientPackage} resolved to ${unexpectedVersions.join(
+      `${packageName} resolved to ${unexpectedVersions.join(
         ", ",
       )}; expected ${expectedVersion}.`,
     );
   }
 
-  console.log(`${expectedMcpClientPackage} resolved to ${expectedVersion}.`);
+  console.log(`${packageName} resolved to ${expectedVersion}.`);
 }
 
 function collectDependencyVersions(node, packageName, versions = []) {
