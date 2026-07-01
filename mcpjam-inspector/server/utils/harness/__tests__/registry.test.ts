@@ -52,6 +52,12 @@ describe("harness registry", () => {
     expect(toNativeModel?.("anthropic/claude-sonnet-4-5-20250929")).toBe(
       "claude-sonnet-4-5"
     );
+    // Major-only dated snapshot (no minor version between major and date):
+    // the optional minor group's greedy digit match must not swallow the
+    // date as if it were a minor version.
+    expect(toNativeModel?.("anthropic/claude-opus-4-20250929")).toBe(
+      "claude-opus-4"
+    );
     // A bare substring match must NOT route a non-Anthropic/malformed id to
     // Claude Code's haiku alias (the regex-gated shortcut, not a loose
     // .includes check).

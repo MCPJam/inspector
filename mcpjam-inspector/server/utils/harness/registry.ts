@@ -373,13 +373,18 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   const withoutProvider = m.startsWith("anthropic/")
     ? m.slice("anthropic/".length)
     : m;
-  // Trailing (?:-\d+)? absorbs an optional dated/pinned snapshot suffix
+  // Trailing 8-digit date absorbs an optional dated/pinned snapshot suffix
   // (e.g. "claude-haiku-4-5-20251001", the exact shape Claude Code's own
   // internal alias resolution can produce on the wire — see the bridge's
   // modelOverrides keys below) without being captured; the return value only
-  // ever depends on family/major/minor, same as the undated shape.
+  // ever depends on family/major/minor, same as the undated shape. The
+  // alternation tries the bare "major + date, no minor" shape FIRST
+  // (-\d{8}) — a plain (?:-\d+)? suffix here is wrong: the earlier optional
+  // minor group's greedy \d+ swallows the date digits as if they were a
+  // minor version (e.g. "claude-opus-4-20250929" -> minor="20250929"),
+  // producing an invalid native model string instead of "claude-opus-4".
   const match = withoutProvider.match(
-    /^claude-(haiku|sonnet|opus)-(\d+)(?:[.-](\d+))?(?:-\d+)?$/
+    /^claude-(haiku|sonnet|opus)-(\d+)(?:-\d{8}|[.-](\d+)(?:-\d{8})?)?$/
   );
   if (match) {
     const [, family, major, minor] = match;
