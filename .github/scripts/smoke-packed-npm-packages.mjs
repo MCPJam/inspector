@@ -258,7 +258,7 @@ function waitForEarlyExit(child, ms) {
 
 function waitForExit(child, ms) {
   return new Promise((resolve) => {
-    if (child.exitCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       resolve(true);
       return;
     }
