@@ -204,6 +204,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.requireToolApproval).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
     expect(result.progressiveToolDiscovery).toBe(true);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
     expectImagePolicyLeaves(result.hostPolicy, false);
     expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
     expect(result.hostPolicy.mcpToolResultImageRendering).toEqual(
@@ -236,6 +237,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
 
     expect(result.progressiveToolDiscovery).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
     expectImagePolicyLeaves(result.hostPolicy, false);
     expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_NONE);
     expect(result.systemPrompt).toBe("host system prompt");
@@ -261,6 +263,7 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.systemPrompt).toBe("body system prompt");
     expect(result.temperature).toBe(0.3);
     expect(result.requireToolApproval).toBe(false);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
     expectImagePolicyLeaves(result.hostPolicy, false);
     expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
     expect(result.selectedServerIds).toEqual(["srv-A"]);
@@ -594,6 +597,20 @@ describe("resolveExecutionContext — builtInToolIds", () => {
 });
 
 describe("resolveExecutionContext — hostPolicy passthrough", () => {
+  it("keeps raw model-visible policy unset while runtime policy resolves to defaults", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {
+        hostStyle: "claude",
+      },
+      precedence: "host-wins",
+    });
+
+    expect(result.modelVisibleMcpToolResults).toBeUndefined();
+    expect(result.hostPolicy.modelVisibleMcpToolResults).toEqual(
+      RESOLVED_IMAGE_POLICY_ENABLED
+    );
+  });
+
   it("forwards `extractHostExecutionPolicy`'s shape unchanged", () => {
     // The resolver computes `hostPolicy` via the existing SDK helper so
     // chat/eval can keep using `buildHostIterationMetadata` etc.

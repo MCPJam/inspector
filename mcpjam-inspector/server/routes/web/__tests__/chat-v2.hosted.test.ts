@@ -554,6 +554,10 @@ describe("web routes — chat-v2 hosted mode", () => {
         }),
       })
     );
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(
+      "modelVisibleMcpToolResults" in persistArgs.hostConfig
+    ).toBe(false);
   });
 
   it("honors direct chat image visibility opt-out from the request body", async () => {

@@ -733,7 +733,8 @@ chatV2.post("/", async (c) => {
           resolvedTemperature,
           requireToolApproval,
           respectToolVisibility,
-          modelVisibleMcpToolResults,
+          modelVisibleMcpToolResults:
+            resolvedExecution.modelVisibleMcpToolResults,
           mcpToolResultImageRendering:
             resolvedExecution.mcpToolResultImageRendering,
           selectedServerIds: hostConfigServerIds,

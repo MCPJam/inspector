@@ -124,6 +124,8 @@ export interface ResolvedExecutionContext {
    * `built-in-tools/registry.ts` at the call site.
    */
   builtInToolIds: string[] | undefined;
+  /** Raw model-visible MCP tool-result policy, before SDK defaults are applied. */
+  modelVisibleMcpToolResults: ModelVisibleMcpToolResults | undefined;
   /** Human-facing MCP tool-result image rendering policy. */
   mcpToolResultImageRendering: McpToolResultImageRenderingPolicy | undefined;
   hostPolicy: HostExecutionPolicy;
@@ -299,6 +301,7 @@ export function resolveExecutionContext(args: {
       harness: undefined,
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
+      modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: overrides.mcpToolResultImageRendering,
       hostPolicy,
       drift,
@@ -432,6 +435,7 @@ export function resolveExecutionContext(args: {
     harness: readHarness(hostConfig),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
+    modelVisibleMcpToolResults: modelVisibleMcpToolResults.value,
     mcpToolResultImageRendering: mcpToolResultImageRendering.value,
     hostPolicy,
     drift,

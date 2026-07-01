@@ -1498,6 +1498,7 @@ describe("POST /api/mcp/chat-v2", () => {
         // HostConfigPayload guard accepts the field.
         expect(typeof body.hostConfig.temperature).toBe("number");
         expect(body.hostConfig.temperature).toBe(0.3);
+        expect("modelVisibleMcpToolResults" in body.hostConfig).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }
