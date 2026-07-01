@@ -106,6 +106,28 @@ A run needs three things, all picked from the suite header:
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
 
+## Computer environment
+
+<Note>
+  The computer environment picker is only visible when the `computers-enabled` feature flag is on for your account and the suite belongs to a project that has at least one environment.
+</Note>
+
+In suite settings, a **Computer environment** row lets you pin a built Docker environment to the suite. When set, each eval iteration boots a fresh sandbox from that image and the agent gets a `bash` tool inside it — so every run starts from an identical state and results are directly comparable across runs and edits.
+
+- Select an environment from the dropdown. Environments without a completed build are labelled **(not built)** and cannot be used until the build finishes.
+- Choose **None (default image)** to run without a pinned environment.
+- The selection is saved immediately; future runs use the new value.
+
+<Warning>
+  If you start a run with an environment that has not finished building, the run fails immediately. Build the environment before running.
+</Warning>
+
+### Seeing which environment a run used
+
+Every run-detail page shows an **Environment** row in the run metadata block when the run was launched with a pinned environment. The label resolves to the environment's name when possible; if the environment has since been deleted, the raw environment ID is shown instead. Hover over the badge to see the image template, base digest, and provider recorded at the time of the run.
+
+---
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
