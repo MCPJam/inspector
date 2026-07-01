@@ -377,6 +377,30 @@ describe("ShareProjectDialog", () => {
     );
   });
 
+  it("tells admins to finish paid seat payment before invitees get access", async () => {
+    mockInviteProjectMember.mockResolvedValueOnce({
+      changed: true,
+      kind: "project_invite_pending",
+      isPending: true,
+      requiresSeatPayment: true,
+    });
+
+    renderDialog({
+      visibility: "private",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        "Invitation saved for invitee@example.com. Finish paid seat payment in organization settings before they get access.",
+      );
+    });
+  });
+
   it("shows a project picker only when multiple projects are available", () => {
     renderDialog({
       availableProjects: {

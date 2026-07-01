@@ -14,6 +14,7 @@ export interface Organization {
   createdAt: number;
   updatedAt: number;
   myRole?: string;
+  isPendingInvite?: boolean;
   isCreator?: boolean;
 }
 

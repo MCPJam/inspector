@@ -22,6 +22,10 @@ import {
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
 import {
+  clearPendingInviteOrgId,
+  readPendingInviteOrgId,
+} from "@/lib/pending-invite-org";
+import {
   clearHostedOAuthPendingState,
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
@@ -43,6 +47,10 @@ export interface PendingDashboardOAuthState {
 }
 
 const PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS = 30 * 1000;
+
+// Session flag so the "seat still being set up" invite notice is shown at most
+// once per browser session instead of on every render/reload while pending.
+const INVITE_PENDING_TOAST_SESSION_KEY = "mcpjam:invite-pending-toast-shown";
 
 interface ActiveOrganizationSelection {
   organizationId?: string;
@@ -192,7 +200,11 @@ export function useAppState({
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
-  validOrganizations: Array<{ _id: string; myRole?: string }>;
+  validOrganizations: Array<{
+    _id: string;
+    myRole?: string;
+    isPendingInvite?: boolean;
+  }>;
   requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
@@ -318,6 +330,65 @@ export function useAppState({
     isLoadingOrganizations,
     isRouteOrganizationValid,
     routeOrganizationId,
+  ]);
+
+  // Nudge a user invited to an org to switch into it once they're a confirmed
+  // member. The invited org is stashed from `?invite_org` at boot. While they
+  // aren't a member yet (e.g. a paid team seat still resolving) we tell them
+  // once; when membership lands we offer a one-click switch. We never force it.
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (!currentUserId || isLoadingOrganizations) {
+      return;
+    }
+    const pendingInviteOrgId = readPendingInviteOrgId();
+    if (!pendingInviteOrgId) {
+      return;
+    }
+    const inviteOrganization = validOrganizations.find(
+      (organization) => organization._id === pendingInviteOrgId
+    );
+    if (!inviteOrganization || inviteOrganization.isPendingInvite) {
+      // Not a member yet — keep the stash and let them know once per session.
+      if (
+        typeof window !== "undefined" &&
+        !window.sessionStorage.getItem(INVITE_PENDING_TOAST_SESSION_KEY)
+      ) {
+        window.sessionStorage.setItem(INVITE_PENDING_TOAST_SESSION_KEY, "1");
+        toast.info(
+          "You've been invited to an organization. You'll get access once your seat is set up."
+        );
+      }
+      return;
+    }
+    clearPendingInviteOrgId();
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(INVITE_PENDING_TOAST_SESSION_KEY);
+    }
+    if (activeOrganizationSelection.organizationId !== pendingInviteOrgId) {
+      toast.success(
+        "You're in! Switch to the organization you were invited to.",
+        {
+          action: {
+            label: "Switch organization",
+            onClick: () => setActiveOrganizationId(pendingInviteOrgId),
+          },
+        }
+      );
+    }
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+    validOrganizations,
   ]);
 
   useEffect(() => {
