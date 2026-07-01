@@ -172,6 +172,24 @@ The **Generate** button reads your attached servers' tool catalog and drafts rea
 
 When the suite has a saved server attachment spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved attachment treat all available servers as a single pool.
 
+## Exporting traces
+
+Open a completed run and click the **Export traces** button (download icon in the run header) to download the run's traces as an OTLP JSON file. The export uses OpenInference semantic conventions plus `mcp.app.*` extensions, making it compatible with Arize Phoenix, Datadog, and any other OTLP-compatible observability backend.
+
+### Export options
+
+| Option | Description |
+|--------|-------------|
+| **This run** | Exports only the iterations from the selected run. |
+| **Whole project** | Exports all recorded sessions across every run in the project. |
+| **Include content & artifacts** | Off by default. When enabled, the export includes prompts, outputs, tool arguments and results, and screenshots. Disable this when the content may contain secrets. |
+
+The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
+
+<Note>
+  If the project is too large to export in a single file, use **This run** scope and export individual runs instead.
+</Note>
+
 ## What to author first
 
 If you're new to the surface, the shortest useful loop is:
