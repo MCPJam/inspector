@@ -17,6 +17,14 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       {...props}
+      toastOptions={{
+        ...props.toastOptions,
+        classNames: {
+          toast: "group/toast",
+          content: "max-h-[50vh] overflow-y-auto",
+          ...props.toastOptions?.classNames,
+        },
+      }}
     />
   );
 };
