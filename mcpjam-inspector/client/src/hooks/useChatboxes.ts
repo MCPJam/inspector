@@ -74,6 +74,26 @@ export interface ChatboxSettings {
     updatedAt: number;
   } | null;
   members: ChatboxMember[];
+  /**
+   * Secure Guest Harness Enablement — the per-swarm host-funded guest execution
+   * opt-in + caps, read-only advisory state for the admin publish UI. `null`
+   * (or absent) ⇒ guest execution disabled. Written via
+   * `chatboxes:setChatboxGuestExecution` (project-admin gated).
+   */
+  guestExecution?: GuestExecutionSettings | null;
+}
+
+export interface GuestExecutionSettings {
+  enabled: boolean;
+  computerEnabled: boolean;
+  sharedSkillsEnabled: boolean;
+  dailyCreditCap: number;
+  dailyComputerStartCap: number;
+  maxConcurrentComputers: number;
+  harnessEnabled?: boolean;
+  dailyHarnessSpendCapMicros?: number;
+  dailyHarnessCallCap?: number;
+  maxConcurrentHarnessRuns?: number;
 }
 
 export interface ChatboxListItem {
@@ -170,6 +190,11 @@ export function useChatboxMutations() {
   const removeChatboxMember = useMutation(
     "chatboxes:removeChatboxMember" as any,
   );
+  // Secure Guest Harness Enablement — project-admin gated per-swarm guest
+  // execution + harness opt-in/caps editor.
+  const setChatboxGuestExecution = useMutation(
+    "chatboxes:setChatboxGuestExecution" as any,
+  );
 
   return {
     updateChatbox,
@@ -178,5 +203,6 @@ export function useChatboxMutations() {
     rotateChatboxLink,
     upsertChatboxMember,
     removeChatboxMember,
+    setChatboxGuestExecution,
   };
 }

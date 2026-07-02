@@ -16,7 +16,11 @@ const srv = (
 describe("buildHarnessProxyMcpJson", () => {
   it("points every entry at its proxy URL with ONLY the proxy token (no upstream headers)", () => {
     const out = buildHarnessProxyMcpJson([
-      srv("notion", "https://abc.tunnels.mcpjam.com/api/mcp/adapter-http/notion?k=s1", "t1"),
+      srv(
+        "notion",
+        "https://abc.tunnels.mcpjam.com/api/mcp/adapter-http/notion?k=s1",
+        "t1",
+      ),
     ]);
     expect(out.mcpServers.notion).toEqual({
       type: "http",
@@ -24,9 +28,9 @@ describe("buildHarnessProxyMcpJson", () => {
       headers: { "X-MCPJam-Proxy-Token": "t1" },
     });
     // The win: no upstream Authorization ever reaches the sandbox file.
-    expect(
-      JSON.stringify(out).toLowerCase().includes("authorization"),
-    ).toBe(false);
+    expect(JSON.stringify(out).toLowerCase().includes("authorization")).toBe(
+      false,
+    );
   });
 
   it("sanitizes and de-duplicates colliding server names into distinct keys", () => {
