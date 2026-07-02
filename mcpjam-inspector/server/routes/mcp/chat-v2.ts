@@ -524,13 +524,14 @@ chatV2.post("/", async (c) => {
 
     const requestAuthHeader = c.req.header("authorization");
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id),
+      modelDefinition.id &&
+      isMCPJamProvidedModel(modelDefinition.id, modelDefinition.provider),
     );
     if (
       isMcpJamProvidedModel &&
       modelDefinition.id &&
       !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id)
+      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
     ) {
       return c.json(
         {
@@ -828,11 +829,6 @@ chatV2.post("/", async (c) => {
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
-                // Harness multi-turn continuity: ride the resume-state commit on
-                // /ingest-chat ATOMICALLY with the transcript (this releases the
-                // claimed lease). Without forwarding this 3rd arg, the lease is
-                // never released and the next turn fails `harness_turn_in_progress`.
-                ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
