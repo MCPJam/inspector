@@ -1,3 +1,5 @@
+import { createRequire } from "module";
+import { dirname, join } from "path";
 import {
   getGuestPrivateKeyPem,
   getGuestPublicKeyPem,
@@ -9,6 +11,23 @@ import { logger } from "./logger.js";
 
 let provisioningPromise: Promise<void> | null = null;
 let provisioningStarted = false;
+let cachedConvexCliEntry: string | null = null;
+
+// Resolve the Convex CLI's actual entry script instead of shelling out to
+// `npx`. On Windows, `npx` resolves to the `npx.cmd` shim, which CreateProcess
+// cannot execute without a shell — and routing through a shell to work around
+// that (`shell: true`) breaks here because the PEM values we pass as argv
+// contain embedded newlines, which cmd.exe splits into extra arguments.
+// Invoking `node <cli-entry>` directly avoids both problems: it's a real
+// executable, and Windows argv passing preserves embedded newlines in a
+// single argument untouched.
+function getConvexCliEntry(): string {
+  if (cachedConvexCliEntry) return cachedConvexCliEntry;
+  const require = createRequire(import.meta.url);
+  const pkgJsonPath = require.resolve("convex/package.json");
+  cachedConvexCliEntry = join(dirname(pkgJsonPath), "bin", "main.js");
+  return cachedConvexCliEntry;
+}
 
 function getConvexDeploymentForProvisioning(): string {
   if (process.env.CONVEX_DEPLOYMENT) {
@@ -42,13 +61,12 @@ async function execConvexEnvSet(
   name: string,
   value: string,
 ): Promise<void> {
-  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
   const { execFile } = await import("child_process");
 
   await new Promise<void>((resolve, reject) => {
     execFile(
-      npxCommand,
-      ["convex", "env", "set", name, "--", value],
+      process.execPath,
+      [getConvexCliEntry(), "env", "set", name, "--", value],
       {
         env: convexEnv,
         timeout: 15_000,
