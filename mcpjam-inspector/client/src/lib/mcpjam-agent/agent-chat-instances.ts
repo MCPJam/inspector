@@ -129,10 +129,15 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   });
 }
 
-function evictIdleInstances(): void {
+function evictIdleInstances(excludeKey: string): void {
   if (instances.size <= MAX_INSTANCES) return;
   for (const [key, entry] of instances) {
     if (instances.size <= MAX_INSTANCES) return;
+    // Never evict the entry that triggered this sweep: it was created a
+    // moment ago and its surface attaches in a React effect AFTER creation,
+    // so it looks idle+detached here. Evicting it would make the next
+    // getOrCreateAgentChat mint a second instance for the same session.
+    if (key === excludeKey) continue;
     const status = entry.chat.status;
     const idle = status === "ready" || status === "error";
     if (idle && entry.config.attachedSurfaces.size === 0) {
@@ -222,7 +227,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
 
   const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };
   instances.set(chatSessionId, entry);
-  evictIdleInstances();
+  evictIdleInstances(chatSessionId);
   return entry;
 }
 

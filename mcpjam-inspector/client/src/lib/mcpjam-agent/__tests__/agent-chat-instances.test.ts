@@ -133,7 +133,7 @@ describe("agent-chat-instances", () => {
     (pinnedStreaming.chat as any).status = "streaming";
     const pinnedAttached = getOrCreateAgentChat("attached");
     pinnedAttached.config.attachedSurfaces.add("side-panel");
-    getOrCreateAgentChat("idle-1");
+    const originalIdle1 = getOrCreateAgentChat("idle-1").chat;
     getOrCreateAgentChat("idle-2");
     getOrCreateAgentChat("idle-3");
     // 6th insertion pushes size past the cap of 4 → oldest idle+detached go.
@@ -142,8 +142,21 @@ describe("agent-chat-instances", () => {
     expect(getOrCreateAgentChat("streaming")).toBe(pinnedStreaming);
     expect(getOrCreateAgentChat("attached")).toBe(pinnedAttached);
     // idle-1 was the oldest evictable entry; a fresh call re-creates it.
-    const recreated = getOrCreateAgentChat("idle-1");
-    expect(recreated.chat).not.toBe(mockState.chatInstances[2]);
+    expect(getOrCreateAgentChat("idle-1").chat).not.toBe(originalIdle1);
+  });
+
+  it("never evicts the just-created instance, even when all others are pinned", () => {
+    // Surfaces attach in a React effect AFTER creation, so a brand-new
+    // entry looks idle+detached during the eviction sweep its own insert
+    // triggers. Evicting it would split-brain the session: the hook keeps
+    // the evicted instance while the next getOrCreateAgentChat mints a
+    // second one.
+    for (const id of ["p1", "p2", "p3", "p4"]) {
+      const pinned = getOrCreateAgentChat(id);
+      (pinned.chat as any).status = "streaming";
+    }
+    const fresh = getOrCreateAgentChat("fresh");
+    expect(getOrCreateAgentChat("fresh")).toBe(fresh);
   });
 
   describe("tool approval", () => {

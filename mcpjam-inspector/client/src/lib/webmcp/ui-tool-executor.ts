@@ -168,7 +168,11 @@ export async function handleUiToolCall(
 
   if (def.mayNavigate) {
     try {
-      opts.onNavigationToolCall?.(toolName);
+      // Tolerate async callbacks too: a rejection must not surface as an
+      // unhandled promise rejection (the contract is fire-and-forget).
+      void Promise.resolve(opts.onNavigationToolCall?.(toolName)).catch(
+        () => {},
+      );
     } catch {
       // Handoff is best-effort; the tool output must still be delivered.
     }
@@ -213,7 +217,10 @@ export async function fulfillApprovedUiToolCall(opts: {
 
   if (def.mayNavigate) {
     try {
-      opts.onNavigationToolCall?.(toolName);
+      // Best-effort, same as the un-gated path (async rejections included).
+      void Promise.resolve(opts.onNavigationToolCall?.(toolName)).catch(
+        () => {},
+      );
     } catch {
       // Best-effort, same as the un-gated path.
     }
