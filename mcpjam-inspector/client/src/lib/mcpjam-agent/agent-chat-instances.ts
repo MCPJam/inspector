@@ -21,12 +21,21 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
+import posthog from "posthog-js";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
+import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import type { ModelDefinition } from "@/shared/types";
 
 const AGENT_API_PATH = "/api/web/mcpjam-agent";
+
+/**
+ * Surfaces that die on navigation. The side panel is mounted outside the
+ * router outlet and survives; the Home takeover ("home") is keyed off the
+ * `/home?session=` route and unmounts when a UI tool changes the route.
+ */
+const ROUTE_BOUND_SURFACES = new Set(["home"]);
 
 /**
  * Cap on retained instances. Eviction skips instances that are streaming or
@@ -64,6 +73,43 @@ export interface AgentChatEntry {
 }
 
 const instances = new Map<string, AgentChatEntry>();
+
+/**
+ * When a navigation-capable UI tool fires while the session is rendered on a
+ * route-bound surface, adopt the session into the always-mounted side panel
+ * BEFORE the route commits. The panel's thread (keyed by session id) attaches
+ * to this same live Chat instance, so the conversation — including the
+ * in-flight turn — stays visible and continues streaming there.
+ *
+ * Runs synchronously (store writes only) from the executor's pre-execute
+ * hook; the hoisted instance makes the ordering soft — even if the panel
+ * mounts a frame after the route change, nothing is lost.
+ */
+function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
+  const onRouteBoundSurface = [...config.attachedSurfaces].some((s) =>
+    ROUTE_BOUND_SURFACES.has(s)
+  );
+  if (!onRouteBoundSurface) return;
+  const panel = useAgentPanelStore.getState();
+  if (panel.activeSessionId === config.chatSessionId && panel.isOpen) return;
+  if (!config.projectId) {
+    // The panel's project-mismatch GC (AgentSidePanelMount) would clear a
+    // null-project pointer immediately — skip rather than flicker.
+    posthog.capture("mcpjam_agent_panel_handoff_skipped", {
+      session_id: config.chatSessionId,
+      tool_name: toolName,
+      reason: "no_project_id",
+    });
+    return;
+  }
+  panel.setActiveSession(config.chatSessionId, config.projectId);
+  panel.setOpen(true);
+  posthog.capture("mcpjam_agent_panel_handoff", {
+    from_surface: "home",
+    session_id: config.chatSessionId,
+    tool_name: toolName,
+  });
+}
 
 function evictIdleInstances(): void {
   if (instances.size <= MAX_INSTANCES) return;
@@ -121,6 +167,9 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         input: (toolCall as { input: unknown }).input,
         addToolOutput: (output) => {
           chat.addToolOutput(output);
+        },
+        onNavigationToolCall: (toolName) => {
+          maybeHandoffToPanel(config, toolName);
         },
       });
     },
