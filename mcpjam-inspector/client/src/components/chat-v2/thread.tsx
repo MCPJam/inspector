@@ -41,6 +41,7 @@ import type {
   AppToolInvocation,
   AppToolInvocationUpdate,
 } from "./thread/app-tool-invocations";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 
 interface ThreadProps {
   chatSessionId?: string;
@@ -72,6 +73,7 @@ interface ThreadProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
@@ -154,6 +156,7 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,
@@ -359,6 +362,7 @@ export function Thread({
           minimalMode={minimalMode}
           interactive={interactive}
           reasoningDisplayMode={reasoningDisplayMode}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
           focusMessageId={focusMessageId}
           highlightedMessageIds={highlightedMessageIds}
           navigationKey={navigationKey}

@@ -71,6 +71,7 @@ import {
   emitToolInput,
   emitToolOutput,
 } from "../chat-stream-chunks.js";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { logger } from "../logger.js";
 import type {
   ChatEngineLoopResult,
@@ -1008,6 +1009,7 @@ export async function runHarnessTurn(
               toolCallId: string;
               toolName: string;
               input: unknown;
+              providerOptions?: Record<string, unknown>;
             }
         > = [];
         const pendingResults: Array<{
@@ -1015,6 +1017,7 @@ export async function runHarnessTurn(
           toolName: string | undefined;
           output: unknown;
           isError: boolean;
+          serverId?: string;
         }> = [];
         const projectAssistantText = (text: string) => {
           const finalTextId = crypto.randomUUID();
@@ -1094,6 +1097,14 @@ export async function runHarnessTurn(
                   // Single-wrap, matching the emulated engine: errors → error-text;
                   // already-typed outputs pass through (no double-nest); else json.
                   output: toToolResultOutput(tr.output, tr.isError),
+                  ...(tr.serverId
+                    ? {
+                        providerOptions: mergeMcpToolOriginMetadata(
+                          undefined,
+                          tr.serverId,
+                        ),
+                    }
+                    : {}),
                 },
               ],
             } as unknown as ModelMessage);
@@ -1265,11 +1276,17 @@ export async function runHarnessTurn(
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
             // auto-continues, re-submitting the turn forever.
-            emitToolInput(writer, {
+            const providerMetadata = mergeMcpToolOriginMetadata(
+              undefined,
+              serverId
+            );
+            writer.write({
+              type: "tool-input-available",
               toolCallId,
               toolName,
               input,
               providerExecuted: true,
+              ...(providerMetadata ? { providerMetadata } : {}),
             });
             emittedAnyVisiblePart = true;
             await onToolCall?.({
@@ -1285,6 +1302,9 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
+              ...(providerMetadata
+                ? { providerOptions: providerMetadata }
+                : {}),
             });
           } else if (
             type === "tool-result" ||
@@ -1348,6 +1368,7 @@ export async function runHarnessTurn(
               toolName: meta.toolName,
               output,
               isError,
+              ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
           } else if (type === "file-change") {
             // Some runtimes (Codex) report file mutations as a `file-change`

@@ -16,6 +16,10 @@
 
 import { DEFAULT_TEMPERATURE_V2 } from "../defaults.js";
 import { getDefaultClientCapabilities } from "../../mcp-client-manager/capabilities.js";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "../types.js";
 
 /** Default host style for a brand-new config — MCPJam house chrome. */
 export const DEFAULT_HOST_STYLE_V2 = "mcpjam";
@@ -43,6 +47,8 @@ export type SeededHostConfigInput = {
   serverIds: string[];
   optionalServerIds: string[];
   builtInToolIds: string[];
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: { kind: "personal"; workdir?: string };
   // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
   // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.
@@ -83,13 +89,13 @@ function deepCloneJsonValue(value: unknown): unknown {
 }
 
 function deepCloneJsonRecord(
-  value: Record<string, unknown>,
+  value: Record<string, unknown>
 ): Record<string, unknown> {
   return deepCloneJsonValue(value) as Record<string, unknown>;
 }
 
 export function emptyHostConfigInputV2(
-  partial: Partial<SeededHostConfigInput> = {},
+  partial: Partial<SeededHostConfigInput> = {}
 ): SeededHostConfigInput {
   // Clone every caller-provided array/record so the returned config can
   // be mutated freely without aliasing the input. Matches the cloning
@@ -114,6 +120,12 @@ export function emptyHostConfigInputV2(
       ? [...partial.optionalServerIds]
       : [],
     builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
+    ...(partial.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: partial.modelVisibleMcpToolResults }
+      : {}),
+    ...(partial.mcpToolResultImageRendering !== undefined
+      ? { mcpToolResultImageRendering: partial.mcpToolResultImageRendering }
+      : {}),
     computer: partial.computer
       ? {
           kind: "personal",
@@ -139,7 +151,7 @@ export function emptyHostConfigInputV2(
     clientCapabilities: partial.clientCapabilities
       ? deepCloneJsonRecord(partial.clientCapabilities)
       : deepCloneJsonRecord(
-          getDefaultClientCapabilities() as Record<string, unknown>,
+          getDefaultClientCapabilities() as Record<string, unknown>
         ),
     hostContext: partial.hostContext
       ? deepCloneJsonRecord(partial.hostContext)
@@ -171,7 +183,7 @@ export function emptyHostConfigInputV2(
                 ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
-          ]),
+          ])
         )
       : undefined,
   };

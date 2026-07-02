@@ -1,4 +1,8 @@
 import type { Context } from "hono";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger";
 import { getRequestLogger } from "./request-logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -39,6 +43,8 @@ interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
 }
 
@@ -48,14 +54,12 @@ interface ResumeConfig {
  * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
  * chats (serverShare and chatbox flows skip it).
  *
- * Phase 3 read switch: `hostStyle` carries the real host style
- * (`claude` / `chatgpt`). The legacy literal `"direct"` is kept in
- * the union for one deploy so an old backend (still expecting
- * `'direct'`) keeps working until its roll lands; the new backend
- * accepts both and normalizes legacy `'direct'` to the project
- * default's real style with a `legacy_direct_style` warn.
+ * Phase 3 read switch: `hostStyle` carries the real host style. HostConfig v2
+ * treats this as an extensible string (Claude, ChatGPT, Cursor, Codex, custom
+ * hosts, etc.); old inspector builds that send `"direct"` are still accepted
+ * by the backend and normalized there.
  */
-export type DirectChatHostStyle = "claude" | "chatgpt" | "direct";
+export type DirectChatHostStyle = string;
 export interface DirectHostConfig {
   hostStyle: DirectChatHostStyle;
   systemPrompt: string;
@@ -68,6 +72,8 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds: string[];
 }
 
@@ -92,6 +98,8 @@ export function buildDirectHostConfig(input: {
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {
@@ -102,6 +110,8 @@ export function buildDirectHostConfig(input: {
     resolvedTemperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     selectedServerIds,
   } = input;
   return {
@@ -117,7 +127,13 @@ export function buildDirectHostConfig(input: {
     requireToolApproval: requireToolApproval === true,
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
-    respectToolVisibility,
+    ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+    ...(modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults }
+      : {}),
+    ...(mcpToolResultImageRendering !== undefined
+      ? { mcpToolResultImageRendering }
+      : {}),
     selectedServerIds: selectedServerIds ?? [],
   };
 }

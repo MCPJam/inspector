@@ -12,6 +12,20 @@ export {
   normalizeClientCapabilities,
   mergeClientCapabilities,
 } from "./mcp-client-manager/capabilities.js";
+export {
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_IMAGE_MAX_MEDIA_PARTS,
+  MCP_IMAGE_MAX_TOTAL_BYTES,
+  MCP_LINKED_RESOURCE_MAX_READS,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpModelVisibleToolResultPolicy,
+  type McpLinkedResourceReader,
+} from "./mcp-client-manager/model-output.js";
 export { redactSensitiveValue } from "./redaction.js";
 
 // Error describer — pure, browser-safe. Same module exported from the
@@ -198,7 +212,6 @@ export type {
   ResolveSandboxCspArgs,
   ResolveSandboxPermissionsArgs,
 } from "./sandbox-policy.js";
-
 // MCP protocol-version constants + predicates. Browser-safe by
 // construction (pure data + pure functions, no Node deps).
 export {
@@ -219,6 +232,10 @@ export type {
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

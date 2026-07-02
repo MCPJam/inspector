@@ -18,7 +18,10 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { MCPClientManager, type Harness } from "@mcpjam/sdk";
-import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
+import {
+  filterAppOnlyTools,
+  type ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -440,7 +443,9 @@ export function buildWidgetInteractionContextSystemPrompt(
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
     ];
     if (content.length > 0) {
-      lines.push(...content.map((block) => renderWidgetContextContentBlock(block)));
+      lines.push(
+        ...content.map((block) => renderWidgetContextContentBlock(block))
+      );
     } else {
       lines.push("(no textual content)");
     }
@@ -467,6 +472,8 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
@@ -555,6 +562,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpToolResults,
     customProviders,
     appTools,
     builtInTools,
@@ -570,12 +578,17 @@ export async function prepareChatV2(
   );
 
   const toolOptions =
-    requireToolApproval || respectToolVisibility === false
+    requireToolApproval ||
+    respectToolVisibility === false ||
+    modelVisibleMcpToolResults !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
             : {}),
           ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
+          ...(modelVisibleMcpToolResults !== undefined
+            ? { modelVisibleMcpToolResults }
+            : {}),
         }
       : undefined;
 
@@ -647,7 +660,7 @@ export async function prepareChatV2(
   for (const name of Object.keys(builtInToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`
       );
       delete mcpTools[name];
     }
@@ -656,7 +669,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app or skill tool.`
       );
     }
   }
@@ -685,7 +698,7 @@ export async function prepareChatV2(
     hydrateDiscoveryStateFromHistory(
       discoveryState,
       options.priorMessages,
-      catalog,
+      catalog
     );
   }
   const envOverride = harness
@@ -738,7 +751,7 @@ export async function prepareChatV2(
       // tool already claimed the name.
       if (Object.prototype.hasOwnProperty.call(realTools, name)) {
         throw new Error(
-          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`
         );
       }
     }

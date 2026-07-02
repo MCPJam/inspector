@@ -54,8 +54,11 @@ import type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -66,7 +69,10 @@ export type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
+  ModelVisibleMcpToolResults,
 };
 
 export type HostStyleId = ChatboxHostStyle;
@@ -83,6 +89,8 @@ export type HostConfigComputerV2 = {
   /** Optional initial working directory for shell/terminal sessions. */
   workdir?: string;
 };
+
+export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
  * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
@@ -132,6 +140,14 @@ export type HostConfigInputV2 = {
    * hostConfig row.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Host/client policies for which MCP tool-result content/resource shapes are
+   * exposed to the model. Optional so untouched hosts use runtime defaults
+   * without forcing a new snapshot.
+   */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -226,6 +242,10 @@ export type HostConfigDtoV2 = {
   respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpToolResults. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Surfaced verbatim — see HostConfigInputV2.mcpToolResultImageRendering. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -276,7 +296,7 @@ export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 // CLI. Cast to the strict client aggregate — the runtime object is
 // field-identical (guarded by host-template-seed-parity.test.ts).
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
-  partial?: Partial<HostConfigInputV2>,
+  partial?: Partial<HostConfigInputV2>
 ) => HostConfigInputV2;
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
@@ -296,6 +316,12 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
+    modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
+      ? cloneModelVisibleMcpToolResults(dto.modelVisibleMcpToolResults)
+      : undefined,
+    mcpToolResultImageRendering: dto.mcpToolResultImageRendering
+      ? cloneMcpToolResultImageRendering(dto.mcpToolResultImageRendering)
+      : undefined,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
@@ -714,6 +740,192 @@ function deepCloneJsonValue(value: unknown): unknown {
   return value;
 }
 
+export function cloneModelVisibleMcpToolResults(
+  value: ModelVisibleMcpToolResults
+): ModelVisibleMcpToolResults {
+  return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
+}
+
+export function cloneMcpToolResultImageRendering(
+  value: McpToolResultImageRenderingPolicy
+): McpToolResultImageRenderingPolicy {
+  return deepCloneJsonValue(value) as McpToolResultImageRenderingPolicy;
+}
+
+export function isMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.embeddedResources?.blob?.enabled ?? true) &&
+    (policy?.embeddedResources?.blob?.image ?? true)
+  );
+}
+
+export function isMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.linkedResources?.blob?.enabled ?? true) &&
+    (policy?.linkedResources?.blob?.image ?? true)
+  );
+}
+
+export function setMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: visible,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
+export function getMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): McpToolResultImageRenderPlacement {
+  return policy?.placement ?? "inline";
+}
+
+export function isMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.embeddedResources?.blob?.image ?? true;
+}
+
+export function isMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.linkedResources?.blob?.image ?? true;
+}
+
+export function setMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  placement: McpToolResultImageRenderPlacement
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    placement,
+  };
+}
+
+export function setMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: rendered,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
+export function gateMcpToolResultImageRenderingByModelVisibility(
+  renderingPolicy: McpToolResultImageRenderingPolicy | undefined,
+  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined
+): McpToolResultImageRenderingPolicy | undefined {
+  const directVisible = isMcpDirectContentImageVisible(modelVisiblePolicy);
+  const embeddedVisible =
+    isMcpEmbeddedResourceBlobImageVisible(modelVisiblePolicy);
+  const linkedVisible = isMcpLinkedResourceBlobImageVisible(modelVisiblePolicy);
+
+  if (directVisible && embeddedVisible && linkedVisible) {
+    return renderingPolicy;
+  }
+
+  let next = renderingPolicy;
+  if (!directVisible) {
+    next = setMcpDirectContentImageRendered(next, false);
+  }
+  if (!embeddedVisible) {
+    next = setMcpEmbeddedResourceBlobImageRendered(next, false);
+  }
+  if (!linkedVisible) {
+    next = setMcpLinkedResourceBlobImageRendered(next, false);
+  }
+  return next;
+}
+
 /**
  * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.
@@ -737,6 +949,21 @@ export function hostConfigInputsEqual(
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
+  if (
+    !optionalModelVisibleMcpToolResultsEq(
+      a.modelVisibleMcpToolResults,
+      b.modelVisibleMcpToolResults
+    )
+  )
+    return false;
+  if (
+    !optionalMcpToolResultImageRenderingEq(
+      a.mcpToolResultImageRendering,
+      b.mcpToolResultImageRendering
+    )
+  ) {
+    return false;
+  }
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   // Order-insensitive, same semantics as server ids — toggling a built-in
@@ -846,6 +1073,24 @@ function optionalMcpProfileEq(
   // nested (initialize, apps.sandbox.{csp,permissions}, extensions); the
   // shared stableStringifyJson sorts keys at every level so semantically
   // equal envelopes built in different orders compare equal.
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
+function optionalModelVisibleMcpToolResultsEq(
+  a: ModelVisibleMcpToolResults | undefined,
+  b: ModelVisibleMcpToolResults | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
+function optionalMcpToolResultImageRenderingEq(
+  a: McpToolResultImageRenderingPolicy | undefined,
+  b: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
   return stableStringifyJson(a) === stableStringifyJson(b);
 }
 

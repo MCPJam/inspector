@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 
@@ -14,7 +16,11 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+      },
     ],
   }),
 }));
@@ -29,6 +35,11 @@ vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
 }));
 
 import { BehaviorTab } from "../BehaviorTab";
+
+function StatefulBehaviorTab() {
+  const [draft, setDraft] = useState(emptyHostConfigInputV2());
+  return <BehaviorTab draft={draft} onDraftChange={setDraft} attention={[]} />;
+}
 
 /**
  * Coupling test: the focus tabs read their labels and descriptions from
@@ -47,7 +58,7 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
   }
 
@@ -67,6 +78,85 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
     renderTab();
     const label = hostConfigField("respectToolVisibility").label;
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+
+  it("uses schema labels for MCP image policy controls", () => {
+    renderTab();
+    for (const field of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+    ] as const) {
+      const label = hostConfigField(field).label;
+      expect(screen.getByRole("switch", { name: label })).toBeInTheDocument();
+    }
+
+    const renderLabel = hostConfigField("mcpToolResultImageRendering").label;
+    expect(
+      screen.getByRole("group", { name: renderLabel })
+    ).toBeInTheDocument();
+  });
+
+  it("keeps info hovers for MCP image policy fields", () => {
+    renderTab();
+    for (const label of [
+      "MCP tool-result images",
+      "Tool image content",
+      "Embedded resource images",
+      "Resource link images",
+    ] as const) {
+      expect(
+        screen.getByRole("button", { name: `About ${label}` })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("toggles MCP image policy fields", async () => {
+    const user = userEvent.setup();
+    render(<StatefulBehaviorTab />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /make tool image content visible to model/i,
+    });
+
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+  });
+
+  it("forces matching UI image rendering off when model visibility is off", async () => {
+    const user = userEvent.setup();
+    render(<StatefulBehaviorTab />);
+
+    const modelToggle = screen.getByRole("switch", {
+      name: hostConfigField(
+        "modelVisibleMcpToolResults.embeddedResources.blob.image"
+      ).label,
+    });
+    const renderToggle = screen.getByRole("switch", {
+      name: hostConfigField(
+        "mcpToolResultImageRendering.embeddedResources.blob.image"
+      ).label,
+    });
+
+    expect(modelToggle).toBeChecked();
+    expect(renderToggle).toBeChecked();
+
+    await user.click(modelToggle);
+
+    expect(modelToggle).not.toBeChecked();
+    expect(renderToggle).not.toBeChecked();
+    expect(renderToggle).toBeDisabled();
+
+    await user.click(modelToggle);
+
+    expect(modelToggle).toBeChecked();
+    expect(renderToggle).not.toBeChecked();
+    expect(renderToggle).not.toBeDisabled();
   });
 
   it("renders the schema label for `progressiveToolDiscovery`", () => {

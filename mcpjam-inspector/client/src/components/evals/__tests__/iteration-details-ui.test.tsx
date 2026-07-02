@@ -26,6 +26,7 @@ const actualToolCalls = [
 
 vi.mock("convex/react", () => ({
   useAction: () => mockGetBlob,
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({

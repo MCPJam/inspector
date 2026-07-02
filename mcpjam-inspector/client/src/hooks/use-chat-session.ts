@@ -120,6 +120,10 @@ import {
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import {
   buildResolvedServerBatchRequest,
@@ -215,11 +219,11 @@ export interface UseChatSessionOptions {
   /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
-   * the user's actual host style (`claude` / `chatgpt`) rather than
-   * defaulting to `'claude'`. Omitted for chatbox flows — the
+   * the user's actual host style rather than defaulting to `'claude'`.
+   * Omitted for chatbox flows — the
    * backend resolves chatbox host style from the chatbox row.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
@@ -239,6 +243,10 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  /** Host-level MCP tool-result content/resource visibility policy. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Host-level UI rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
    * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
    * model should see this turn. Sourced from the caller's resolved host
@@ -348,6 +356,8 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+        mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
       };
       version: number;
@@ -1228,6 +1238,26 @@ export function useChatSession(
     options.respectToolVisibility ??
     options.executionConfig?.respectToolVisibility ??
     respectToolVisibility;
+  const resumedModelVisibleMcpToolResultsRef = useRef<
+    ModelVisibleMcpToolResults | undefined
+  >(undefined);
+  const resumedMcpToolResultImageRenderingRef = useRef<
+    McpToolResultImageRenderingPolicy | undefined
+  >(undefined);
+  const modelVisibleMcpToolResultsRef = useRef<
+    ModelVisibleMcpToolResults | undefined
+  >(undefined);
+  modelVisibleMcpToolResultsRef.current =
+    resumedModelVisibleMcpToolResultsRef.current ??
+    options.modelVisibleMcpToolResults ??
+    options.executionConfig?.modelVisibleMcpToolResults;
+  const mcpToolResultImageRenderingRef = useRef<
+    McpToolResultImageRenderingPolicy | undefined
+  >(undefined);
+  mcpToolResultImageRenderingRef.current =
+    resumedMcpToolResultImageRenderingRef.current ??
+    options.mcpToolResultImageRendering ??
+    options.executionConfig?.mcpToolResultImageRendering;
   // Host-managed built-in tools. Top-level option wins (mirrors the
   // progressiveToolDiscovery / respectToolVisibility pattern), then
   // executionConfig as a fallback for surfaces that thread everything
@@ -1646,6 +1676,18 @@ export function useChatSession(
               }),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          ...(modelVisibleMcpToolResultsRef.current !== undefined
+            ? {
+                modelVisibleMcpToolResults:
+                  modelVisibleMcpToolResultsRef.current,
+              }
+            : {}),
+          ...(mcpToolResultImageRenderingRef.current !== undefined
+            ? {
+                mcpToolResultImageRendering:
+                  mcpToolResultImageRenderingRef.current,
+              }
+            : {}),
           // Only send when the user explicitly set the host-level toggle.
           // Omitting the field tells the backend orchestrator to use its
           // auto policy (currently: off for hosted unless the env override
@@ -1864,7 +1906,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog,
+          useTrafficLogStore.getState().addLog
         );
         addToolOutput({
           tool: tc.toolName,
@@ -2259,6 +2301,8 @@ export function useChatSession(
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedModelVisibleMcpToolResultsRef.current = undefined;
+    resumedMcpToolResultImageRenderingRef.current = undefined;
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -2281,6 +2325,8 @@ export function useChatSession(
       }
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedModelVisibleMcpToolResultsRef.current = undefined;
+      resumedMcpToolResultImageRenderingRef.current = undefined;
       // Return the hydration promise so callers can chain work that must run
       // AFTER the seeded messages are applied (e.g. the eval handoff sending a
       // widget's `ui/message` follow-up so the model replies to the seeded
@@ -2308,6 +2354,8 @@ export function useChatSession(
           temperature?: number;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+          mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
         };
         version: number;
@@ -2380,6 +2428,10 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedModelVisibleMcpToolResultsRef.current =
+          session.resumeConfig?.modelVisibleMcpToolResults;
+        resumedMcpToolResultImageRenderingRef.current =
+          session.resumeConfig?.mcpToolResultImageRendering;
       }
 
       if (options?.shouldApply && !options.shouldApply()) {

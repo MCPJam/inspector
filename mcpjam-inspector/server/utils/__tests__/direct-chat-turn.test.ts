@@ -38,6 +38,7 @@ vi.mock("ai", async () => {
 import {
   consumeDirectChatTurnHeadless,
   runDirectChatTurn,
+  withMcpToolOriginChunkMetadata,
 } from "../direct-chat-turn";
 
 describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
@@ -47,6 +48,24 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("stamps MCP origin metadata on model-visible tool input chunks", () => {
+    const chunk = withMcpToolOriginChunkMetadata(
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "take_screenshot",
+        input: {},
+      },
+      {
+        take_screenshot: { _serverId: "srv-1" },
+      } as any
+    ) as any;
+
+    expect(chunk.providerMetadata).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
   });
 
   function defaultStreamTextReturn(

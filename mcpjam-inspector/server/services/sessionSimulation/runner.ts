@@ -1,6 +1,10 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
@@ -176,6 +180,16 @@ export interface RunSimulationOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Host/client policy for eligible MCP tool-result content/resources.
+   * Undefined keeps prepareChatV2's default behavior.
+   */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Human-facing rendering policy for MCP tool-returned images.
+   * Undefined keeps prepareChatV2's default behavior.
+   */
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  /**
    * Personal-computer attachment from the chatbox's pinned HostConfigV2. This
    * is the resource gate for computer-backed built-ins like `bash`; capabilities
    * still ride `builtInToolIds`.
@@ -318,6 +332,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     computer,
     harness,
     accessVersion,
@@ -369,6 +385,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           respectToolVisibility,
           progressiveToolDiscovery,
           builtInToolIds,
+          modelVisibleMcpToolResults,
+          mcpToolResultImageRendering,
           computer,
           harness,
           accessVersion,
@@ -460,6 +478,8 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
   harness?: Harness;
   accessVersion?: number;
@@ -483,6 +503,8 @@ async function runOneSession(args: {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     computer,
     harness,
     accessVersion,
@@ -519,6 +541,12 @@ async function runOneSession(args: {
       ...(temperature !== undefined ? { temperature } : {}),
       requireToolApproval,
       ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+      ...(modelVisibleMcpToolResults !== undefined
+        ? { modelVisibleMcpToolResults }
+        : {}),
+      ...(mcpToolResultImageRendering !== undefined
+        ? { mcpToolResultImageRendering }
+        : {}),
       selectedServers:
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
@@ -575,6 +603,7 @@ async function runOneSession(args: {
       temperature,
       requireToolApproval,
       respectToolVisibility,
+      modelVisibleMcpToolResults,
       ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
@@ -1253,6 +1282,9 @@ export async function drainAssistantTurn(
       : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
+      : {}),
+    ...(args.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
       : {}),
     // Harness selector: when the chatbox host runs harness: "claude-code",
     // synthetic turns run the real Claude Code runtime. requireToolApproval is

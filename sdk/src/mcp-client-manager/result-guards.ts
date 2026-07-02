@@ -18,6 +18,25 @@ function isEmbeddedResource(value: unknown): boolean {
   );
 }
 
+function isResourceLink(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.uri !== "string") {
+    return false;
+  }
+
+  return (
+    (!("name" in value) ||
+      value.name === undefined ||
+      typeof value.name === "string") &&
+    (!("description" in value) ||
+      value.description === undefined ||
+      typeof value.description === "string") &&
+    (!("mimeType" in value) ||
+      value.mimeType === undefined ||
+      typeof value.mimeType === "string") &&
+    (!("_meta" in value) || value._meta === undefined || isRecord(value._meta))
+  );
+}
+
 function isCallToolContentBlock(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
@@ -33,6 +52,8 @@ function isCallToolContentBlock(value: unknown): boolean {
       );
     case "resource":
       return isEmbeddedResource(value.resource);
+    case "resource_link":
+      return isResourceLink(value);
     default:
       return false;
   }

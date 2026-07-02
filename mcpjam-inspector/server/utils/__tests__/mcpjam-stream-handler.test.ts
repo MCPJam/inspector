@@ -1332,6 +1332,109 @@ describe("mcpjam-stream-handler", () => {
     );
   });
 
+  it("emits raw embedded image resources in the UI tool-output chunk when model output is media content", async () => {
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-image-1",
+            toolName: "qa_return_embedded_image_resource",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const rawResult = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "example://embedded-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        },
+      ],
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-image-1",
+              toolName: "qa_return_embedded_image_resource",
+              output: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "aGVsbG8=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+              result: rawResult,
+              serverId: "resource-mcp",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show image" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: {
+        qa_return_embedded_image_resource: { _serverId: "resource-mcp" },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi
+          .fn()
+          .mockReturnValue({ qa_return_embedded_image_resource: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const toolOutputChunk = writtenChunks.find(
+      (chunk) =>
+        chunk?.type === "tool-output-available" &&
+        chunk?.toolCallId === "call-image-1"
+    );
+    expect(toolOutputChunk).toBeDefined();
+    expect((toolOutputChunk!.output as any).content).toEqual(rawResult.content);
+    expect((toolOutputChunk!.output as any).type).not.toBe("content");
+  });
+
   describe("progressive discovery approval semantics", () => {
     // Minimal "plan enabled" — only the `enabled` flag is read on the
     // post-stream unresolved-tool detection + drain paths exercised here.

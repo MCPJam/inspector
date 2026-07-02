@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
+  gateMcpToolResultImageRenderingByModelVisibility,
   hostCapabilitiesOverrideToMatrix,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
@@ -118,6 +119,89 @@ describe("hostConfigInputsEqual", () => {
       hostCapabilitiesOverride: {} as Record<string, unknown>,
     });
     expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+
+  it("distinguishes unset, enabled, and disabled MCP image policies", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({ modelVisibleMcpToolResults: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: false } },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("detects MCP tool-result image rendering changes", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: { placement: "inline" } })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          mcpToolResultImageRendering: { placement: "collapsed" },
+        }),
+        makeInput({ mcpToolResultImageRendering: { placement: "none" } })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: true } },
+        }),
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: false } },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("masks MCP tool-result image rendering with model visibility", () => {
+    expect(
+      gateMcpToolResultImageRenderingByModelVisibility(
+        {
+          placement: "inline",
+          directContent: { image: true },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: true } },
+        },
+        {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: false } },
+          linkedResources: { blob: { image: true } },
+        }
+      )
+    ).toEqual({
+      placement: "inline",
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
   });
 });
 
@@ -345,6 +429,34 @@ describe("hostConfigDtoToInput", () => {
     };
     const input = hostConfigDtoToInput(dto);
     expect(input.hostCapabilitiesOverride).toBeUndefined();
+  });
+
+  it("copies explicit MCP image policies to input", () => {
+    const input = hostConfigDtoToInput(
+      makeDto({
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: false } },
+        },
+        mcpToolResultImageRendering: {
+          placement: "collapsed",
+          directContent: { image: false },
+        },
+        hostContext: { other: "keep" },
+      })
+    );
+
+    expect(input.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(input.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+      directContent: { image: false },
+    });
+    expect(input.hostContext).toEqual({ other: "keep" });
   });
 });
 

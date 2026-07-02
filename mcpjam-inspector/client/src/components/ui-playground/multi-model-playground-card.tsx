@@ -36,6 +36,7 @@ import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
+  hostStyleSupportsModelVisibleMcpToolImages,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import {
@@ -53,7 +54,10 @@ import {
   useActiveMcpProfile,
 } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  type HostConfigDtoV2,
+} from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   getChatboxChatBackground,
@@ -73,6 +77,7 @@ export interface PlaygroundDeterministicExecutionRequest {
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   toolMeta: Record<string, unknown> | undefined;
   state?: "output-available" | "output-error";
   errorText?: string;
@@ -274,6 +279,28 @@ export function MultiModelPlaygroundCard({
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
   const lastCompareEnterVersionRef = useRef(0);
+  const resolvedModelVisibleMcpToolResults = useMemo(
+    () =>
+      hostCapsResolver?.modelVisibleMcpToolResults ??
+      executionConfig?.modelVisibleMcpToolResults,
+    [
+      hostCapsResolver?.modelVisibleMcpToolResults,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
+  const resolvedMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        hostCapsResolver?.mcpToolResultImageRendering ??
+          executionConfig?.mcpToolResultImageRendering,
+        resolvedModelVisibleMcpToolResults
+      ),
+    [
+      hostCapsResolver?.mcpToolResultImageRendering,
+      executionConfig?.mcpToolResultImageRendering,
+      resolvedModelVisibleMcpToolResults,
+    ]
+  );
 
   const {
     messages,
@@ -309,6 +336,7 @@ export function MultiModelPlaygroundCard({
     // policy in that case.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
+    modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -317,7 +345,7 @@ export function MultiModelPlaygroundCard({
   });
 
   const isThreadEmpty = !messages.some(
-    (message) => message.role === "user" || message.role === "assistant",
+    (message) => message.role === "user" || message.role === "assistant"
   );
   const { sendBlocked: fullscreenChatSendBlocked } =
     getChatComposerInteractivity({
@@ -357,13 +385,16 @@ export function MultiModelPlaygroundCard({
   ]);
 
   const preludeTraceEnvelope = useMemo(
-    () => buildPreludeTraceEnvelope(preludeTraceExecutions),
-    [preludeTraceExecutions],
+    () =>
+      buildPreludeTraceEnvelope(preludeTraceExecutions, {
+        ...hostStyleSupportsModelVisibleMcpToolImages(hostStyle),
+      }),
+    [hostStyle, preludeTraceExecutions]
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : (preludeTraceEnvelope ?? liveTraceEnvelope);
+      : preludeTraceEnvelope ?? liveTraceEnvelope;
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode
@@ -404,13 +435,13 @@ export function MultiModelPlaygroundCard({
       status: error
         ? "error"
         : isStreaming || isExecuting
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+        ? "running"
+        : isThreadEmpty
+        ? "idle"
+        : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn],
+    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn]
   );
   const errorMessage = formatErrorMessage(error);
   const mergedToolRenderOverrides = useMemo(
@@ -418,7 +449,7 @@ export function MultiModelPlaygroundCard({
       ...injectedToolRenderOverrides,
       ...toolRenderOverrides,
     }),
-    [injectedToolRenderOverrides, toolRenderOverrides],
+    [injectedToolRenderOverrides, toolRenderOverrides]
   );
   const hostBackgroundColor =
     getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
@@ -428,9 +459,7 @@ export function MultiModelPlaygroundCard({
   const isTabletFullscreenTakeover =
     deviceType === "tablet" && displayMode === "fullscreen";
   const shellHeightClass =
-    isMobileFullTakeover || isTabletFullscreenTakeover
-      ? "min-h-[34rem]"
-      : "";
+    isMobileFullTakeover || isTabletFullscreenTakeover ? "min-h-[34rem]" : "";
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -526,13 +555,15 @@ export function MultiModelPlaygroundCard({
           }
         : {
             toolCallId: deterministicExecutionRequest.toolCallId,
+            modelOutput: deterministicExecutionRequest.modelOutput,
+            mcpToolResultImageRendering: resolvedMcpToolResultImageRendering,
           };
     const { messages: newMessages } = createDeterministicToolMessages(
       deterministicExecutionRequest.toolName,
       deterministicExecutionRequest.params,
       deterministicExecutionRequest.result,
       deterministicExecutionRequest.toolMeta,
-      deterministicOptions,
+      deterministicOptions
     );
 
     if (deterministicExecutionRequest.renderOverride) {
@@ -545,10 +576,10 @@ export function MultiModelPlaygroundCard({
 
     const upsertById = (
       currentMessages: typeof newMessages,
-      nextMessage: (typeof newMessages)[number],
+      nextMessage: (typeof newMessages)[number]
     ) => {
       const existingIndex = currentMessages.findIndex(
-        (message) => message.id === nextMessage.id,
+        (message) => message.id === nextMessage.id
       );
       if (existingIndex === -1) {
         return [...currentMessages, nextMessage];
@@ -567,7 +598,7 @@ export function MultiModelPlaygroundCard({
         for (const message of newMessages) {
           next = upsertById(
             next as typeof newMessages,
-            message,
+            message
           ) as typeof previous;
         }
         return next;
@@ -586,6 +617,7 @@ export function MultiModelPlaygroundCard({
         toolName: deterministicExecutionRequest.toolName,
         params: deterministicExecutionRequest.params,
         result: deterministicExecutionRequest.result,
+        modelOutput: deterministicExecutionRequest.modelOutput,
         state:
           deterministicExecutionRequest.state === "output-error"
             ? "output-error"
@@ -600,13 +632,18 @@ export function MultiModelPlaygroundCard({
         return previous.map((execution) =>
           execution.toolCallId === deterministicExecutionRequest.toolCallId
             ? nextExecution
-            : execution,
+            : execution
         );
       }
 
       return [...previous, nextExecution];
     });
-  }, [deterministicExecutionRequest, hasTraceSnapshot, setMessages]);
+  }, [
+    deterministicExecutionRequest,
+    hasTraceSnapshot,
+    resolvedMcpToolResultImageRendering,
+    setMessages,
+  ]);
 
   useEffect(() => {
     if (hasTraceSnapshot) {
@@ -630,7 +667,7 @@ export function MultiModelPlaygroundCard({
         widgetModelContext: drainModelContextQueue(),
       });
     },
-    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata]
   );
 
   const handleModelContextUpdate = useCallback(
@@ -639,13 +676,13 @@ export function MultiModelPlaygroundCard({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      },
+      }
     ) => {
       setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
       );
     },
-    [],
+    []
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
@@ -765,7 +802,7 @@ export function MultiModelPlaygroundCard({
             className={cn(
               "chatbox-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
-              effectiveThreadTheme === "dark" && "dark",
+              effectiveThreadTheme === "dark" && "dark"
             )}
             data-host-style={hostStyle}
             data-thread-theme={effectiveThreadTheme}
@@ -808,6 +845,9 @@ export function MultiModelPlaygroundCard({
                       fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                       onFullscreenChatStop={stop}
                       reasoningDisplayMode={reasoningDisplayMode}
+                      mcpToolResultImageRendering={
+                        resolvedMcpToolResultImageRendering
+                      }
                       showSenderAvatars={showSenderAvatars}
                       resolveSenderAvatar={resolveSenderAvatar}
                     />
