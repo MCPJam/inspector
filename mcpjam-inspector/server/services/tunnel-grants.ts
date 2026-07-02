@@ -107,14 +107,16 @@ export function validateGrant(
 // bearer secret AND disconnects/denies the previous grant at the edge.
 export async function fetchRelayGrant(
   serverId: string,
-  authHeader?: string
+  authHeader?: string,
+  scope: "adapter-http" | "harness-web" = "adapter-http"
 ): Promise<RelayGrant> {
   const convexUrl = requireConvexHttpUrl();
 
+  const scopeParam = scope === "harness-web" ? "&scope=harness-web" : "";
   const response = await convexFetch(
     `${convexUrl}/tunnels/token?serverId=${encodeURIComponent(
       serverId
-    )}&transport=relay`,
+    )}&transport=relay${scopeParam}`,
     {
       method: "GET",
       headers: convexHeaders(authHeader),

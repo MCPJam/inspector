@@ -848,6 +848,7 @@ export function useAppState({
       serverState.handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded:
       serverState.persistRuntimeServerToProjectIfNeeded,
+    ensureHostedServerIdsForNames: serverState.ensureHostedServerIdsForNames,
 
     handleSwitchProject,
     handleCreateProject: projectState.handleCreateProject,

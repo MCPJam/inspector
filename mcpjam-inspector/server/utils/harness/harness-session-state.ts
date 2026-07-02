@@ -9,6 +9,7 @@
  */
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "../logger.js";
+import type { HarnessResetReason } from "@/shared/harness-session";
 
 export type HarnessOwnerType =
   | "direct-chat"
@@ -33,6 +34,10 @@ export type HarnessResumePayload = {
   harnessSessionId: string;
   resumeState: unknown;
   computerId: string;
+  /** WS3: when true, `resumeState` is a `continue-turn` payload (the turn paused
+   *  for a tool approval) — resume with `createSession({ continueFrom })` +
+   *  `continueStream`, not `resumeFrom` + `stream`. */
+  awaitingApproval?: boolean;
 };
 
 /**
@@ -55,6 +60,9 @@ export type HarnessSessionCommitPayload = {
   runtimeFingerprint: string;
   /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
   skillsHash?: string;
+  /** WS3: the committed state is a paused-for-approval continuation (see
+   *  HarnessResumePayload.awaitingApproval). */
+  awaitingApproval?: boolean;
 };
 
 export type HarnessClaimResult =
@@ -65,6 +73,54 @@ export type HarnessClaimResult =
       fingerprintChanged: boolean;
     }
   | { ok: false; status: number; error: string };
+
+export type HarnessResumeEligibility = {
+  resume: boolean;
+  reason?: HarnessResetReason;
+};
+
+/**
+ * Decide whether a claimed harness session sidecar can warm-resume on THIS
+ * computer/sandbox, and if not, why. Pure + side-effect-free so the resume
+ * policy is unit-testable without a live harness runner.
+ *
+ *  - no prior state                      → fresh, no reason (normal first turn).
+ *  - computerId moved                    → `sandbox-replaced` (control-plane reprovision).
+ *  - prior bridge sandboxId ≠ current    → `sandbox-replaced` (box swapped under the same computer).
+ *  - prior sidecar has no bridge sandbox → `legacy-cold-resume` (pre-`detach()` state; still
+ *                                          attempt the disk/cold resume, but don't claim warm continuity).
+ *  - otherwise                           → resume.
+ *
+ * The bridge sandbox id is read defensively from the opaque `resumeState`
+ * (`detach()` embeds it at `data.bridge.sandboxId`); an unexpected shape
+ * degrades to the legacy path rather than throwing. This only detects a
+ * REPROVISIONED box — it cannot tell whether a bridge died inside the SAME
+ * sandbox (that path is swallowed inside the adapter and falls back fresh on
+ * its own).
+ */
+export function getHarnessResumeEligibility(args: {
+  state: HarnessResumePayload | null | undefined;
+  computerId: string;
+  sandboxId: string;
+}): HarnessResumeEligibility {
+  const { state, computerId, sandboxId } = args;
+  if (!state) return { resume: false };
+  if (state.computerId !== computerId) {
+    return { resume: false, reason: "sandbox-replaced" };
+  }
+  const priorSandboxId = (
+    state.resumeState as
+      | { data?: { bridge?: { sandboxId?: unknown } } }
+      | null
+      | undefined
+  )?.data?.bridge?.sandboxId;
+  if (typeof priorSandboxId === "string" && priorSandboxId.length > 0) {
+    return priorSandboxId === sandboxId
+      ? { resume: true }
+      : { resume: false, reason: "sandbox-replaced" };
+  }
+  return { resume: true, reason: "legacy-cold-resume" };
+}
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -217,6 +273,7 @@ export async function commitHarnessSessionState(args: {
   runtimeFingerprint: string;
   /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
   skillsHash?: string;
+  awaitingApproval?: boolean;
   bearer: string;
 }): Promise<boolean> {
   const res = await postSessionState("commit", args.bearer, {
@@ -228,6 +285,7 @@ export async function commitHarnessSessionState(args: {
     computerId: args.computerId,
     runtimeFingerprint: args.runtimeFingerprint,
     ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
+    ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
   });
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });

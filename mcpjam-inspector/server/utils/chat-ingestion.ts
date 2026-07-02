@@ -175,9 +175,10 @@ interface PersistChatSessionOptions {
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
   /**
-   * §3: chat-backed Claude Code harness resume-state commit. Applied ATOMICALLY
-   * with the transcript inside the ingest mutation (a failed sidecar commit
-   * rolls back the transcript write). Opaque pass-through.
+   * §3: chat-backed harness resume-state commit. Applied ATOMICALLY with the
+   * transcript inside the ingest mutation (a failed sidecar commit rolls back
+   * the transcript write). Opaque pass-through. `harnessId` is a lane-key
+   * dimension (the backend keys per-harness), so it carries the full union.
    */
   harnessSessionCommit?: {
     ownerType: "direct-chat" | "chatbox-chat";
@@ -185,7 +186,7 @@ interface PersistChatSessionOptions {
     chatboxId?: string;
     leaseId: string;
     expectedStateVersion: number;
-    harnessId: "claude-code";
+    harnessId: "claude-code" | "codex";
     harnessSessionId: string;
     resumeState: unknown;
     computerId: string;

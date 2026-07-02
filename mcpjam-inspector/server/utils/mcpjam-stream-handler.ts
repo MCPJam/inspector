@@ -27,6 +27,7 @@ import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
   emitError,
@@ -312,6 +313,12 @@ export interface MCPJamHandlerOptions {
    * browser-fulfilled) and skills (the harness has its own).
    */
   builtInTools?: ToolSet;
+  /**
+   * WS5 foundation: reusable instruction bundles for the harness runtime,
+   * forwarded to `new HarnessAgent({ skills })`. Harness-only (emulated ignores).
+   * Empty/unset today — hosted-mode skills authoring is a separate workstream.
+   */
+  skills?: unknown[];
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -323,6 +330,11 @@ export interface MCPJamHandlerOptions {
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
+   *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
+   *  global env. Absent ⇒ harness runs without proxied MCP. See
+   *  `harness-proxy-strategy.ts`. */
+  harnessMcpProxy?: HarnessMcpProxyStrategy;
   requireToolApproval?: boolean;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:

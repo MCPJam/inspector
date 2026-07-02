@@ -35,4 +35,17 @@ export type HostedRuntimeContext = {
    * reuse the builder's locally-connected servers.
    */
   requiresWebChatApi?: boolean;
+  /**
+   * Preflight that resolves selected runtime server NAMES → persisted Convex
+   * server ids (persisting ad-hoc/App servers that aren't saved yet), awaited
+   * before a hosted harness send so the proxy/authorize-batch never receive a
+   * display name. Provided by Playground-class surfaces from
+   * `useServerActions().ensureHostedServerIdsForNames`; absent for surfaces
+   * whose servers are already Convex-resolved (e.g. chatbox), which keep the
+   * existing pre-resolved `selectedServerIds` path. Throws on an unresolvable
+   * name so the caller fails the send closed.
+   */
+  ensureServerIds?: (
+    serverNames: string[],
+  ) => Promise<Array<{ serverName: string; serverId: string }>>;
 };

@@ -50,6 +50,7 @@ import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
+import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { registerSelfFetch } from "./utils/self-app";
 
 const sysLogger = getSystemLogger("process");
@@ -337,8 +338,9 @@ app.use(
   })
 );
 
-// 1MB JSON cap for /api/web/*, with a multipart carve-out for the cloud-skills
-// folder upload (bounded by the service caps instead). See `webBodyLimit`.
+// 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
+// route (multipart blobs; it applies its own higher bodyLimit at the mount
+// site below). See `webBodyLimit`.
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
@@ -372,6 +374,21 @@ app.route("/api/web", webRoutes);
 app.get(
   "/api/web/computers/terminal",
   createComputerTerminalWsHandler(upgradeWebSocket)
+);
+// Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
+// auth as the WS above; its own 30MB bodyLimit (the global /api/web/* 1MB cap
+// excludes this path). See routes/web/computer-upload.
+app.post(
+  "/api/web/computers/upload",
+  bodyLimit({
+    maxSize: 30 * 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        { ok: false, error: "Upload exceeds the 30MB request limit." },
+        413
+      ),
+  }),
+  createComputerUploadHandler()
 );
 
 // Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same

@@ -23,6 +23,8 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       text: Promise.resolve(harnessState.finalText),
     }));
   },
+  // WS3: no trailing tool-approval-response parts in these prompts.
+  collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
 
 vi.mock("../registry.js", () => ({
@@ -63,17 +65,23 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
   reconcileSkillDirs: vi.fn(async () => {}),
 }));
 
-vi.mock("../harness-session-state.js", () => ({
-  claimHarnessSessionState: vi.fn(async () => ({
-    ok: true,
-    leaseId: "lease-1",
-    stateVersion: 1,
-    state: null,
-    fingerprintChanged: false,
-  })),
-  heartbeatHarnessSessionState: vi.fn(async () => "ok"),
-  releaseHarnessSessionState: vi.fn(async () => {}),
-}));
+vi.mock("../harness-session-state.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../harness-session-state.js")>();
+  return {
+    ...actual,
+    claimHarnessSessionState: vi.fn(async () => ({
+      ok: true,
+      leaseId: "lease-1",
+      stateVersion: 1,
+      state: null,
+      fingerprintChanged: false,
+    })),
+    commitHarnessSessionState: vi.fn(async () => true),
+    heartbeatHarnessSessionState: vi.fn(async () => "ok"),
+    releaseHarnessSessionState: vi.fn(async () => {}),
+  };
+});
 
 vi.mock("../harness-model-broker.js", () => ({
   revokeHarnessModelBroker: vi.fn(async () => {}),

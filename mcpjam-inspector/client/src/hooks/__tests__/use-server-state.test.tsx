@@ -318,6 +318,61 @@ beforeEach(() => {
   });
 });
 
+describe("ensureHostedServerIdsForNames (hosted harness preflight)", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+    mockCreateServer.mockReset();
+    mockCreateServerIfMissing.mockReset();
+    mockConvexQuery.mockReset();
+    getStoredTokensMock.mockReturnValue(null);
+    readStoredOAuthConfigMock.mockReturnValue({});
+    testConnectionMock.mockResolvedValue({ success: true, initInfo: null });
+  });
+
+  it("returns existing Convex ids without persisting when names already resolve", async () => {
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "default",
+      serverId: "srv_existing",
+    });
+    const appState = createAppState();
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+    });
+
+    let resolved: Array<{ serverName: string; serverId: string }> = [];
+    await act(async () => {
+      resolved =
+        await result.current.ensureHostedServerIdsForNames(["demo-server"]);
+    });
+
+    expect(resolved).toEqual([
+      { serverName: "demo-server", serverId: "srv_existing" },
+    ]);
+    // Already resolved → no persistence side effect.
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockCreateServer).not.toHaveBeenCalled();
+  });
+
+  it("fails closed (throws) when a selected name is neither mapped nor connected", async () => {
+    tryResolveProjectServerMock.mockReturnValue(null);
+    const appState = createAppState(); // top-level servers has only "demo-server"
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+    });
+
+    await expect(
+      result.current.ensureHostedServerIdsForNames(["ghost-server"])
+    ).rejects.toThrow(/ghost-server/);
+  });
+});
+
 describe("useServerState CLI config import", () => {
   beforeEach(() => {
     vi.clearAllMocks();

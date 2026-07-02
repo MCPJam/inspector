@@ -23,6 +23,48 @@
  * @param hostHeader - The Host header value from the request
  * @returns true if the request is from localhost, false otherwise
  */
+/**
+ * Whether a configured base URL is reachable from a CLOUD sandbox (i.e. truly
+ * public). Rejects every non-routable host, not just loopback — a private
+ * `BASE_URL` like `http://192.168.x.x` must NOT be treated as direct-reachable.
+ * Used by the hosted harness URL strategy to choose direct vs relay.
+ */
+export function isPubliclyReachableUrl(raw: string): boolean {
+  let host: string;
+  try {
+    host = new URL(raw).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".local")) return false;
+  // Unwrap IPv6 brackets.
+  const h = host.replace(/^\[/, "").replace(/\]$/, "");
+  if (h === "::1" || h === "0.0.0.0" || h === "::") return false;
+  if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
+    return false; // IPv6 link-local / unique-local
+  }
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const c = Number(m[3]);
+    if (a === 0 || a === 127) return false; // this-host / loopback
+    if (a === 10) return false; // 10.0.0.0/8 private
+    if (a === 192 && b === 168) return false; // 192.168.0.0/16 private
+    if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12 private
+    if (a === 169 && b === 254) return false; // 169.254.0.0/16 link-local
+    if (a === 100 && b >= 64 && b <= 127) return false; // 100.64.0.0/10 CGNAT
+    if (a === 198 && (b === 18 || b === 19)) return false; // 198.18.0.0/15 benchmarking
+    if (a >= 224) return false; // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved
+    // Documentation / protocol-assignment ranges (not routable on the internet).
+    if (a === 192 && b === 0 && c === 0) return false; // 192.0.0.0/24
+    if (a === 192 && b === 0 && c === 2) return false; // 192.0.2.0/24 TEST-NET-1
+    if (a === 198 && b === 51 && c === 100) return false; // 198.51.100.0/24 TEST-NET-2
+    if (a === 203 && b === 0 && c === 113) return false; // 203.0.113.0/24 TEST-NET-3
+  }
+  return true;
+}
+
 export function isLocalhostRequest(hostHeader: string | undefined): boolean {
   if (!hostHeader) {
     return false;

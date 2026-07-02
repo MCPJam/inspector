@@ -66,6 +66,10 @@ import {
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
+import {
+  resolveWebAuthorizedHarnessStrategy,
+  type HarnessMcpProxyStrategy,
+} from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -455,6 +459,16 @@ export async function streamWebChatTurn(
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
+  // Harness MCP proxy — WEB-AUTHORIZED plane: this is an /api/web request, so
+  // the harness reaches MCPJam either directly (public inspector) or via a
+  // scoped harness-web relay (private/dev inspector), decided purely by whether
+  // the inspector is publicly reachable. The token (with the user's identity) is
+  // minted by Convex from the same bearer. If relay infra is needed but absent,
+  // the turn fails closed later, at tunnel creation.
+  const harnessMcpProxy: HarnessMcpProxyStrategy | undefined = persist.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
+
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
@@ -475,6 +489,7 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the

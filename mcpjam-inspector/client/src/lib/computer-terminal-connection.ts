@@ -36,6 +36,9 @@ export interface OpenTerminalOptions {
   onClose: (code: number, reason: string) => void;
   /** Origin override (defaults to the current page origin); mainly for tests. */
   baseUrl?: string;
+  /** Starting working directory for the PTY (e.g. the harness session workdir).
+   *  Applied server-side at PTY creation; falls back to home if it can't be set. */
+  cwd?: string;
   /** WebSocket factory override for tests. */
   wsFactory?: (url: string) => WebSocket;
 }
@@ -58,12 +61,72 @@ export function toTerminalWsBase(httpOrigin: string): string | undefined {
   }
 }
 
+/**
+ * Build the `http(s)://…/api/web/computers/upload` URL. The upload MUST hit the
+ * same data plane as the terminal WebSocket (the sandbox lives there), so when a
+ * remote `ws(s)://` base is set we convert it back to `http(s)://`; otherwise we
+ * return a page-origin-relative path.
+ */
+export function buildComputerUploadUrl(args?: { baseUrl?: string }): string {
+  const path = "/api/web/computers/upload";
+  const base = args?.baseUrl;
+  if (!base) return path;
+  // `baseUrl` is the ws(s):// terminal base; swap the scheme for fetch.
+  const origin = base
+    .replace(/^wss:\/\//i, "https://")
+    .replace(/^ws:\/\//i, "http://");
+  return `${origin}${path}`;
+}
+
+export interface UploadedComputerFile {
+  name: string;
+  path: string;
+  bytes: number;
+}
+
+/**
+ * POST files to the user's project computer (drag-and-drop from the Shell). The
+ * `token` is a fresh Convex-minted terminal token (the same one the WS uses);
+ * auth is the token in the query string. `dir` targets a destination directory
+ * (the Shell's cwd — i.e. the harness workdir) so uploads land where the user is
+ * working; the server confines it under the box home and falls back to a default
+ * bucket when absent/invalid. Resolves to the written files (with their absolute
+ * sandbox paths) or throws with a server-supplied message.
+ */
+export async function uploadFilesToComputer(args: {
+  token: string;
+  files: File[];
+  baseUrl?: string;
+  dir?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<UploadedComputerFile[]> {
+  const params = new URLSearchParams({ token: args.token });
+  if (args.dir) params.set("dir", args.dir);
+  const url = `${buildComputerUploadUrl({ baseUrl: args.baseUrl })}?${params.toString()}`;
+  const form = new FormData();
+  for (const file of args.files) form.append("files", file);
+
+  const doFetch = args.fetchImpl ?? fetch;
+  const res = await doFetch(url, { method: "POST", body: form });
+  let body: { ok?: boolean; files?: UploadedComputerFile[]; error?: string } = {};
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    // non-JSON (e.g. a proxy error page) — fall through to the status check.
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.error || `Upload failed (${res.status}).`);
+  }
+  return body.files ?? [];
+}
+
 /** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin. */
 export function buildTerminalWsUrl(args: {
   token: string;
   cols: number;
   rows: number;
   baseUrl?: string;
+  cwd?: string;
 }): string {
   const origin =
     args.baseUrl ??
@@ -75,6 +138,7 @@ export function buildTerminalWsUrl(args: {
     cols: String(args.cols),
     rows: String(args.rows),
   });
+  if (args.cwd) params.set("cwd", args.cwd);
   return `${origin}/api/web/computers/terminal?${params.toString()}`;
 }
 
