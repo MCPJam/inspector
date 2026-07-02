@@ -2,7 +2,7 @@ import type { HostThemeMode } from "@/lib/client-styles/types";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
-import { HOST_TEMPLATES } from "@/lib/client-templates";
+import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
 
 /**
  * Static host profiles surfaced in Host Compare so a user can compare against
@@ -28,6 +28,10 @@ export interface PresetCompareEntries {
   subjects: Record<string, HostComparisonSubject>;
 }
 
+interface PresetCompareOptions {
+  excludedTemplateIds?: ReadonlySet<HostTemplateId>;
+}
+
 /**
  * Build the preset selector chips + their comparison subjects from the host
  * template catalog. A template `seed()` returns a `HostConfigInputV2`, which is
@@ -40,11 +44,14 @@ export interface PresetCompareEntries {
  */
 export function buildPresetCompareEntries(
   theme: HostThemeMode,
+  options: PresetCompareOptions = {},
 ): PresetCompareEntries {
   const hosts: HostListItem[] = [];
   const subjects: Record<string, HostComparisonSubject> = {};
 
   for (const template of HOST_TEMPLATES) {
+    if (options.excludedTemplateIds?.has(template.id)) continue;
+
     const hostId = `${PRESET_HOST_ID_PREFIX}${template.id}`;
     const input = template.seed({ theme });
     const config: HostConfigDtoV2 = {
