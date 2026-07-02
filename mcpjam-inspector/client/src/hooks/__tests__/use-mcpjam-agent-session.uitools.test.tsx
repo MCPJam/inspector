@@ -23,6 +23,7 @@ const mockState = vi.hoisted(() => ({
   stop: vi.fn(),
   setMessages: vi.fn(),
   sendAutomaticallyWhenSentinel: vi.fn(),
+  approvalsCompleteSentinel: vi.fn(),
 }));
 
 vi.mock("@ai-sdk/react", () => ({
@@ -59,6 +60,8 @@ vi.mock("ai", () => ({
   generateId: vi.fn(() => "generated-session"),
   lastAssistantMessageIsCompleteWithToolCalls:
     mockState.sendAutomaticallyWhenSentinel,
+  lastAssistantMessageIsCompleteWithApprovalResponses:
+    mockState.approvalsCompleteSentinel,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -176,11 +179,16 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     render();
 
     await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
-    // The turn resumes automatically once every tool call has an output —
-    // the predicate identity is the contract with the AI SDK.
-    expect(mockState.lastChatInit.sendAutomaticallyWhen).toBe(
-      mockState.sendAutomaticallyWhenSentinel
-    );
+    // The composed auto-resume predicate delegates to the SDK's
+    // tool-calls-complete helper; with approval OFF (default) the
+    // approval-responses branch never fires.
+    const predicate = mockState.lastChatInit.sendAutomaticallyWhen;
+    mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(true);
+    expect(predicate({ messages: [] })).toBe(true);
+    mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(false);
+    mockState.approvalsCompleteSentinel.mockReturnValue(true);
+    expect(predicate({ messages: [] })).toBe(false);
+    expect(mockState.approvalsCompleteSentinel).not.toHaveBeenCalled();
 
     await mockState.lastChatInit.onToolCall({
       toolCall: {

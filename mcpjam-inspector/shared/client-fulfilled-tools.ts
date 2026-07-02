@@ -42,3 +42,23 @@ export function isUiToolName(name: string): boolean {
 export function isClientFulfilledToolName(name: string): boolean {
   return isAppToolAlias(name) || isUiToolName(name);
 }
+
+/**
+ * Whether a UI tool call must pause for the user's approval this turn.
+ *
+ * Single source of truth for BOTH sides of the approval handshake: the
+ * server (per-tool `needsApproval` in `buildUiTools`, and the free-model
+ * loop's approval gate) and the client (the executor's defer-before-execute
+ * gate). They must agree because the client decides "defer" when the
+ * tool-call chunk arrives — BEFORE the server's approval-request chunk
+ * reaches it.
+ *
+ * Read-only tools (`ui_snapshot_app`) never gate: they observe, so pausing
+ * them buys no safety and costs a click.
+ */
+export function uiToolCallNeedsApproval(opts: {
+  readOnly: boolean;
+  requireToolApproval: boolean;
+}): boolean {
+  return opts.requireToolApproval && !opts.readOnly;
+}

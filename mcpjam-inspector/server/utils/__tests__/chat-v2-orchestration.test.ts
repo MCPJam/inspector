@@ -15,6 +15,7 @@ vi.mock("@/shared/types", async () => {
 });
 
 import {
+  buildUiTools,
   buildUiToolsSystemPrompt,
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
@@ -1031,5 +1032,59 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
   it("buildUiToolsSystemPrompt is empty for empty input", () => {
     expect(buildUiToolsSystemPrompt(undefined)).toBe("");
     expect(buildUiToolsSystemPrompt([])).toBe("");
+  });
+
+  it("stamps needsApproval on mutating UI tools only when the flag is on", () => {
+    const withoutFlag = buildUiTools(uiTools);
+    expect(
+      (withoutFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval
+    ).toBeFalsy();
+    expect(
+      (withoutFlag["ui_snapshot_app"] as { needsApproval?: unknown })
+        .needsApproval
+    ).toBeFalsy();
+
+    const withFlag = buildUiTools(uiTools, { requireToolApproval: true });
+    expect(
+      (withFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval
+    ).toBe(true);
+    // Read-only tools observe; approval buys no safety and costs a click.
+    expect(
+      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown })
+        .needsApproval
+    ).toBeFalsy();
+    // Still no-execute either way — the CLIENT executes after approval.
+    expect(
+      (withFlag["ui_navigate"] as { execute?: unknown }).execute
+    ).toBeUndefined();
+  });
+
+  it("threads requireToolApproval through prepareChatV2 into the UI tool set", async () => {
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+      requireToolApproval: true,
+    });
+    expect(
+      (result.allTools["ui_navigate"] as { needsApproval?: unknown })
+        .needsApproval
+    ).toBe(true);
+    expect(
+      (result.allTools["ui_snapshot_app"] as { needsApproval?: unknown })
+        .needsApproval
+    ).toBeFalsy();
+  });
+
+  it("adds the approval sentence to the UI prompt section iff the flag is on", () => {
+    const withFlag = buildUiToolsSystemPrompt(uiTools, {
+      requireToolApproval: true,
+    });
+    expect(withFlag).toContain("approval");
+    expect(withFlag).toContain("denial is final");
+    const withoutFlag = buildUiToolsSystemPrompt(uiTools);
+    expect(withoutFlag).not.toContain("denial is final");
   });
 });

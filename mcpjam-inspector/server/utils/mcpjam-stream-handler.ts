@@ -136,6 +136,23 @@ function isApprovalFreeMetaToolName(
   if (!progressivePlan?.enabled) return false;
   return META_TOOL_NAMES.includes(name);
 }
+
+/**
+ * Union of the approval exemptions this loop honors: progressive-discovery
+ * meta-tools, plus the read-only WebMCP UI tools this turn advertised
+ * (`approvalFreeUiToolNames`, computed by the caller from the validated
+ * `uiTools` snapshot — never from the raw name, which a third-party server
+ * could spoof). Read-only UI tools observe rather than mutate, so they flow
+ * through the normal client-fulfilled pause with no approval pill.
+ */
+function isApprovalFreeToolCallName(
+  name: string,
+  progressivePlan: ProgressiveToolPlan | undefined,
+  approvalFreeUiToolNames: ReadonlySet<string> | undefined
+): boolean {
+  if (isApprovalFreeMetaToolName(name, progressivePlan)) return true;
+  return approvalFreeUiToolNames?.has(name) === true;
+}
 import { logger } from "./logger";
 import {
   applyPrepareAdvertisedTools,
@@ -399,6 +416,12 @@ export interface MCPJamHandlerOptions {
   harnessMcpProxy?: HarnessMcpProxyStrategy;
   requireToolApproval?: boolean;
   /**
+   * Names of read-only `ui_*` tools from this turn's validated snapshot —
+   * exempt from the approval gate even when `requireToolApproval` is on
+   * (see `isApprovalFreeToolCallName`).
+   */
+  approvalFreeUiToolNames?: ReadonlySet<string>;
+  /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
    * UI/debug history.
@@ -571,6 +594,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  approvalFreeUiToolNames?: ReadonlySet<string>;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -1067,7 +1091,8 @@ async function processStream(
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
+  approvalFreeUiToolNames?: ReadonlySet<string>
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -1295,7 +1320,11 @@ async function processStream(
 
           if (
             requireToolApproval &&
-            !isApprovalFreeMetaToolName(chunk.toolName, progressivePlan)
+            !isApprovalFreeToolCallName(
+              chunk.toolName,
+              progressivePlan,
+              approvalFreeUiToolNames
+            )
           ) {
             emitToolApprovalRequest(writer, {
               approvalId: generateToolCallId(),
@@ -1794,6 +1823,13 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
       modelVisibleMcpToolResults,
       readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
+      // Defense-in-depth for client-fulfilled tools (app_*/ui_*): the client
+      // resolves an APPROVED ui_* call by executing it and shipping the
+      // tool-result directly, so an approval response without a result
+      // should never reach us — but if a stale client sends one anyway,
+      // skip the no-execute entry (the loop re-pauses for client
+      // fulfillment) instead of throwing and 500ing the whole turn.
+      skipNonExecutableTools: true,
       ...(abortSignal ? { abortSignal } : {}),
     });
 
@@ -1835,6 +1871,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalFreeUiToolNames,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -2109,7 +2146,8 @@ async function processOneStep(
     onLiveTextDelta,
     abortSignal,
     progressivePlan,
-    onToolCall
+    onToolCall,
+    approvalFreeUiToolNames
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -2170,7 +2208,11 @@ async function processOneStep(
           if (
             part.type === "tool-call" &&
             !resultIds.has(part.toolCallId) &&
-            !isApprovalFreeMetaToolName(part.toolName, progressivePlan)
+            !isApprovalFreeToolCallName(
+              part.toolName,
+              progressivePlan,
+              approvalFreeUiToolNames
+            )
           ) {
             return true;
           }
@@ -2206,7 +2248,11 @@ async function processOneStep(
           if (
             part.type !== "tool-call" ||
             resultIds.has(part.toolCallId) ||
-            isApprovalFreeMetaToolName(part.toolName, progressivePlan)
+            isApprovalFreeToolCallName(
+              part.toolName,
+              progressivePlan,
+              approvalFreeUiToolNames
+            )
           ) {
             continue;
           }
@@ -2645,6 +2691,7 @@ export async function runChatEngineLoop(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalFreeUiToolNames,
     modelVisibleMcpToolResults,
     approvalMode,
     onConversationComplete,
@@ -2897,6 +2944,7 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           requireToolApproval,
+          approvalFreeUiToolNames,
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),

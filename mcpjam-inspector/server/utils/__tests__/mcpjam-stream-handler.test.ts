@@ -1564,6 +1564,146 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  describe("WebMCP UI tool approval semantics", () => {
+    it("does not emit an approval request for read-only ui_* tools (exempt set)", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-1",
+            toolName: "ui_snapshot_app",
+            input: {},
+          },
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-2",
+            toolName: "ui_navigate",
+            input: { target: "servers" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "observe then navigate" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        // Both are no-execute client-fulfilled entries.
+        tools: { ui_snapshot_app: {}, ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      // Only the MUTATING ui tool pauses for approval; the read-only one
+      // flows straight through to client fulfillment with no pill.
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-ui-2" });
+    });
+
+    it("read-only ui_* calls skip the approval pause classifier (no drain filter)", async () => {
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "observe" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_snapshot_app",
+                input: {},
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_snapshot_app: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+      });
+
+      await lastExecution;
+
+      // With the exemption, the step has no unresolved REAL tool call, so
+      // the approval branch (whose executor call carries `filterToolName`)
+      // is skipped — the normal client-fulfilled execution path runs.
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        expect((call[1] as any)?.filterToolName).toBeUndefined();
+      }
+    });
+
+    it("handlePendingApprovals skips no-execute tools instead of throwing (stale-client defense)", async () => {
+      // The new client resolves an APPROVED ui_* call by executing it and
+      // shipping the tool-result, never a bare approval response. If a
+      // stale client sends one anyway, the resume path must skip the
+      // no-execute entry (loop re-pauses for fulfillment), not 500.
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                input: { target: "servers" },
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-ui-1",
+                toolCallId: "call-ui-1",
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "approval-ui-1",
+                approved: true,
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      // The approval-resume executor call must carry the skip flag so a
+      // no-execute entry can never throw `has no execute function`.
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0]?.[1] as any)?.skipNonExecutableTools).toBe(true);
+    });
+  });
+
   describe("guest IP-hash header", () => {
     it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";

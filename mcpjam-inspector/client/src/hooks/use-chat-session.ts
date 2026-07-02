@@ -39,6 +39,10 @@ import {
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
+import {
+  createUiAwareApprovalResponseHandler,
+  fulfillOrphanedDeferredUiToolCalls,
+} from "@/lib/webmcp/ui-tool-approval";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -1807,6 +1811,9 @@ export function useChatSession(
           addToolOutput: addToolOutput as Parameters<
             typeof handleUiToolCall
           >[0]["addToolOutput"],
+          // Defers mutating UI tools to the approval pill when the toggle is
+          // on — must mirror the server's gate (shared predicate).
+          requireToolApproval: requireToolApprovalRef.current,
         })
       ) {
         return;
@@ -1971,6 +1978,39 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI-tool-aware approval responses: Approve on a `ui_*` part executes the
+  // tool in the browser and ships the result (the server can't execute a
+  // no-execute tool, and a bare approval response would strand the turn);
+  // Deny and every non-UI tool use the plain approval response unchanged.
+  const uiAwareAddToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse,
+        addToolOutput: addToolOutput as Parameters<
+          typeof createUiAwareApprovalResponseHandler
+        >[0]["addToolOutput"],
+      }),
+    [addToolApprovalResponse, addToolOutput]
+  );
+
+  // Orphaned-defer fallback: a UI tool call deferred for approval whose
+  // approval request never arrived (client/server flag disagreement for one
+  // turn, e.g. the toggle flipped mid-stream) executes once the stream
+  // settles so the turn can't hang.
+  const prevStatusForDeferredUiRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusForDeferredUiRef.current;
+    prevStatusForDeferredUiRef.current = status;
+    if (prev === status || status !== "ready") return;
+    fulfillOrphanedDeferredUiToolCalls({
+      messages: messagesRef.current,
+      addToolOutput: addToolOutput as Parameters<
+        typeof fulfillOrphanedDeferredUiToolCalls
+      >[0]["addToolOutput"],
+    });
+  }, [addToolOutput, status]);
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {
@@ -2841,7 +2881,7 @@ export function useChatSession(
     // Tool approval
     requireToolApproval,
     setRequireToolApproval,
-    addToolApprovalResponse,
+    addToolApprovalResponse: uiAwareAddToolApprovalResponse,
 
     // Actions
     resetChat,

@@ -3,6 +3,7 @@ import {
   isAppToolAlias,
   isClientFulfilledToolName,
   isUiToolName,
+  uiToolCallNeedsApproval,
 } from "../client-fulfilled-tools";
 
 describe("client-fulfilled tool names", () => {
@@ -33,5 +34,21 @@ describe("client-fulfilled tool names", () => {
     expect(isClientFulfilledToolName("ui_navigate")).toBe(true);
     expect(isClientFulfilledToolName("regular_tool")).toBe(false);
     expect(isClientFulfilledToolName("ui-navigate")).toBe(false);
+  });
+
+  it("uiToolCallNeedsApproval gates mutating tools only when the flag is on", () => {
+    // The truth table both the server gate and the client defer read.
+    expect(
+      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: true })
+    ).toBe(true);
+    expect(
+      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: true })
+    ).toBe(false);
+    expect(
+      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: false })
+    ).toBe(false);
+    expect(
+      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: false })
+    ).toBe(false);
   });
 });

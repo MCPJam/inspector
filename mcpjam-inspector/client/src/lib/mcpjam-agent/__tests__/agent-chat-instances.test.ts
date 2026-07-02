@@ -17,6 +17,7 @@ vi.mock("@ai-sdk/react", () => ({
     status = "ready";
     init: any;
     addToolOutput = vi.fn();
+    addToolApprovalResponse = vi.fn();
     constructor(init: { id: string }) {
       this.init = init;
       this.id = init.id;
@@ -25,13 +26,21 @@ vi.mock("@ai-sdk/react", () => ({
   },
 }));
 
+const aiPredicateMocks = vi.hoisted(() => ({
+  toolCallsComplete: vi.fn(),
+  approvalsComplete: vi.fn(),
+}));
+
 vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
     constructor(options: unknown) {
       mockState.lastTransportOptions = options;
     }
   },
-  lastAssistantMessageIsCompleteWithToolCalls: vi.fn(),
+  lastAssistantMessageIsCompleteWithToolCalls:
+    aiPredicateMocks.toolCallsComplete,
+  lastAssistantMessageIsCompleteWithApprovalResponses:
+    aiPredicateMocks.approvalsComplete,
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -51,6 +60,7 @@ import {
   __resetAgentChatInstancesForTests,
   getOrCreateAgentChat,
 } from "../agent-chat-instances";
+import { __resetUiToolExecutorForTests } from "@/lib/webmcp/ui-tool-executor";
 import {
   AGENT_PANEL_STORAGE_KEY,
   useAgentPanelStore,
@@ -81,6 +91,7 @@ describe("agent-chat-instances", () => {
     mockState.chatInstances = [];
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
+    __resetUiToolExecutorForTests();
     window.localStorage.removeItem(AGENT_PANEL_STORAGE_KEY);
     useAgentPanelStore.setState({
       isOpen: false,
@@ -133,6 +144,85 @@ describe("agent-chat-instances", () => {
     // idle-1 was the oldest evictable entry; a fresh call re-creates it.
     const recreated = getOrCreateAgentChat("idle-1");
     expect(recreated.chat).not.toBe(mockState.chatInstances[2]);
+  });
+
+  describe("tool approval", () => {
+    it("body carries the config's requireToolApproval at POST time", () => {
+      const { config } = getOrCreateAgentChat("s1");
+      expect(mockState.lastTransportOptions.body().requireToolApproval).toBe(
+        false
+      );
+      config.requireToolApproval = true;
+      expect(mockState.lastTransportOptions.body().requireToolApproval).toBe(
+        true
+      );
+    });
+
+    it("defers mutating ui_* calls when approval is on (pill resolves them)", async () => {
+      const def = registerTool();
+      const entry = getOrCreateAgentChat("s1");
+      entry.config.requireToolApproval = true;
+
+      await entry.chat.init.onToolCall({
+        toolCall: {
+          toolName: "ui_navigate",
+          toolCallId: "tc-defer",
+          input: { target: "servers" },
+        },
+      });
+
+      expect(def.execute).not.toHaveBeenCalled();
+      expect((entry.chat as any).addToolOutput).not.toHaveBeenCalled();
+      // Deferral must also not hand off — nothing navigated yet.
+      expect(useAgentPanelStore.getState().isOpen).toBe(false);
+    });
+
+    it("handleToolApprovalResponse: approve executes + ships result; deny sends the response", async () => {
+      const def = registerTool();
+      const entry = getOrCreateAgentChat("s1");
+      entry.config.requireToolApproval = true;
+      (entry.chat as any).messages = [
+        {
+          id: "m1",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolName: "ui_navigate",
+              toolCallId: "tc-appr",
+              state: "approval-requested",
+              input: { target: "servers" },
+              approval: { id: "appr-1" },
+            },
+          ],
+        },
+      ];
+
+      entry.handleToolApprovalResponse({ id: "appr-1", approved: false });
+      expect(
+        (entry.chat as any).addToolApprovalResponse
+      ).toHaveBeenCalledWith({ id: "appr-1", approved: false });
+      expect(def.execute).not.toHaveBeenCalled();
+
+      entry.handleToolApprovalResponse({ id: "appr-1", approved: true });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+      expect((entry.chat as any).addToolOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ toolCallId: "tc-appr" })
+      );
+    });
+
+    it("sendAutomaticallyWhen honors approvals only when the config flag is on", () => {
+      const entry = getOrCreateAgentChat("s1");
+      const predicate = entry.chat.init.sendAutomaticallyWhen;
+
+      aiPredicateMocks.toolCallsComplete.mockReturnValue(false);
+      aiPredicateMocks.approvalsComplete.mockReturnValue(true);
+      expect(predicate({ messages: [] })).toBe(false);
+
+      entry.config.requireToolApproval = true;
+      expect(predicate({ messages: [] })).toBe(true);
+    });
   });
 
   describe("home → side-panel handoff", () => {

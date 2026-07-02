@@ -4,7 +4,12 @@ vi.mock("../native-mirror", () => ({
   mirrorUiToolToNative: vi.fn(() => null),
 }));
 
-import { handleUiToolCall } from "../ui-tool-executor";
+import {
+  __resetUiToolExecutorForTests,
+  fulfillApprovedUiToolCall,
+  handleUiToolCall,
+  listDeferredUiToolCalls,
+} from "../ui-tool-executor";
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -24,6 +29,7 @@ function makeTool(extra?: Partial<UiToolDefinition>): UiToolDefinition {
 
 describe("handleUiToolCall", () => {
   beforeEach(() => {
+    __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
       nativeDisposers: new Map(),
@@ -50,6 +56,108 @@ describe("handleUiToolCall", () => {
       toolCallId: "tc-1",
       output: { content: [{ type: "text", text: "navigated" }] },
     });
+  });
+
+  it("defers mutating tools when requireToolApproval is on (no execute, no output)", async () => {
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    const handled = await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-defer",
+      input: { target: "servers" },
+      addToolOutput,
+      requireToolApproval: true,
+    });
+
+    expect(handled).toBe(true); // claimed — the approval pill resolves it
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(addToolOutput).not.toHaveBeenCalled();
+    expect(listDeferredUiToolCalls()).toEqual([
+      {
+        toolCallId: "tc-defer",
+        toolName: "ui_navigate",
+        input: { target: "servers" },
+      },
+    ]);
+  });
+
+  it("read-only tools execute immediately even with the flag on", async () => {
+    const def = makeTool({ name: "ui_snapshot_app", readOnly: true });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    await handleUiToolCall({
+      toolName: "ui_snapshot_app",
+      toolCallId: "tc-ro",
+      input: {},
+      addToolOutput,
+      requireToolApproval: true,
+    });
+
+    expect(def.execute).toHaveBeenCalled();
+    expect(addToolOutput).toHaveBeenCalled();
+  });
+
+  it("fulfillApprovedUiToolCall executes the deferred call once (double-click safe)", async () => {
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-appr",
+      input: { target: "servers" },
+      addToolOutput,
+      requireToolApproval: true,
+    });
+    await fulfillApprovedUiToolCall({ toolCallId: "tc-appr", addToolOutput });
+    await fulfillApprovedUiToolCall({ toolCallId: "tc-appr", addToolOutput });
+
+    expect(def.execute).toHaveBeenCalledTimes(1);
+    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(addToolOutput).toHaveBeenCalledTimes(1);
+    expect(listDeferredUiToolCalls()).toEqual([]);
+  });
+
+  it("fulfillApprovedUiToolCall works from part data alone (reload case)", async () => {
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    // No prior defer — the page reloaded and the stash is gone; the caller
+    // passes the hydrated part's toolName + input.
+    await fulfillApprovedUiToolCall({
+      toolCallId: "tc-reload",
+      toolName: "ui_navigate",
+      input: { target: "evals" },
+      addToolOutput,
+    });
+
+    expect(def.execute).toHaveBeenCalledWith({ target: "evals" });
+    expect(addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCallId: "tc-reload" })
+    );
+  });
+
+  it("re-emitted tool calls for an executed id are claimed without re-executing", async () => {
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+    const opts = {
+      toolName: "ui_navigate",
+      toolCallId: "tc-reemit",
+      input: {},
+      addToolOutput,
+    };
+
+    await handleUiToolCall(opts);
+    const handledAgain = await handleUiToolCall(opts);
+
+    expect(handledAgain).toBe(true);
+    expect(def.execute).toHaveBeenCalledTimes(1);
+    expect(addToolOutput).toHaveBeenCalledTimes(1);
   });
 
   it("fires onNavigationToolCall BEFORE execute for mayNavigate tools", async () => {

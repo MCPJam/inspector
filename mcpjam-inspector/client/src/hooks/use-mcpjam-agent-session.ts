@@ -16,6 +16,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
 import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
+import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
+import {
+  loadAgentRequireToolApproval,
+  saveAgentRequireToolApproval,
+  subscribeAgentRequireToolApproval,
+} from "@/lib/agent-tool-approval-storage";
 import { usePostHog } from "posthog-js/react";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
@@ -66,6 +72,14 @@ export interface UseMcpjamAgentSessionResult {
   model: ModelDefinition | undefined;
   /** True while the persisted transcript is being seeded on mount. */
   hydrating: boolean;
+  /** "Tool Approval" preference (persisted, agent-global, default off). */
+  requireToolApproval: boolean;
+  setRequireToolApproval: (value: boolean) => void;
+  /** UI-tool-aware approval responses — pass as `onToolApprovalResponse`. */
+  addToolApprovalResponse: (response: {
+    id: string;
+    approved: boolean;
+  }) => void;
 }
 
 export function useMcpjamAgentSession(
@@ -108,17 +122,35 @@ export function useMcpjamAgentSession(
     return getDefaultModel(availableModels);
   }, [args.modelOverride, availableModels, selectedModelId]);
 
+  // "Tool Approval" preference — persisted, shared across agent surfaces
+  // (hero + panel) via the storage-change subscription. Default off.
+  const [requireToolApproval, setRequireToolApprovalState] = useState(
+    loadAgentRequireToolApproval
+  );
+  useEffect(
+    () =>
+      subscribeAgentRequireToolApproval(() => {
+        setRequireToolApprovalState(loadAgentRequireToolApproval());
+      }),
+    []
+  );
+  const setRequireToolApproval = useCallback((value: boolean) => {
+    setRequireToolApprovalState(value);
+    saveAgentRequireToolApproval(value);
+  }, []);
+
   // The Chat instance lives OUTSIDE React (see agent-chat-instances.ts) so
   // an in-flight stream survives this hook unmounting — e.g. a `ui_navigate`
   // tool call leaving the Home takeover mid-turn. The hook attaches via
   // `useChat({ chat })` and keeps the instance's mutable config current.
-  const { chat, config } = useMemo(
+  const { chat, config, handleToolApprovalResponse } = useMemo(
     () => getOrCreateAgentChat(chatSessionId),
     [chatSessionId]
   );
   useEffect(() => {
     config.projectId = projectId ?? null;
     config.model = resolvedModel;
+    config.requireToolApproval = requireToolApproval;
   });
   useEffect(() => {
     config.attachedSurfaces.add(surface);
@@ -233,6 +265,24 @@ export function useMcpjamAgentSession(
     }
   }, [chatSessionId, error, messages, posthog, status, surface]);
 
+  // Orphaned-defer fallback: a UI tool call deferred for approval whose
+  // approval request never arrived (client/server flag disagreement for one
+  // turn) executes once the stream settles so the turn can't hang.
+  const messagesForDeferRef = useRef(messages);
+  messagesForDeferRef.current = messages;
+  const prevStatusForDeferRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusForDeferRef.current;
+    prevStatusForDeferRef.current = status;
+    if (prev === status || status !== "ready") return;
+    fulfillOrphanedDeferredUiToolCalls({
+      messages: messagesForDeferRef.current,
+      addToolOutput: (output) => {
+        chat.addToolOutput(output);
+      },
+    });
+  }, [chat, status]);
+
   // Seed the instance with hydrated history once it arrives. The guard is
   // per-INSTANCE (`config.seeded`), not per-hook: a second surface adopting
   // a live instance (panel adoption during a navigation handoff) must never
@@ -280,5 +330,8 @@ export function useMcpjamAgentSession(
     stop,
     model: resolvedModel,
     hydrating,
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse: handleToolApprovalResponse,
   };
 }
