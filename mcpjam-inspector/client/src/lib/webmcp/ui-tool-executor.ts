@@ -20,6 +20,13 @@ export interface HandleUiToolCallOptions {
     toolCallId: string;
     output: UiToolResult;
   }) => void;
+  /**
+   * Fired BEFORE `execute` when the resolved tool is flagged `mayNavigate` —
+   * the seam where a route-bound surface hands the conversation off to the
+   * side panel before the route commits. Best-effort: a throwing callback
+   * must never block the tool output (the stream would hang).
+   */
+  onNavigationToolCall?: (toolName: string) => void;
 }
 
 /**
@@ -56,6 +63,18 @@ export async function handleUiToolCall(
       return true;
     }
     return false;
+  }
+
+  if (def.mayNavigate) {
+    try {
+      // Tolerate async callbacks too: a rejection must not surface as an
+      // unhandled promise rejection (the contract is fire-and-forget).
+      void Promise.resolve(opts.onNavigationToolCall?.(toolName)).catch(
+        () => {},
+      );
+    } catch {
+      // Handoff is best-effort; the tool output must still be delivered.
+    }
   }
 
   let output: UiToolResult;

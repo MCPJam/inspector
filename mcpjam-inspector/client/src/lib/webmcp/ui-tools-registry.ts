@@ -40,6 +40,14 @@ export interface UiToolDefinition {
   inputSchema?: Record<string, unknown>;
   /** Mirrored to native `annotations.readOnlyHint`; metadata, not a gate. */
   readOnly: boolean;
+  /**
+   * Executing this tool can change the SPA route (directly, or via the
+   * auto-open-playground fallback). Route-bound chat surfaces use this to
+   * hand the conversation off to the always-mounted side panel BEFORE the
+   * route commits. Client-only metadata — `snapshotForChatBody` never ships
+   * it to the server.
+   */
+  mayNavigate?: boolean;
   execute: (args: Record<string, unknown>) => Promise<UiToolResult>;
 }
 
