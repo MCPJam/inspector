@@ -9,6 +9,30 @@ import { logger } from "./logger.js";
 
 let provisioningPromise: Promise<void> | null = null;
 let provisioningStarted = false;
+let convexProvisioningUnavailable = false;
+
+// True once we've determined that this machine can't provision guest-auth env
+// on the target Convex deployment — i.e. the Convex CLI isn't authenticated,
+// or the logged-in account can't administer the deployment. This is the normal
+// state for open-source / local contributors: the committed `.env.local`
+// points at MCPJam's shared dev deployment, which they don't own. When true,
+// the guest-session helpers fall back to MCPJam's hosted mint instead of
+// trying (and failing) to talk to a deployment we can't write to.
+export function isConvexProvisioningUnavailable(): boolean {
+  return convexProvisioningUnavailable;
+}
+
+// A `convex env set` failure that means "we can't administer this deployment"
+// rather than "the write itself failed". Covers the unauthenticated case
+// (`MissingAccessToken` — the CLI has never run `npx convex dev`) and the
+// authenticated-but-not-a-member case (403 / not authorized for this team or
+// project). These are expected for OSS/local dev and must degrade to the
+// hosted guest mint, not surface as a hard error.
+function isConvexAuthUnavailableMessage(message: string): boolean {
+  return /MissingAccessToken|access token is required|Authenticate with|Not logged in|401\b|\b403\b|Forbidden|Unauthorized|not authorized|not a member/i.test(
+    message,
+  );
+}
 
 function getConvexDeploymentForProvisioning(): string {
   if (process.env.CONVEX_DEPLOYMENT) {
@@ -37,18 +61,36 @@ function isOccFailureMessage(message: string): boolean {
   return /OptimisticConcurrencyControlFailure/i.test(message);
 }
 
+let convexCliPath: string | null = null;
+
+// Resolve the convex CLI's entry script on disk and invoke it directly with
+// `node`, rather than shelling out through `npx`/`npx.cmd`. On Windows,
+// execFile-ing `npx.cmd` without a shell hits a Node bug (EINVAL) when args
+// contain newlines (e.g. our PEM-formatted keys), and routing through a shell
+// instead would require fragile re-quoting of those same multi-line values.
+async function getConvexCliPath(): Promise<string> {
+  if (!convexCliPath) {
+    const { createRequire } = await import("module");
+    const { dirname, join } = await import("path");
+    const require = createRequire(import.meta.url);
+    const packageJsonPath = require.resolve("convex/package.json");
+    convexCliPath = join(dirname(packageJsonPath), "bin", "main.js");
+  }
+  return convexCliPath;
+}
+
 async function execConvexEnvSet(
   convexEnv: NodeJS.ProcessEnv,
   name: string,
   value: string,
 ): Promise<void> {
-  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
   const { execFile } = await import("child_process");
+  const cliPath = await getConvexCliPath();
 
   await new Promise<void>((resolve, reject) => {
     execFile(
-      npxCommand,
-      ["convex", "env", "set", name, "--", value],
+      process.execPath,
+      [cliPath, "env", "set", name, "--", value],
       {
         env: convexEnv,
         timeout: 15_000,
@@ -164,6 +206,24 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
         `[guest-auth] Provisioned Convex guest auth env (${convexEnv.CONVEX_DEPLOYMENT})`,
       );
     })().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+
+      // Can't administer the deployment (no Convex login, or logged in as an
+      // account without access). This is expected for OSS/local dev against
+      // MCPJam's shared deployment — mark provisioning unavailable so the
+      // guest-session helpers fall back to the hosted mint, and resolve
+      // successfully so callers don't 503. Memoized: we won't retry per-request.
+      if (isConvexAuthUnavailableMessage(message)) {
+        convexProvisioningUnavailable = true;
+        logger.info(
+          "[guest-auth] Convex CLI can't provision guest auth env " +
+            "(not authenticated for this deployment); using MCPJam's hosted " +
+            "guest auth instead. This is expected for open-source/local dev. " +
+            "To provision your own Convex deployment, run `npx convex dev` first.",
+        );
+        return;
+      }
+
       provisioningPromise = null;
       throw error;
     });
