@@ -899,4 +899,13 @@ describe("useServerForm", () => {
     });
     expect(result.current.buildFormData().clientSecret).toBeUndefined();
   });
+
+  it("accepts client secrets of any length, including short ones from IdPs", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    expect(result.current.validateClientSecret("")).toBeNull();
+    expect(result.current.validateClientSecret("banana")).toBeNull();
+    expect(result.current.validateClientSecret("s3cr3t")).toBeNull();
+    expect(result.current.validateClientSecret("a")).toBeNull();
+  });
 });
