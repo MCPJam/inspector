@@ -1649,6 +1649,74 @@ describe("mcpjam-stream-handler", () => {
       }
     });
 
+    it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
+      // Approve-by-fulfillment: the client executed the approved ui_* call
+      // and shipped the tool-result; the approval request stays UNANSWERED.
+      // The loop must treat the step as resolved — call the backend, emit
+      // no fresh approval request, and not pause again.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "Done." },
+          { type: "text-end", id: "t1" },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+      const onConversationComplete = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "navigate please" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                input: { target: "servers" },
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-ui-1",
+                toolCallId: "call-ui-1",
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                output: { type: "json", value: { ok: true } },
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        onConversationComplete,
+      });
+
+      await lastExecution;
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-approval-request"
+        )
+      ).toHaveLength(0);
+      // Clean completion — the turn persisted.
+      expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    });
+
     it("handlePendingApprovals skips no-execute tools instead of throwing (stale-client defense)", async () => {
       // The new client resolves an APPROVED ui_* call by executing it and
       // shipping the tool-result, never a bare approval response. If a
