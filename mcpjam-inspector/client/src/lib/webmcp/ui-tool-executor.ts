@@ -78,6 +78,17 @@ export function listDeferredUiToolCalls(): Array<{
   }));
 }
 
+/**
+ * Settle a call the user DENIED: the server's denial machinery supplies the
+ * result, so the call must become unfulfillable here — otherwise a duplicate
+ * approve event (double-emitted pill handlers, replayed state) could still
+ * execute a side-effectful tool the user explicitly rejected.
+ */
+export function settleDeniedUiToolCall(toolCallId: string): void {
+  settledOrInFlightToolCallIds.add(toolCallId);
+  deferredUiToolCalls.delete(toolCallId);
+}
+
 async function executeResolvedUiTool(
   def: UiToolDefinition,
   opts: Pick<

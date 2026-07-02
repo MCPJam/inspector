@@ -21,6 +21,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import {
   fulfillApprovedUiToolCall,
   listDeferredUiToolCalls,
+  settleDeniedUiToolCall,
   type HandleUiToolCallOptions,
 } from "./ui-tool-executor";
 import { useUiToolsRegistry } from "./ui-tools-registry";
@@ -112,6 +113,10 @@ export function createUiAwareApprovalResponseHandler(
       return;
     }
     if (!approved) {
+      // Settle first: the server's denial machinery supplies the result,
+      // and a later duplicate approve event must not be able to execute a
+      // call the user explicitly rejected.
+      settleDeniedUiToolCall(located.toolCallId);
       deps.addToolApprovalResponse({ id, approved: false });
       return;
     }

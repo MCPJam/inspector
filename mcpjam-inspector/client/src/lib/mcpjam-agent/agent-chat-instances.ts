@@ -201,14 +201,15 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     },
     // Resume the turn automatically once every tool call has an output —
     // without this, `addToolOutput` would sit unsent until the next user
-    // message. With approval on, also resume once every approval request
-    // has an answer (the MCP/skill-tool deny/approve path).
+    // message — or once every approval request has an answer (the MCP/
+    // skill-tool deny/approve path). The approval branch is deliberately
+    // NOT gated on the CURRENT `config.requireToolApproval`: a pill minted
+    // while the toggle was on must still resume the turn if the user flips
+    // it off before answering, and the predicate is inert when the message
+    // holds no approval requests.
     sendAutomaticallyWhen: (options) => {
       if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return (
-        config.requireToolApproval &&
-        lastAssistantMessageIsCompleteWithApprovalResponses(options)
-      );
+      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
   });
 

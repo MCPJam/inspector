@@ -194,6 +194,9 @@ describe("agent-chat-instances", () => {
       const def = registerTool();
       const entry = getOrCreateAgentChat("s1");
       entry.config.requireToolApproval = true;
+      // Two distinct gated calls: denying one must not affect the other
+      // (and a denied call is settled — see the executor's
+      // settleDeniedUiToolCall — so approve/deny must target separate ids).
       (entry.chat as any).messages = [
         {
           id: "m1",
@@ -202,22 +205,30 @@ describe("agent-chat-instances", () => {
             {
               type: "dynamic-tool",
               toolName: "ui_navigate",
+              toolCallId: "tc-deny",
+              state: "approval-requested",
+              input: { target: "evals" },
+              approval: { id: "appr-deny" },
+            },
+            {
+              type: "dynamic-tool",
+              toolName: "ui_navigate",
               toolCallId: "tc-appr",
               state: "approval-requested",
               input: { target: "servers" },
-              approval: { id: "appr-1" },
+              approval: { id: "appr-appr" },
             },
           ],
         },
       ];
 
-      entry.handleToolApprovalResponse({ id: "appr-1", approved: false });
+      entry.handleToolApprovalResponse({ id: "appr-deny", approved: false });
       expect(
         (entry.chat as any).addToolApprovalResponse
-      ).toHaveBeenCalledWith({ id: "appr-1", approved: false });
+      ).toHaveBeenCalledWith({ id: "appr-deny", approved: false });
       expect(def.execute).not.toHaveBeenCalled();
 
-      entry.handleToolApprovalResponse({ id: "appr-1", approved: true });
+      entry.handleToolApprovalResponse({ id: "appr-appr", approved: true });
       await new Promise((r) => setTimeout(r, 0));
       expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
       expect((entry.chat as any).addToolOutput).toHaveBeenCalledWith(
@@ -225,16 +236,20 @@ describe("agent-chat-instances", () => {
       );
     });
 
-    it("sendAutomaticallyWhen honors approvals only when the config flag is on", () => {
+    it("sendAutomaticallyWhen resumes on answered approvals regardless of the current flag", () => {
+      // A pill minted while the toggle was ON must still resume the turn if
+      // the user flips it off before answering — the predicate is inert when
+      // the message holds no approval requests, so no flag gate is needed.
       const entry = getOrCreateAgentChat("s1");
       const predicate = entry.chat.init.sendAutomaticallyWhen;
 
       aiPredicateMocks.toolCallsComplete.mockReturnValue(false);
       aiPredicateMocks.approvalsComplete.mockReturnValue(true);
-      expect(predicate({ messages: [] })).toBe(false);
-
-      entry.config.requireToolApproval = true;
+      expect(entry.config.requireToolApproval).toBe(false);
       expect(predicate({ messages: [] })).toBe(true);
+
+      aiPredicateMocks.approvalsComplete.mockReturnValue(false);
+      expect(predicate({ messages: [] })).toBe(false);
     });
   });
 

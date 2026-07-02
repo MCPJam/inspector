@@ -180,15 +180,17 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
 
     await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
     // The composed auto-resume predicate delegates to the SDK's
-    // tool-calls-complete helper; with approval OFF (default) the
-    // approval-responses branch never fires.
+    // tool-calls-complete helper, and to the approval-responses helper
+    // regardless of the current toggle (a pill minted before a toggle-off
+    // must still resume the turn).
     const predicate = mockState.lastChatInit.sendAutomaticallyWhen;
     mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(true);
     expect(predicate({ messages: [] })).toBe(true);
-    mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(false);
-    mockState.approvalsCompleteSentinel.mockReturnValue(true);
+    mockState.sendAutomaticallyWhenSentinel.mockReturnValue(false);
+    mockState.approvalsCompleteSentinel.mockReturnValueOnce(true);
+    expect(predicate({ messages: [] })).toBe(true);
+    mockState.approvalsCompleteSentinel.mockReturnValue(false);
     expect(predicate({ messages: [] })).toBe(false);
-    expect(mockState.approvalsCompleteSentinel).not.toHaveBeenCalled();
 
     await mockState.lastChatInit.onToolCall({
       toolCall: {
