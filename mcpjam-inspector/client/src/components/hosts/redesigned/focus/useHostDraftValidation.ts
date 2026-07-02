@@ -34,10 +34,10 @@ export function collectHostAttentionIssues(
 
   if (draft.modelId.trim() === "") {
     issues.push({
-      level: "error",
+      level: "warning",
       tab: "behavior",
       field: "modelId",
-      message: "Pick a model before saving",
+      message: "Pick a model before chatting",
     });
   }
   if (draft.systemPrompt.trim() === "") {

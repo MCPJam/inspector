@@ -11,6 +11,13 @@
  */
 
 import {
+  getMcpToolResultImageRenderPlacement,
+  isMcpDirectContentImageVisible,
+  isMcpDirectContentImageRendered,
+  isMcpEmbeddedResourceBlobImageVisible,
+  isMcpEmbeddedResourceBlobImageRendered,
+  isMcpLinkedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageRendered,
   resolveEffectiveCompatRuntime,
   resolveEffectiveMcpAppsCapabilities,
 } from "@/lib/client-config-v2";
@@ -134,7 +141,10 @@ const mcpProfile = (cfg: HostConfigDtoV2) => cfg.mcpProfile;
 // because coverage/filter/search/divergence all call `read` repeatedly.
 // ============================================================
 
-const mcpAppsCache = new WeakMap<HostConfigDtoV2, ResolvedMcpAppsCapabilities>();
+const mcpAppsCache = new WeakMap<
+  HostConfigDtoV2,
+  ResolvedMcpAppsCapabilities
+>();
 const effMcpApps = (cfg: HostConfigDtoV2): ResolvedMcpAppsCapabilities => {
   let v = mcpAppsCache.get(cfg);
   if (!v) {
@@ -180,7 +190,8 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "MCP Apps capabilities",
     label: "availableDisplayModes",
     path: "mcpProfile.apps.mcpAppsOverrides.availableDisplayModes (effective)",
-    description: "Display modes the host offers widgets (inline / fullscreen / pip).",
+    description:
+      "Display modes the host offers widgets (inline / fullscreen / pip).",
     kind: { kind: "mode-set", modes: ALL_DISPLAY_MODES },
     read: (cfg) => effMcpApps(cfg).availableDisplayModes,
   },
@@ -204,7 +215,7 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       description,
       kind: { kind: "boolean" },
       read: (cfg) => effMcpApps(cfg)[key],
-    }),
+    })
   ),
 ];
 
@@ -224,7 +235,9 @@ const OPENAI_SHIM_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     kind: { kind: "boolean" },
     read: (cfg) => effCompat(cfg).injected,
   },
-  ...OPENAI_APPS_METHOD_LABELS.filter(({ key }) => key !== "requestDisplayMode").map(
+  ...OPENAI_APPS_METHOD_LABELS.filter(
+    ({ key }) => key !== "requestDisplayMode"
+  ).map(
     ({ key, label }): HostConfigFieldDef => ({
       id: `openaiShim.${key}`,
       section: "apps",
@@ -237,7 +250,7 @@ const OPENAI_SHIM_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
         const c = effCompat(cfg);
         return c.injected ? Boolean(c.capabilities[key]) : false;
       },
-    }),
+    })
   ),
   {
     id: "openaiShim.requestDisplayMode",
@@ -273,7 +286,7 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
       kind: { kind: "boolean" },
       read: (cfg) =>
         Boolean(mcpProfile(cfg)?.apps?.sandbox?.permissions?.allow?.[key]),
-    }),
+    })
   );
 
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
@@ -322,6 +335,88 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // to `true`, but the raw DTO can still carry `undefined`. Coerce here
     // so the matrix shows the resolved value, not "—".
     read: (cfg) => cfg.respectToolVisibility ?? true,
+  },
+  {
+    id: "modelVisibleMcpToolResults.directContent.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Make tool image content visible to model",
+    path: "modelVisibleMcpToolResults.directContent.image",
+    description: "Pass MCP image content from tool results to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "modelVisibleMcpToolResults.embeddedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Make embedded resource images visible to model",
+    path: "modelVisibleMcpToolResults.embeddedResources.blob.image",
+    description:
+      "Pass MCP embedded resource images from tool results to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "modelVisibleMcpToolResults.linkedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Make resource link images visible to model",
+    path: "modelVisibleMcpToolResults.linkedResources.blob.image",
+    description: "Resolve MCP resource link images and pass them to the model.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+  },
+  {
+    id: "mcpToolResultImageRendering",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render tool images",
+    path: "mcpToolResultImageRendering.placement",
+    description: "Human-facing display mode for MCP tool-returned images.",
+    kind: {
+      kind: "enum",
+      options: ["none", "collapsed", "inline"],
+    },
+    read: (cfg) =>
+      getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.directContent.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render tool image content",
+    path: "mcpToolResultImageRendering.directContent.image",
+    description: "Render direct MCP image content from tool results in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.embeddedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render embedded resource images",
+    path: "mcpToolResultImageRendering.embeddedResources.blob.image",
+    description:
+      "Render MCP embedded resource images from tool results in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+  },
+  {
+    id: "mcpToolResultImageRendering.linkedResources.blob.image",
+    section: "agent",
+    subsection: "Model & sampling",
+    label: "Render resource link images",
+    path: "mcpToolResultImageRendering.linkedResources.blob.image",
+    description: "Resolve MCP resource link images and render them in the UI.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "progressiveToolDiscovery",
@@ -578,7 +673,7 @@ export function hostConfigField(id: string): HostConfigFieldDef {
   if (!f) {
     throw new Error(
       `hostConfigField: unknown field id "${id}". ` +
-        `Did you rename it in host-config-field-schema.ts without updating callers?`,
+        `Did you rename it in host-config-field-schema.ts without updating callers?`
     );
   }
   return f;
@@ -607,8 +702,8 @@ function stableStringify(value: unknown): string {
     .map(
       (k) =>
         `${JSON.stringify(k)}:${stableStringify(
-          (value as Record<string, unknown>)[k],
-        )}`,
+          (value as Record<string, unknown>)[k]
+        )}`
     )
     .join(",")}}`;
 }
@@ -616,7 +711,7 @@ function stableStringify(value: unknown): string {
 /** True when at least two hosts disagree on this field's value. */
 export function fieldDiverges(
   field: HostConfigFieldDef,
-  hosts: ReadonlyArray<HostConfigDtoV2>,
+  hosts: ReadonlyArray<HostConfigDtoV2>
 ): boolean {
   if (hosts.length < 2) return false;
   const first = stableStringify(field.read(hosts[0]));
@@ -636,7 +731,7 @@ export interface HostConfigFieldGroup {
 }
 
 export function groupHostConfigFields(
-  fields: ReadonlyArray<HostConfigFieldDef> = HOST_CONFIG_FIELDS,
+  fields: ReadonlyArray<HostConfigFieldDef> = HOST_CONFIG_FIELDS
 ): ReadonlyArray<HostConfigFieldGroup> {
   return HOST_CONFIG_SECTIONS.map((section) => {
     const fieldsForSection = fields.filter((f) => f.section === section.id);

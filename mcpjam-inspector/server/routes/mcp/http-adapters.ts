@@ -7,6 +7,7 @@ import {
 } from "../../services/tunnel-registry";
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
 import { getRequestLogger } from "../../utils/request-logger";
+import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
@@ -154,9 +155,19 @@ function normalizeServerId(clientManager: any, serverId: string): string {
   return match ?? serverId;
 }
 
-// Unified HTTP adapter that handles both adapter-http and manager-http routes
-// with the same robust implementation but different JSON-RPC response modes
+// Per-turn harness-proxy token (`X-MCPJam-Proxy-Token`, HEADER-ONLY). The relay
+// edge binds every adapter tunnel to `/api/mcp/adapter-http/{serverId}`
+// (backend `tunnelPolicy.ts`), so the harness reuses THIS route rather than a
+// dedicated one. The token is VALIDATE-WHEN-PRESENT: the harness always sends
+// it (per-turn expiry/revocation on top of the tunnel's per-server `?k=`
+// bearer), while external MCP clients send none and are unaffected. The old
+// `?t=` query fallback is removed — tokens in URLs leak into edge/access logs.
+function readProxyToken(c: any): string | undefined {
+  return c.req.header("x-mcpjam-proxy-token") || undefined;
+}
 
+// Unified HTTP adapter for adapter-http + manager-http (same robust
+// implementation, different JSON-RPC response modes).
 function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   const router = new Hono();
 
@@ -174,6 +185,14 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     // A per-server tunnel must not reach any other server's adapter.
     if (tunnelScopeViolation(c, serverId)) {
       return c.json({ error: "Not found" }, 404);
+    }
+
+    // Harness proxy token: when supplied it MUST be valid + scoped to this
+    // serverId (covers GET/POST/HEAD before any stream opens or RPC runs).
+    // Absent ⇒ external client ⇒ unaffected.
+    const proxyTok = readProxyToken(c);
+    if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     // SSE endpoint for clients that probe/subscribe via GET; HEAD advertises event-stream
@@ -337,6 +356,11 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       return c.json({ error: "Not found" }, 404);
     }
 
+    const proxyTok = readProxyToken(c);
+    if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
     const url = new URL(c.req.url);
     const sessionId = url.searchParams.get("sessionId") || "";
     const key = `${serverId}:${sessionId}`;
@@ -398,7 +422,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   return router;
 }
 
-// Create both adapters with their respective modes
+// Create both adapters with their respective modes. The Claude Code harness
+// connects through `adapter-http` (the edge-bound tunnel path), carrying its
+// per-turn `X-MCPJam-Proxy-Token` which is validated-when-present above.
 export const adapterHttp = createHttpHandler("adapter", "adapter-http");
 export const managerHttp = createHttpHandler("manager", "manager-http");
 

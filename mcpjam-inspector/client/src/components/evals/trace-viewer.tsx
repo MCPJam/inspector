@@ -51,7 +51,10 @@ import {
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import type {
+  HostConfigDtoV2,
+  McpToolResultImageRendering,
+} from "@/lib/client-config-v2";
 
 // Default host-style template id used when the caller passes
 // `activeHost` but no explicit `hostStyle`. Mirrors
@@ -193,6 +196,14 @@ interface TraceViewerProps {
    * outer scope's user-edited caps.
    */
   hostStyle?: string;
+  /**
+   * Human-facing render policy for MCP tool-result images, mirroring the
+   * chat surfaces (App.tsx / ChatTabV2). When omitted, the trace `Thread`
+   * falls back to the default "inline" placement. Pass the value already
+   * gated by model visibility via
+   * `gateMcpToolResultImageRenderingByModelVisibility`.
+   */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
 }
 
 function getTraceMessages(
@@ -234,6 +245,41 @@ function getRecordedSpans(
   const raw = (trace as TraceEnvelope).spans;
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   return raw as EvalTraceSpan[];
+}
+
+type TraceTurnRuntime = {
+  engine?: "emulated" | "harness";
+  harness?: string;
+};
+
+function getTraceTurnRuntimeByPromptIndex(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): Map<number, TraceTurnRuntime> | undefined {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") {
+    return undefined;
+  }
+  const rawEvents = (trace as TraceEnvelope).events;
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return undefined;
+
+  const byPromptIndex = new Map<number, TraceTurnRuntime>();
+  for (const rawEvent of rawEvents) {
+    if (!rawEvent || typeof rawEvent !== "object") continue;
+    const event = rawEvent as Record<string, unknown>;
+    if (event.type !== "turn_start") continue;
+    if (typeof event.promptIndex !== "number") continue;
+    const engine =
+      event.engine === "emulated" || event.engine === "harness"
+        ? event.engine
+        : undefined;
+    const harness =
+      typeof event.harness === "string" && event.harness.trim()
+        ? event.harness
+        : undefined;
+    if (!engine && !harness) continue;
+    byPromptIndex.set(event.promptIndex, { engine, harness });
+  }
+
+  return byPromptIndex.size > 0 ? byPromptIndex : undefined;
 }
 
 // PR 7: pull the browser-rendered MCP App artifacts off the trace envelope.
@@ -306,6 +352,7 @@ export function TraceViewer({
   rawGrowWithContent = false,
   activeHost,
   hostStyle,
+  mcpToolResultImageRendering,
 }: TraceViewerProps) {
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
@@ -361,6 +408,10 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  const turnRuntimeByPromptIndex = useMemo(
+    () => getTraceTurnRuntimeByPromptIndex(trace),
+    [trace]
+  );
   // PR 7: browser-rendered MCP App eval artifacts (render observations +
   // Computer Use steps). Only iterations driven through the headless-Chromium
   // harness carry these, so the Browser tab is gated on their presence.
@@ -864,6 +915,7 @@ export function TraceViewer({
                 viewportMaxMs={
                   hasRecordedSpans ? timelineViewportMaxMs : undefined
                 }
+                turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
               />
             </div>
@@ -902,6 +954,7 @@ export function TraceViewer({
                     isLoading={isLoading}
                     toolsMetadata={toolsMetadata}
                     toolServerMap={toolServerMap}
+                    mcpToolResultImageRendering={mcpToolResultImageRendering}
                     onWidgetStateChange={onWidgetStateChange}
                     onModelContextUpdate={onModelContextUpdate}
                     displayMode={displayMode}

@@ -25,9 +25,11 @@ import type {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
+import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
   emitError,
@@ -63,6 +65,51 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+
+function unwrapJsonEnvelope(value: unknown): unknown {
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return current;
+    }
+    const record = current as Record<string, unknown>;
+    if (record.type !== "json" || !("value" in record)) {
+      return current;
+    }
+    current = record.value;
+  }
+  return current;
+}
+
+function isModelVisibleImageOutput(value: unknown): boolean {
+  const output = unwrapJsonEnvelope(value);
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return false;
+  }
+  const record = output as Record<string, unknown>;
+  if (record.type !== "content" || !Array.isArray(record.value)) {
+    return false;
+  }
+  return record.value.some((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      return false;
+    }
+    const partRecord = part as Record<string, unknown>;
+    if (partRecord.type === "text" && typeof partRecord.text === "string") {
+      return (
+        partRecord.text.startsWith("[image omitted:") ||
+        partRecord.text.startsWith("[resource link omitted:") ||
+        partRecord.text.startsWith("[embedded image resource omitted:")
+      );
+    }
+    return (
+      (partRecord.type === "media" || partRecord.type === "image-data") &&
+      typeof partRecord.mediaType === "string" &&
+      partRecord.mediaType.startsWith("image/")
+    );
+  });
+}
 
 /**
  * Approval-free check for a tool-call name.
@@ -132,6 +179,21 @@ const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
+
+function readLinkedMcpResourceWithManager(
+  mcpClientManager: MCPClientManager,
+): (params: {
+  serverId: string;
+  uri: string;
+  options?: { abortSignal?: AbortSignal };
+}) => Promise<unknown> {
+  return ({ serverId, uri, options }) => {
+    const requestOptions = options?.abortSignal
+      ? { signal: options.abortSignal }
+      : undefined;
+    return mcpClientManager.readResource(serverId, { uri }, requestOptions);
+  };
+}
 const streamChunkSchema = zodSchema(z.unknown());
 
 let warnedMissingAbortSignal = false;
@@ -313,6 +375,12 @@ export interface MCPJamHandlerOptions {
    * browser-fulfilled) and skills (the harness has its own).
    */
   builtInTools?: ToolSet;
+  /**
+   * WS5 foundation: reusable instruction bundles for the harness runtime,
+   * forwarded to `new HarnessAgent({ skills })`. Harness-only (emulated ignores).
+   * Empty/unset today — hosted-mode skills authoring is a separate workstream.
+   */
+  skills?: unknown[];
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -331,7 +399,18 @@ export interface MCPJamHandlerOptions {
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
+   *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
+   *  global env. Absent ⇒ harness runs without proxied MCP. See
+   *  `harness-proxy-strategy.ts`. */
+  harnessMcpProxy?: HarnessMcpProxyStrategy;
   requireToolApproval?: boolean;
+  /**
+   * Host/client policy for eligible MCP tool-result content/resources.
+   * Controls only model-facing tool output; raw results remain available to
+   * UI/debug history.
+   */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
    * approval-required tool calls pause the loop until the user answers
@@ -499,6 +578,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
   usedToolCallIds: Set<string>;
@@ -1171,15 +1251,24 @@ async function processStream(
           flushText();
           flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
+          const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
+          const providerMetadata = mergeMcpToolOriginMetadata(
+            chunk.providerMetadata,
+            serverIdForToolCall,
+          );
           contentParts.push({
             type: "tool-call",
             toolCallId,
             toolName: chunk.toolName,
             input: chunk.input ?? {},
+            ...(providerMetadata ? { providerOptions: providerMetadata } : {}),
           });
           hasToolCalls = true;
-          writer.write({ ...chunk, toolCallId });
-          const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
+          writer.write({
+            ...chunk,
+            toolCallId,
+            ...(providerMetadata ? { providerMetadata } : {}),
+          });
           writeTraceEvent(writer, {
             type: "tool_call",
             turnId: traceTurn.turnId,
@@ -1290,17 +1379,16 @@ async function emitToolResults(
             typeof (part as any).serverId === "string"
               ? ((part as any).serverId as string)
               : undefined;
-          // MCP App tools scrub structuredContent from the model-facing
-          // `output`; their widgets need the raw result, which
-          // `executeToolCallsFromMessages` stamps on `result` when it carries
-          // structuredContent. Prefer it so the widget receives
-          // structuredContent. All other tools keep the existing
-          // `output`-first behavior.
+          // Some tool outputs have a model-facing `output` and a raw MCP
+          // `result`. UI must use the raw result when the model-facing copy
+          // drops fields widgets need (structuredContent) or turns images into
+          // media parts for the model.
           const rawResult = (part as any).result;
           const rawOutput =
             rawResult &&
             typeof rawResult === "object" &&
-            "structuredContent" in rawResult
+            ("structuredContent" in rawResult ||
+              isModelVisibleImageOutput(part.output))
               ? rawResult
               : (part.output ?? rawResult);
 
@@ -1437,6 +1525,9 @@ function emitInheritedToolCalls(
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? {},
+            ...(part.providerOptions
+              ? { providerMetadata: part.providerOptions }
+              : {}),
           });
           // PR 5b-pre review fix (Cursor Medium): fire `onToolCall`
           // for inherited unresolved calls so PR 5b's eval wiring
@@ -1483,6 +1574,7 @@ async function handlePendingApprovals(
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
   abortSignal?: AbortSignal,
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults,
   // PR 5b-pre: propagate the chunk-level callbacks so denial /
   // resumed-approval / approved-tool-result emissions all fire them.
   onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
@@ -1676,6 +1768,9 @@ async function handlePendingApprovals(
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? {},
+            ...(part.providerOptions
+              ? { providerMetadata: part.providerOptions }
+              : {}),
           });
           // PR 5b-pre review fix (Cursor Medium "Resumed approvals
           // skip onToolCall"): fire `onToolCall` for resumed approved
@@ -1707,6 +1802,8 @@ async function handlePendingApprovals(
 
     const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
+      modelVisibleMcpToolResults,
+      readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
       ...(abortSignal ? { abortSignal } : {}),
     });
 
@@ -1748,6 +1845,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
     usedToolCallIds,
@@ -2189,6 +2287,8 @@ async function processOneStep(
         tools: metaTracedTools as Record<string, any>,
         filterToolName: (name) =>
           isApprovalFreeMetaToolName(name, progressivePlan),
+        modelVisibleMcpToolResults,
+        readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
       });
       if (metaMessages.length > 0) {
@@ -2294,6 +2394,8 @@ async function processOneStep(
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: executableTools as Record<string, any>,
         skipNonExecutableTools: true,
+        modelVisibleMcpToolResults,
+        readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();
@@ -2552,6 +2654,7 @@ export async function runChatEngineLoop(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    modelVisibleMcpToolResults,
     approvalMode,
     onConversationComplete,
     onStreamComplete,
@@ -2641,6 +2744,7 @@ export async function runChatEngineLoop(
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     modelId,
+    engine: "emulated",
     traceBaseMs: traceTurn.turnStartedAt,
     spans: traceTurn.turnSpans,
     onStepFinish,
@@ -2771,6 +2875,7 @@ export async function runChatEngineLoop(
           traceTurn,
           effectiveSteps(),
           abortSignal,
+          modelVisibleMcpToolResults,
           onToolResult,
           onToolCall,
         );
@@ -2804,6 +2909,7 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           requireToolApproval,
+          modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
           usedToolCallIds,

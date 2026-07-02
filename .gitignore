@@ -1,5 +1,6 @@
 .DS_Store
 worktrees/
+.worktrees/
 .cursor/
 node_modules/
 .mcpjam/skills/
@@ -14,3 +15,4 @@ widget-react/dist/
 
 # Local git worktrees checked out under the repo
 worktrees/
+wt-*/

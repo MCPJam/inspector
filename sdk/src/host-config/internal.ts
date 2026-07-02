@@ -38,6 +38,10 @@ export type {
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
+  ModelVisibleMcpToolResults,
 } from "./types.js";
 
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.
@@ -55,9 +59,11 @@ export {
   extractHostExecutionPolicy,
   buildHostIterationMetadata,
   buildHostSnapshotMetadata,
+  resolveMcpToolResultImageRendering,
 } from "./host-policy.js";
 export type {
   HostExecutionPolicy,
+  ResolvedMcpToolResultImageRenderingPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
 export { hostConnectionProfile } from "./host-connection.js";

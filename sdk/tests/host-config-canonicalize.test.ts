@@ -148,6 +148,86 @@ describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
       await hash(base({ progressiveToolDiscovery: false }))
     );
   });
+
+  it("distinguishes MCP tool-result policy undefined from explicit values", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("modelVisibleMcpToolResults" in omitted).toBe(false);
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: true },
+          },
+        })
+      )
+    );
+  });
+
+  it("distinguishes MCP tool-result image rendering undefined from explicit policies", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("mcpToolResultImageRendering" in omitted).toBe(false);
+    expect(await hash(base())).not.toBe(
+      await hash(base({ mcpToolResultImageRendering: { placement: "none" } }))
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({ mcpToolResultImageRendering: { placement: "collapsed" } })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            placement: "inline",
+            directContent: { image: false },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
+  });
+
+  it("rejects unknown MCP tool-result image rendering modes", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpToolResultImageRendering: {
+            placement: "floating" as never,
+          },
+        })
+      )
+    ).toThrow(/placement must be "none", "collapsed", or "inline"/);
+  });
 });
 
 describe("canonicalizeHostConfigV2 — computer", () => {
@@ -528,7 +608,7 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     // Untyped (JS) callers must not persist a value the runtime can't honor.
     // `pi` is a plausible-but-unregistered runtime — not in HARNESS_IDS.
     expect(() =>
-      canonicalizeHostConfigV2(base({ harness: "pi" as never })),
+      canonicalizeHostConfigV2(base({ harness: "pi" as never }))
     ).toThrow(/harness must be/);
   });
 
@@ -537,7 +617,7 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     (harness) => {
       const canonical = canonicalizeHostConfigV2(base({ harness }));
       expect(canonical.harness).toBe(harness);
-    },
+    }
   );
 
   it("absent harness drops from canonical JSON and hashes distinctly from when set", async () => {
@@ -546,11 +626,11 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     // Absent ⇒ no key in canonical JSON (JSON.stringify drops the undefined
     // property), so pre-feature rows hash byte-identically.
     expect(JSON.stringify(canonicalizeHostConfigV2(without))).not.toContain(
-      "harness",
+      "harness"
     );
     // Setting it writes the key and changes the hash (distinct from emulated).
     expect(JSON.stringify(canonicalizeHostConfigV2(withHarness))).toContain(
-      '"harness":"claude-code"',
+      '"harness":"claude-code"'
     );
     expect(await hash(withHarness)).not.toBe(await hash(without));
   });

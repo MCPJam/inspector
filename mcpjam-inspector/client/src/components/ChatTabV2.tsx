@@ -99,6 +99,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
@@ -194,6 +195,17 @@ export function ChatTabV2({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        executionConfig?.mcpToolResultImageRendering,
+        executionConfig?.modelVisibleMcpToolResults
+      ),
+    [
+      executionConfig?.mcpToolResultImageRendering,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -1401,7 +1413,10 @@ export function ChatTabV2({
     const pendingUserMessage = evalChatHandoff.pendingUserMessage;
     if (pendingUserMessage) {
       void seedApplied.then(() => {
-        sendMessage({ text: pendingUserMessage, metadata: outgoingSenderMetadata });
+        sendMessage({
+          text: pendingUserMessage,
+          metadata: outgoingSenderMetadata,
+        });
       });
     }
 
@@ -2348,11 +2363,14 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            modelVisibleMcpToolResults:
+                              executionConfig?.modelVisibleMcpToolResults,
+                            mcpToolResultImageRendering:
+                              effectiveMcpToolResultImageRendering,
                             // Same rationale: forward attached built-in
                             // tools so each per-model card resolves the
                             // same ToolSet the single-model path would.
-                            builtInToolIds:
-                              executionConfig?.builtInToolIds,
+                            builtInToolIds: executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2534,6 +2552,9 @@ export function ChatTabV2({
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          mcpToolResultImageRendering={
+                            effectiveMcpToolResultImageRendering
+                          }
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {

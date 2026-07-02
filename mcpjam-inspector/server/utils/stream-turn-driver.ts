@@ -69,6 +69,8 @@ export interface StreamTurnDriverOptions {
   turnId: string;
   promptIndex: number;
   modelId: string;
+  engine?: "emulated" | "harness";
+  harness?: string;
   /** Span-offset zero point — set to STREAM start (after setup), so live and
    *  rehydrated traces align. Both engines clock spans from here. */
   traceBaseMs: number;
@@ -88,6 +90,8 @@ export class StreamTurnDriver {
   readonly turnId: string;
   readonly promptIndex: number;
   readonly modelId: string;
+  readonly engine?: "emulated" | "harness";
+  readonly harness?: string;
   readonly traceBaseMs: number;
   readonly spans: EvalTraceSpan[];
 
@@ -108,6 +112,8 @@ export class StreamTurnDriver {
     this.turnId = opts.turnId;
     this.promptIndex = opts.promptIndex;
     this.modelId = opts.modelId;
+    this.engine = opts.engine;
+    this.harness = opts.harness;
     this.traceBaseMs = opts.traceBaseMs;
     this.spans = opts.spans;
     this.onStepFinishCb = opts.onStepFinish;
@@ -129,6 +135,8 @@ export class StreamTurnDriver {
       turnId: this.turnId,
       promptIndex: this.promptIndex,
       startedAtMs: this.traceBaseMs,
+      ...(this.engine ? { engine: this.engine } : {}),
+      ...(this.harness ? { harness: this.harness } : {}),
     });
     this.started = true;
   }

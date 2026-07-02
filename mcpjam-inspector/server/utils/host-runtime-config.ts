@@ -44,6 +44,32 @@ export type HostRuntimeConfigResult =
   | { ok: true; config: HostRuntimeConfig }
   | { ok: false; status: number; error: string };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeHostRuntimeConfig(
+  raw: Record<string, unknown>
+): HostRuntimeConfig {
+  const nestedConfig = isRecord(raw.config)
+    ? raw.config
+    : isRecord(raw.hostConfig)
+      ? raw.hostConfig
+      : null;
+  const { config: _ignoredConfig, hostConfig: _ignoredHostConfig, ...topLevel } =
+    raw;
+  // Current runtime-config is expected to be flat, but some host APIs return
+  // `{ ..., config: HostConfigV2 }` (or `hostConfig`). The Playground sidebar
+  // reads that nested DTO and shows Claude Code built-ins; execution reads this
+  // helper. Flatten the nested config as a compatibility shim so
+  // `harness: "claude-code"` does not disappear and silently route the turn
+  // through the emulated engine.
+  return {
+    ...(nestedConfig ?? {}),
+    ...topLevel,
+  } as HostRuntimeConfig;
+}
+
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
@@ -118,5 +144,8 @@ export async function fetchHostRuntimeConfig(args: {
     };
   }
 
-  return { ok: true, config: payload.config as HostRuntimeConfig };
+  return {
+    ok: true,
+    config: normalizeHostRuntimeConfig(payload.config as Record<string, unknown>),
+  };
 }

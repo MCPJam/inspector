@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import {
@@ -12,6 +12,10 @@ import {
   parseIterationPredicates,
 } from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  type HostConfigDtoV2,
+} from "@/lib/client-config-v2";
 import {
   TraceViewModeTabs,
   type TraceViewMode,
@@ -288,6 +292,29 @@ export function IterationDetails({
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
   const [connectedServerIds, setConnectedServerIds] = useState<string[]>([]);
+
+  // Suite-level image-render policy. Mirrors how the chat surfaces derive it
+  // from the active host config (App.tsx / ChatTabV2): read the suite's host
+  // config and gate the policy by model visibility, then hand it to the trace
+  // `Thread`. Without this, eval result traces always fall back to the default
+  // "inline" placement and ignore the suite's collapse/hide setting.
+  const suiteHostConfigDto = useQuery(
+    "hostConfigsV2:getSuiteConfig" as any,
+    testCase?.testSuiteId
+      ? ({ suiteId: testCase.testSuiteId } as any)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  const mcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        suiteHostConfigDto?.mcpToolResultImageRendering,
+        suiteHostConfigDto?.modelVisibleMcpToolResults,
+      ),
+    [
+      suiteHostConfigDto?.mcpToolResultImageRendering,
+      suiteHostConfigDto?.modelVisibleMcpToolResults,
+    ],
+  );
   const [toolsWithSchema, setToolsWithSchema] = useState<
     Record<string, { name: string; inputSchema?: any }>
   >({});
@@ -962,6 +989,7 @@ export function IterationDetails({
         ) : (
           <TraceViewer
               trace={blob}
+              mcpToolResultImageRendering={mcpToolResultImageRendering}
               model={traceModel}
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}

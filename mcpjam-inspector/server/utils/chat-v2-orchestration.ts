@@ -17,8 +17,11 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager } from "@mcpjam/sdk";
-import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
+import { MCPClientManager, type Harness } from "@mcpjam/sdk";
+import {
+  filterAppOnlyTools,
+  type ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -440,7 +443,9 @@ export function buildWidgetInteractionContextSystemPrompt(
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
     ];
     if (content.length > 0) {
-      lines.push(...content.map((block) => renderWidgetContextContentBlock(block)));
+      lines.push(
+        ...content.map((block) => renderWidgetContextContentBlock(block))
+      );
     } else {
       lines.push("(no textual content)");
     }
@@ -467,9 +472,16 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
+  /**
+   * Resolved host harness. Harness runtimes own native tool discovery, so
+   * MCPJam's progressive meta-tools must stay out of their prepared tool set.
+   */
+  harness?: Harness;
   /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
@@ -550,10 +562,12 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpToolResults,
     customProviders,
     appTools,
     builtInTools,
     cloudSkills,
+    harness,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -564,12 +578,17 @@ export async function prepareChatV2(
   );
 
   const toolOptions =
-    requireToolApproval || respectToolVisibility === false
+    requireToolApproval ||
+    respectToolVisibility === false ||
+    modelVisibleMcpToolResults !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
             : {}),
           ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
+          ...(modelVisibleMcpToolResults !== undefined
+            ? { modelVisibleMcpToolResults }
+            : {}),
         }
       : undefined;
 
@@ -641,7 +660,7 @@ export async function prepareChatV2(
   for (const name of Object.keys(builtInToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`
       );
       delete mcpTools[name];
     }
@@ -650,7 +669,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app or skill tool.`
       );
     }
   }
@@ -679,16 +698,18 @@ export async function prepareChatV2(
     hydrateDiscoveryStateFromHistory(
       discoveryState,
       options.priorMessages,
-      catalog,
+      catalog
     );
   }
-  const envOverride = parseProgressiveToolsEnv(
-    process.env.MCPJAM_PROGRESSIVE_TOOLS,
-  );
+  const envOverride = harness
+    ? false
+    : parseProgressiveToolsEnv(process.env.MCPJAM_PROGRESSIVE_TOOLS);
   const progressivePlan = decideProgressivePlan({
     catalog,
     modelContextLength: modelDefinition.contextLength,
-    options: options.progressiveToolDiscovery,
+    options: harness
+      ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
+      : options.progressiveToolDiscovery,
     envOverride,
   });
 
@@ -730,7 +751,7 @@ export async function prepareChatV2(
       // tool already claimed the name.
       if (Object.prototype.hasOwnProperty.call(realTools, name)) {
         throw new Error(
-          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`
         );
       }
     }

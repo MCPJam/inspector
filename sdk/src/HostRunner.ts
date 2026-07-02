@@ -16,6 +16,7 @@ import type {
   UserModelMessage,
   StepResult,
 } from "ai";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -32,6 +33,7 @@ import {
   ensureJsonSchemaObject,
   isAppOnlyTool,
 } from "./mcp-client-manager/tool-converters.js";
+import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -41,13 +43,13 @@ import {
 } from "./eval-trace-spans.js";
 import { snapshotHostSource } from "./host-config/host.js";
 import type { HostSource } from "./host-config/host.js";
+import type { ModelVisibleMcpToolResults } from "./host-config/types.js";
 import type { HostJson } from "./host-config/public-types.js";
 import {
   extractHostExecutionPolicy,
   resolveOpenAiCompatForHostConfig,
   type HostExecutionPolicy,
 } from "./host-config/internal.js";
-
 
 /**
  * Common fields for {@link HostRunnerConfig}. See the discriminated union
@@ -121,8 +123,7 @@ function isToolArray(tools: Tool[] | AiSdkTool): tools is Tool[] {
  */
 function dropAppOnlyTools(tools: Tool[]): Tool[] {
   return tools.filter(
-    (tool) =>
-      !isAppOnlyTool(tool._meta as Record<string, unknown> | undefined),
+    (tool) => !isAppOnlyTool(tool._meta as Record<string, unknown> | undefined)
   );
 }
 
@@ -131,7 +132,12 @@ function dropAppOnlyTools(tools: Tool[]): Tool[] {
  * handled at the HostRunner prep step (single-gated by host policy), not
  * inside this converter.
  */
-function convertToToolSet(tools: Tool[]): ToolSet {
+function convertToToolSet(
+  tools: Tool[],
+  options: {
+    modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  } = {}
+): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
     const converted = dynamicTool({
@@ -142,6 +148,13 @@ function convertToToolSet(tools: Tool[]): ToolSet {
         const result = await tool.execute(args as Record<string, unknown>);
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
+      toModelOutput: ({ output }) =>
+        (mcpCallToolResultToModelOutput(output as CallToolResult, {
+          modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+        }) ?? {
+          type: "json" as const,
+          value: output as any,
+        }) as any,
     });
 
     // Preserve _serverId like getToolsForAiSdk() does
@@ -160,7 +173,6 @@ type StartedToolCall = {
   arguments: Record<string, unknown>;
   shortCircuited: boolean;
 };
-
 
 /**
  * Synchronous executor that runs LLM prompts with tool calling. Wraps the
@@ -251,7 +263,7 @@ export class HostRunner implements HostExecutor {
       : undefined;
     this.hostPolicy = this.hostSnapshot
       ? extractHostExecutionPolicy(
-          this.hostSnapshot as unknown as Record<string, unknown>,
+          this.hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
 
@@ -261,7 +273,7 @@ export class HostRunner implements HostExecutor {
     const resolvedModel = config.model ?? this.hostSnapshot?.model;
     if (!resolvedModel) {
       throw new Error(
-        "HostRunner requires either `host` (with a configured model) or an explicit `model` string.",
+        "HostRunner requires either `host` (with a configured model) or an explicit `model` string."
       );
     }
 
@@ -275,8 +287,7 @@ export class HostRunner implements HostExecutor {
     // own `includeAppOnly` flag at construction. `HostRuntime` plumbs the
     // host policy into that flag, so by the time tools land here they have
     // already been gated correctly — re-filtering would be a double-gate.
-    const respectVisibility =
-      this.hostPolicy?.respectToolVisibility !== false;
+    const respectVisibility = this.hostPolicy?.respectToolVisibility !== false;
     const preparedTools = isToolArray(config.tools)
       ? respectVisibility
         ? dropAppOnlyTools(config.tools)
@@ -284,7 +295,10 @@ export class HostRunner implements HostExecutor {
       : config.tools;
 
     this.tools = isToolArray(preparedTools)
-      ? convertToToolSet(preparedTools)
+      ? convertToToolSet(preparedTools, {
+          modelVisibleMcpToolResults:
+            this.hostSnapshot?.modelVisibleMcpToolResults,
+        })
       : preparedTools;
     // Stash the original (unfiltered) input so withOptions can re-run the
     // prep step under a replacement host's policy. Tool[] inputs are
@@ -301,8 +315,7 @@ export class HostRunner implements HostExecutor {
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
-    this.temperature =
-      config.temperature ?? this.hostSnapshot?.temperature;
+    this.temperature = config.temperature ?? this.hostSnapshot?.temperature;
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
@@ -344,7 +357,9 @@ export class HostRunner implements HostExecutor {
           ? `: ${String(error)}`
           : "";
     console.warn(
-      `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${suffix || `: ${message}`}`
+      `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${
+        suffix || `: ${message}`
+      }`
     );
   }
 
@@ -392,10 +407,7 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    const toolMetadata = manager.getToolMetadata(
-      serverId,
-      params.toolName
-    );
+    const toolMetadata = manager.getToolMetadata(serverId, params.toolName);
     if (!toolMetadata) {
       return;
     }
@@ -408,12 +420,9 @@ export class HostRunner implements HostExecutor {
     }
 
     try {
-      const resourceResult = await manager.readResource(
-        serverId,
-        {
-          uri: resourceUri,
-        }
-      );
+      const resourceResult = await manager.readResource(serverId, {
+        uri: resourceUri,
+      });
       const contents = Array.isArray((resourceResult as any)?.contents)
         ? (resourceResult as any).contents
         : [];
@@ -500,14 +509,17 @@ export class HostRunner implements HostExecutor {
 
             try {
               if (shouldShortCircuit) {
-                return assertCallToolResult({
-                  content: [
-                    {
-                      type: "text",
-                      text: "[skipped by stopAfterToolCall]",
-                    },
-                  ],
-                }, `Tool "${name}" short-circuit result`);
+                return assertCallToolResult(
+                  {
+                    content: [
+                      {
+                        type: "text",
+                        text: "[skipped by stopAfterToolCall]",
+                      },
+                    ],
+                  },
+                  `Tool "${name}" short-circuit result`
+                );
               }
 
               const result = await originalExecute(args, options);
@@ -625,10 +637,7 @@ export class HostRunner implements HostExecutor {
    * const r2 = await runner.run("Pick the first", { context: r1 });
    * const r3 = await runner.run("Show tasks", { context: [r1, r2] });
    */
-  async run(
-    message: string,
-    options?: PromptOptions
-  ): Promise<PromptResult> {
+  async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
@@ -903,8 +912,7 @@ export class HostRunner implements HostExecutor {
     const carryParent = !replacingHost;
     const nextHost = options.host ?? this.hostSnapshot;
 
-    const nextModel =
-      options.model ?? (carryParent ? this.model : undefined);
+    const nextModel = options.model ?? (carryParent ? this.model : undefined);
     const nextSystemPrompt =
       options.systemPrompt ?? (carryParent ? this.systemPrompt : undefined);
     const nextTemperature =
@@ -940,7 +948,7 @@ export class HostRunner implements HostExecutor {
       // hypothetical case where a caller tries to drop the host and
       // model simultaneously.
       throw new Error(
-        "HostRunner.withOptions: cannot drop both `host` and `model` from a host-backed runner.",
+        "HostRunner.withOptions: cannot drop both `host` and `model` from a host-backed runner."
       );
     }
     return new HostRunner({ ...base, model: nextModel });

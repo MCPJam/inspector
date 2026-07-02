@@ -44,14 +44,24 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
+import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -88,6 +98,9 @@ export function ToolPart({
   runDisabledReason,
   editVersion,
   minimalMode = false,
+  serverId,
+  mcpToolResultImageRendering,
+  rawOutput,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -136,6 +149,9 @@ export function ToolPart({
   /** Bumped by the parent to remount + reseed the editors on a hard reset. */
   editVersion?: number;
   minimalMode?: boolean;
+  serverId?: string;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  rawOutput?: unknown;
 }) {
   const posthog = usePostHog();
   const hasTrackedSkillLoad = useRef(false);
@@ -188,13 +204,31 @@ export function ToolPart({
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "sandbox" | "context" | null
   >("data");
+  const [resultImageMode, setResultImageMode] = useState<"images" | "raw">(
+    "images"
+  );
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
+  const rawResultData = rawOutput ?? outputData;
+  const resultDisplayData =
+    outputValue !== undefined ? outputValue : rawResultData;
+  const imagePreviewData = rawResultData;
+  const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
+    mcpToolResultImageRendering
+  );
+  const showInlineImagePreview = imageRenderPlacement === "inline";
+  const showPanelImagePreview = imageRenderPlacement === "collapsed";
+  const canRenderToolImages =
+    showInlineImagePreview || (showPanelImagePreview && isExpanded);
+  const resultImageState = useMcpToolResultImagePreviews(
+    canRenderToolImages ? imagePreviewData : undefined,
+    { serverId, renderingPolicy: mcpToolResultImageRendering }
+  );
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
   const editInputValue = inputValue !== undefined ? inputValue : inputData;
-  const editOutputValue = outputValue !== undefined ? outputValue : outputData;
+  const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =
@@ -217,7 +251,8 @@ export function ToolPart({
     }
     return 1;
   }, [hasInput, inputData]);
-  const hasOutput = outputData !== undefined && outputData !== null;
+  const hasOutput =
+    resultDisplayData !== undefined && resultDisplayData !== null;
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
@@ -237,6 +272,10 @@ export function ToolPart({
     onDisplayModeChange !== undefined &&
     !hideAppControls;
   const showDebugControls = hasWidgetDebugUI && !hideAppControls;
+
+  useEffect(() => {
+    setResultImageMode("images");
+  }, [imagePreviewData]);
 
   const displayModeOptions: {
     mode: DisplayMode;
@@ -584,29 +623,120 @@ export function ToolPart({
   const renderToolResult = () =>
     showRawResult ? (
       <div className="space-y-1">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-          Result
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+            Result
+          </div>
+          {showPanelImagePreview &&
+            resultImageState.status === "ready" &&
+            resultImageState.previews.length > 0 && (
+              <ToggleGroup
+                type="single"
+                value={resultImageMode}
+                onValueChange={(value) => {
+                  if (value) setResultImageMode(value as "images" | "raw");
+                }}
+                className="gap-0.5"
+              >
+                <ToggleGroupItem
+                  value="images"
+                  aria-label="Images"
+                  className="h-6 px-2 text-[10px]"
+                >
+                  Images
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="raw"
+                  aria-label="Raw"
+                  className="h-6 px-2 text-[10px]"
+                >
+                  Raw
+                </ToggleGroupItem>
+              </ToggleGroup>
+            )}
         </div>
-        <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-          <JsonEditor
-            key={`tool-result-${editorKeyVersion}`}
-            height="100%"
-            value={editOutputValue}
-            className="p-2 text-[11px]"
-            collapsible
-            defaultExpandDepth={2}
-            {...(isEditing && !isRunning && onOutputChange
-              ? {
-                  mode: "edit" as const,
-                  onModeChange: () => {},
-                  showModeToggle: false,
-                  onChange: onOutputChange,
-                }
-              : { viewOnly: true })}
-          />
-        </div>
+        {showPanelImagePreview &&
+        resultImageState.hasCandidate &&
+        (resultImageState.status === "idle" ||
+          resultImageState.status === "loading") ? (
+          <div className="rounded-md border border-border/30 bg-muted/20 min-h-[120px] flex items-center justify-center">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Resolving images...
+            </div>
+          </div>
+        ) : showPanelImagePreview &&
+          resultImageState.status === "ready" &&
+          resultImageState.previews.length > 0 &&
+          resultImageMode === "images" ? (
+          <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto p-2">
+            <McpToolResultImagePreviewGrid
+              previews={resultImageState.previews}
+              className="grid-cols-1"
+              tileClassName="min-h-[120px]"
+              imageClassName="max-h-[260px]"
+            />
+          </div>
+        ) : (
+          <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+            <JsonEditor
+              key={`tool-result-${editorKeyVersion}`}
+              height="100%"
+              value={editOutputValue}
+              className="p-2 text-[11px]"
+              collapsible
+              defaultExpandDepth={2}
+              {...(isEditing && !isRunning && onOutputChange
+                ? {
+                    mode: "edit" as const,
+                    onModeChange: () => {},
+                    showModeToggle: false,
+                    onChange: onOutputChange,
+                  }
+                : { viewOnly: true })}
+            />
+          </div>
+        )}
       </div>
     ) : null;
+
+  const renderInlineImagePreview = () => {
+    if (!showRawResult || !showInlineImagePreview) return null;
+    if (
+      resultImageState.hasCandidate &&
+      (resultImageState.status === "idle" ||
+        resultImageState.status === "loading")
+    ) {
+      return (
+        <div className="px-3 pb-3">
+          <div className="rounded-md border border-border/30 bg-muted/20 min-h-[120px] flex items-center justify-center">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Resolving images...
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (
+      resultImageState.status !== "ready" ||
+      resultImageState.previews.length === 0
+    ) {
+      return null;
+    }
+
+    return (
+      <div className="px-3 pb-3">
+        <McpToolResultImagePreviewGrid
+          previews={resultImageState.previews}
+          className="grid-cols-1"
+          tileClassName="min-h-[160px]"
+          imageClassName="max-h-[360px]"
+        />
+      </div>
+    );
+  };
 
   // Device-flow login URLs surfaced by the computer `bash` tool (e.g. from
   // `gh auth login`). The tool lifts them into a structured `authUrls` field
@@ -615,7 +745,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (outputData as { authUrls?: unknown })?.authUrls
+      (resultDisplayData as { authUrls?: unknown })?.authUrls
     );
     if (urls.length === 0) return null;
     return (
@@ -860,6 +990,8 @@ export function ToolPart({
           )}
         </span>
       </div>
+
+      {renderInlineImagePreview()}
 
       {isExpanded && (
         <div className="border-t border-border/40 px-3 py-3">

@@ -14,9 +14,12 @@ import type { ComputerTerminalController } from "./useComputerTerminal";
 export function ComputerTerminalPane({
   controller,
   className,
+  cwd,
 }: {
   controller: ComputerTerminalController;
   className?: string;
+  /** Starting directory for the terminal (harness workdir); home if unset. */
+  cwd?: string;
 }) {
   const {
     status,
@@ -76,6 +79,7 @@ export function ComputerTerminalPane({
           themeMode={terminalTheme}
           className="h-full"
           {...(terminalBaseUrl ? { baseUrl: terminalBaseUrl } : {})}
+          {...(cwd ? { cwd } : {})}
         />
       );
     }

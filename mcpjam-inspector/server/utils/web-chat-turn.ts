@@ -24,10 +24,14 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { convertToModelMessages, type ToolSet } from "ai";
+import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -64,7 +68,11 @@ import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
-import type { Harness } from "@mcpjam/sdk";
+import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import {
+  resolveWebAuthorizedHarnessStrategy,
+  type HarnessMcpProxyStrategy,
+} from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -119,6 +127,7 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
@@ -145,11 +154,14 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
+  /** Resolved host harness. Harness runtimes own native tool discovery. */
+  harness?: Harness;
   appTools?: AppToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
@@ -206,9 +218,16 @@ export async function streamWebChatTurn(
   const sessionStartedAt = Date.now();
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
-  const modelMessages = (await convertToModelMessages(
+  const modelMessages = await convertToMcpjamModelMessages(
     prepare.uiMessages as never,
-  )) as ModelMessage[];
+    {
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // Browser-sent history can replay already-resolved media, but must not
+      // trigger new linked resource reads. Fresh server-side tool execution
+      // resolves resource_link results through trusted tool-origin metadata.
+      abortSignal: c.req.raw.signal as AbortSignal | undefined,
+    },
+  );
 
   let prepared;
   try {
@@ -220,8 +239,10 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
+      ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
@@ -340,6 +361,9 @@ export async function streamWebChatTurn(
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
+                modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+                mcpToolResultImageRendering:
+                  persist.mcpToolResultImageRendering,
                 selectedServers:
                   Array.isArray(persist.selectedServerNames) &&
                   persist.selectedServerNames.length ===
@@ -445,6 +469,7 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) =>
@@ -460,6 +485,16 @@ export async function streamWebChatTurn(
     "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
+
+  // Harness MCP proxy — WEB-AUTHORIZED plane: this is an /api/web request, so
+  // the harness reaches MCPJam either directly (public inspector) or via a
+  // scoped harness-web relay (private/dev inspector), decided purely by whether
+  // the inspector is publicly reachable. The token (with the user's identity) is
+  // minted by Convex from the same bearer. If relay infra is needed but absent,
+  // the turn fails closed later, at tunnel creation.
+  const harnessMcpProxy: HarnessMcpProxyStrategy | undefined = persist.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
 
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
@@ -485,7 +520,9 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the

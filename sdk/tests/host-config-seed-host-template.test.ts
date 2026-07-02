@@ -56,6 +56,7 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
+    expect(config.progressiveToolDiscovery).toBe(false);
   });
 
   it("seeds the real Codex harness + a personal computer", () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildComputerUploadUrl,
   buildTerminalWsUrl,
   openTerminalConnection,
   toTerminalWsBase,
+  uploadFilesToComputer,
   type TerminalEvent,
 } from "../computer-terminal-connection";
 
@@ -76,6 +78,27 @@ describe("buildTerminalWsUrl", () => {
       "wss://host.test/api/web/computers/terminal?token=abc&cols=100&rows=30"
     );
   });
+
+  it("appends an encoded cwd when provided", () => {
+    const url = buildTerminalWsUrl({
+      token: "abc",
+      cols: 80,
+      rows: 24,
+      baseUrl: "wss://host.test",
+      cwd: "/home/user/claude-code-XyZ",
+    });
+    expect(url).toContain("&cwd=%2Fhome%2Fuser%2Fclaude-code-XyZ");
+  });
+
+  it("omits cwd when absent", () => {
+    const url = buildTerminalWsUrl({
+      token: "abc",
+      cols: 80,
+      rows: 24,
+      baseUrl: "wss://host.test",
+    });
+    expect(url).not.toContain("cwd=");
+  });
 });
 
 describe("openTerminalConnection", () => {
@@ -140,6 +163,116 @@ describe("openTerminalConnection", () => {
       ws.onmessage?.({ data: "not json {{{" } as MessageEvent)
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+describe("buildComputerUploadUrl", () => {
+  it("converts a wss base to https and appends the upload path", () => {
+    expect(buildComputerUploadUrl({ baseUrl: "wss://host.test" })).toBe(
+      "https://host.test/api/web/computers/upload"
+    );
+    expect(buildComputerUploadUrl({ baseUrl: "ws://localhost:3500" })).toBe(
+      "http://localhost:3500/api/web/computers/upload"
+    );
+  });
+
+  it("returns a relative path when no base is given (page origin)", () => {
+    expect(buildComputerUploadUrl()).toBe("/api/web/computers/upload");
+    expect(buildComputerUploadUrl({})).toBe("/api/web/computers/upload");
+  });
+});
+
+describe("uploadFilesToComputer", () => {
+  function fakeFile(name: string): File {
+    return new File([new Uint8Array([1, 2, 3])], name, { type: "text/plain" });
+  }
+
+  it("POSTs a FormData with the token in the Authorization header (never the URL)", async () => {
+    let calledUrl = "";
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calledUrl = String(url);
+      calledInit = init;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          files: [{ name: "x", path: "/home/user/uploads/x", bytes: 3 }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const files = await uploadFilesToComputer({
+      token: "tok-9",
+      files: [fakeFile("a.txt")],
+      baseUrl: "wss://host.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    // Token rides the header, not the URL — URLs land in access/proxy logs.
+    expect(calledUrl).toBe("https://host.test/api/web/computers/upload");
+    expect(calledInit?.headers).toEqual({ Authorization: "Bearer tok-9" });
+    expect(calledInit?.method).toBe("POST");
+    expect(calledInit?.body).toBeInstanceOf(FormData);
+    expect((calledInit?.body as FormData).getAll("files")).toHaveLength(1);
+    expect(files).toEqual([
+      { name: "x", path: "/home/user/uploads/x", bytes: 3 },
+    ]);
+  });
+
+  it("keeps dir in the query while the token stays in the header", async () => {
+    let calledUrl = "";
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calledUrl = String(url);
+      calledInit = init;
+      return new Response(JSON.stringify({ ok: true, files: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await uploadFilesToComputer({
+      token: "tok-9",
+      files: [fakeFile("a.txt")],
+      dir: "/home/user/claude-code-1",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(calledUrl).toBe(
+      "/api/web/computers/upload?dir=%2Fhome%2Fuser%2Fclaude-code-1"
+    );
+    expect(calledInit?.headers).toEqual({ Authorization: "Bearer tok-9" });
+  });
+
+  it("throws with the server-supplied message on a non-2xx response", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: false, error: "computer asleep" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    await expect(
+      uploadFilesToComputer({
+        token: "t",
+        files: [fakeFile("a.txt")],
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+    ).rejects.toThrow("computer asleep");
+  });
+
+  it("throws a status fallback when the body isn't JSON", async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response("<html>502</html>", { status: 502 })
+    );
+    await expect(
+      uploadFilesToComputer({
+        token: "t",
+        files: [fakeFile("a.txt")],
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+    ).rejects.toThrow("502");
   });
 });
 

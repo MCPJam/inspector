@@ -103,7 +103,10 @@ import {
   type HostListItem,
   type HostDetail,
 } from "@/hooks/useClients";
-import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import {
+  emptyHostConfigInputV2,
+  gateMcpToolResultImageRenderingByModelVisibility,
+} from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
@@ -111,15 +114,13 @@ import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
+import { useServerActionsOptional } from "@/state/server-actions-context";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import {
-  snapshotFromHostConfig,
-  type HostSnapshot,
-} from "@/lib/host-snapshot";
+import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -147,6 +148,7 @@ import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
   buildPreludeTraceEnvelope,
+  hostStyleSupportsModelVisibleMcpToolImages,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
@@ -157,10 +159,7 @@ import {
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import {
-  shouldAutoRunPreview,
-  shouldRunPreview,
-} from "./preview-autorun";
+import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
@@ -193,7 +192,7 @@ const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
-  widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+  widgetSnapshots?: ChatHistoryWidgetSnapshot[]
 ) {
   const snapshotSignature = (widgetSnapshots ?? [])
     .map((snapshot) =>
@@ -203,7 +202,7 @@ function buildHistoryContentSignature(
         snapshot.resourceUri ?? "",
         snapshot.widgetHtmlUrl ?? "",
         snapshot.toolOutputUrl ?? "",
-      ].join(":"),
+      ].join(":")
     )
     .sort()
     .join("|");
@@ -286,6 +285,7 @@ interface PlaygroundMainProps {
     toolName: string;
     params: Record<string, unknown>;
     result: unknown;
+    modelOutput?: unknown;
     toolMeta: Record<string, unknown> | undefined;
     state?: "output-available" | "output-error";
     errorText?: string;
@@ -624,7 +624,7 @@ export function PlaygroundMain({
     const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
     if (Array.isArray(propsMulti) && propsMulti.length > 0) {
       return propsMulti.filter(
-        (name) => servers[name]?.connectionStatus === "connected",
+        (name) => servers[name]?.connectionStatus === "connected"
       );
     }
     return [];
@@ -664,6 +664,9 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
   });
+  // Optional: present app-wide, absent in isolated embeds. Drives the hosted
+  // harness preflight (resolve/persist selected server names → Convex ids).
+  const playgroundServerActions = useServerActionsOptional();
   const hostedSelectedServerIds = useMemo(
     () =>
       selectedServers
@@ -700,15 +703,27 @@ export function PlaygroundMain({
   // silently disabled the reseed in authed projects because the writer
   // wrote under a different storage scope.
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
-    convexProjectId ?? activeProjectId,
+    convexProjectId ?? activeProjectId
   );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        previewedHost?.config?.mcpToolResultImageRendering,
+        previewedHost?.config?.modelVisibleMcpToolResults
+      ),
+    [
+      previewedHost?.config?.mcpToolResultImageRendering,
+      previewedHost?.config?.modelVisibleMcpToolResults,
+    ]
+  );
   // Native built-in tools for the previewed harness (if any) — fed into the Raw
   // tab so a harness host's empty `tools` is annotated rather than confusing.
-  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
+  const { tools: harnessBuiltinTools } =
+    useHarnessBuiltinTools(previewedHostId);
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -761,6 +776,16 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
+      // Resolve/persist selected server names → Convex ids before a hosted
+      // harness send (ad-hoc/App servers included), so the proxy never sees a
+      // display name. Absent in isolated embeds → falls back to the
+      // pre-resolved selection above.
+      ...(playgroundServerActions?.ensureHostedServerIdsForNames
+        ? {
+            ensureServerIds:
+              playgroundServerActions.ensureHostedServerIdsForNames,
+          }
+        : {}),
       // Forward the previewed host id so the server re-resolves its
       // authoritative runtime config (harness/computer) for this direct
       // session, and so switching hosts forks the chat session.
@@ -771,6 +796,9 @@ export function PlaygroundMain({
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
+    modelVisibleMcpToolResults:
+      previewedHost?.config?.modelVisibleMcpToolResults,
+    mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // previewed host's hostConfig. The server re-resolves via the shared
     // execution-context helper, so this also flows through chatbox sessions
@@ -847,11 +875,7 @@ export function PlaygroundMain({
     }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
-    if (
-      last &&
-      last.hostId === previewedHostId &&
-      last.configId === configId
-    ) {
+    if (last && last.hostId === previewedHostId && last.configId === configId) {
       return;
     }
 
@@ -865,10 +889,7 @@ export function PlaygroundMain({
     // servers but `serversById` hasn't hydrated yet (empty map on first pass),
     // bail without marking the (hostId, configId) seeded so a later render
     // with a populated map can finish the seed.
-    const ids = [
-      ...(cfg.serverIds ?? []),
-      ...(cfg.optionalServerIds ?? []),
-    ];
+    const ids = [...(cfg.serverIds ?? []), ...(cfg.optionalServerIds ?? [])];
     if (ids.length > 0 && serversById.size === 0) return;
 
     lastSeededHostRef.current = { hostId: previewedHostId, configId };
@@ -1086,7 +1107,7 @@ export function PlaygroundMain({
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
   const hostSlots = usePlaygroundHostSlots(
     isConvexAuthenticated,
-    selectedHostIds,
+    selectedHostIds
   );
   const resolvedSelectedHosts = useMemo<HostDetail[]>(
     () =>
@@ -1094,7 +1115,7 @@ export function PlaygroundMain({
         .slice(0, selectedHostIds.length)
         .map((slot) => slot.host)
         .filter((host): host is HostDetail => host !== null),
-    [hostSlots, selectedHostIds.length],
+    [hostSlots, selectedHostIds.length]
   );
   const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
 
@@ -1251,8 +1272,8 @@ export function PlaygroundMain({
   const currentCompareMode: CompareMode = isMultiHostMode
     ? "host"
     : isMultiModelMode
-      ? "model"
-      : "none";
+    ? "model"
+    : "none";
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
     if (prev === currentCompareMode) return;
@@ -1262,9 +1283,8 @@ export function PlaygroundMain({
       if (!leadId) return null;
       const transcript = compareTranscriptsRef.current[leadId];
       const hasConversation =
-        transcript?.some(
-          (m) => m.role === "user" || m.role === "assistant",
-        ) ?? false;
+        transcript?.some((m) => m.role === "user" || m.role === "assistant") ??
+        false;
       return hasConversation && transcript ? cloneUiMessages(transcript) : null;
     };
 
@@ -1365,8 +1385,11 @@ export function PlaygroundMain({
     ? Object.values(compareHasMessages).some(Boolean)
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
-    () => buildPreludeTraceEnvelope(preludeTraceExecutions),
-    [preludeTraceExecutions]
+    () =>
+      buildPreludeTraceEnvelope(preludeTraceExecutions, {
+        ...hostStyleSupportsModelVisibleMcpToolImages(hostStyle),
+      }),
+    [hostStyle, preludeTraceExecutions]
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
@@ -1475,7 +1498,7 @@ export function PlaygroundMain({
     let matchingModel = null;
     if (handoffExec.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === handoffExec.modelId,
+        (model) => String(model.id) === handoffExec.modelId
       );
       // Wait for the model list to load — `availableModels.length === 0`
       // means the catalog hasn't arrived yet; re-run when it does.
@@ -1566,7 +1589,7 @@ export function PlaygroundMain({
 
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
-    null,
+    null
   );
   const discardDraftSettledRef = useRef(false);
 
@@ -1626,7 +1649,7 @@ export function PlaygroundMain({
       const desired = resolveRestorableServerNames(
         savedServerNames,
         serversById,
-        Object.keys(servers),
+        Object.keys(servers)
       );
       if (desired.length === 0) return;
 
@@ -1661,19 +1684,14 @@ export function PlaygroundMain({
       const onServerChange = playgroundServerSelectorProps?.onServerChange;
       if (!onServerChange) return;
       const firstMatch = desired.find(
-        (name) => servers[name]?.connectionStatus === "connected",
+        (name) => servers[name]?.connectionStatus === "connected"
       );
       const target = firstMatch ?? desired[0];
       if (target && target !== serverName) {
         onServerChange(target);
       }
     },
-    [
-      playgroundServerSelectorProps,
-      serverName,
-      servers,
-      serversById,
-    ],
+    [playgroundServerSelectorProps, serverName, servers, serversById]
   );
 
   const loadHistorySession = useCallback(
@@ -1684,7 +1702,7 @@ export function PlaygroundMain({
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
-      },
+      }
     ) => {
       await loadChatSession(
         {
@@ -1698,7 +1716,7 @@ export function PlaygroundMain({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
-        },
+        }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
@@ -1707,7 +1725,7 @@ export function PlaygroundMain({
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
         const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId,
+          (model) => String(model.id) === detail.modelId
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -1716,8 +1734,10 @@ export function PlaygroundMain({
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
-      appliedHistoryContentSignatureRef.current =
-        buildHistoryContentSignature(detail, widgetSnapshots);
+      appliedHistoryContentSignatureRef.current = buildHistoryContentSignature(
+        detail,
+        widgetSnapshots
+      );
       syncResumedVersion(detail.version);
       void markHistorySessionRead(detail._id);
     },
@@ -1727,7 +1747,7 @@ export function PlaygroundMain({
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const {
@@ -1736,8 +1756,7 @@ export function PlaygroundMain({
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
     projectId: convexProjectId,
-    enabled:
-      isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
+    enabled: isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
   });
 
   // Shared-session sender attribution: only active for project-visible
@@ -1749,11 +1768,11 @@ export function PlaygroundMain({
   });
   const senderProfileByUserId = useMemo(
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
-    [senderActiveMembers],
+    [senderActiveMembers]
   );
   const currentUserForSender = useQuery(
     "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip",
+    isConvexAuthenticated ? ({} as any) : "skip"
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
@@ -1767,7 +1786,7 @@ export function PlaygroundMain({
         profileByUserId: senderProfileByUserId,
         fallbackOwnerUserId: senderFallbackUserId,
       }),
-    [senderProfileByUserId, senderFallbackUserId],
+    [senderProfileByUserId, senderFallbackUserId]
   );
   // Stamp current user onto live outgoing prompts in shared sessions so the
   // transcript can attribute them before persistence round-trips.
@@ -1809,7 +1828,7 @@ export function PlaygroundMain({
       restoredToolRenderOverrides,
       startChatWithMessages,
       syncResumedVersion,
-    ],
+    ]
   );
 
   useEffect(() => {
@@ -1827,7 +1846,7 @@ export function PlaygroundMain({
 
     if (reactiveHistorySession === null) {
       detachHistorySession(
-        "This chat is no longer available. Continuing locally in a new thread.",
+        "This chat is no longer available. Continuing locally in a new thread."
       );
       return;
     }
@@ -1845,7 +1864,7 @@ export function PlaygroundMain({
 
     const contentSignature = buildHistoryContentSignature(
       reactiveHistorySession,
-      reactiveHistoryWidgetSnapshots,
+      reactiveHistoryWidgetSnapshots
     );
     if (appliedHistoryContentSignatureRef.current === contentSignature) {
       setPendingDirectVisibility(reactiveHistorySession.directVisibility);
@@ -1867,11 +1886,11 @@ export function PlaygroundMain({
           reactiveHistoryLoadRequestIdRef.current === requestId &&
           activeHistorySessionIdRef.current === reactiveHistorySession._id,
         turnTraces: undefined,
-      },
+      }
     ).catch((error) => {
       console.error(
         "[PlaygroundMain] Failed to apply reactive chat history",
-        error,
+        error
       );
     });
   }, [
@@ -1919,7 +1938,7 @@ export function PlaygroundMain({
           }
           console.error(
             "[PlaygroundMain] Failed to refresh history session",
-            error,
+            error
           );
           return null;
         }
@@ -1932,7 +1951,7 @@ export function PlaygroundMain({
       convexProjectId,
       markHistorySessionRead,
       syncResumedVersion,
-    ],
+    ]
   );
 
   // After a streaming turn ends we re-fetch the active session so the rail
@@ -1945,7 +1964,7 @@ export function PlaygroundMain({
       resumedThreadSendBaseline: {
         sessionId: string;
         version: number;
-      } | null,
+      } | null
     ) => {
       const maxAttempts = resumedThreadSendBaseline
         ? RESUMED_THREAD_REFRESH_RETRIES + 1
@@ -1975,7 +1994,7 @@ export function PlaygroundMain({
       }
       return null;
     },
-    [refreshCurrentHistorySession],
+    [refreshCurrentHistorySession]
   );
 
   const handleSelectThread = useCallback(
@@ -2013,7 +2032,7 @@ export function PlaygroundMain({
           return;
         }
         restoreHistoryServerSelection(
-          detail.session.resumeConfig?.selectedServers,
+          detail.session.resumeConfig?.selectedServers
         );
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
@@ -2035,7 +2054,7 @@ export function PlaygroundMain({
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
-    ],
+    ]
   );
 
   const resetMultiModelSessions = useCallback(() => {
@@ -2069,7 +2088,7 @@ export function PlaygroundMain({
       resetChat,
       resetMultiModelSessions,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const handleArchiveAllComplete = useCallback(
@@ -2092,7 +2111,7 @@ export function PlaygroundMain({
       resetChat,
       resetMultiModelSessions,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const handleHistorySessionAction = useCallback(
@@ -2118,18 +2137,18 @@ export function PlaygroundMain({
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
             detachHistorySession(
-              "This chat is no longer shared with you. Continuing locally in a new thread.",
+              "This chat is no longer shared with you. Continuing locally in a new thread."
             );
           }
         } catch (error) {
           console.error(
             "[PlaygroundMain] Failed to refresh unshared chat",
-            error,
+            error
           );
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession],
+    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
   );
 
   // Hover prefetch — fires on row pointer-enter. Warms the detail + blob
@@ -2143,7 +2162,7 @@ export function PlaygroundMain({
         projectId: convexProjectId ?? undefined,
       });
     },
-    [convexProjectId],
+    [convexProjectId]
   );
 
   // Publish the chat-history bridge so the docked Playground pane (outside
@@ -2245,7 +2264,7 @@ export function PlaygroundMain({
     const timerId = window.setTimeout(() => {
       void (async () => {
         const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline,
+          resumedThreadSendBaseline
         );
         if (
           resumedThreadSendBaseline &&
@@ -2255,14 +2274,11 @@ export function PlaygroundMain({
         ) {
           detachHistorySession(
             "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
-            { silent: suppressHistoryConflictToastRef.current },
+            { silent: suppressHistoryConflictToastRef.current }
           );
         }
       })().catch((error) => {
-        console.error(
-          "[PlaygroundMain] Failed to refresh chat history",
-          error,
-        );
+        console.error("[PlaygroundMain] Failed to refresh chat history", error);
       });
     }, 250);
 
@@ -2329,8 +2345,8 @@ export function PlaygroundMain({
     setCompareSummaries((previous) => {
       const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId),
-        ),
+          activeIds.has(compareId)
+        )
       );
       // Bail when the filter would be a no-op so we don't write a new
       // reference into state for an unchanged value.
@@ -2341,8 +2357,8 @@ export function PlaygroundMain({
     setCompareHasMessages((previous) => {
       const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId),
-        ),
+          activeIds.has(compareId)
+        )
       );
       return Object.keys(filtered).length === Object.keys(previous).length
         ? previous
@@ -2399,6 +2415,7 @@ export function PlaygroundMain({
         toolName: pendingExecution.toolName,
         params: pendingExecution.params,
         result: pendingExecution.result,
+        modelOutput: pendingExecution.modelOutput,
         toolMeta: pendingExecution.toolMeta,
         state: pendingExecution.state,
         errorText: pendingExecution.errorText,
@@ -2411,16 +2428,23 @@ export function PlaygroundMain({
     }
 
     const { toolName, params, result, toolMeta } = pendingExecution;
-    const deterministicOptions =
-      pendingExecution.state === "output-error"
+    const deterministicOptions = {
+      ...(pendingExecution.state === "output-error"
         ? {
             state: "output-error" as const,
             errorText: pendingExecution.errorText,
             toolCallId: pendingExecution.toolCallId,
           }
         : pendingExecution.toolCallId
-        ? { toolCallId: pendingExecution.toolCallId }
-        : undefined;
+        ? {
+            toolCallId: pendingExecution.toolCallId,
+            modelOutput: pendingExecution.modelOutput,
+          }
+        : pendingExecution.modelOutput
+        ? { modelOutput: pendingExecution.modelOutput }
+        : {}),
+      mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
+    };
     const { messages: newMessages, toolCallId } =
       createDeterministicToolMessages(
         toolName,
@@ -2465,6 +2489,7 @@ export function PlaygroundMain({
         toolName,
         params,
         result,
+        modelOutput: pendingExecution.modelOutput,
         state:
           pendingExecution.state === "output-error"
             ? "output-error"
@@ -2483,7 +2508,13 @@ export function PlaygroundMain({
       return [...prev, nextExecution];
     });
     onExecutionInjected(toolCallId);
-  }, [isCompareMode, onExecutionInjected, pendingExecution, setMessages]);
+  }, [
+    isCompareMode,
+    onExecutionInjected,
+    pendingExecution,
+    effectiveMcpToolResultImageRendering,
+    setMessages,
+  ]);
 
   useEffect(() => {
     if (!isCompareMode && hasTraceSnapshot) {
@@ -2694,7 +2725,7 @@ export function PlaygroundMain({
       multiHostEnabled,
       setMultiHostEnabled,
       setSelectedHostIds,
-    ],
+    ]
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
@@ -2727,7 +2758,7 @@ export function PlaygroundMain({
       if (!multiHostProjectId) return;
       replaceLeadHostId(multiHostProjectId, hostId);
     },
-    [multiHostProjectId],
+    [multiHostProjectId]
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -2925,11 +2956,7 @@ export function PlaygroundMain({
       return false;
     }
 
-    if (
-      !isCompareMode &&
-      displayMode === "fullscreen" &&
-      isWidgetFullscreen
-    ) {
+    if (!isCompareMode && displayMode === "fullscreen" && isWidgetFullscreen) {
       setIsFullscreenChatOpen(true);
     }
 
@@ -3099,7 +3126,7 @@ export function PlaygroundMain({
       } else {
         queueBroadcastRequest(
           { text, prependMessages: [] },
-          { single_model_send: true },
+          { single_model_send: true }
         );
         sendMessage({
           text,
@@ -3121,7 +3148,7 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
       modelContextQueue,
       onFirstMessageSent,
-    ],
+    ]
   );
 
   const pendingAgentToolPrompt = useAgentToolPromptBridge((s) => s.pending);
@@ -3401,6 +3428,9 @@ export function PlaygroundMain({
                 onFullscreenChange={setIsWidgetFullscreen}
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
+                mcpToolResultImageRendering={
+                  effectiveMcpToolResultImageRendering
+                }
                 showInlineEdit={!hideInlineEdit}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
@@ -3512,275 +3542,203 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
-    <div
-      className={cn(
-        "relative h-full flex flex-col overflow-hidden",
-        showPostConnectGuide || isMultiModelLayoutMode
-          ? "bg-background"
-          : "bg-muted/20"
-      )}
-    >
-      {showLoadingOverlay && (
-        <div
-          className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
-          role="status"
-          aria-label="Loading chat"
-        >
-          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-        </div>
-      )}
-      {/* Center header strip — hidden during onboarding and embedded eval preview */}
-      {!showPostConnectGuide && !hideCenterHeaderChrome && (
-        <PlaygroundCenterHeaderBar
-          showTraceTabs={showTraceViewTabs}
-          mode={activeTraceViewMode}
-          onModeChange={(mode) => {
-            if (mode === "tools") return;
-            setTraceViewMode(mode);
-          }}
-          activeProjectId={activeProjectId}
-          onSaveHostContext={onSaveHostContext}
-          protocol={selectedProtocol}
-          isMultiModelLayoutMode={isMultiModelLayoutMode}
-          leadHostInMultiHost={
-            isMultiHostMode ? leadHost?.name ?? null : null
-          }
-          // The standalone "Compare" host picker moved into the chat-input
-          // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
-          // switching still lives in the global `GlobalHostBar`.
-          trailing={
-            effectiveHasMessages ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowClearConfirm(true)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  sideOffset={6}
-                  collisionPadding={12}
-                >
-                  <p className="font-medium">Clear chat</p>
-                  <p className="text-xs font-light text-muted-foreground">
-                    {navigator.platform.includes("Mac")
-                      ? "⌘⇧K"
-                      : "Ctrl+Shift+K"}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            ) : null
-          }
-        />
-      )}
-
-      <ConfirmChatResetDialog
-        open={showClearConfirm}
-        onCancel={() => setShowClearConfirm(false)}
-        onConfirm={handleClearChat}
-      />
-
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {isMultiModelLayoutMode ? (
-          <PlaygroundCompareThemeScope
-            hostStyle={hostStyle}
-            hostCapabilitiesOverride={hostCapabilitiesOverride}
-            chatUiOverride={chatUiOverride}
-            effectiveThreadTheme={effectiveThreadTheme}
-            hostShellStyle={hostShellStyle}
+      <div
+        className={cn(
+          "relative h-full flex flex-col overflow-hidden",
+          showPostConnectGuide || isMultiModelLayoutMode
+            ? "bg-background"
+            : "bg-muted/20"
+        )}
+      >
+        {showLoadingOverlay && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+            role="status"
+            aria-label="Loading chat"
           >
-            {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
-              <MultiModelEmptyTraceDiagnosticsPanel
-                activeTraceViewMode={activeTraceViewMode}
-                effectiveHasMessages={effectiveHasMessages}
-                hasLiveTimelineContent={hasLiveTimelineContent}
-                traceViewerTrace={traceViewerTrace}
-                model={multiModelTracePanelModel}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
-                traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
-                rawRequestPayloadHistory={{
-                  entries: requestPayloadHistory,
-                  hasUiMessages: effectiveHasMessages,
-                }}
-                rawEmptyTestId="playground-multi-empty-raw-pending"
-                timelineEmptyTestId="playground-multi-empty-trace-pending"
-                onRevealNavigateToChat={() => setTraceViewMode("chat")}
-                errorFooterSlot={
-                  errorMessage ? (
-                    <div className="max-w-4xl mx-auto px-4 pt-4">
-                      <ErrorBox
-                        message={errorMessage.message}
-                        errorDetails={errorMessage.details}
-                        code={errorMessage.code}
-                        statusCode={errorMessage.statusCode}
-                        isRetryable={errorMessage.isRetryable}
-                        isMCPJamPlatformError={
-                          errorMessage.isMCPJamPlatformError
-                        }
-                        onResetChat={handleResetAllChats}
-                      />
-                    </div>
-                  ) : null
-                }
-                chatInputSlot={
-                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
-                }
-              />
-            ) : null}
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+          </div>
+        )}
+        {/* Center header strip — hidden during onboarding and embedded eval preview */}
+        {!showPostConnectGuide && !hideCenterHeaderChrome && (
+          <PlaygroundCenterHeaderBar
+            showTraceTabs={showTraceViewTabs}
+            mode={activeTraceViewMode}
+            onModeChange={(mode) => {
+              if (mode === "tools") return;
+              setTraceViewMode(mode);
+            }}
+            activeProjectId={activeProjectId}
+            onSaveHostContext={onSaveHostContext}
+            protocol={selectedProtocol}
+            isMultiModelLayoutMode={isMultiModelLayoutMode}
+            leadHostInMultiHost={
+              isMultiHostMode ? leadHost?.name ?? null : null
+            }
+            // The standalone "Compare" host picker moved into the chat-input
+            // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
+            // switching still lives in the global `GlobalHostBar`.
+            trailing={
+              effectiveHasMessages ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowClearConfirm(true)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    sideOffset={6}
+                    collisionPadding={12}
+                  >
+                    <p className="font-medium">Clear chat</p>
+                    <p className="text-xs font-light text-muted-foreground">
+                      {navigator.platform.includes("Mac")
+                        ? "⌘⇧K"
+                        : "Ctrl+Shift+K"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : null
+            }
+          />
+        )}
 
-            {!effectiveHasMessages && !showMultiModelTraceEmptyPanel ? (
-              <MultiModelStartersEmptyLayout
-                isAuthLoading={isAuthLoading}
-                showStarterPrompts={showMultiModelStarterPrompts}
-                authPrimarySlot={
-                  isAuthLoading ? (
-                    <div className="text-center space-y-4">
-                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                      <p className="text-sm text-muted-foreground">
-                        Loading...
-                      </p>
-                    </div>
-                  ) : shouldShowUpsell ? (
-                    <div className="space-y-4">
-                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                    </div>
-                  ) : null
-                }
-                onStarterPrompt={handleMultiModelStarterPrompt}
-                chatInputSlot={
-                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
-                }
-              />
-            ) : null}
+        <ConfirmChatResetDialog
+          open={showClearConfirm}
+          onCancel={() => setShowClearConfirm(false)}
+          onConfirm={handleClearChat}
+        />
 
-            <div
-              data-testid={
-                isMultiHostMode
-                  ? "playground-multi-host-compare-section"
-                  : "playground-multi-model-compare-section"
-              }
-              className={cn(
-                "flex flex-1 min-h-0 flex-col overflow-hidden",
-                !effectiveHasMessages && "hidden"
-              )}
-              aria-hidden={!effectiveHasMessages}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {isMultiModelLayoutMode ? (
+            <PlaygroundCompareThemeScope
+              hostStyle={hostStyle}
+              hostCapabilitiesOverride={hostCapabilitiesOverride}
+              chatUiOverride={chatUiOverride}
+              effectiveThreadTheme={effectiveThreadTheme}
+              hostShellStyle={hostShellStyle}
             >
-              <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
-                {isMultiHostMode ? (
-                  // Phase 4 multi-host compare grid. Project-scoped
-                  // server config means `selectedServers`,
-                  // `hostedSelectedServerIds`, and `hostedOAuthTokens`
-                  // are SHARED across all columns — there is no
-                  // per-host server set in v1 (see plan §"What v1 does
-                  // NOT compare"). Each column gets its own
-                  // `hostSnapshot` (style, caps, chat UI, MCP profile)
-                  // and its own `hostCapsResolver` so per-server
-                  // capability gating evaluates under the right host
-                  // identity. Every column shares the lead's model and
-                  // the global chip `executionConfig` — host is the only
-                  // varying axis. See `multiHostColumns` memo above.
-                  <div
-                    data-testid="playground-multi-host-grid"
-                    className={cn(
-                      "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                      multiHostColumns.length <= 1 && "grid-cols-1",
-                      multiHostColumns.length === 2 &&
-                        "grid-cols-1 xl:grid-cols-2",
-                      multiHostColumns.length >= 3 &&
-                        "grid-cols-1 xl:grid-cols-3"
-                    )}
-                  >
-                    {multiHostColumns.map((column) => (
-                      <MultiModelPlaygroundCard
-                        // Include `compareKind` in the key so a mode
-                        // swap between multi-model and multi-host can't
-                        // accidentally reuse a card instance keyed by a
-                        // hostId that happens to equal a modelId string.
-                        key={`${multiModelSessionGeneration}:host:${column.compareId}`}
-                        compareId={column.compareId}
-                        compareLabel={column.compareLabel}
-                        compareKind="host"
-                        compareSubLabel={column.compareSubLabel}
-                        model={column.model}
-                        comparisonSummaries={Object.values(compareSummaries)}
-                        selectedServers={selectedServers}
-                        broadcastRequest={broadcastRequest}
-                        deterministicExecutionRequest={
-                          deterministicExecutionRequest
-                        }
-                        stopRequestId={stopBroadcastRequestId}
-                        executionConfig={column.executionConfig}
-                        hostedContext={{
-                          projectId: convexProjectId,
-                          selectedServerIds: hostedSelectedServerIds,
-                          oauthTokens: hostedOAuthTokens,
-                        }}
-                        hostedOrgModelConfig={hostedOrgModelConfig}
-                        displayMode={displayMode}
-                        onDisplayModeChange={handleDisplayModeChange}
-                        hostStyle={column.hostSnapshot.hostStyle}
-                        effectiveThreadTheme={effectiveThreadTheme}
-                        deviceType={storeDeviceType}
-                        hideInlineEdit={hideInlineEdit}
-                        onWidgetStateChange={onWidgetStateChange}
-                        toolRenderOverrides={externalToolRenderOverrides}
-                        isExecuting={isExecuting}
-                        executingToolName={executingToolName}
-                        invokingMessage={invokingMessage}
-                        onSummaryChange={handleMultiModelSummaryChange}
-                        onHasMessagesChange={handleMultiModelHasMessagesChange}
-                        // Multi-host mode varies only the host; per-card
-                        // model title + Latency/Tokens chrome is redundant
-                        // (same model in every column) and noisy. Keep the
-                        // Trace/Chat/Raw tab strip — that comes from
-                        // `showTraceTabs` inside the header.
-                        showComparisonChrome={false}
-                        suppressThreadEmptyHint={false}
-                        compareEnterVersion={multiCompareEnterVersion}
-                        compareEnterMessages={multiCompareEnterMessages}
-                        addColumnSeed={
-                          compareAddColumnSeeds[column.compareId] ?? null
-                        }
-                        onTranscriptSync={handleMultiModelTranscriptSync}
-                        showSenderAvatars={showSenderAvatars}
-                        resolveSenderAvatar={resolveSenderAvatar}
-                        outgoingSenderMetadata={outgoingSenderMetadata}
-                        hostSnapshot={column.hostSnapshot}
-                        hostCapsResolver={column.hostConfig}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div
-                    data-testid="playground-multi-model-grid"
-                    className={cn(
-                      "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                      resolvedSelectedModels.length <= 1 && "grid-cols-1",
-                      resolvedSelectedModels.length === 2 &&
-                        "grid-cols-1 xl:grid-cols-2",
-                      resolvedSelectedModels.length >= 3 &&
-                        "grid-cols-1 xl:grid-cols-3"
-                    )}
-                  >
-                    {resolvedSelectedModels.map((model) => {
-                      const compareId = String(model.id);
-                      return (
+              {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
+                <MultiModelEmptyTraceDiagnosticsPanel
+                  activeTraceViewMode={activeTraceViewMode}
+                  effectiveHasMessages={effectiveHasMessages}
+                  hasLiveTimelineContent={hasLiveTimelineContent}
+                  traceViewerTrace={traceViewerTrace}
+                  model={multiModelTracePanelModel}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
+                  traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
+                  rawRequestPayloadHistory={{
+                    entries: requestPayloadHistory,
+                    hasUiMessages: effectiveHasMessages,
+                  }}
+                  rawEmptyTestId="playground-multi-empty-raw-pending"
+                  timelineEmptyTestId="playground-multi-empty-trace-pending"
+                  onRevealNavigateToChat={() => setTraceViewMode("chat")}
+                  errorFooterSlot={
+                    errorMessage ? (
+                      <div className="max-w-4xl mx-auto px-4 pt-4">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={handleResetAllChats}
+                        />
+                      </div>
+                    ) : null
+                  }
+                  chatInputSlot={
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                  }
+                />
+              ) : null}
+
+              {!effectiveHasMessages && !showMultiModelTraceEmptyPanel ? (
+                <MultiModelStartersEmptyLayout
+                  isAuthLoading={isAuthLoading}
+                  showStarterPrompts={showMultiModelStarterPrompts}
+                  authPrimarySlot={
+                    isAuthLoading ? (
+                      <div className="text-center space-y-4">
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                        <p className="text-sm text-muted-foreground">
+                          Loading...
+                        </p>
+                      </div>
+                    ) : shouldShowUpsell ? (
+                      <div className="space-y-4">
+                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                      </div>
+                    ) : null
+                  }
+                  onStarterPrompt={handleMultiModelStarterPrompt}
+                  chatInputSlot={
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                  }
+                />
+              ) : null}
+
+              <div
+                data-testid={
+                  isMultiHostMode
+                    ? "playground-multi-host-compare-section"
+                    : "playground-multi-model-compare-section"
+                }
+                className={cn(
+                  "flex flex-1 min-h-0 flex-col overflow-hidden",
+                  !effectiveHasMessages && "hidden"
+                )}
+                aria-hidden={!effectiveHasMessages}
+              >
+                <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
+                  {isMultiHostMode ? (
+                    // Phase 4 multi-host compare grid. Project-scoped
+                    // server config means `selectedServers`,
+                    // `hostedSelectedServerIds`, and `hostedOAuthTokens`
+                    // are SHARED across all columns — there is no
+                    // per-host server set in v1 (see plan §"What v1 does
+                    // NOT compare"). Each column gets its own
+                    // `hostSnapshot` (style, caps, chat UI, MCP profile)
+                    // and its own `hostCapsResolver` so per-server
+                    // capability gating evaluates under the right host
+                    // identity. Every column shares the lead's model and
+                    // the global chip `executionConfig` — host is the only
+                    // varying axis. See `multiHostColumns` memo above.
+                    <div
+                      data-testid="playground-multi-host-grid"
+                      className={cn(
+                        "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                        multiHostColumns.length <= 1 && "grid-cols-1",
+                        multiHostColumns.length === 2 &&
+                          "grid-cols-1 xl:grid-cols-2",
+                        multiHostColumns.length >= 3 &&
+                          "grid-cols-1 xl:grid-cols-3"
+                      )}
+                    >
+                      {multiHostColumns.map((column) => (
                         <MultiModelPlaygroundCard
-                          // Phase 3: include `compareKind` in the key so
-                          // model-mode and host-mode keys never collide
-                          // during mode-swap transitions.
-                          key={`${multiModelSessionGeneration}:model:${compareId}`}
-                          compareId={compareId}
-                          compareLabel={model.name}
-                          compareKind="model"
-                          model={model}
+                          // Include `compareKind` in the key so a mode
+                          // swap between multi-model and multi-host can't
+                          // accidentally reuse a card instance keyed by a
+                          // hostId that happens to equal a modelId string.
+                          key={`${multiModelSessionGeneration}:host:${column.compareId}`}
+                          compareId={column.compareId}
+                          compareLabel={column.compareLabel}
+                          compareKind="host"
+                          compareSubLabel={column.compareSubLabel}
+                          model={column.model}
                           comparisonSummaries={Object.values(compareSummaries)}
                           selectedServers={selectedServers}
                           broadcastRequest={broadcastRequest}
@@ -3788,25 +3746,17 @@ export function PlaygroundMain({
                             deterministicExecutionRequest
                           }
                           stopRequestId={stopBroadcastRequestId}
-                          executionConfig={{
-                            systemPrompt,
-                            temperature,
-                            requireToolApproval,
-                            progressiveToolDiscovery:
-                              previewedHost?.config?.progressiveToolDiscovery,
-                            respectToolVisibility:
-                              previewedHost?.config?.respectToolVisibility,
-                            builtInToolIds:
-                              previewedHost?.config?.builtInToolIds,
-                          }}
+                          executionConfig={column.executionConfig}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
                             oauthTokens: hostedOAuthTokens,
+                            hostId: column.compareId,
                           }}
+                          hostedOrgModelConfig={hostedOrgModelConfig}
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
-                          hostStyle={hostStyle}
+                          hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={effectiveThreadTheme}
                           deviceType={storeDeviceType}
                           hideInlineEdit={hideInlineEdit}
@@ -3816,200 +3766,301 @@ export function PlaygroundMain({
                           executingToolName={executingToolName}
                           invokingMessage={invokingMessage}
                           onSummaryChange={handleMultiModelSummaryChange}
-                          onHasMessagesChange={handleMultiModelHasMessagesChange}
-                          showComparisonChrome={
-                            resolvedSelectedModels.length > 1
+                          onHasMessagesChange={
+                            handleMultiModelHasMessagesChange
                           }
+                          // Multi-host mode varies only the host; per-card
+                          // model title + Latency/Tokens chrome is redundant
+                          // (same model in every column) and noisy. Keep the
+                          // Trace/Chat/Raw tab strip — that comes from
+                          // `showTraceTabs` inside the header.
+                          showComparisonChrome={false}
                           suppressThreadEmptyHint={false}
                           compareEnterVersion={multiCompareEnterVersion}
                           compareEnterMessages={multiCompareEnterMessages}
                           addColumnSeed={
-                            compareAddColumnSeeds[compareId] ?? null
+                            compareAddColumnSeeds[column.compareId] ?? null
                           }
                           onTranscriptSync={handleMultiModelTranscriptSync}
-                          // Model-mode does NOT pass `hostSnapshot`. The
-                          // card falls back to tab-root provider values
-                          // via `useContext`, so the rendered tree is
-                          // behavior-identical to today.
+                          showSenderAvatars={showSenderAvatars}
+                          resolveSenderAvatar={resolveSenderAvatar}
+                          outgoingSenderMetadata={outgoingSenderMetadata}
+                          hostSnapshot={column.hostSnapshot}
+                          hostCapsResolver={column.hostConfig}
                         />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {!showMultiModelTraceEmptyPanel ? (
-                <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm">
-                  {!isAuthLoading ? (
-                    <div className="w-full p-4">
-                      <ChatInput
-                        {...sharedChatInputProps}
-                        hasMessages={effectiveHasMessages}
-                      />
+                      ))}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div
+                      data-testid="playground-multi-model-grid"
+                      className={cn(
+                        "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                        resolvedSelectedModels.length <= 1 && "grid-cols-1",
+                        resolvedSelectedModels.length === 2 &&
+                          "grid-cols-1 xl:grid-cols-2",
+                        resolvedSelectedModels.length >= 3 &&
+                          "grid-cols-1 xl:grid-cols-3"
+                      )}
+                    >
+                      {resolvedSelectedModels.map((model) => {
+                        const compareId = String(model.id);
+                        return (
+                          <MultiModelPlaygroundCard
+                            // Phase 3: include `compareKind` in the key so
+                            // model-mode and host-mode keys never collide
+                            // during mode-swap transitions.
+                            key={`${multiModelSessionGeneration}:model:${compareId}`}
+                            compareId={compareId}
+                            compareLabel={model.name}
+                            compareKind="model"
+                            model={model}
+                            comparisonSummaries={Object.values(
+                              compareSummaries
+                            )}
+                            selectedServers={selectedServers}
+                            broadcastRequest={broadcastRequest}
+                            deterministicExecutionRequest={
+                              deterministicExecutionRequest
+                            }
+                            stopRequestId={stopBroadcastRequestId}
+                            executionConfig={{
+                              systemPrompt,
+                              temperature,
+                              requireToolApproval,
+                              progressiveToolDiscovery:
+                                previewedHost?.config?.progressiveToolDiscovery,
+                              respectToolVisibility:
+                                previewedHost?.config?.respectToolVisibility,
+                              modelVisibleMcpToolResults:
+                                previewedHost?.config
+                                  ?.modelVisibleMcpToolResults,
+                              mcpToolResultImageRendering:
+                                effectiveMcpToolResultImageRendering,
+                              builtInToolIds:
+                                previewedHost?.config?.builtInToolIds,
+                            }}
+                            hostedContext={{
+                              projectId: convexProjectId,
+                              selectedServerIds: hostedSelectedServerIds,
+                              oauthTokens: hostedOAuthTokens,
+                              ...(previewedHostId
+                                ? { hostId: previewedHostId }
+                                : {}),
+                            }}
+                            displayMode={displayMode}
+                            onDisplayModeChange={handleDisplayModeChange}
+                            hostStyle={hostStyle}
+                            effectiveThreadTheme={effectiveThreadTheme}
+                            deviceType={storeDeviceType}
+                            hideInlineEdit={hideInlineEdit}
+                            onWidgetStateChange={onWidgetStateChange}
+                            toolRenderOverrides={externalToolRenderOverrides}
+                            isExecuting={isExecuting}
+                            executingToolName={executingToolName}
+                            invokingMessage={invokingMessage}
+                            onSummaryChange={handleMultiModelSummaryChange}
+                            onHasMessagesChange={
+                              handleMultiModelHasMessagesChange
+                            }
+                            showComparisonChrome={
+                              resolvedSelectedModels.length > 1
+                            }
+                            suppressThreadEmptyHint={false}
+                            compareEnterVersion={multiCompareEnterVersion}
+                            compareEnterMessages={multiCompareEnterMessages}
+                            addColumnSeed={
+                              compareAddColumnSeeds[compareId] ?? null
+                            }
+                            onTranscriptSync={handleMultiModelTranscriptSync}
+                            // Model-mode does NOT pass `hostSnapshot`. The
+                            // card falls back to tab-root provider values
+                            // via `useContext`, so the rendered tree is
+                            // behavior-identical to today.
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              ) : null}
-            </div>
-          </PlaygroundCompareThemeScope>
-        ) : (
-          <>
-            {showLiveTraceDiagnostics && (
-              <ChatboxHostStyleProvider value={hostStyle}>
-                <ChatboxHostCapabilitiesOverrideProvider
-                  value={hostCapabilitiesOverride}
-                >
-                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
-                  <div
-                    className={cn(
-                      "flex h-full min-h-0 flex-col overflow-hidden",
-                      effectiveThreadTheme === "dark" && "dark"
-                    )}
-                    data-testid="playground-trace-diagnostics"
-                  >
-                    <SingleModelTraceDiagnosticsBody
-                      chatSessionId={chatSessionId}
-                      activeTraceViewMode={activeTraceViewMode}
-                      isThreadEmpty={isThreadEmpty}
-                      showLiveTracePending={showLiveTracePending}
-                      trace={traceViewerTrace}
-                      model={selectedModel}
-                      toolsMetadata={toolsMetadata}
-                      toolServerMap={toolServerMap}
-                      traceStartedAtMs={
-                        effectiveLiveTraceEnvelope?.traceStartedAtMs ?? null
-                      }
-                      traceEndedAtMs={
-                        effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
-                      }
-                      onRevealNavigateToChat={() => setTraceViewMode("chat")}
-                      sendFollowUpMessage={handleSendFollowUp}
-                      displayMode={displayMode}
-                      onDisplayModeChange={handleDisplayModeChange}
-                      onFullscreenChange={setIsWidgetFullscreen}
-                      rawRequestPayloadHistory={{
-                        entries: requestPayloadHistory,
-                        hasUiMessages: !isThreadEmpty,
-                      }}
-                      harnessBuiltinTools={harnessBuiltinTools}
-                      rawEmptyTestId="playground-live-raw-pending"
-                      timelineEmptyTestId="playground-live-trace-pending"
-                      nonRawShellClassName="flex-1 min-h-0 overflow-hidden px-4 py-4"
-                    />
-                    <div className="flex-shrink-0 border-t border-border bg-background/70">
-                      <div className="max-w-4xl mx-auto w-full p-3">
-                        {errorMessage && (
-                          <div className="pb-3">
-                            <ErrorBox
-                              message={errorMessage.message}
-                              errorDetails={errorMessage.details}
-                              code={errorMessage.code}
-                              statusCode={errorMessage.statusCode}
-                              isRetryable={errorMessage.isRetryable}
-                              isMCPJamPlatformError={
-                                errorMessage.isMCPJamPlatformError
-                              }
-                              onResetChat={resetChat}
-                            />
-                          </div>
-                        )}
+
+                {!showMultiModelTraceEmptyPanel ? (
+                  <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm">
+                    {!isAuthLoading ? (
+                      <div className="w-full p-4">
                         <ChatInput
                           {...sharedChatInputProps}
-                          hasMessages={!isThreadEmpty}
+                          hasMessages={effectiveHasMessages}
                         />
                       </div>
-                    </div>
+                    ) : null}
                   </div>
-                </ChatboxHostThemeProvider>
-                </ChatboxHostCapabilitiesOverrideProvider>
-              </ChatboxHostStyleProvider>
-            )}
-
-            {/* Device frame container */}
-            <div
-              className="flex h-full items-center justify-center min-h-0 overflow-auto"
-              style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
-            >
-              <ChatboxHostStyleProvider value={hostStyle}>
-                <ChatboxHostCapabilitiesOverrideProvider
-                  value={hostCapabilitiesOverride}
-                >
-                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
-                  <div
-                    className={cn(
-                      "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
-                      effectiveThreadTheme === "dark" && "dark"
-                    )}
-                    data-testid="playground-thread-shell"
-                    data-host-style={hostStyle}
-                    data-theme-preset={themePreset}
-                    data-thread-theme={effectiveThreadTheme}
-                    style={{
-                      width: showPostConnectGuide ? "100%" : deviceConfig.width,
-                      maxWidth: "100%",
-                      height: showPostConnectGuide
-                        ? "100%"
-                        : isWidgetFullTakeover
-                        ? "100%"
-                        : deviceConfig.height,
-                      maxHeight: "100%",
-                      backgroundColor: showPostConnectGuide
-                        ? undefined
-                        : hostBackgroundColor,
-                    }}
+                ) : null}
+              </div>
+            </PlaygroundCompareThemeScope>
+          ) : (
+            <>
+              {showLiveTraceDiagnostics && (
+                <ChatboxHostStyleProvider value={hostStyle}>
+                  <ChatboxHostCapabilitiesOverrideProvider
+                    value={hostCapabilitiesOverride}
                   >
-                    <div className="flex flex-col flex-1 min-h-0">
-                      {threadContent}
-                    </div>
-                  </div>
-                </ChatboxHostThemeProvider>
-                </ChatboxHostCapabilitiesOverrideProvider>
-              </ChatboxHostStyleProvider>
-            </div>
-          </>
-        )}
+                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                      <div
+                        className={cn(
+                          "flex h-full min-h-0 flex-col overflow-hidden",
+                          effectiveThreadTheme === "dark" && "dark"
+                        )}
+                        data-testid="playground-trace-diagnostics"
+                      >
+                        <SingleModelTraceDiagnosticsBody
+                          chatSessionId={chatSessionId}
+                          activeTraceViewMode={activeTraceViewMode}
+                          isThreadEmpty={isThreadEmpty}
+                          showLiveTracePending={showLiveTracePending}
+                          trace={traceViewerTrace}
+                          model={selectedModel}
+                          toolsMetadata={toolsMetadata}
+                          toolServerMap={toolServerMap}
+                          traceStartedAtMs={
+                            effectiveLiveTraceEnvelope?.traceStartedAtMs ?? null
+                          }
+                          traceEndedAtMs={
+                            effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
+                          }
+                          onRevealNavigateToChat={() =>
+                            setTraceViewMode("chat")
+                          }
+                          sendFollowUpMessage={handleSendFollowUp}
+                          displayMode={displayMode}
+                          onDisplayModeChange={handleDisplayModeChange}
+                          onFullscreenChange={setIsWidgetFullscreen}
+                          rawRequestPayloadHistory={{
+                            entries: requestPayloadHistory,
+                            hasUiMessages: !isThreadEmpty,
+                          }}
+                          harnessBuiltinTools={harnessBuiltinTools}
+                          rawEmptyTestId="playground-live-raw-pending"
+                          timelineEmptyTestId="playground-live-trace-pending"
+                          nonRawShellClassName="flex-1 min-h-0 overflow-hidden px-4 py-4"
+                        />
+                        <div className="flex-shrink-0 border-t border-border bg-background/70">
+                          <div className="max-w-4xl mx-auto w-full p-3">
+                            {errorMessage && (
+                              <div className="pb-3">
+                                <ErrorBox
+                                  message={errorMessage.message}
+                                  errorDetails={errorMessage.details}
+                                  code={errorMessage.code}
+                                  statusCode={errorMessage.statusCode}
+                                  isRetryable={errorMessage.isRetryable}
+                                  isMCPJamPlatformError={
+                                    errorMessage.isMCPJamPlatformError
+                                  }
+                                  onResetChat={resetChat}
+                                />
+                              </div>
+                            )}
+                            <ChatInput
+                              {...sharedChatInputProps}
+                              hasMessages={!isThreadEmpty}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </ChatboxHostThemeProvider>
+                  </ChatboxHostCapabilitiesOverrideProvider>
+                </ChatboxHostStyleProvider>
+              )}
+
+              {/* Device frame container */}
+              <div
+                className="flex h-full items-center justify-center min-h-0 overflow-auto"
+                style={
+                  showLiveTraceDiagnostics ? { display: "none" } : undefined
+                }
+              >
+                <ChatboxHostStyleProvider value={hostStyle}>
+                  <ChatboxHostCapabilitiesOverrideProvider
+                    value={hostCapabilitiesOverride}
+                  >
+                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                      <div
+                        className={cn(
+                          "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                          effectiveThreadTheme === "dark" && "dark"
+                        )}
+                        data-testid="playground-thread-shell"
+                        data-host-style={hostStyle}
+                        data-theme-preset={themePreset}
+                        data-thread-theme={effectiveThreadTheme}
+                        style={{
+                          width: showPostConnectGuide
+                            ? "100%"
+                            : deviceConfig.width,
+                          maxWidth: "100%",
+                          height: showPostConnectGuide
+                            ? "100%"
+                            : isWidgetFullTakeover
+                            ? "100%"
+                            : deviceConfig.height,
+                          maxHeight: "100%",
+                          backgroundColor: showPostConnectGuide
+                            ? undefined
+                            : hostBackgroundColor,
+                        }}
+                      >
+                        <div className="flex flex-col flex-1 min-h-0">
+                          {threadContent}
+                        </div>
+                      </div>
+                    </ChatboxHostThemeProvider>
+                  </ChatboxHostCapabilitiesOverrideProvider>
+                </ChatboxHostStyleProvider>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-    <AlertDialog
-      open={discardDraftDialogOpen}
-      onOpenChange={(open) => {
-        setDiscardDraftDialogOpen(open);
-        if (!open && !discardDraftSettledRef.current) {
-          discardDraftSettledRef.current = true;
-          const resolve = discardDraftResolveRef.current;
-          discardDraftResolveRef.current = null;
-          resolve?.(false);
-        }
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Your chat has text that has not been sent. Discard your current
-            draft and continue?
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel
-            onClick={(event) => {
-              event.preventDefault();
-              settleDiscardDraft(false);
-            }}
-          >
-            Cancel
-          </AlertDialogCancel>
-          <AlertDialogAction
-            onClick={(event) => {
-              event.preventDefault();
-              settleDiscardDraft(true);
-            }}
-          >
-            Discard and continue
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      <AlertDialog
+        open={discardDraftDialogOpen}
+        onOpenChange={(open) => {
+          setDiscardDraftDialogOpen(open);
+          if (!open && !discardDraftSettledRef.current) {
+            discardDraftSettledRef.current = true;
+            const resolve = discardDraftResolveRef.current;
+            discardDraftResolveRef.current = null;
+            resolve?.(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your chat has text that has not been sent. Discard your current
+              draft and continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={(event) => {
+                event.preventDefault();
+                settleDiscardDraft(false);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                settleDiscardDraft(true);
+              }}
+            >
+              Discard and continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </WidgetSurfaceProvider>
   );
 }

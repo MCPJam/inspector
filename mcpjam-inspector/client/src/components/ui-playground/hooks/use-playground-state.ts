@@ -38,6 +38,10 @@ import {
 } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useOnboarding } from "@/hooks/use-onboarding";
@@ -98,6 +102,8 @@ export interface UsePlaygroundStateOptions {
   ensureServersReady?: (
     serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   /**
    * Active multi-server selection. When non-empty, the Playground tools pane
@@ -278,6 +284,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
+    modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);

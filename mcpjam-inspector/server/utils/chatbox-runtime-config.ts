@@ -15,6 +15,10 @@
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { logger } from "./logger.js";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
 export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
@@ -33,6 +37,11 @@ export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
   // mcpjam-backend PR #334 (which adds the field) returns omitted →
   // undefined and the inspector falls back to its auto policy.
   progressiveToolDiscovery?: boolean;
+  // Host/client policy for MCP tool-result content/resource visibility.
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  // Human-facing rendering policy for MCP tool-returned images.
+  // Optional so older backends return omitted → inspector defaults inline.
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Built-in tool ids from the pinned HostConfigV2 (e.g. ["web_search"]).
   // Optional so a backend older than mcpjam-backend PR #484 (which adds
   // the field to runtime-config) returns omitted → no built-in tools.

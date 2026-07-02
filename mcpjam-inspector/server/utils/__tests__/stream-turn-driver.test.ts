@@ -25,6 +25,7 @@ function makeDriver(spans: EvalTraceSpan[] = [], onStepFinish?: any) {
     turnId: "turn-1",
     promptIndex: 0,
     modelId: "anthropic/claude",
+    engine: "emulated",
     traceBaseMs: 1000,
     spans,
     onStepFinish,
@@ -47,6 +48,30 @@ describe("StreamTurnDriver", () => {
         turnId: "turn-1",
         promptIndex: 0,
         startedAtMs: 1000,
+        engine: "emulated",
+      },
+    });
+  });
+
+  it("can annotate harness-backed turns", () => {
+    const { writer, chunks } = collectingWriter();
+    const d = new StreamTurnDriver({
+      turnId: "turn-1",
+      promptIndex: 0,
+      modelId: "anthropic/claude",
+      engine: "harness",
+      harness: "claude-code",
+      traceBaseMs: 1000,
+      spans: [],
+    });
+
+    d.emitTurnStart(writer);
+
+    expect(chunks[0]).toMatchObject({
+      data: {
+        type: "turn_start",
+        engine: "harness",
+        harness: "claude-code",
       },
     });
   });

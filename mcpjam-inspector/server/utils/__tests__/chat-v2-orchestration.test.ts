@@ -257,7 +257,7 @@ describe("prepareChatV2", () => {
             app_tool: { ui: { visibility: ["app"] } },
             both_tool: { ui: { visibility: ["model", "app"] } },
           }
-        : {},
+        : {}
     );
 
     const result = await prepareChatV2({
@@ -293,6 +293,31 @@ describe("prepareChatV2", () => {
       ["live-server"],
       undefined
     );
+  });
+
+  it("passes model-visible MCP image-result policy into MCP tool conversion", async () => {
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "srv");
+
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      modelVisibleMcpToolResults: {
+        directContent: { image: true },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      },
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["srv"], {
+      modelVisibleMcpToolResults: {
+        directContent: { image: true },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      },
+    });
   });
 
   describe("progressive discovery", () => {
@@ -361,6 +386,37 @@ describe("prepareChatV2", () => {
       expect(result.progressivePlan.reasons).toEqual(["forced_on"]);
     });
 
+    it("keeps progressive meta-tools out of harness-prepared turns", async () => {
+      const previous = process.env.MCPJAM_PROGRESSIVE_TOOLS;
+      process.env.MCPJAM_PROGRESSIVE_TOOLS = "on";
+      try {
+        const manager = manyToolsManager(40);
+        const result = await prepareChatV2({
+          mcpClientManager: manager,
+          selectedServers: ["srv"],
+          modelDefinition: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            contextLength: 200_000,
+          } as any,
+          systemPrompt: "Base prompt.",
+          progressiveToolDiscovery: { enabled: true },
+          harness: "claude-code",
+        });
+
+        expect(result.progressivePlan.enabled).toBe(false);
+        expect(result.progressivePlan.reasons).toEqual(["forced_off"]);
+        expect(Object.keys(result.allTools)).not.toContain("search_mcp_tools");
+        expect(Object.keys(result.allTools)).not.toContain("load_mcp_tools");
+      } finally {
+        if (previous === undefined) {
+          delete process.env.MCPJAM_PROGRESSIVE_TOOLS;
+        } else {
+          process.env.MCPJAM_PROGRESSIVE_TOOLS = previous;
+        }
+      }
+    });
+
     it("supports the full search → load → real-tool-call loop end to end", async () => {
       // End-to-end exercise of the progressive flow on a large
       // catalog: the model uses `search_mcp_tools` to locate the
@@ -404,11 +460,11 @@ describe("prepareChatV2", () => {
       const search = (result.allTools as any).search_mcp_tools.execute;
       const searchRes = await search(
         { query: "create task assignee" },
-        {} as any,
+        {} as any
       );
       expect(searchRes.matches.length).toBeGreaterThan(0);
       const target = searchRes.matches.find(
-        (m: any) => m.name === "asana_task_17",
+        (m: any) => m.name === "asana_task_17"
       );
       expect(target).toBeDefined();
       const targetToolId: string = target.toolId;
@@ -418,14 +474,14 @@ describe("prepareChatV2", () => {
       const loadRes = await load({ toolIds: [targetToolId] }, {} as any);
       expect(loadRes.loaded.map((l: any) => l.toolId)).toEqual([targetToolId]);
       expect(result.discoveryState.newlyLoadedToolIds.has(targetToolId)).toBe(
-        true,
+        true
       );
 
       // 3. The orchestrator promotes newly-loaded ids between steps;
       // simulate that here so the gate sees the tool as loaded.
       commitNewlyLoaded(result.discoveryState);
       const activeNames = new Set(
-        resolveActiveToolNames(result.progressivePlan, result.discoveryState),
+        resolveActiveToolNames(result.progressivePlan, result.discoveryState)
       );
       expect(activeNames.has("asana_task_17")).toBe(true);
       // Non-loaded siblings stay hidden from the model.
@@ -436,7 +492,7 @@ describe("prepareChatV2", () => {
       const gated = gateToolsToActiveSubset(
         result.allTools as Record<string, unknown>,
         result.progressivePlan,
-        () => result.discoveryState,
+        () => result.discoveryState
       );
       const loadedOut = await (gated as any).asana_task_17.execute({}, {});
       expect(loadedOut).toEqual({ ok: true, index: 17 });
@@ -445,10 +501,10 @@ describe("prepareChatV2", () => {
       // 5. …and rejects the siblings the model never loaded, pointing
       // back at load_mcp_tools so the model can recover in-loop.
       await expect(
-        (gated as any).asana_task_18.execute({}, {}),
+        (gated as any).asana_task_18.execute({}, {})
       ).rejects.toThrow(/asana_task_18.*not loaded/);
       await expect(
-        (gated as any).asana_task_18.execute({}, {}),
+        (gated as any).asana_task_18.execute({}, {})
       ).rejects.toThrow(/load_mcp_tools/);
     });
 
@@ -472,7 +528,7 @@ describe("prepareChatV2", () => {
               _serverId: "srv",
               execute: async () => ({}),
             },
-          ]),
+          ])
         ),
       });
       await expect(
@@ -485,7 +541,7 @@ describe("prepareChatV2", () => {
             contextLength: 200_000,
           } as any,
           systemPrompt: "Base prompt.",
-        }),
+        })
       ).rejects.toThrow(/search_mcp_tools/);
     });
   });
@@ -570,7 +626,7 @@ describe("prepareChatV2 built-in tools", () => {
         ...baseArgs,
         mcpClientManager: manager,
         builtInTools: webSearchBuiltIn(),
-      }),
+      })
     ).rejects.toThrow(/web_search.*collides/);
   });
 
@@ -595,7 +651,7 @@ describe("prepareChatV2 built-in tools", () => {
         mcpClientManager: manager,
         appTools,
         builtInTools: webSearchBuiltIn(),
-      }),
+      })
     ).rejects.toThrow(/web_search.*collides/);
   });
 });
@@ -709,12 +765,12 @@ describe("widget model context helpers (SEP-1865 boundary)", () => {
 
   it("rejects malformed input with the widget-context error type", () => {
     expect(() => validateWidgetModelContextEntries({})).toThrow(
-      WidgetModelContextValidationError,
+      WidgetModelContextValidationError
     );
     expect(() =>
       validateWidgetModelContextEntries([
         { ...validEntry, context: { content: "not-array" } },
-      ]),
+      ])
     ).toThrow(/context.content must be an array/);
   });
 

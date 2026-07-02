@@ -51,6 +51,7 @@ import { stripConvexReservedKeys } from "@/lib/convex-args";
 import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -119,12 +120,14 @@ interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   serverConnectionStatus?: ConnectionStatus;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
 
 export function ToolsTab({
   serverConfig,
   serverName,
   serverConnectionStatus,
+  mcpToolResultImageRendering,
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
@@ -821,6 +824,7 @@ export function ToolsTab({
       toolMeta={getToolMeta(lastToolName)}
       responseDurationMs={responseDurationMs}
       serverName={serverName}
+      mcpToolResultImageRendering={mcpToolResultImageRendering}
     />
   ) : (
     <div className="h-full flex items-center justify-center">

@@ -1,4 +1,8 @@
 import { type UIMessage } from "@ai-sdk/react";
+import {
+  mergeMcpToolOriginMetadata,
+  readMcpToolOriginServerId,
+} from "@/shared/mcp-tool-origin-metadata";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -122,6 +126,96 @@ function readToolCallId(part: TranscriptPart): string | undefined {
   return undefined;
 }
 
+function readToolOriginMetadata(
+  part: TranscriptPart
+): Record<string, unknown> | undefined {
+  const metadataCandidates = [
+    part.providerOptions,
+    part.callProviderMetadata,
+    part.resultProviderMetadata,
+    part.providerMetadata,
+  ];
+  const providerMetadata = metadataCandidates.find(
+    (candidate) =>
+      candidate !== null &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+  );
+  const directServerId =
+    typeof part.serverId === "string" && part.serverId.length > 0
+      ? part.serverId
+      : undefined;
+  const serverId =
+    directServerId ??
+    metadataCandidates
+      .map((candidate) => readMcpToolOriginServerId(candidate))
+      .find((candidate): candidate is string => !!candidate);
+  return mergeMcpToolOriginMetadata(providerMetadata, serverId);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function unwrapJsonEnvelope(value: unknown): unknown {
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return current;
+    }
+    const record = current as Record<string, unknown>;
+    if (record.type !== "json" || !hasOwn(record, "value")) {
+      return current;
+    }
+    current = record.value;
+  }
+  return current;
+}
+
+function isModelVisibleImageOutput(value: unknown): boolean {
+  const output = unwrapJsonEnvelope(value);
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return false;
+  }
+  const record = output as Record<string, unknown>;
+  if (record.type !== "content" || !Array.isArray(record.value)) {
+    return false;
+  }
+  return record.value.some((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      return false;
+    }
+    const partRecord = part as Record<string, unknown>;
+    if (partRecord.type === "text" && typeof partRecord.text === "string") {
+      return (
+        partRecord.text.startsWith("[image omitted:") ||
+        partRecord.text.startsWith("[resource link omitted:") ||
+        partRecord.text.startsWith("[embedded image resource omitted:")
+      );
+    }
+    return (
+      (partRecord.type === "media" || partRecord.type === "image-data") &&
+      typeof partRecord.mediaType === "string" &&
+      partRecord.mediaType.startsWith("image/")
+    );
+  });
+}
+
+function readHydratedToolOutput(part: TranscriptPart): unknown {
+  const hasResult = hasOwn(part, "result");
+  const hasOutput = hasOwn(part, "output");
+  if (
+    hasResult &&
+    hasOutput &&
+    isModelVisibleImageOutput(part.output)
+  ) {
+    return part.result;
+  }
+  if (hasOutput) return part.output;
+  if (hasResult) return part.result;
+  return {};
+}
+
 function cloneTranscriptMessage(msg: TranscriptMessage): TranscriptMessage {
   if (typeof msg.content === "string") {
     return { ...msg };
@@ -189,6 +283,11 @@ export function mergeTranscriptToolResults(transcript: unknown[]): unknown[] {
             if (tp.output !== undefined) {
               p.output = tp.output;
             }
+            const providerMetadata =
+              readToolOriginMetadata(tp) ?? readToolOriginMetadata(p);
+            if (providerMetadata) {
+              p.providerOptions = providerMetadata;
+            }
             patched = true;
             break;
           }
@@ -243,19 +342,24 @@ function convertParts(
     if (partType === "text" && typeof part.text === "string") {
       parts.push({ type: "text", text: part.text });
     } else if (partType === "tool-call") {
+      const providerMetadata = readToolOriginMetadata(part);
       // Use "dynamic-tool" format so that PartSwitch can access toolCallId
       // at the top level (required for toolRenderOverrides lookup).
       // Use "output-available" state (not "result") — the rendering pipeline
       // (WidgetReplay) checks for this state to decide whether to render.
-      // Prefer the raw `output` payload when available because it preserves
-      // widget metadata like `_meta.ui.resourceUri` and `_serverId`.
+      // Preserve the UI/raw tool payload. Image tool traces may carry
+      // model-facing media in `output` and raw MCP JSON in `result`; legacy
+      // widget traces may carry raw widget data in `output`.
       parts.push({
         type: "dynamic-tool",
         toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
         state: "output-available" as const,
         input: part.args ?? part.input ?? {},
-        output: part.output ?? part.result ?? {},
+        output: readHydratedToolOutput(part),
+        ...(providerMetadata
+          ? { callProviderMetadata: providerMetadata }
+          : {}),
       } as any);
     } else if (partType === "tool-result") {
       // Tool results are typically already captured via tool-call results
