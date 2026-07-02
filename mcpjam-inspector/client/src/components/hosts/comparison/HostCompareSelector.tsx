@@ -57,8 +57,10 @@ interface HostCompareSelectorProps {
   onSupportFilterChange: (mode: SupportFilterMode) => void;
   showDescriptions: boolean;
   onShowDescriptionsChange: (enabled: boolean) => void;
+  descriptionsDisabled?: boolean;
   disabled?: boolean;
   themeMode?: HostThemeMode;
+  mobileOptimized?: boolean;
 }
 
 export function HostCompareSelector({
@@ -72,15 +74,22 @@ export function HostCompareSelector({
   onSupportFilterChange,
   showDescriptions,
   onShowDescriptionsChange,
+  descriptionsDisabled = false,
   disabled = false,
   themeMode = "light",
+  mobileOptimized = false,
 }: HostCompareSelectorProps) {
   const selectedSet = new Set(selectedHostIds);
   const inlineHosts = hosts.slice(0, INLINE_CHIP_LIMIT);
   const overflowHosts = hosts.slice(INLINE_CHIP_LIMIT);
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div
+      className={cn(
+        "mb-4 flex flex-wrap items-center gap-2",
+        mobileOptimized && "min-w-0"
+      )}
+    >
       {inlineHosts.map((host) => (
         <HostCompareChip
           key={host.hostId}
@@ -104,11 +113,21 @@ export function HostCompareSelector({
         />
       ) : null}
 
-      <div className="ml-auto flex items-center gap-4">
+      <div
+        className={cn(
+          "ml-auto flex items-center gap-4",
+          mobileOptimized &&
+            "ml-0 min-w-0 w-full flex-wrap gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap sm:gap-4"
+        )}
+      >
         <div
           role="group"
           aria-label="Filter by support level"
-          className="flex items-center gap-0.5 rounded-full border border-border p-0.5"
+          className={cn(
+            "flex items-center gap-0.5 rounded-full border border-border p-0.5",
+            mobileOptimized &&
+              "max-w-full overflow-x-auto [-webkit-overflow-scrolling:touch]"
+          )}
         >
           {SUPPORT_FILTERS.map((f) => {
             const active = supportFilter === f.value;
@@ -123,11 +142,12 @@ export function HostCompareSelector({
                 onClick={() => onSupportFilterChange(f.value)}
                 className={cn(
                   "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                  mobileOptimized && "shrink-0",
                   "disabled:cursor-not-allowed disabled:opacity-50",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                   active
                     ? "bg-primary/10 text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
+                    : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 {f.label}
@@ -135,15 +155,32 @@ export function HostCompareSelector({
             );
           })}
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
+            descriptionsDisabled && "cursor-not-allowed opacity-40",
+            mobileOptimized && "shrink-0"
+          )}
+          title={
+            descriptionsDisabled
+              ? "Descriptions are available in table view"
+              : undefined
+          }
+        >
           <Switch
             checked={showDescriptions}
+            disabled={disabled || descriptionsDisabled}
             onCheckedChange={onShowDescriptionsChange}
             aria-label="Show field descriptions"
           />
           <span>Descriptions</span>
         </label>
-        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
+            mobileOptimized && "shrink-0"
+          )}
+        >
           <Switch
             checked={divergingOnly}
             onCheckedChange={onDivergingOnlyChange}

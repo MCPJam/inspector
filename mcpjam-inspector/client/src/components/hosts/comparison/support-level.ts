@@ -45,7 +45,7 @@ export function isSupportField(field: HostConfigFieldDef): boolean {
  */
 export function getSupportLevel(
   field: HostConfigFieldDef,
-  cfg: HostConfigDtoV2,
+  cfg: HostConfigDtoV2
 ): SupportLevel | null {
   const value = field.read(cfg);
   switch (field.kind.kind) {
@@ -102,7 +102,7 @@ export function getSupportLevel(
 /** Support levels across every host for one row (support-shaped fields only). */
 export function rowSupportLevels(
   field: HostConfigFieldDef,
-  configs: ReadonlyArray<HostConfigDtoV2>,
+  configs: ReadonlyArray<HostConfigDtoV2>
 ): SupportLevel[] {
   return configs
     .map((c) => getSupportLevel(field, c))
@@ -115,7 +115,7 @@ export function rowSupportLevels(
  */
 export function rowCoverage(
   field: HostConfigFieldDef,
-  configs: ReadonlyArray<HostConfigDtoV2>,
+  configs: ReadonlyArray<HostConfigDtoV2>
 ): { supported: number; total: number } | null {
   if (!isSupportField(field)) return null;
   const levels = rowSupportLevels(field, configs);
@@ -132,7 +132,7 @@ export type SupportFilterMode = "all" | "missing" | "partial" | "supported";
 export function rowPassesSupportFilter(
   field: HostConfigFieldDef,
   configs: ReadonlyArray<HostConfigDtoV2>,
-  mode: SupportFilterMode,
+  mode: SupportFilterMode
 ): boolean {
   if (mode === "all") return true;
   if (!isSupportField(field)) return false;
@@ -148,16 +148,31 @@ export function rowPassesSupportFilter(
   }
 }
 
-/** Free-text match against a field's label / description / subsection. */
+function normalizeFieldSearchText(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Free-text match against a field's label / description / id / path. */
 export function fieldMatchesQuery(
   field: HostConfigFieldDef,
-  loweredQuery: string,
+  loweredQuery: string
 ): boolean {
-  if (!loweredQuery) return true;
-  return (
-    field.label.toLowerCase().includes(loweredQuery) ||
-    (field.description?.toLowerCase().includes(loweredQuery) ?? false) ||
-    field.subsection.toLowerCase().includes(loweredQuery)
+  const queryTokens = normalizeFieldSearchText(loweredQuery)
+    .split(/\s+/)
+    .filter(Boolean);
+  if (queryTokens.length === 0) return true;
+
+  const haystackTokens = normalizeFieldSearchText(
+    [field.id, field.label, field.path, field.description ?? ""].join(" ")
+  )
+    .split(/\s+/)
+    .filter(Boolean);
+  return queryTokens.every((part) =>
+    haystackTokens.some((token) => token.startsWith(part))
   );
 }
 
@@ -176,7 +191,8 @@ export function computeVisibleFieldIds(args: {
   const set = new Set<string>();
   for (const field of HOST_CONFIG_FIELDS) {
     if (args.divergingOnly && !fieldDiverges(field, args.configs)) continue;
-    if (!rowPassesSupportFilter(field, args.configs, args.supportFilter)) continue;
+    if (!rowPassesSupportFilter(field, args.configs, args.supportFilter))
+      continue;
     if (!fieldMatchesQuery(field, q)) continue;
     set.add(field.id);
   }
@@ -190,7 +206,7 @@ export function computeVisibleFieldIds(args: {
  */
 export function getCapabilityCaveats(
   field: HostConfigFieldDef,
-  cfg: HostConfigDtoV2,
+  cfg: HostConfigDtoV2
 ): string[] {
   const caveats: string[] = [];
   if (field.kind.kind !== "capability") return caveats;
@@ -199,15 +215,12 @@ export function getCapabilityCaveats(
   const rec = value as Record<string, unknown>;
 
   if (rec.listChanged === false) {
-    caveats.push("Advertised without list-changed notifications.");
+    caveats.push("Supported without list-changed notifications.");
   }
   if (field.id === "capabilities.sampling" && "tools" in rec) {
     caveats.push("Supports tool use in sampling (SEP-1577).");
   }
-  if (
-    field.id === "capabilities.experimental" &&
-    Object.keys(rec).length > 0
-  ) {
+  if (field.id === "capabilities.experimental" && Object.keys(rec).length > 0) {
     caveats.push("Vendor / experimental — outside the core capability set.");
   }
   return caveats;

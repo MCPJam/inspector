@@ -22,6 +22,7 @@ interface HostCapabilityListViewProps {
   supportFilter?: SupportFilterMode;
   searchQuery?: string;
   themeMode?: HostThemeMode;
+  mobileOptimized?: boolean;
 }
 
 /**
@@ -42,6 +43,7 @@ export function HostCapabilityListView({
   supportFilter = "all",
   searchQuery = "",
   themeMode = "light",
+  mobileOptimized = false,
 }: HostCapabilityListViewProps) {
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
   const visibleFieldIds = useMemo(
@@ -52,7 +54,7 @@ export function HostCapabilityListView({
         supportFilter,
         searchQuery,
       }),
-    [configs, divergingOnly, supportFilter, searchQuery],
+    [configs, divergingOnly, supportFilter, searchQuery]
   );
 
   // Support-shaped, currently-visible fields in registry order. Support-shape
@@ -60,8 +62,11 @@ export function HostCapabilityListView({
   // reading `configs[0]` while subjects are still hydrating (subjects can be
   // empty here even when hosts are selected).
   const fields = useMemo(
-    () => HOST_CONFIG_FIELDS.filter((f) => visibleFieldIds.has(f.id) && isSupportField(f)),
-    [visibleFieldIds],
+    () =>
+      HOST_CONFIG_FIELDS.filter(
+        (f) => visibleFieldIds.has(f.id) && isSupportField(f)
+      ),
+    [visibleFieldIds]
   );
 
   if (subjects.length === 0) {
@@ -95,6 +100,7 @@ export function HostCapabilityListView({
           subject={subject}
           fields={fields}
           themeMode={themeMode}
+          mobileOptimized={mobileOptimized}
         />
       ))}
     </div>
@@ -105,15 +111,17 @@ function HostListColumn({
   subject,
   fields,
   themeMode,
+  mobileOptimized,
 }: {
   subject: HostComparisonSubject;
   fields: ReadonlyArray<(typeof HOST_CONFIG_FIELDS)[number]>;
   themeMode: HostThemeMode;
+  mobileOptimized: boolean;
 }) {
   const logoSrc = getChatboxHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
-    themeMode,
+    themeMode
   );
 
   // Bucket every visible support-shaped field by its level for this host.
@@ -136,11 +144,17 @@ function HostListColumn({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-      className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4"
+      className={cn(
+        "flex flex-col gap-4 rounded-xl border border-border bg-card p-4",
+        mobileOptimized && "min-w-0 overflow-hidden"
+      )}
     >
       <div className="flex items-center gap-2 border-b border-border pb-3">
         <img src={logoSrc} alt="" className="size-4 shrink-0 object-contain" />
-        <span className="truncate text-[14px] font-medium" title={subject.hostName}>
+        <span
+          className="truncate text-[14px] font-medium"
+          title={subject.hostName}
+        >
           {subject.hostName}
         </span>
       </div>
@@ -164,7 +178,11 @@ function HostListColumn({
                   key={label}
                   level={level}
                   label={label}
-                  className={cn(level === "neutral" && "opacity-90")}
+                  className={cn(
+                    mobileOptimized && "max-w-full",
+                    level === "neutral" && "opacity-90"
+                  )}
+                  truncateLabel={mobileOptimized}
                 />
               ))}
             </div>
