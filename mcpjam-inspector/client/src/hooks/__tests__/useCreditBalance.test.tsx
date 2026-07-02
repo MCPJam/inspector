@@ -90,6 +90,7 @@ describe("useCreditBalance", () => {
       walletLocked: false,
       billingModel: "daily",
       monthlyResetAt: null,
+      voiceSecondsRemaining: 0,
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);

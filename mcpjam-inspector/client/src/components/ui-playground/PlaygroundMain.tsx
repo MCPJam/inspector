@@ -768,6 +768,7 @@ export function PlaygroundMain({
     resumedVersion,
     restoredToolRenderOverrides,
     status,
+    authHeaders,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -3243,6 +3244,15 @@ export function PlaygroundMain({
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
     onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
     onAddServer: playgroundServerSelectorProps?.onConnect,
+    voiceInputContext: convexProjectId
+      ? {
+          projectId: convexProjectId,
+          ...(hostedSelectedServerIds.length > 0
+            ? { selectedServerIds: hostedSelectedServerIds }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
   };
 
   // Check if widget should take over the full container

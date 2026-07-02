@@ -89,7 +89,7 @@ export function createHonoApp() {
         code: "FEATURE_NOT_SUPPORTED",
         message: `${path} is disabled in hosted mode`,
       },
-      410,
+      410
     );
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -130,7 +130,7 @@ export function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
-    },
+    }
   );
 
   // Initialize elicitation callback immediately so tasks/result calls work
@@ -165,7 +165,7 @@ export function createHonoApp() {
   // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
   if (HOSTED_MODE) {
     app.use("/api/session-token", (c) =>
-      strictModeResponse(c, "/api/session-token"),
+      strictModeResponse(c, "/api/session-token")
     );
     app.use("/api/mcp", (c, next) => {
       if (c.req.path === "/api/mcp/health") return next();
@@ -200,7 +200,7 @@ export function createHonoApp() {
       "*",
       logger((message) => {
         appLogger.info(scrubTokenFromUrl(message));
-      }),
+      })
     );
   }
   app.use(
@@ -208,11 +208,12 @@ export function createHonoApp() {
     cors({
       origin: CORS_ORIGINS,
       credentials: true,
-    }),
+    })
   );
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
-  // folder upload, which is multipart and bounded by the service caps. See
+  // folder upload, which is multipart and bounded by the service caps. Audio
+  // transcription gets its own larger cap inside the helper. See
   // `webBodyLimit`.
   app.use("/api/web/*", webBodyLimit());
 
@@ -227,14 +228,14 @@ export function createHonoApp() {
         service: "MCP API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
     app.get("/api/apps/health", (c) =>
       c.json({
         service: "Apps API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
   }
   app.route("/api/web", webRoutes);
@@ -293,7 +294,7 @@ export function createHonoApp() {
             "Cache-Control": "no-store",
             "Content-Type": "application/json",
           },
-        },
+        }
       );
     }
 
@@ -319,7 +320,7 @@ export function createHonoApp() {
 
     if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`,
+        `[Security] Token request denied - Host not allowed: ${host}`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -372,7 +373,7 @@ export function createHonoApp() {
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
+            `[Security] Token not injected - Host not allowed: ${host}`
           );
           const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);

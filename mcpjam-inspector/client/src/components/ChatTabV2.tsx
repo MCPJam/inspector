@@ -320,6 +320,7 @@ export function ChatTabV2({
       : null
   );
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
@@ -376,6 +377,7 @@ export function ChatTabV2({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    authHeaders,
     isAuthLoading,
     isSessionBootstrapComplete,
     systemPrompt,
@@ -2084,6 +2086,19 @@ export function ChatTabV2({
     onReconnectServer,
     onDisconnectServer,
     onAddServer,
+    voiceInputContext: effectiveHostedProjectId
+      ? {
+          projectId: effectiveHostedProjectId,
+          ...(effectiveHostedSelectedServerIds.length > 0
+            ? { selectedServerIds: effectiveHostedSelectedServerIds }
+            : {}),
+          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedAccessVersion !== undefined
+            ? { accessVersion: hostedAccessVersion }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0
         ? chatboxOptionalInventory
