@@ -6,6 +6,7 @@ import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostCompareSelector } from "./HostCompareSelector";
 import {
+  DEFAULT_COMPARE_HOST_IDS,
   parseHostsParam,
   resolveInitialHostCompareSelection,
   toggleHostCompareSelection,
@@ -80,8 +81,10 @@ export function HostConfigCompareView({
   // becomes the source of truth and mirrors back into the URL.
   const urlConsumedRef = useRef(false);
 
-  // Real created hosts only — drives the default selection and the
-  // ?hosts=-is-default suppression. Presets are never part of the default.
+  // Real created hosts only — the last-resort fallback inside
+  // `resolveInitialHostCompareSelection` if the Codex/Claude Code presets
+  // are ever unavailable. The actual default selection is
+  // `DEFAULT_COMPARE_HOST_IDS` (see the ?hosts=-is-default suppression below).
   const liveHostIds = useMemo(
     () => liveHosts.map((host) => host.hostId),
     [liveHosts],
@@ -116,7 +119,7 @@ export function HostConfigCompareView({
   }, [projectId, selectedHostIds]);
 
   // Mirror selection → ?hosts=. Suppress when the selection is the default
-  // "all live hosts" (in original order) so shared links stay clean.
+  // (Codex + Claude Code, in that order) so shared links stay clean.
   useEffect(() => {
     if (!urlConsumedRef.current) return;
     if (listLoading) return;
@@ -126,12 +129,13 @@ export function HostConfigCompareView({
     // commit with `selectedHostIds` still empty. Treating that as "default"
     // would delete `?hosts=` before the queued state lands, clobbering the
     // deep link. After resolve, `selectedHostIds` is always ≥ 1 (resolver
-    // falls back to all live hosts; `toggleHostCompareSelection` keeps
-    // `minSelected=1`), so an empty selection means "not yet resolved."
+    // falls back to the Codex/Claude Code presets, or live hosts if those
+    // are unavailable; `toggleHostCompareSelection` keeps `minSelected=1`),
+    // so an empty selection means "not yet resolved."
     if (selectedHostIds.length === 0) return;
     const isDefault =
-      selectedHostIds.length === liveHostIds.length &&
-      selectedHostIds.every((id, i) => id === liveHostIds[i]);
+      selectedHostIds.length === DEFAULT_COMPARE_HOST_IDS.length &&
+      selectedHostIds.every((id, i) => id === DEFAULT_COMPARE_HOST_IDS[i]);
     const current = searchParams.get(HOSTS_QUERY_PARAM);
     if (isDefault) {
       if (current === null) return;
@@ -145,7 +149,7 @@ export function HostConfigCompareView({
     const next = new URLSearchParams(searchParams);
     next.set(HOSTS_QUERY_PARAM, desired);
     setSearchParams(next, { replace: true });
-  }, [selectedHostIds, liveHostIds, listLoading, searchParams, setSearchParams]);
+  }, [selectedHostIds, listLoading, searchParams, setSearchParams]);
 
   const reportSubject = useCallback(
     (hostId: string, subject: HostComparisonSubject) => {
