@@ -160,15 +160,25 @@ async function handle(c: any) {
           // so a live harness turn ON THIS INSTANCE can forward it into the
           // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and
           // the local-mode Logs SSE/buffer sees it too. Observation-only —
-          // never affects the proxy result. Cross-instance hosted delivery
+          // never affects the proxy result: the bus isolates subscribers, and
+          // this guard is the belt-and-suspenders so no logging failure can
+          // reach the RPC try/catch below. Cross-instance hosted delivery
           // needs a shared sink (follow-up issue).
           rpcLogger: ({ direction, message, serverId: sid }) => {
-            rpcLogBus.publish({
-              serverId: sid,
-              direction,
-              timestamp: new Date().toISOString(),
-              message,
-            });
+            try {
+              rpcLogBus.publish({
+                serverId: sid,
+                direction,
+                timestamp: new Date().toISOString(),
+                message,
+              });
+            } catch (error) {
+              logger.warn(
+                `[harness-mcp] rpc log publish failed serverId=${sid}: ${
+                  error instanceof Error ? error.message : error
+                }`,
+              );
+            }
           },
         },
       ),
