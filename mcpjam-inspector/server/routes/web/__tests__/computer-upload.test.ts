@@ -136,13 +136,13 @@ async function uploadRequest(
   const form = new FormData();
   for (const f of files) form.append("files", f);
   const params = new URLSearchParams();
-  if (token) params.set("token", token);
   if (dir) params.set("dir", dir);
   const qs = params.toString();
-  return await app.request(
-    `/api/web/computers/upload${qs ? `?${qs}` : ""}`,
-    { method: "POST", body: form }
-  );
+  return await app.request(`/api/web/computers/upload${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+    body: form,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
 }
 
 beforeEach(() => {
@@ -176,6 +176,31 @@ describe("POST /api/web/computers/upload", () => {
     ]);
     expect(res.status).toBe(401);
     expect(fake.writes).toHaveLength(0);
+  });
+
+  it("401s when no credentials are provided at all", async () => {
+    stubConfiguredEnv();
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, null, [
+      new File([new Uint8Array([1])], "a.txt"),
+    ]);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
+  });
+
+  it("still accepts the legacy ?token= query (stale tabs across a deploy)", async () => {
+    stubConfiguredEnv();
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const form = new FormData();
+    form.append("files", new File([new Uint8Array([1, 2])], "a.txt"));
+    const res = await app.request(
+      `/api/web/computers/upload?token=${encodeURIComponent(await signToken())}`,
+      { method: "POST", body: form }
+    );
+    expect(res.status).toBe(200);
+    expect(fake.writes).toHaveLength(1);
   });
 
   it("400s when no files are attached", async () => {
