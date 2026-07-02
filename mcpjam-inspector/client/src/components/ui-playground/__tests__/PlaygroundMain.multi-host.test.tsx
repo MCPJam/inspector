@@ -673,6 +673,27 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
+  it("passes each host id into the per-column hosted runtime context", () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const lastByCompareId = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      lastByCompareId.set(props.compareId, props);
+    }
+
+    expect(lastByCompareId.get("h-A")?.hostedContext?.hostId).toBe("h-A");
+    expect(lastByCompareId.get("h-B")?.hostedContext?.hostId).toBe("h-B");
+  });
+
   it("every column shares the global chip state and the lead's model (multi-host varies host only)", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",

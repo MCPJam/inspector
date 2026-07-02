@@ -118,6 +118,9 @@ export function BehaviorTab({
     draft.harness,
     "progressiveToolDiscovery",
   );
+  const progressiveTriValue = progressiveState.enforced
+    ? progressiveValueToTri(draft.progressiveToolDiscovery)
+    : "off";
 
   return (
     <div className="flex flex-col gap-4">
@@ -250,7 +253,7 @@ export function BehaviorTab({
               type="single"
               size="sm"
               variant="outline"
-              value={progressiveValueToTri(draft.progressiveToolDiscovery)}
+              value={progressiveTriValue}
               onValueChange={(value) => {
                 // Radix calls onValueChange("") when the user
                 // re-clicks the active item. Treat that as no-op so

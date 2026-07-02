@@ -63,6 +63,66 @@ describe("fetchHostRuntimeConfig", () => {
     expect(auth).toBe("Bearer abc");
   });
 
+  it("flattens a nested HostConfigV2 config so harness reaches execution", async () => {
+    mockFetch(() =>
+      Response.json({
+        ok: true,
+        config: {
+          hostId: "h1",
+          modelId: "anthropic/claude-haiku-4.5",
+          config: {
+            harness: "claude-code",
+            progressiveToolDiscovery: false,
+            builtInToolIds: ["web_search"],
+          },
+        },
+      })
+    );
+
+    const result = await fetchHostRuntimeConfig({
+      hostId: "h1",
+      bearer: "Bearer abc",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      config: {
+        hostId: "h1",
+        modelId: "anthropic/claude-haiku-4.5",
+        harness: "claude-code",
+        progressiveToolDiscovery: false,
+        builtInToolIds: ["web_search"],
+      },
+    });
+  });
+
+  it("also accepts hostConfig as the nested HostConfigV2 key", async () => {
+    mockFetch(() =>
+      Response.json({
+        ok: true,
+        config: {
+          hostId: "h1",
+          hostConfig: {
+            harness: "claude-code",
+          },
+        },
+      })
+    );
+
+    const result = await fetchHostRuntimeConfig({
+      hostId: "h1",
+      bearer: "Bearer abc",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      config: {
+        hostId: "h1",
+        harness: "claude-code",
+      },
+    });
+  });
+
   it("maps a 403 error body to ok:false with the status", async () => {
     mockFetch(
       () =>

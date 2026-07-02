@@ -58,6 +58,19 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeDisabled();
   });
 
+  it("shows progressive discovery as off for harness hosts even if an old draft says on", () => {
+    renderBehaviorTab({
+      harness: "claude-code",
+      progressiveToolDiscovery: true,
+    });
+
+    expect(
+      screen.getByText(/claude code does its own tool discovery/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("On")).toHaveAttribute("data-state", "off");
+    expect(screen.getByLabelText("Off")).toHaveAttribute("data-state", "on");
+  });
+
   it("leaves every control enabled for an emulated (no-harness) host", () => {
     const { container } = renderBehaviorTab();
 

@@ -27,7 +27,7 @@ import type { Context } from "hono";
 import { convertToModelMessages, type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { Harness, MCPClientManager } from "@mcpjam/sdk";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -66,7 +66,6 @@ import {
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
-import type { Harness } from "@mcpjam/sdk";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -147,6 +146,8 @@ export interface WebChatTurnPrepareInputs {
   uiMessages: UIMessage[] | unknown[];
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
+  /** Resolved host harness. Harness runtimes own native tool discovery. */
+  harness?: Harness;
   appTools?: AppToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
@@ -219,6 +220,7 @@ export async function streamWebChatTurn(
       respectToolVisibility: prepare.respectToolVisibility,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
+      ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),

@@ -767,6 +767,31 @@ describe("TraceViewer", () => {
     expect(within(detail).getByText("Output")).toBeInTheDocument();
   });
 
+  it("shows the live turn runtime in the timeline detail pane", async () => {
+    render(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          events: [
+            {
+              type: "turn_start",
+              turnId: "turn-1",
+              promptIndex: 0,
+              startedAtMs: 100,
+              engine: "harness",
+              harness: "claude-code",
+            },
+          ],
+        }}
+      />,
+    );
+    openTraceTab();
+
+    expect(
+      await screen.findByTestId("trace-turn-runtime-badge"),
+    ).toHaveTextContent("Engine: Claude Code");
+  });
+
   it("filters the waterfall to tool rows while preserving step context", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);

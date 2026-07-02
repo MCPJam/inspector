@@ -181,6 +181,11 @@ type InteractionRow = {
 
 type TimelineRow = PromptRow | SpanRow | InteractionRow;
 
+type TraceTurnRuntime = {
+  engine?: "emulated" | "harness";
+  harness?: string;
+};
+
 /** Human-readable verb for an interaction step's action enum. */
 function interactionActionVerb(action: string): string {
   switch (action) {
@@ -1544,14 +1549,34 @@ function InteractionDetailPane({ row }: { row: InteractionRow }) {
   );
 }
 
+function formatHarnessName(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
+  if (runtime.engine === "harness") {
+    return runtime.harness ? formatHarnessName(runtime.harness) : "Harness";
+  }
+  if (runtime.engine === "emulated") {
+    return "Emulated";
+  }
+  return runtime.harness ? formatHarnessName(runtime.harness) : "Unknown";
+}
+
 function TimelineDetailPane({
   row,
   transcriptMessages,
   onRevealInTranscript,
+  turnRuntimeByPromptIndex,
 }: {
   row: TimelineRow | undefined;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
+  turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
 }) {
   if (!row) {
     return (
@@ -1609,6 +1634,7 @@ function TimelineDetailPane({
           spanIndicatesTranscriptFailure(row.span, transcriptMessages)
         ? "error"
         : row.span.category;
+  const turnRuntime = turnRuntimeByPromptIndex?.get(row.promptIndex);
 
   const llmIo =
     row.kind === "span" &&
@@ -1708,6 +1734,23 @@ function TimelineDetailPane({
               <h3 className="text-sm font-bold leading-tight text-foreground">
                 {title}
               </h3>
+              {turnRuntime ? (
+                <Badge
+                  className="border-border/60 bg-muted/30 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                  data-testid="trace-turn-runtime-badge"
+                  title={
+                    turnRuntime.engine === "harness"
+                      ? "This turn ran through the harness adapter."
+                      : turnRuntime.engine === "emulated"
+                        ? "This turn ran through MCPJam's emulated chat engine."
+                        : turnRuntime.harness
+                          ? "This turn ran through the harness adapter."
+                          : "Runtime engine was not recorded for this turn."
+                  }
+                >
+                  Engine: {turnRuntimeLabel(turnRuntime)}
+                </Badge>
+              ) : null}
               {status === "error" ? (
                 <span
                   className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
@@ -1895,6 +1938,8 @@ export interface TraceTimelineProps {
   onExpandedStepIdsChange?: (next: Set<string>) => void;
   /** Timeline axis ends at this many ms (≥ max span end); used for zoom. */
   viewportMaxMs?: number;
+  /** Runtime used for each live chat turn, keyed by promptIndex. */
+  turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
 }
@@ -1916,6 +1961,7 @@ export function TraceTimeline({
   expandedStepIds: expandedStepIdsProp,
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
+  turnRuntimeByPromptIndex,
   fillContent = false,
 }: TraceTimelineProps) {
   const shouldReduceMotion = useReducedMotion();
@@ -2922,6 +2968,7 @@ export function TraceTimeline({
                 row={selectedRow}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
+                turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
               />
             </div>
           </ResizablePanel>
