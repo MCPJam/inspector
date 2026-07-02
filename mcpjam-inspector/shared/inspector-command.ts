@@ -1,4 +1,14 @@
-export type InspectorAppDeviceType = "mobile" | "tablet" | "desktop" | "custom";
+/**
+ * Device-emulation targets addressable via commands. `"fill"` is the
+ * playground store's DEFAULT (fit the panel) — included so an agent can
+ * restore the default after switching to a fixed-size preset.
+ */
+export type InspectorAppDeviceType =
+  | "fill"
+  | "mobile"
+  | "tablet"
+  | "desktop"
+  | "custom";
 export type InspectorAppDisplayMode = "inline" | "pip" | "fullscreen";
 
 export const INSPECTOR_COMMAND_DEFAULT_TIMEOUT_MS = 30_000;
