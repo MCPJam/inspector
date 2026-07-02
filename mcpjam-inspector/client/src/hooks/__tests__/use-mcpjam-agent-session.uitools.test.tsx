@@ -331,6 +331,48 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     }
   });
 
+  it("re-evaluates pristineness when chatSessionId changes without a remount", async () => {
+    // Regression: the pristine verdict must be per-instance, not per hook
+    // mount. Mounting on an ADOPTED live session (never seed) and then
+    // switching to a fresh resumed session in place must still seed the
+    // fresh session's transcript.
+    vi.mocked(getChatHistoryDetail).mockResolvedValue({
+      session: { messagesBlobUrl: "https://blob.example/transcript" },
+    } as any);
+    const hydrated = [{ id: "old-1", role: "user", parts: [] }];
+    vi.mocked(transcriptToUIMessages).mockReturnValue(hydrated as any);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, json: async () => [{}] } as any);
+    try {
+      const { getOrCreateAgentChat } = await import(
+        "@/lib/mcpjam-agent/agent-chat-instances"
+      );
+      // Session A: adopted live instance → not pristine, never seeded.
+      const liveEntry = getOrCreateAgentChat("session-live");
+      (liveEntry.chat as any).messages = [
+        { id: "live", role: "user", parts: [] },
+      ];
+      (liveEntry.chat as any).status = "streaming";
+
+      const { rerender } = renderHook(
+        ({ id }: { id: string }) =>
+          useMcpjamAgentSession({ chatSessionId: id, projectId: "project-1" }),
+        { initialProps: { id: "session-live" } }
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockState.setMessages).not.toHaveBeenCalled();
+
+      // Switch in place to a fresh resumed session → must seed.
+      rerender({ id: "session-fresh" });
+      await waitFor(() =>
+        expect(mockState.setMessages).toHaveBeenCalledWith(hydrated)
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("answers shipped-then-unregistered tools with an error so the stream resumes", async () => {
     registerTool();
     render();
