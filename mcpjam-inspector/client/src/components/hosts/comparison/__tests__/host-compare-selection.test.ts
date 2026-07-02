@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  DEFAULT_COMPARE_HOST_IDS,
   parseHostsParam,
   reconcileHostCompareSelection,
   resolveInitialHostCompareSelection,
@@ -36,7 +37,7 @@ describe("host-compare-selection", () => {
     ).toEqual(["b", "c"]);
   });
 
-  it("resolveInitialHostCompareSelection falls back to all live hosts", () => {
+  it("resolveInitialHostCompareSelection falls back to all live hosts when the default presets aren't known", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
@@ -109,7 +110,7 @@ describe("host-compare-selection", () => {
     ).toEqual(["preset:chatgpt"]);
   });
 
-  it("resolveInitialHostCompareSelection default stays real-hosts-only (presets opt-in)", () => {
+  it("resolveInitialHostCompareSelection ignores unrelated presets and falls back to live hosts", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
@@ -118,5 +119,32 @@ describe("host-compare-selection", () => {
         previousSelection: [],
       }),
     ).toEqual(["a", "b"]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to Codex + Claude Code over live hosts on a fresh visit", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b"],
+        knownHostIds: [
+          "a",
+          "b",
+          ...DEFAULT_COMPARE_HOST_IDS,
+          "preset:chatgpt",
+        ],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to Codex + Claude Code with zero live hosts", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: [...DEFAULT_COMPARE_HOST_IDS, "preset:chatgpt"],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
   });
 });
