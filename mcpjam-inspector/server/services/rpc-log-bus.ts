@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { logger } from "../utils/logger";
 
 export type RpcLogEvent = {
   serverId: string;
@@ -7,6 +8,12 @@ export type RpcLogEvent = {
   message: unknown;
 };
 
+/** Per-server replay-buffer cap, enforced on WRITE. The buffer exists only to
+ *  seed the Logs SSE with recent history (`getBuffer`); without a cap a
+ *  long-lived process publishing steadily (e.g. hosted harness-mcp traffic)
+ *  retains every payload for the process lifetime. */
+const MAX_BUFFERED_EVENTS_PER_SERVER = 500;
+
 class RpcLogBus {
   private readonly emitter = new EventEmitter();
   private readonly bufferByServer = new Map<string, RpcLogEvent[]>();
@@ -14,6 +21,9 @@ class RpcLogBus {
   publish(event: RpcLogEvent): void {
     const buffer = this.bufferByServer.get(event.serverId) ?? [];
     buffer.push(event);
+    if (buffer.length > MAX_BUFFERED_EVENTS_PER_SERVER) {
+      buffer.splice(0, buffer.length - MAX_BUFFERED_EVENTS_PER_SERVER);
+    }
     this.bufferByServer.set(event.serverId, buffer);
     this.emitter.emit("event", event);
   }
@@ -24,7 +34,20 @@ class RpcLogBus {
   ): () => void {
     const filter = new Set(serverIds);
     const handler = (event: RpcLogEvent) => {
-      if (filter.size === 0 || filter.has(event.serverId)) listener(event);
+      if (filter.size === 0 || filter.has(event.serverId)) {
+        // Isolate subscribers: EventEmitter.emit re-throws synchronously, so
+        // an unguarded listener would propagate into the PRODUCER — turning a
+        // logging side-effect into an RPC failure (e.g. failing a harness-mcp
+        // proxy call) and starving later subscribers of the same event.
+        try {
+          listener(event);
+        } catch (error) {
+          logger.warn("[rpc-log-bus] subscriber threw; event dropped for it", {
+            serverId: event.serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     };
     this.emitter.on("event", handler);
     return () => this.emitter.off("event", handler);

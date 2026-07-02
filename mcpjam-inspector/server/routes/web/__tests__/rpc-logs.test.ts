@@ -304,3 +304,78 @@ describe("web hosted rpc logs", () => {
     expect(data._rpcLogs).toBeUndefined();
   });
 });
+
+// ── Harness bridge: rpcLogBus → a live turn's collector ─────────────────────
+// The harness's MCP traffic arrives as separate /api/web/harness-mcp requests
+// that publish to the in-process bus; the chat turn bridges those entries into
+// its collector so the Logs panel fills like an emulated turn.
+import {
+  bridgeHarnessRpcLogsToCollector,
+  createHostedRpcLogCollector,
+} from "../hosted-rpc-logs.js";
+import { rpcLogBus } from "../../../services/rpc-log-bus.js";
+
+describe("bridgeHarnessRpcLogsToCollector", () => {
+  it("forwards bus events for the turn's servers into the collector (with name resolution)", () => {
+    const collector = createHostedRpcLogCollector({
+      selectedServerIds: ["srv-1"],
+      selectedServerNames: ["My Server"],
+    });
+    const stop = bridgeHarnessRpcLogsToCollector(["srv-1"], collector);
+    try {
+      rpcLogBus.publish({
+        serverId: "srv-1",
+        direction: "send",
+        timestamp: new Date().toISOString(),
+        message: { jsonrpc: "2.0", id: 1, method: "tools/call" },
+      });
+      rpcLogBus.publish({
+        serverId: "other-srv",
+        direction: "send",
+        timestamp: new Date().toISOString(),
+        message: { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      });
+    } finally {
+      stop();
+    }
+
+    const logs = collector.getLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      serverId: "srv-1",
+      serverName: "My Server",
+      direction: "send",
+    });
+  });
+
+  it("stops forwarding after unsubscribe", () => {
+    const collector = createHostedRpcLogCollector({
+      selectedServerIds: ["srv-1"],
+    });
+    const stop = bridgeHarnessRpcLogsToCollector(["srv-1"], collector);
+    stop();
+    rpcLogBus.publish({
+      serverId: "srv-1",
+      direction: "receive",
+      timestamp: new Date().toISOString(),
+      message: {},
+    });
+    expect(collector.hasLogs()).toBe(false);
+  });
+
+  it("subscribes to NOTHING for an empty server list (bus treats empty filter as all)", () => {
+    const collector = createHostedRpcLogCollector({});
+    const stop = bridgeHarnessRpcLogsToCollector([], collector);
+    try {
+      rpcLogBus.publish({
+        serverId: "any-srv",
+        direction: "send",
+        timestamp: new Date().toISOString(),
+        message: {},
+      });
+    } finally {
+      stop();
+    }
+    expect(collector.hasLogs()).toBe(false);
+  });
+});
