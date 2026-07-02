@@ -245,6 +245,8 @@ function renderUseServerState(
     isAuthenticated?: boolean;
     isUserReady?: boolean;
     useLocalFallback?: boolean;
+    activeOrganizationId?: string;
+    restoreActiveOrganizationId?: (organizationId: string) => void;
     effectiveProjects?: AppState["projects"];
     effectiveActiveProjectId?: string;
     activeProjectServersFlat?: any;
@@ -267,6 +269,8 @@ function renderUseServerState(
       isAuthLoading: false,
       isLoadingProjects: false,
       useLocalFallback: options?.useLocalFallback ?? true,
+      activeOrganizationId: options?.activeOrganizationId,
+      restoreActiveOrganizationId: options?.restoreActiveOrganizationId,
       effectiveProjects: options?.effectiveProjects ?? appState.projects,
       effectiveActiveProjectId:
         options?.effectiveActiveProjectId ?? appState.activeProjectId,
@@ -667,6 +671,14 @@ describe("useServerState effective server projection", () => {
       }),
     });
     expect(result.current.projectServers).not.toHaveProperty(
+      "runtime-connected"
+    );
+    expect(result.current.displayServerConfigs).toEqual({
+      "persisted-server": expect.objectContaining({
+        name: "persisted-server",
+      }),
+    });
+    expect(result.current.displayServerConfigs).not.toHaveProperty(
       "runtime-connected"
     );
     expect(result.current.selectedMCPConfig).toBeUndefined();
@@ -1157,6 +1169,172 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("syncs the hosted OAuth profile against the marker-pinned project, not the ambient active project", async () => {
+    // Regression: an OAuth server added in org A duplicated into the user's
+    // owned org because the post-callback sync resolved by name against the
+    // ambient active project (which had flipped to the fallback org's default
+    // project during the redirect remount) instead of the pinned target.
+    mockHostedMode.mockReturnValue(true);
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        organizationId: "org_pinned",
+        projectId: "project_pinned",
+        serverId: "srv_pinned",
+        serverName: "bart",
+        serverUrl: "https://bart.example.com/mcp",
+        accessScope: "project_member",
+        returnPath: "/servers",
+        startedAt: Date.now(),
+      })
+    );
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "bart",
+      serverConfig: {
+        type: "http",
+        url: "https://bart.example.com/mcp",
+      },
+    });
+    mockConvexQuery.mockResolvedValue([
+      {
+        _id: "srv_pinned",
+        projectId: "project_pinned",
+        name: "bart",
+      },
+    ]);
+    mockUpdateServer.mockResolvedValue("srv_pinned");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_ambient";
+    const dispatch = vi.fn();
+    const restoreActiveOrganizationId = vi.fn();
+    renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      isUserReady: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_fallback",
+      restoreActiveOrganizationId,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "project_ambient",
+      activeProjectServersFlat: [],
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateServer).toHaveBeenCalled();
+    });
+
+    // Existence was decided against the pinned project and the pinned row
+    // was updated in place — no create in the ambient project.
+    expect(mockConvexQuery).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "project_pinned",
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "srv_pinned",
+        name: "bart",
+      })
+    );
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+
+    // The callback URL is only restored once completion settles, the org
+    // selection is restored from the marker, and the return path is the
+    // marker's returnPath.
+    await waitFor(() => {
+      expect(window.location.search).toBe("");
+    });
+    expect(restoreActiveOrganizationId).toHaveBeenCalledWith("org_pinned");
+    expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("pins the post-callback sync in local (non-hosted) mode too", async () => {
+    // Regression: local dev runs with HOSTED_MODE=false, where completion
+    // goes through the legacy client-side token exchange. The pending marker
+    // is still written before the redirect, and the Convex sync after the
+    // callback must honor it — this was the path that kept duplicating the
+    // server into the fallback org after the hosted-only fix.
+    localStorage.setItem("mcp-oauth-pending", "bart");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        organizationId: "org_pinned",
+        projectId: "project_pinned",
+        serverId: "srv_pinned",
+        serverName: "bart",
+        serverUrl: "https://bart.example.com/mcp",
+        accessScope: "project_member",
+        returnPath: "/servers",
+        startedAt: Date.now(),
+      })
+    );
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "bart",
+      serverConfig: {
+        type: "http",
+        url: "https://bart.example.com/mcp",
+      },
+    });
+    mockConvexQuery.mockResolvedValue([
+      {
+        _id: "srv_pinned",
+        projectId: "project_pinned",
+        name: "bart",
+      },
+    ]);
+    mockUpdateServer.mockResolvedValue("srv_pinned");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_ambient";
+    const dispatch = vi.fn();
+    const restoreActiveOrganizationId = vi.fn();
+    renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      isUserReady: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_fallback",
+      restoreActiveOrganizationId,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "project_ambient",
+      activeProjectServersFlat: [],
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateServer).toHaveBeenCalled();
+    });
+
+    expect(completeHostedOAuthCallbackMock).not.toHaveBeenCalled();
+    expect(handleOAuthCallbackMock).toHaveBeenCalled();
+    expect(mockConvexQuery).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "project_pinned",
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "srv_pinned",
+        name: "bart",
+      })
+    );
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    // Marker cleanup applies to the legacy completion path as well.
+    await waitFor(() => {
+      expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    });
+    // The org the flow started in is restored as the explicit selection.
+    await waitFor(() => {
+      expect(restoreActiveOrganizationId).toHaveBeenCalledWith("org_pinned");
+    });
   });
 
   it("preserves existing HTTP config without keeping the callback bearer token", async () => {
@@ -2458,6 +2636,116 @@ describe("syncServerToConvex name-collision recovery", () => {
     );
     expect(mockCreateServer).not.toHaveBeenCalled();
     expect(mockConvexQuery).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale snapshot rows from another project when saving", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockResolvedValue("srv_current_project");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [
+        {
+          _id: "srv_other_project",
+          projectId: "other-project",
+          name: "Excalidraw (App)",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Excalidraw (App)",
+      })
+    );
+    expect(mockConvexQuery).not.toHaveBeenCalled();
+  });
+
+  it("refuses to save when the active project belongs to another organization", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    appState.projects.default.organizationId = "org_a";
+    const dispatch = vi.fn();
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_b",
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Cross Org Server",
+        type: "http",
+        url: "https://example.com/mcp",
+      });
+    });
+
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER" })
+    );
+    expect(toastError.mock.calls[0]?.[0]).toEqual(
+      expect.stringContaining("selected project is not in the active organization")
+    );
+  });
+
+  it("does not start a hosted runtime connection when scoped Convex save is refused", async () => {
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    appState.projects.default.organizationId = "org_a";
+    const dispatch = vi.fn();
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_b",
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "Cross Org Server",
+        type: "http",
+        url: "https://example.com/mcp",
+      });
+    });
+
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "Cross Org Server",
+        error: expect.stringContaining(
+          "selected project is not in the active organization"
+        ),
+      })
+    );
   });
 
   it("syncs bearer-token metadata when saving header secrets", async () => {
