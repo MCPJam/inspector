@@ -51,6 +51,18 @@ describe("verifyHarnessProxyToken (verifies Convex-minted HS256 tokens)", () => 
     ).not.toBeNull();
   });
 
+  it("rejects a token AT its exp second (JWT NumericDate: expired at exp, not after)", () => {
+    const token = signTestProxyToken(
+      { serverId: "srv-a" },
+      { nowS: 1000, expS: 2000 },
+    );
+    expect(verifyHarnessProxyToken(token, "srv-a", { nowMs: 2_000_000 })).toBeNull();
+    // The final second BEFORE exp is still valid.
+    expect(
+      verifyHarnessProxyToken(token, "srv-a", { nowMs: 1_999_999 }),
+    ).not.toBeNull();
+  });
+
   it("rejects a tampered signature", () => {
     const token = signTestProxyToken({ serverId: "srv-a" });
     const [h, p] = token.split(".");

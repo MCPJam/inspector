@@ -37,11 +37,14 @@ export type HarnessMcpProxyStrategy =
  * Decide how the cloud sandbox reaches THIS inspector's `/api/web/harness-mcp`
  * for a hosted (`/api/web`) harness turn — a single **deploy-topology** call,
  * no extra env knob: is the inspector publicly reachable?
- *  - a publicly-reachable `MCPJAM_INSPECTOR_PUBLIC_URL`/`BASE_URL` → **direct**
- *    (cloud prod; a configured public self-host);
- *  - otherwise (no URL, loopback, or RFC1918/private) the inspector is private
- *    — local dev (`dev:hosted`) or self-hosted-behind-a-firewall — so the cloud
- *    sandbox reaches it through the scoped **harness-web relay**.
+ *  - a publicly-reachable HTTPS `MCPJAM_INSPECTOR_PUBLIC_URL`/`BASE_URL` →
+ *    **direct** (cloud prod; a configured public self-host);
+ *  - otherwise (no URL, plain-http, loopback, or RFC1918/private) the inspector
+ *    is private — local dev (`dev:hosted`) or self-hosted-behind-a-firewall —
+ *    so the cloud sandbox reaches it through the scoped **harness-web relay**.
+ * Direct mode requires `https:`: every hosted `.mcp.json` entry carries an
+ * `X-MCPJam-Proxy-Token`, so a public plain-http URL would send that token in
+ * cleartext across the internet; such a topology degrades to relay instead.
  * Still fail-closed where it matters: if relay infra isn't configured,
  * `ensureHarnessWebTunnel` throws at tunnel-creation with a concrete error.
  */
@@ -49,10 +52,18 @@ export function resolveWebAuthorizedHarnessStrategy(): HarnessMcpProxyStrategy {
   const publicUrl =
     process.env.MCPJAM_INSPECTOR_PUBLIC_URL?.trim() ||
     process.env.BASE_URL?.trim();
-  if (publicUrl && isPubliclyReachableUrl(publicUrl)) {
+  if (publicUrl && isHttpsUrl(publicUrl) && isPubliclyReachableUrl(publicUrl)) {
     return { plane: "web-authorized", mode: "direct", publicBaseUrl: publicUrl };
   }
   return { plane: "web-authorized", mode: "relay" };
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -187,7 +187,7 @@ describe("uploadFilesToComputer", () => {
     return new File([new Uint8Array([1, 2, 3])], name, { type: "text/plain" });
   }
 
-  it("POSTs a FormData with the token in the query and returns written files", async () => {
+  it("POSTs a FormData with the token in the Authorization header (never the URL)", async () => {
     let calledUrl = "";
     let calledInit: RequestInit | undefined;
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -209,15 +209,40 @@ describe("uploadFilesToComputer", () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    expect(calledUrl).toBe(
-      "https://host.test/api/web/computers/upload?token=tok-9"
-    );
+    // Token rides the header, not the URL — URLs land in access/proxy logs.
+    expect(calledUrl).toBe("https://host.test/api/web/computers/upload");
+    expect(calledInit?.headers).toEqual({ Authorization: "Bearer tok-9" });
     expect(calledInit?.method).toBe("POST");
     expect(calledInit?.body).toBeInstanceOf(FormData);
     expect((calledInit?.body as FormData).getAll("files")).toHaveLength(1);
     expect(files).toEqual([
       { name: "x", path: "/home/user/uploads/x", bytes: 3 },
     ]);
+  });
+
+  it("keeps dir in the query while the token stays in the header", async () => {
+    let calledUrl = "";
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calledUrl = String(url);
+      calledInit = init;
+      return new Response(JSON.stringify({ ok: true, files: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await uploadFilesToComputer({
+      token: "tok-9",
+      files: [fakeFile("a.txt")],
+      dir: "/home/user/claude-code-1",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(calledUrl).toBe(
+      "/api/web/computers/upload?dir=%2Fhome%2Fuser%2Fclaude-code-1"
+    );
+    expect(calledInit?.headers).toEqual({ Authorization: "Bearer tok-9" });
   });
 
   it("throws with the server-supplied message on a non-2xx response", async () => {
