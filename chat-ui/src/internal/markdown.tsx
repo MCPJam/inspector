@@ -17,7 +17,7 @@ export const Markdown = memo(function Markdown({
 }) {
   return (
     <div className={cn("mcpjam-chat-markdown [overflow-wrap:anywhere]", className)}>
-      <Streamdown>{content}</Streamdown>
+      <Streamdown rawHtml={false}>{content}</Streamdown>
     </div>
   );
 });
