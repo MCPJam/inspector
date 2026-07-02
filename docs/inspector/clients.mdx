@@ -162,6 +162,35 @@ The **Compare** view lets you see how multiple host configurations stack up side
 
 Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
 
+### Reading the comparison table
+
+Each capability row shows a colored chip per host:
+
+- **Supported** — the host advertises this capability.
+- **Partial** — the host advertises the capability with caveats (e.g. without list-changed notifications). Click the info icon next to the chip to see details.
+- **Not supported** — the capability is absent from the host's configuration.
+
+### View modes
+
+Use the **Tables / List** toggle in the search bar to switch between views:
+
+- **Tables** — the full comparison matrix with all field types (model, system prompt, temperature, capabilities, sandbox settings, etc.).
+- **List** — a condensed per-host capability wall showing only support-shaped fields (capabilities, boolean flags). Useful for a quick at-a-glance summary.
+
+On narrow screens (phones), the view defaults to **List** automatically.
+
+**Descriptions** and **List** view are mutually exclusive — enabling descriptions switches the view to Tables, and switching to List disables descriptions.
+
+### Filtering and searching
+
+The search bar at the top of the Compare view accepts free-text queries. As you type, a dropdown suggests matching fields by name, subsection, and description — click a suggestion to jump directly to that field. The search narrows both the table rows and the "N / M fields" count shown in the toolbar.
+
+Use the filter pills (**All / Missing / Partial / Supported**) to focus on a specific support tier. The **Diverging only** toggle hides rows where every selected host agrees, leaving only the fields that differ.
+
+<Note>
+  Model, System Prompt, and Temperature are intentionally excluded from the search picker suggestions — use the full table view to compare those fields.
+</Note>
+
 ### Deep-linking to a specific selection
 
 Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific set of hosts on load:
@@ -175,6 +204,10 @@ The URL updates automatically as you toggle hosts on or off. When all live hosts
 ### Compare from the Eval Playground
 
 In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a **Compare** button. When two or more hosts are attached to the suite, clicking **Compare** opens the Compare view with exactly those hosts pre-selected. The button is disabled (with a tooltip) when fewer than two hosts are attached.
+
+### caniuse.dev
+
+[caniuse.dev](https://caniuse.dev) is a public, sign-in-free version of the same Compare UI. It shows only the built-in preset client profiles (Claude, ChatGPT, Cursor, Copilot, Codex, MCPJam) — your saved project hosts are not included. Selections made on caniuse.dev are independent of your MCPJam Host Compare selections.
 
 ## Best practices
 
