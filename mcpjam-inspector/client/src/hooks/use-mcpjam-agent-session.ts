@@ -116,6 +116,13 @@ export function useMcpjamAgentSession(
     () => getOrCreateAgentChat(chatSessionId),
     [chatSessionId]
   );
+  // Whether this hook found the instance pristine. Distinguishes "we own the
+  // fresh instance and may seed it (even merging around a racing user send)"
+  // from "we adopted a live instance from another surface (panel adoption
+  // during a navigation handoff) and must never re-seed stale history".
+  const instanceWasPristineRef = useRef(
+    !config.seeded && chat.messages.length === 0 && chat.status === "ready"
+  );
   useEffect(() => {
     config.projectId = projectId ?? null;
     config.model = resolvedModel;
@@ -236,16 +243,25 @@ export function useMcpjamAgentSession(
   // Seed the instance with hydrated history once it arrives. The guard is
   // per-INSTANCE (`config.seeded`), not per-hook: a second surface adopting
   // a live instance (panel adoption during a navigation handoff) must never
-  // re-seed stale history over an in-flight turn — so also bail when the
-  // instance already holds messages or is mid-stream.
+  // re-seed stale history over an in-flight turn — only the hook that found
+  // the instance pristine may seed. If the user sent a message BEFORE
+  // hydration finished (racing a resumed session), everything live is new by
+  // construction, so prepend the hydrated history instead of dropping it —
+  // waiting for `status === "ready"` (a dep, so the effect re-runs when the
+  // racing turn settles) keeps setMessages off a mid-stream instance.
   useEffect(() => {
     if (hydrating) return;
     if (initialMessages.length === 0) return;
     if (config.seeded) return;
-    if (chat.messages.length > 0 || chat.status !== "ready") return;
+    if (!instanceWasPristineRef.current) return;
+    if (status !== "ready") return;
     config.seeded = true;
-    setMessages(initialMessages);
-  }, [chat, config, hydrating, initialMessages, setMessages]);
+    if (chat.messages.length === 0) {
+      setMessages(initialMessages);
+    } else {
+      setMessages([...initialMessages, ...chat.messages]);
+    }
+  }, [chat, config, hydrating, initialMessages, setMessages, status]);
 
   const submit = useCallback(
     (text: string) => {

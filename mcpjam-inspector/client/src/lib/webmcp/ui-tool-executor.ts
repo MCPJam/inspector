@@ -67,7 +67,11 @@ export async function handleUiToolCall(
 
   if (def.mayNavigate) {
     try {
-      opts.onNavigationToolCall?.(toolName);
+      // Tolerate async callbacks too: a rejection must not surface as an
+      // unhandled promise rejection (the contract is fire-and-forget).
+      void Promise.resolve(opts.onNavigationToolCall?.(toolName)).catch(
+        () => {},
+      );
     } catch {
       // Handoff is best-effort; the tool output must still be delivered.
     }

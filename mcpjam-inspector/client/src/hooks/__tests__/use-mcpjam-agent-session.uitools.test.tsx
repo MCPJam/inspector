@@ -284,6 +284,43 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     }
   });
 
+  it("prepends hydrated history when the user sent before hydration finished", async () => {
+    // The race: resumed session, user types + sends while the transcript
+    // fetch is in flight. Everything live is new by construction (the hook
+    // found the instance pristine), so the prior transcript must be
+    // prepended — not dropped forever.
+    let releaseHydration!: (value: unknown) => void;
+    vi.mocked(getChatHistoryDetail).mockReturnValue(
+      new Promise((resolve) => {
+        releaseHydration = resolve;
+      }) as any
+    );
+    const hydrated = [{ id: "old-1", role: "user", parts: [] }];
+    vi.mocked(transcriptToUIMessages).mockReturnValue(hydrated as any);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, json: async () => [{}] } as any);
+    try {
+      render();
+      await waitFor(() => expect(mockState.lastChatInstance).not.toBeNull());
+      // User sends before hydration lands.
+      const live = [{ id: "new-1", role: "user", parts: [] }];
+      mockState.lastChatInstance.messages = live;
+
+      releaseHydration({
+        session: { messagesBlobUrl: "https://blob.example/transcript" },
+      });
+      await waitFor(() =>
+        expect(mockState.setMessages).toHaveBeenCalledWith([
+          ...hydrated,
+          ...live,
+        ])
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("answers shipped-then-unregistered tools with an error so the stream resumes", async () => {
     registerTool();
     render();
