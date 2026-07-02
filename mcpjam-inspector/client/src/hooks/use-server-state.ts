@@ -1763,6 +1763,47 @@ export function useServerState({
     [effectiveActiveProjectId, syncServerToConvex, logger]
   );
 
+  /**
+   * Resolve selected runtime server names → persisted Convex server ids for a
+   * HOSTED send, persisting any ad-hoc/App server that isn't saved yet. The
+   * hosted harness proxy + `authorize-batch` operate on real `Id<'servers'>`, so
+   * a display name like "Excalidraw (App)" must become a Convex id before the
+   * send (otherwise the mint endpoint 422s and the turn fails closed). Mirrors
+   * the manual-connect persist path (`syncServerToConvex` → inject mapping).
+   * THROWS if a name can't be resolved/persisted — the caller must fail the send
+   * closed rather than send a name.
+   */
+  const ensureHostedServerIdsForNames = useCallback(
+    async (
+      serverNames: string[]
+    ): Promise<Array<{ serverName: string; serverId: string }>> => {
+      const out: Array<{ serverName: string; serverId: string }> = [];
+      for (const serverName of serverNames) {
+        const resolved = tryResolveProjectServer(serverName);
+        if (resolved?.serverId) {
+          out.push({ serverName, serverId: resolved.serverId });
+          continue;
+        }
+        const entry = appStateServersRef.current[serverName];
+        if (!entry) {
+          throw new Error(
+            `Cannot start: server "${serverName}" is not connected, so it can't be saved to the project.`
+          );
+        }
+        const serverId = await syncServerToConvex(serverName, entry);
+        if (!serverId) {
+          throw new Error(
+            `Cannot start: failed to save server "${serverName}" to the project.`
+          );
+        }
+        injectHostedServerMapping(serverName, serverId);
+        out.push({ serverName, serverId });
+      }
+      return out;
+    },
+    [syncServerToConvex]
+  );
+
   const removeServerFromConvex = useCallback(
     async (serverName: string) => {
       if (useLocalFallback || !isAuthenticated || !effectiveActiveProjectId) {
@@ -4603,5 +4644,6 @@ export function useServerState({
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded,
+    ensureHostedServerIdsForNames,
   };
 }

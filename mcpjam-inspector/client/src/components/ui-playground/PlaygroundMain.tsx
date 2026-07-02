@@ -114,6 +114,7 @@ import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
+import { useServerActionsOptional } from "@/state/server-actions-context";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
@@ -663,6 +664,9 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
   });
+  // Optional: present app-wide, absent in isolated embeds. Drives the hosted
+  // harness preflight (resolve/persist selected server names → Convex ids).
+  const playgroundServerActions = useServerActionsOptional();
   const hostedSelectedServerIds = useMemo(
     () =>
       selectedServers
@@ -772,6 +776,16 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
+      // Resolve/persist selected server names → Convex ids before a hosted
+      // harness send (ad-hoc/App servers included), so the proxy never sees a
+      // display name. Absent in isolated embeds → falls back to the
+      // pre-resolved selection above.
+      ...(playgroundServerActions?.ensureHostedServerIdsForNames
+        ? {
+            ensureServerIds:
+              playgroundServerActions.ensureHostedServerIdsForNames,
+          }
+        : {}),
       // Forward the previewed host id so the server re-resolves its
       // authoritative runtime config (harness/computer) for this direct
       // session, and so switching hosts forks the chat session.

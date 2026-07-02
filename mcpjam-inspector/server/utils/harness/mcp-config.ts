@@ -1,23 +1,22 @@
 /**
- * Build a Claude Code `.mcp.json` from a host's selected MCP servers.
+ * Build a Claude Code `.mcp.json` from a host's selected MCP servers — the
+ * "Keep MCPJam being MCPJam" Phase 1 shape.
  *
- * Claude Code runs INSIDE the E2B sandbox and connects to each server itself,
- * so EVERY entry is an `http` entry — the sandbox can neither spawn our stdio
- * subprocesses nor reach private addresses:
- *   - remote http/sse servers → their public url + headers directly (sandbox
- *     egress reaches the public internet);
- *   - local/stdio servers → the inspector's tunnel relay url, which bridges an
- *     external https request back to the local stdio process. Claude Code never
- *     spawns a stdio server itself.
+ * Every entry points the harness at MCPJam's OWN per-server tunnel
+ * (`…/api/mcp/adapter-http/{serverId}?k=…`), NOT at the upstream server. MCPJam
+ * forwards to the real server via the live `MCPClientManager`, so:
+ *   - the harness's MCP traffic flows through MCPJam (observation, the shared
+ *     authorized connection, host-knob enforcement — the whole playground);
+ *   - **no upstream credentials land in the sandbox** — the only secrets in
+ *     `.mcp.json` are the tunnel's per-server `?k=` bearer and a per-turn,
+ *     server-scoped `X-MCPJam-Proxy-Token` (validated-when-present by
+ *     `adapter-http`; see `harness-proxy-token.ts`).
  *
- * This is the pure generator. Resolving each server's effective config (and the
- * tunnel url for local ones) is the caller's job — see Phase 4's
- * `runHarnessTurn`, which has the live MCPClientManager + tunnelManager.
+ * This is the pure generator. Resolving each server's tunnel URL + minting its
+ * token is the caller's job — see `run-harness-turn`.
  */
-import { isHttpServerConfig } from "@mcpjam/sdk";
-import type { MCPServerConfig } from "@mcpjam/sdk";
 
-/** Failure building the harness MCP config (e.g. a local server with no tunnel). */
+/** Failure building the harness MCP config (e.g. a server with no tunnel). */
 export class HarnessMcpConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -25,25 +24,21 @@ export class HarnessMcpConfigError extends Error {
   }
 }
 
-/**
- * A selected MCP server, normalized for the harness. Both variants resolve to
- * an http entry; the variant only records where the url came from.
- */
-export type HarnessMcpServerInput =
-  | {
-      name: string;
-      transport: "http";
-      /** Public URL the sandbox reaches directly. */
-      url: string;
-      headers?: Record<string, string>;
-    }
-  | {
-      name: string;
-      transport: "stdio";
-      /** Tunnel relay URL bridging the local stdio server over https. */
-      tunnelUrl: string;
-      headers?: Record<string, string>;
-    };
+/** One server, resolved to its MCPJam proxy endpoint + per-turn token. */
+export interface HarnessProxyServerInput {
+  /** The MCPJam serverId (used as the key→name source for tool mapping). */
+  name: string;
+  /** Per-server tunnel URL that lands at `adapter-http/{serverId}` (carries `?k=`). */
+  proxyUrl: string;
+  /**
+   * Convex-minted, server-scoped identity token sent as `X-MCPJam-Proxy-Token`.
+   * Present on the HOSTED (web-authorized) plane, where the route uses it for
+   * acting-as. OMITTED on the local-mcp plane: local servers have no Convex row
+   * to authorize, the persistent manager already holds the connection, and the
+   * tunnel's `?k=` secret is the auth (`adapter-http` is validate-when-present).
+   */
+  proxyToken?: string;
+}
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
 export interface HarnessMcpHttpEntry {
@@ -67,76 +62,14 @@ function sanitizeServerName(name: string): string {
   return cleaned || "server";
 }
 
-/** Normalize a transport `headers` value (Headers | tuples | record) to a plain
- *  record; returns undefined when there's nothing to send. */
-function coerceHeaders(h: unknown): Record<string, string> | undefined {
-  if (!h) return undefined;
-  let entries: Array<[string, string]> = [];
-  if (typeof Headers !== "undefined" && h instanceof Headers) {
-    entries = [...h.entries()];
-  } else if (Array.isArray(h)) {
-    entries = h
-      .filter((p): p is [unknown, unknown] => Array.isArray(p) && p.length >= 2)
-      .map(([k, v]) => [String(k), String(v)]);
-  } else if (typeof h === "object") {
-    entries = Object.entries(h as Record<string, unknown>).map(([k, v]) => [
-      k,
-      String(v),
-    ]);
-  }
-  const out: Record<string, string> = {};
-  for (const [k, v] of entries) out[k] = v;
-  return Object.keys(out).length ? out : undefined;
-}
-
-/**
- * Normalize one resolved `MCPServerConfig` (the shape `createAuthorizedManager`
- * produces) into a harness input.
- *  - http/sse → its url + headers directly.
- *  - stdio    → requires `tunnelUrl` (the local process isn't reachable from
- *               the sandbox); throws `HarnessMcpConfigError` if it's missing.
- */
-export function harnessServerInputFromConfig(
-  name: string,
-  config: MCPServerConfig,
-  opts: { tunnelUrl?: string | null } = {},
-): HarnessMcpServerInput {
-  if (isHttpServerConfig(config)) {
-    const headers = coerceHeaders(config.requestInit?.headers) ?? {};
-    // createAuthorizedManager already overlays OAuth into headers, but honor a
-    // bare accessToken too (any existing Authorization header wins, regardless
-    // of casing — header names are case-insensitive).
-    const hasAuthorizationHeader = Object.keys(headers).some(
-      (key) => key.toLowerCase() === "authorization",
-    );
-    if (config.accessToken && !hasAuthorizationHeader) {
-      headers.Authorization = `Bearer ${config.accessToken}`;
-    }
-    return {
-      name,
-      transport: "http",
-      url: config.url,
-      headers: Object.keys(headers).length ? headers : undefined,
-    };
-  }
-  // stdio — not reachable from the sandbox without a tunnel.
-  if (!opts.tunnelUrl) {
-    throw new HarnessMcpConfigError(
-      `local (stdio) server "${name}" needs a tunnel URL to be reachable from ` +
-        `the sandbox — open a tunnel for it before starting the harness turn`,
-    );
-  }
-  return { name, transport: "stdio", tunnelUrl: opts.tunnelUrl };
-}
-
 /** Assign each server its sanitized, de-duplicated `.mcp.json` key, preserving
- *  input order. Shared by buildHarnessMcpJson and harnessServerKeyToName so the
- *  keys — and thus Claude Code's `mcp__<key>__<tool>` names — can't drift. */
-function assignServerKeys(
-  servers: HarnessMcpServerInput[],
-): Array<{ key: string; server: HarnessMcpServerInput }> {
+ *  input order. Shared by the json builder and the key→name map so the keys —
+ *  and thus Claude Code's `mcp__<key>__<tool>` names — can't drift. */
+function assignServerKeys<T extends { name: string }>(
+  servers: T[],
+): Array<{ key: string; server: T }> {
   const used = new Set<string>();
-  const out: Array<{ key: string; server: HarnessMcpServerInput }> = [];
+  const out: Array<{ key: string; server: T }> = [];
   for (const server of servers) {
     let key = sanitizeServerName(server.name);
     if (used.has(key)) {
@@ -150,29 +83,35 @@ function assignServerKeys(
   return out;
 }
 
-/** Build the `.mcp.json` object from normalized inputs. Names are sanitized and
- *  de-duplicated so distinct servers never collide on a key. */
-export function buildHarnessMcpJson(
-  servers: HarnessMcpServerInput[],
+/**
+ * Build the `.mcp.json` object — every entry is an `http` entry pointing at the
+ * server's MCPJam proxy URL, carrying ONLY the per-turn proxy token (no upstream
+ * auth). Names are sanitized + de-duplicated so distinct servers never collide.
+ */
+export function buildHarnessProxyMcpJson(
+  servers: HarnessProxyServerInput[],
 ): HarnessMcpJson {
   const mcpServers: Record<string, HarnessMcpHttpEntry> = {};
-  for (const { key, server: s } of assignServerKeys(servers)) {
-    const url = s.transport === "http" ? s.url : s.tunnelUrl;
-    const entry: HarnessMcpHttpEntry = { type: "http", url };
-    if (s.headers && Object.keys(s.headers).length > 0) {
-      entry.headers = { ...s.headers };
-    }
-    mcpServers[key] = entry;
+  for (const { key, server } of assignServerKeys(servers)) {
+    mcpServers[key] = {
+      type: "http",
+      url: server.proxyUrl,
+      // Header only when a token was minted (hosted plane); the local plane is
+      // gated by the tunnel `?k=` and sends none.
+      ...(server.proxyToken
+        ? { headers: { "X-MCPJam-Proxy-Token": server.proxyToken } }
+        : {}),
+    };
   }
   return { mcpServers };
 }
 
 /** Map each sanitized `.mcp.json` key → the input's original name (the MCPJam
- *  serverId), using the SAME sanitize+dedup as buildHarnessMcpJson. Lets the
- *  turn runner map Claude Code's `mcp__<key>__<tool>` tool names back to the
+ *  serverId), using the SAME sanitize+dedup as `buildHarnessProxyMcpJson`. Lets
+ *  the turn runner map Claude Code's `mcp__<key>__<tool>` tool names back to the
  *  originating serverId (eval tool matching, trace spans, MCP App rendering). */
 export function harnessServerKeyToName(
-  servers: HarnessMcpServerInput[],
+  servers: Array<{ name: string }>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const { key, server } of assignServerKeys(servers)) {
