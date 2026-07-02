@@ -999,6 +999,7 @@ export function AuthRoute() {
 export function OAuthFlowRoute() {
   const {
     appState,
+    displayServerConfigs,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -1053,7 +1054,7 @@ export function OAuthFlowRoute() {
       }}
     >
       <OAuthFlowTab
-        serverConfigs={appState.servers}
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
