@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 
 // Gate the engine signal: an MCPJam-provided model id reports true, BYOK false.
+// Mirrors the real helper's provider-aware canonicalization: a BARE id only
+// counts as MCPJam-provided when the provider is supplied (bare + provider →
+// prefixed hosted id).
 vi.mock("@/shared/types", () => ({
-  isMCPJamProvidedModel: (id: string) => id.startsWith("mcpjam/"),
+  isMCPJamProvidedModel: (id: string, provider?: string) =>
+    id.startsWith("mcpjam/") || (provider === "mcpjam" && !id.includes("/")),
 }));
 
 import { shouldEnableCloudSkillTools } from "../cloud-skill-tools";
@@ -56,5 +60,30 @@ describe("shouldEnableCloudSkillTools", () => {
         modelId: "openai/gpt-5",
       })
     ).toBe(true);
+  });
+
+  it("disables for a BARE MCPJam id + provider on a harness host (provider-aware)", () => {
+    // Regression: a provider-blind check mis-detected bare hosted ids as
+    // non-MCPJam and advertised the emulated skill tools into a harness turn.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        harness: "claude-code",
+        modelId: "bare-model",
+        provider: "mcpjam",
+      })
+    ).toBe(false);
+  });
+
+  it("disables for ANY harness id, not just claude-code (codex host)", () => {
+    // Codex runs a real harness too; emulated skill tools on that turn would
+    // be a prompt/tool mismatch even though Codex delivers no skills itself.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        harness: "codex",
+        modelId: "mcpjam/gpt-5",
+      })
+    ).toBe(false);
   });
 });

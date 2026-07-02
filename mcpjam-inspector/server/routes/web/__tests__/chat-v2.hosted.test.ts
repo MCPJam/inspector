@@ -5,6 +5,7 @@ const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
+  fetchChatboxRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   managerListToolsMock,
@@ -21,6 +22,7 @@ const {
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
+  fetchChatboxRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   managerListToolsMock: vi.fn(),
@@ -127,6 +129,10 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
+vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
+  fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+}));
+
 vi.mock("../apps.js", () => ({
   default: new Hono(),
 }));
@@ -165,6 +171,13 @@ describe("web routes — chat-v2 hosted mode", () => {
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: { selectedServerIds: ["server-1"] },
+    });
+    // Default: chatbox runtime-config resolves (empty = host has no
+    // overrides). Chatbox turns now FAIL CLOSED on a failed fetch, so the
+    // happy-path tests must resolve it rather than lean on the old fallback.
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {},
     });
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
@@ -329,6 +342,36 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
+    expect(response.status).not.toBe(200);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED when the chatbox runtime-config fetch fails — never runs the engine", async () => {
+    const { app, token } = createWebTestApp();
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "backend unreachable",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-fail",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // The fetched config is the only source of harness/computer and of the
+    // host-wins protections; falling back to body values would silently
+    // downgrade a harness chatbox and reopen the tampered-body window.
     expect(response.status).not.toBe(200);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });

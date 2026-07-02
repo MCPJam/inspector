@@ -25,21 +25,32 @@ const NAME_RE = /^[a-z0-9-]+$/;
  *
  * Cloud skills are a Convex-backed PROJECT resource (no computer required), so
  * any signed-in member with a project gets them — EXCEPT when the turn will run
- * the real Claude Code harness, which delivers skills via the adapter `skills`
- * param instead (advertising the tools there would be a prompt/tool mismatch).
+ * a real harness runtime, which delivers skills via the adapter `skills` param
+ * (or, for skills-incapable runtimes like Codex, not at all) — advertising the
+ * emulated tools there would be a prompt/tool mismatch.
  *
- * The harness runs ONLY for a `harness:"claude-code"` host on an MCPJam-provided
- * model; a BYOK model on that same host runs emulated — so gate on the actual
- * engine (model), not host config alone.
+ * Two footguns this check must not regress on:
+ *  - `provider` is REQUIRED for the model check: bare hosted ids
+ *    (`gpt-5-nano` + `openai`) only canonicalize to their prefixed form with
+ *    the provider, and a provider-blind check would advertise the emulated
+ *    tools into a real harness turn.
+ *  - Gate on ANY harness id, not the `claude-code` literal — a Codex host on
+ *    an MCPJam model runs the Codex harness, not the emulated engine.
+ *
+ * A BYOK model on a harness host does NOT reach the harness (the route
+ * preflight rejects non-eligible models), so `willRunHarness` false there is
+ * moot; keep the model check anyway so this helper stands alone.
  */
 export function shouldEnableCloudSkillTools(args: {
   isGuest: boolean;
   harness: string | undefined;
   modelId: string;
+  provider?: string;
   hasProjectId: boolean;
 }): boolean {
   const willRunHarness =
-    args.harness === "claude-code" && isMCPJamProvidedModel(args.modelId);
+    args.harness !== undefined &&
+    isMCPJamProvidedModel(args.modelId, args.provider);
   return !args.isGuest && !willRunHarness && args.hasProjectId;
 }
 

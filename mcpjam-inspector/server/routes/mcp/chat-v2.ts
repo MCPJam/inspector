@@ -316,8 +316,11 @@ chatV2.post("/", async (c) => {
     // Chatbox-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
     // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
-    // Soft-fall-through on Convex blip — chat keeps running with body
-    // values, matching pre-rollout behavior.
+    // FAIL CLOSED on fetch failure — same rationale as the host-bound branch
+    // below: the fetched config is the only source of `harness`/`computer`
+    // and of every host-wins protection, so falling back to body values
+    // would silently downgrade a harness chatbox to the emulated engine and
+    // reopen the tampered-body window.
     //
     // PR 4c of the engine consolidation (`~/mcpjam-docs/unification.md`):
     // the field-by-field merge between body and `fetchChatboxRuntimeConfig`
@@ -348,12 +351,18 @@ chatV2.post("/", async (c) => {
           >;
         } else {
           logger.warn(
-            "[mcp/chat-v2] runtime-config fetch failed; using body values",
+            "[mcp/chat-v2] runtime-config fetch failed; failing closed",
             {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
             }
+          );
+          return c.json(
+            {
+              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
+            },
+            runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
           );
         }
       }
