@@ -180,15 +180,17 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
 
     await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
     // The composed auto-resume predicate delegates to the SDK's
-    // tool-calls-complete helper; with approval OFF (default) the
-    // approval-responses branch never fires.
+    // tool-calls-complete helper, and to the approval-responses helper
+    // regardless of the current toggle (a pill minted before a toggle-off
+    // must still resume the turn).
     const predicate = mockState.lastChatInit.sendAutomaticallyWhen;
     mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(true);
     expect(predicate({ messages: [] })).toBe(true);
-    mockState.sendAutomaticallyWhenSentinel.mockReturnValueOnce(false);
-    mockState.approvalsCompleteSentinel.mockReturnValue(true);
+    mockState.sendAutomaticallyWhenSentinel.mockReturnValue(false);
+    mockState.approvalsCompleteSentinel.mockReturnValueOnce(true);
+    expect(predicate({ messages: [] })).toBe(true);
+    mockState.approvalsCompleteSentinel.mockReturnValue(false);
     expect(predicate({ messages: [] })).toBe(false);
-    expect(mockState.approvalsCompleteSentinel).not.toHaveBeenCalled();
 
     await mockState.lastChatInit.onToolCall({
       toolCall: {
@@ -286,6 +288,43 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       render();
       await waitFor(() =>
         expect(mockState.setMessages).toHaveBeenCalledWith(hydrated)
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("prepends hydrated history when the user sent before hydration finished", async () => {
+    // The race: resumed session, user types + sends while the transcript
+    // fetch is in flight. Everything live is new by construction (the hook
+    // found the instance pristine), so the prior transcript must be
+    // prepended — not dropped forever.
+    let releaseHydration!: (value: unknown) => void;
+    vi.mocked(getChatHistoryDetail).mockReturnValue(
+      new Promise((resolve) => {
+        releaseHydration = resolve;
+      }) as any
+    );
+    const hydrated = [{ id: "old-1", role: "user", parts: [] }];
+    vi.mocked(transcriptToUIMessages).mockReturnValue(hydrated as any);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, json: async () => [{}] } as any);
+    try {
+      render();
+      await waitFor(() => expect(mockState.lastChatInstance).not.toBeNull());
+      // User sends before hydration lands.
+      const live = [{ id: "new-1", role: "user", parts: [] }];
+      mockState.lastChatInstance.messages = live;
+
+      releaseHydration({
+        session: { messagesBlobUrl: "https://blob.example/transcript" },
+      });
+      await waitFor(() =>
+        expect(mockState.setMessages).toHaveBeenCalledWith([
+          ...hydrated,
+          ...live,
+        ])
       );
     } finally {
       fetchSpy.mockRestore();

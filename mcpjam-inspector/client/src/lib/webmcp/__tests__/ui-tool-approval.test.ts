@@ -111,6 +111,28 @@ describe("createUiAwareApprovalResponseHandler", () => {
     expect(addToolOutput).not.toHaveBeenCalled();
   });
 
+  it("a duplicate approve after a deny never executes the denied call", async () => {
+    const def = registerTool();
+    const addToolApprovalResponse = vi.fn();
+    const addToolOutput = vi.fn();
+    const handler = createUiAwareApprovalResponseHandler({
+      getMessages: () => [uiPartMessage()],
+      addToolApprovalResponse,
+      addToolOutput,
+    });
+
+    handler({ id: "appr-1", approved: false });
+    handler({ id: "appr-1", approved: true }); // duplicate/replayed event
+    await flushMicrotasks();
+
+    expect(addToolApprovalResponse).toHaveBeenCalledWith({
+      id: "appr-1",
+      approved: false,
+    });
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(addToolOutput).not.toHaveBeenCalled();
+  });
+
   it("non-UI tool parts fall through to the plain approval response", async () => {
     const addToolApprovalResponse = vi.fn();
     const addToolOutput = vi.fn();

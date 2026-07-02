@@ -129,10 +129,15 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   });
 }
 
-function evictIdleInstances(): void {
+function evictIdleInstances(excludeKey: string): void {
   if (instances.size <= MAX_INSTANCES) return;
   for (const [key, entry] of instances) {
     if (instances.size <= MAX_INSTANCES) return;
+    // Never evict the entry that triggered this sweep: it was created a
+    // moment ago and its surface attaches in a React effect AFTER creation,
+    // so it looks idle+detached here. Evicting it would make the next
+    // getOrCreateAgentChat mint a second instance for the same session.
+    if (key === excludeKey) continue;
     const status = entry.chat.status;
     const idle = status === "ready" || status === "error";
     if (idle && entry.config.attachedSurfaces.size === 0) {
@@ -196,14 +201,15 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     },
     // Resume the turn automatically once every tool call has an output —
     // without this, `addToolOutput` would sit unsent until the next user
-    // message. With approval on, also resume once every approval request
-    // has an answer (the MCP/skill-tool deny/approve path).
+    // message — or once every approval request has an answer (the MCP/
+    // skill-tool deny/approve path). The approval branch is deliberately
+    // NOT gated on the CURRENT `config.requireToolApproval`: a pill minted
+    // while the toggle was on must still resume the turn if the user flips
+    // it off before answering, and the predicate is inert when the message
+    // holds no approval requests.
     sendAutomaticallyWhen: (options) => {
       if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return (
-        config.requireToolApproval &&
-        lastAssistantMessageIsCompleteWithApprovalResponses(options)
-      );
+      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
   });
 
@@ -222,7 +228,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
 
   const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };
   instances.set(chatSessionId, entry);
-  evictIdleInstances();
+  evictIdleInstances(chatSessionId);
   return entry;
 }
 

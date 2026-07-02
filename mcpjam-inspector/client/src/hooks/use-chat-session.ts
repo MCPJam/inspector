@@ -1965,15 +1965,13 @@ export function useChatSession(
     // our `onToolCall` above; that triggers an auto-send which carries
     // the new tool results back to the server so the agent loop resumes.
     // Both AI SDK helpers take the options object: `({ messages }) => …`.
+    // The approval branch is deliberately NOT gated on the CURRENT
+    // `requireToolApproval`: a pill minted while the toggle was on must
+    // still resume the turn if the user flips it off before answering, and
+    // the predicate is inert when the message holds no approval requests.
     sendAutomaticallyWhen: (options) => {
       if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      if (
-        requireToolApproval &&
-        lastAssistantMessageIsCompleteWithApprovalResponses(options)
-      ) {
-        return true;
-      }
-      return false;
+      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
   });
   const messagesRef = useRef(messages);
