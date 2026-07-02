@@ -34,7 +34,10 @@ import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
-import { UI_TOOL_NAME_REGEX } from "@/shared/client-fulfilled-tools";
+import {
+  UI_TOOL_NAME_REGEX,
+  uiToolCallNeedsApproval,
+} from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
@@ -628,6 +631,7 @@ export interface PrepareChatV2Options {
 function toNoExecuteAiSdkTool(args: {
   description: string;
   inputSchema?: Record<string, unknown>;
+  needsApproval?: boolean;
 }) {
   return tool({
     description: args.description,
@@ -638,6 +642,7 @@ function toNoExecuteAiSdkTool(args: {
         additionalProperties: false,
       }
     ),
+    ...(args.needsApproval ? { needsApproval: true } : {}),
     // No execute — client fulfills via onToolCall.
   });
 }
@@ -648,6 +653,9 @@ function toNoExecuteAiSdkTool(args: {
  * All app-provided tools are emitted. `readOnly` is preserved in the snapshot
  * for policy/telemetry, but MCPJam does not force approval for app-provided
  * tools here; normal server-tool approval remains scoped to server tools.
+ * (UI tools DO gate on approval now — see `buildUiTools`. Extending the same
+ * treatment to app tools is a deliberate follow-up: `app_<8hex>` aliases need
+ * their own fulfillment UX in the iframe bridge first.)
  */
 export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
   if (!appTools || appTools.length === 0) return {};
@@ -663,16 +671,31 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
 
 /**
  * Build no-execute AI SDK tool entries for the WebMCP UI tools snapshot.
- * Same client-fulfilled contract as {@link buildAppTools}; like app tools,
- * UI tools do not participate in the server-tool approval flow (v1).
+ * Same client-fulfilled contract as {@link buildAppTools}.
+ *
+ * When the turn's `requireToolApproval` flag is on, non-readOnly UI tools
+ * get `needsApproval` so the BYOK `streamText` path pauses and emits a
+ * `tool-approval-request` the client renders as the Approve/Deny pill.
+ * NOTE the client resolves an APPROVED `ui_*` call by executing it and
+ * supplying the tool-result directly (never a bare approval response) —
+ * the server cannot execute a no-execute tool, so an approval response
+ * without a result would strand the turn. Denials use the normal approval
+ * response and the existing denial machinery.
  */
-export function buildUiTools(uiTools: UiToolEntry[] | undefined): ToolSet {
+export function buildUiTools(
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
+): ToolSet {
   if (!uiTools || uiTools.length === 0) return {};
   const out: ToolSet = {};
   for (const t of uiTools) {
     out[t.name] = toNoExecuteAiSdkTool({
       description: t.description,
       inputSchema: t.inputSchema,
+      needsApproval: uiToolCallNeedsApproval({
+        readOnly: t.readOnly,
+        requireToolApproval: opts?.requireToolApproval === true,
+      }),
     });
   }
   return out;
@@ -683,7 +706,8 @@ export function buildUiTools(uiTools: UiToolEntry[] | undefined): ToolSet {
  * snapshotted, so surfaces without UI tools keep a byte-identical prompt.
  */
 export function buildUiToolsSystemPrompt(
-  uiTools: UiToolEntry[] | undefined
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
 ): string {
   if (!uiTools || uiTools.length === 0) return "";
   return [
@@ -691,6 +715,11 @@ export function buildUiToolsSystemPrompt(
     "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
     "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful.",
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
+    ...(opts?.requireToolApproval
+      ? [
+          "Mutating `ui_*` actions pause for the user's explicit approval before they run. A denial is final — explain what you wanted to do instead of retrying the call.",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -811,7 +840,7 @@ export async function prepareChatV2(
   const appToolEntries = buildAppTools(appTools);
   // WebMCP UI tools — client-fulfilled like app tools, but with curated
   // `ui_*` names instead of opaque aliases.
-  const uiToolEntries = buildUiTools(uiTools);
+  const uiToolEntries = buildUiTools(uiTools, { requireToolApproval });
   const builtInToolEntries = builtInTools ?? {};
   // UI tools are host-curated like built-ins, but `ui_` is a guessable
   // prefix any third-party MCP server could ship — failing closed would let
@@ -954,7 +983,7 @@ export async function prepareChatV2(
   const enhancedSystemPrompt = [
     systemPrompt,
     skillsPromptSection,
-    buildUiToolsSystemPrompt(uiTools),
+    buildUiToolsSystemPrompt(uiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))
     .map((section) => section.trim())
