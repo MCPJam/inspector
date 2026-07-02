@@ -83,4 +83,34 @@ describe("/api/web/harness-mcp", () => {
     expect(data.result.tools).toEqual([{ name: "echo" }]);
     expect(mockManager.listTools).toHaveBeenCalledWith("srv-a");
   });
+
+  it("wires an rpcLogger that publishes the sandbox's MCP traffic to the rpc-log bus", async () => {
+    const { createAuthorizedManager } = await import("../auth");
+    const { rpcLogBus } = await import("../../../services/rpc-log-bus.js");
+    (createAuthorizedManager as ReturnType<typeof vi.fn>).mockClear();
+
+    const res = await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") });
+    expect(res.status).toBe(200);
+
+    // 8th arg = options; the route must hand the manager a logger that lands
+    // on the shared bus (the live harness turn bridges the bus into its
+    // collector — see bridgeHarnessRpcLogsToCollector).
+    const options = (createAuthorizedManager as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[7] as { rpcLogger?: (e: unknown) => void } | undefined;
+    expect(typeof options?.rpcLogger).toBe("function");
+
+    const seen: unknown[] = [];
+    const stop = rpcLogBus.subscribe(["srv-a"], (e) => seen.push(e));
+    try {
+      options!.rpcLogger!({
+        direction: "send",
+        serverId: "srv-a",
+        message: { jsonrpc: "2.0", id: 9, method: "tools/call" },
+      });
+    } finally {
+      stop();
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ serverId: "srv-a", direction: "send" });
+  });
 });

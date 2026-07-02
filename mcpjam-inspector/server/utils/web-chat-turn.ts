@@ -65,6 +65,7 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
+import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
@@ -492,6 +493,14 @@ export async function streamWebChatTurn(
     ? resolveWebAuthorizedHarnessStrategy()
     : undefined;
 
+  // Harness observation: the turn's MCP traffic arrives as separate
+  // `/api/web/harness-mcp` requests (not through THIS request's manager), so
+  // bridge the in-process rpc-log bus into this turn's collector while the
+  // stream is live — the Logs panel then fills exactly like an emulated turn.
+  // Subscribed at stream start (not before — a pre-stream failure must not
+  // leave a live subscription) and torn down with the stream.
+  let stopHarnessRpcLogBridge: (() => void) | undefined;
+
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
@@ -521,8 +530,19 @@ export async function streamWebChatTurn(
     ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
-    onStreamComplete: cleanupStream,
-    onStreamWriterReady: (writer) =>
-      runtime.rpcCollector?.attachStreamWriter(writer),
+    onStreamComplete: async () => {
+      stopHarnessRpcLogBridge?.();
+      stopHarnessRpcLogBridge = undefined;
+      await cleanupStream();
+    },
+    onStreamWriterReady: (writer) => {
+      runtime.rpcCollector?.attachStreamWriter(writer);
+      if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
+        stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
+          persist.selectedServerIds,
+          runtime.rpcCollector
+        );
+      }
+    },
   });
 }
