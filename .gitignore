@@ -1,5 +1,6 @@
 .DS_Store
 worktrees/
+.worktrees/
 .cursor/
 node_modules/
 .mcpjam/skills/
