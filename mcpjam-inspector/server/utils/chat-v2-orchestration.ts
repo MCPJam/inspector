@@ -34,6 +34,7 @@ import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import { UI_TOOL_NAME_REGEX } from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
@@ -66,6 +67,14 @@ export { filterAppOnlyTools };
  * validated against `/^app_[a-z0-9]{8}$/i`).
  */
 export type AppToolEntry = import("@/shared/chat-v2").AppToolSnapshotEntry;
+/**
+ * WebMCP-shaped MCPJam UI tool descriptor as accepted by `prepareChatV2`,
+ * already sanitized by {@link validateUiToolEntries}. Mirrors
+ * `UiToolSnapshotEntry` in `shared/chat-v2.ts`. Unlike app tools there is no
+ * alias indirection: `name` (reserved `ui_` prefix) is the model-facing tool
+ * name, fulfilled client-side by `useChat.onToolCall`.
+ */
+export type UiToolEntry = import("@/shared/chat-v2").UiToolSnapshotEntry;
 export type WidgetModelContextEntry =
   import("@/shared/chat-v2").WidgetModelContextEntry;
 
@@ -80,6 +89,13 @@ const APP_TOOL_MAX_ENTRIES = 64;
 const APP_TOOL_MAX_NAME_CHARS = 128;
 const APP_TOOL_MAX_DESCRIPTION_CHARS = 512;
 const APP_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
+// UI tool caps mirror the client snapshotter at
+// `client/src/lib/webmcp/ui-tools-registry.ts`. The name regex lives in
+// `shared/client-fulfilled-tools.ts` so the no-execute gates in the MCPJam
+// free-model loop can never drift from the validator.
+const UI_TOOL_MAX_ENTRIES = 64;
+const UI_TOOL_MAX_DESCRIPTION_CHARS = 512;
+const UI_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const WIDGET_MODEL_CONTEXT_MAX_ENTRIES = 32;
 const WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS = 32;
 const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
@@ -88,6 +104,13 @@ export class AppToolValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AppToolValidationError";
+  }
+}
+
+export class UiToolValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UiToolValidationError";
   }
 }
 
@@ -236,6 +259,100 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
       parentToolCallId,
       rawName,
       description,
+      inputSchema,
+      readOnly: raw.readOnly,
+    });
+  }
+  return out;
+}
+
+/**
+ * Validate and normalize the client-supplied `uiTools` snapshot.
+ *
+ * Returns a cleaned array of {@link UiToolEntry} or throws
+ * {@link UiToolValidationError} — routes turn the throw into a 400.
+ *
+ * Same defensive posture as {@link validateAppToolEntries}: nothing here
+ * trusts the client snapshotter to have enforced the caps. The `ui_` name
+ * regex is a strict subset of the Anthropic tool-name charset, so validated
+ * entries can never trip the provider name gate.
+ */
+export function validateUiToolEntries(input: unknown): UiToolEntry[] {
+  if (input === undefined || input === null) return [];
+  if (!Array.isArray(input)) {
+    throw new UiToolValidationError("uiTools must be an array");
+  }
+  if (input.length > UI_TOOL_MAX_ENTRIES) {
+    throw new UiToolValidationError(
+      `uiTools accepts at most ${UI_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+    );
+  }
+  const out: UiToolEntry[] = [];
+  const seenNames = new Set<string>();
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") {
+      throw new UiToolValidationError(`uiTools[${i}] must be an object`);
+    }
+    const name = raw.name;
+    if (typeof name !== "string" || !UI_TOOL_NAME_REGEX.test(name)) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].name must match ${UI_TOOL_NAME_REGEX}`
+      );
+    }
+    if (seenNames.has(name)) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].name '${name}' is duplicated`
+      );
+    }
+    seenNames.add(name);
+    if (
+      typeof raw.description !== "string" ||
+      raw.description.trim().length === 0
+    ) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].description must be a non-empty string`
+      );
+    }
+    if (raw.description.length > UI_TOOL_MAX_DESCRIPTION_CHARS) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].description exceeds ${UI_TOOL_MAX_DESCRIPTION_CHARS} chars`
+      );
+    }
+    let inputSchema: Record<string, unknown> | undefined;
+    if (raw.inputSchema !== undefined) {
+      if (
+        raw.inputSchema === null ||
+        typeof raw.inputSchema !== "object" ||
+        Array.isArray(raw.inputSchema)
+      ) {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema must be a JSON object`
+        );
+      }
+      let size = 0;
+      try {
+        size = new TextEncoder().encode(JSON.stringify(raw.inputSchema)).length;
+      } catch {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema is not JSON-serializable`
+        );
+      }
+      if (size > UI_TOOL_MAX_INPUT_SCHEMA_BYTES) {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema exceeds ${UI_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+        );
+      }
+      inputSchema = raw.inputSchema as Record<string, unknown>;
+    }
+    if (typeof raw.readOnly !== "boolean") {
+      throw new UiToolValidationError(
+        `uiTools[${i}].readOnly must be a boolean`
+      );
+    }
+    out.push({
+      name,
+      description: raw.description,
       inputSchema,
       readOnly: raw.readOnly,
     });
@@ -490,6 +607,8 @@ export interface PrepareChatV2Options {
    */
   priorMessages?: ReadonlyArray<ModelMessage>;
   appTools?: AppToolEntry[];
+  /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
+  uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
   /**
@@ -502,11 +621,29 @@ export interface PrepareChatV2Options {
 }
 
 /**
+ * AI SDK tool entry with no `execute`, on purpose: `streamText` will stream
+ * the tool-call to the client, where `useChat.onToolCall` fulfills it and
+ * supplies the result back via `addToolOutput`.
+ */
+function toNoExecuteAiSdkTool(args: {
+  description: string;
+  inputSchema?: Record<string, unknown>;
+}) {
+  return tool({
+    description: args.description,
+    inputSchema: jsonSchema(
+      (args.inputSchema as Parameters<typeof jsonSchema>[0]) ?? {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      }
+    ),
+    // No execute — client fulfills via onToolCall.
+  });
+}
+
+/**
  * Build no-execute AI SDK tool entries from the client snapshot.
- *
- * No `execute` is set on purpose: `streamText` will stream the tool-call to
- * the client, where `useChat.onToolCall` dispatches into the right iframe
- * via `AppBridge.callTool` and supplies the result back via `addToolOutput`.
  *
  * All app-provided tools are emitted. `readOnly` is preserved in the snapshot
  * for policy/telemetry, but MCPJam does not force approval for app-provided
@@ -516,19 +653,45 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
   if (!appTools || appTools.length === 0) return {};
   const out: ToolSet = {};
   for (const t of appTools) {
-    out[t.alias] = tool({
+    out[t.alias] = toNoExecuteAiSdkTool({
       description: `[${t.appName}] ${t.description ?? t.rawName}`,
-      inputSchema: jsonSchema(
-        (t.inputSchema as Parameters<typeof jsonSchema>[0]) ?? {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        }
-      ),
-      // No execute — client fulfills via onToolCall.
+      inputSchema: t.inputSchema,
     });
   }
   return out;
+}
+
+/**
+ * Build no-execute AI SDK tool entries for the WebMCP UI tools snapshot.
+ * Same client-fulfilled contract as {@link buildAppTools}; like app tools,
+ * UI tools do not participate in the server-tool approval flow (v1).
+ */
+export function buildUiTools(uiTools: UiToolEntry[] | undefined): ToolSet {
+  if (!uiTools || uiTools.length === 0) return {};
+  const out: ToolSet = {};
+  for (const t of uiTools) {
+    out[t.name] = toNoExecuteAiSdkTool({
+      description: t.description,
+      inputSchema: t.inputSchema,
+    });
+  }
+  return out;
+}
+
+/**
+ * System-prompt section advertising the UI tools. Empty when none were
+ * snapshotted, so surfaces without UI tools keep a byte-identical prompt.
+ */
+export function buildUiToolsSystemPrompt(
+  uiTools: UiToolEntry[] | undefined
+): string {
+  if (!uiTools || uiTools.length === 0) return "";
+  return [
+    "## MCPJam UI tools",
+    "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
+    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful.",
+    "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
+  ].join("\n");
 }
 
 export interface PrepareChatV2Result {
@@ -565,6 +728,7 @@ export async function prepareChatV2(
     modelVisibleMcpToolResults,
     customProviders,
     appTools,
+    uiTools,
     builtInTools,
     cloudSkills,
     harness,
@@ -645,7 +809,22 @@ export async function prepareChatV2(
   // before skills so an app alias never collides with either (the
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
+  // WebMCP UI tools — client-fulfilled like app tools, but with curated
+  // `ui_*` names instead of opaque aliases.
+  const uiToolEntries = buildUiTools(uiTools);
   const builtInToolEntries = builtInTools ?? {};
+  // UI tools are host-curated like built-ins, but `ui_` is a guessable
+  // prefix any third-party MCP server could ship — failing closed would let
+  // such a server brick every chat turn for the user. Same policy as
+  // built-ins: the UI tool wins and the MCP twin is dropped with a warn.
+  for (const name of Object.keys(uiToolEntries)) {
+    if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
+      logger.warn(
+        `[chat-v2] UI tool '${name}' shadows an MCP tool with the same name; using the UI tool`,
+      );
+      delete mcpTools[name];
+    }
+  }
   // Collision policy, per origin:
   //  - MCP tools: the built-in wins and the server tool is dropped with a
   //    warn. Built-ins are the host's explicit catalog choice, and the
@@ -666,10 +845,11 @@ export async function prepareChatV2(
     }
     if (
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app or skill tool.`
+        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`,
       );
     }
   }
@@ -678,6 +858,7 @@ export async function prepareChatV2(
   const realTools = {
     ...mcpTools,
     ...appToolEntries,
+    ...uiToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
   } as ToolSet;
@@ -686,7 +867,19 @@ export async function prepareChatV2(
   // it does. The catalog is built from real tools only (meta-tools aren't
   // searchable) but the meta-tools are then merged into the final ToolSet so
   // both streamText and the Convex loop see them.
-  const catalog = buildToolCatalog(realTools);
+  //
+  // WebMCP UI tools are exempt from progressive discovery: the catalog is
+  // what gets lazily loaded via `load_mcp_tools`, and both stream paths
+  // treat non-cataloged entries as always-advertised, never-gated
+  // "injected" tools (see direct-chat-turn / mcpjam-stream-handler).
+  // Cataloging them would hide the `ui_*` tools behind a load step while
+  // the system prompt advertises them unconditionally — and a 7-entry
+  // first-party control surface is not what discovery exists to trim.
+  const catalogSource: ToolSet = { ...realTools };
+  for (const name of Object.keys(uiToolEntries)) {
+    delete catalogSource[name];
+  }
+  const catalog = buildToolCatalog(catalogSource);
   const discoveryState = createDiscoveryState();
   // Replay prior `load_mcp_tools` calls into the discovery state before
   // we mint the plan / meta-tools. Without hydration, a multi-turn
@@ -758,7 +951,11 @@ export async function prepareChatV2(
   }
 
   // 3. System prompt concatenation
-  const enhancedSystemPrompt = [systemPrompt, skillsPromptSection]
+  const enhancedSystemPrompt = [
+    systemPrompt,
+    skillsPromptSection,
+    buildUiToolsSystemPrompt(uiTools),
+  ]
     .filter((section): section is string => Boolean(section?.trim()))
     .map((section) => section.trim())
     .join("\n\n");

@@ -92,6 +92,18 @@ export function registerInspectorCommandHandler(
   };
 }
 
+/**
+ * True when at least one handler is currently registered for `type`.
+ * Lets callers (e.g. the WebMCP UI tools) decide whether a prerequisite
+ * step is needed to mount the surface that registers the handler, instead
+ * of guessing from unrelated UI state.
+ */
+export function hasInspectorCommandHandler(
+  type: InspectorCommandType,
+): boolean {
+  return (handlers.get(type)?.length ?? 0) > 0;
+}
+
 export async function executeInspectorCommand(
   command: InspectorCommand,
 ): Promise<InspectorCommandResponse> {

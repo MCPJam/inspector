@@ -51,6 +51,7 @@ import {
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   type AppToolEntry,
+  type UiToolEntry,
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
 import {
@@ -160,6 +161,8 @@ export interface WebChatTurnPrepareInputs {
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
   appTools?: AppToolEntry[];
+  /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
+  uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   widgetModelContext?: WidgetModelContextEntry[];
@@ -244,6 +247,7 @@ export async function streamWebChatTurn(
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
       appTools: prepare.appTools,
+      uiTools: prepare.uiTools,
       builtInTools: prepare.builtInTools,
       ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
     });

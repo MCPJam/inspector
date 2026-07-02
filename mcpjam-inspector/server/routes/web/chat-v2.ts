@@ -8,6 +8,8 @@ import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   validateAppToolEntries,
   AppToolValidationError,
+  validateUiToolEntries,
+  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
@@ -419,6 +421,17 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // WebMCP UI tools: same boundary treatment as appTools.
+    let validatedUiTools;
+    try {
+      validatedUiTools = validateUiToolEntries(body.uiTools);
+    } catch (error) {
+      if (error instanceof UiToolValidationError) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
+
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
@@ -462,6 +475,7 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
+          uiTools: validatedUiTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           ...(cloudSkillsEnabled
