@@ -14,15 +14,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  generateId,
-  lastAssistantMessageIsCompleteWithToolCalls,
-} from "ai";
-import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
-import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
+import { generateId } from "ai";
+import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { usePostHog } from "posthog-js/react";
-import { authFetch } from "@/lib/session-token";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
@@ -35,8 +29,6 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
-
-const AGENT_API_PATH = "/api/web/mcpjam-agent";
 
 export interface UseMcpjamAgentSessionArgs {
   /**
@@ -116,10 +108,24 @@ export function useMcpjamAgentSession(
     return getDefaultModel(availableModels);
   }, [args.modelOverride, availableModels, selectedModelId]);
 
-  const modelRef = useRef<ModelDefinition | undefined>(resolvedModel);
+  // The Chat instance lives OUTSIDE React (see agent-chat-instances.ts) so
+  // an in-flight stream survives this hook unmounting — e.g. a `ui_navigate`
+  // tool call leaving the Home takeover mid-turn. The hook attaches via
+  // `useChat({ chat })` and keeps the instance's mutable config current.
+  const { chat, config } = useMemo(
+    () => getOrCreateAgentChat(chatSessionId),
+    [chatSessionId]
+  );
   useEffect(() => {
-    modelRef.current = resolvedModel;
-  }, [resolvedModel]);
+    config.projectId = projectId ?? null;
+    config.model = resolvedModel;
+  });
+  useEffect(() => {
+    config.attachedSurfaces.add(surface);
+    return () => {
+      config.attachedSurfaces.delete(surface);
+    };
+  }, [config, surface]);
 
   // Transcript hydration: when we mount with a known session id, fetch the
   // persisted transcript and seed `useChat`. Without this, reload would
@@ -176,46 +182,12 @@ export function useMcpjamAgentSession(
     };
   }, [providedSessionId, projectId]);
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: AGENT_API_PATH,
-        fetch: authFetch,
-        body: () => ({
-          model: modelRef.current,
-          projectId,
-          chatSessionId,
-          // WebMCP UI tools snapshot, drained fresh at POST time (same
-          // contract as `useChatSession`). The server validates again in
-          // `validateUiToolEntries`.
-          uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
-        }),
-      }),
-    [chatSessionId, projectId]
-  );
-
-  const { messages, sendMessage, status, error, stop, setMessages, addToolOutput } =
-    useChat({
-      id: chatSessionId,
-      transport,
-      // WebMCP UI tools are no-execute server-side; the stream pauses until
-      // the client supplies the result via `addToolOutput`. Non-UI names
-      // fall through untouched (this surface has no app tools).
-      onToolCall: async ({ toolCall }) => {
-        await handleUiToolCall({
-          toolName: (toolCall as { toolName: string }).toolName,
-          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
-          input: (toolCall as { input: unknown }).input,
-          addToolOutput: addToolOutput as Parameters<
-            typeof handleUiToolCall
-          >[0]["addToolOutput"],
-        });
-      },
-      // Resume the turn automatically once every tool call has an output —
-      // without this, `addToolOutput` would sit unsent until the next user
-      // message.
-      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    });
+  // Transport, `onToolCall` (WebMCP UI tool fulfillment), and
+  // `sendAutomaticallyWhen` are wired at instance creation in
+  // `agent-chat-instances.ts` — they read the mutable `config` synced above.
+  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
+    chat,
+  });
 
   // Lifecycle telemetry — track each user message round-trip so we can read
   // engagement (message_sent), latency (response_finished.duration_ms), tool
@@ -261,24 +233,28 @@ export function useMcpjamAgentSession(
     }
   }, [chatSessionId, error, messages, posthog, status, surface]);
 
-  // Seed `useChat` with hydrated history once it arrives.
-  const seededForRef = useRef<string | null>(null);
+  // Seed the instance with hydrated history once it arrives. The guard is
+  // per-INSTANCE (`config.seeded`), not per-hook: a second surface adopting
+  // a live instance (panel adoption during a navigation handoff) must never
+  // re-seed stale history over an in-flight turn — so also bail when the
+  // instance already holds messages or is mid-stream.
   useEffect(() => {
     if (hydrating) return;
     if (initialMessages.length === 0) return;
-    if (seededForRef.current === chatSessionId) return;
-    seededForRef.current = chatSessionId;
+    if (config.seeded) return;
+    if (chat.messages.length > 0 || chat.status !== "ready") return;
+    config.seeded = true;
     setMessages(initialMessages);
-  }, [chatSessionId, hydrating, initialMessages, setMessages]);
+  }, [chat, config, hydrating, initialMessages, setMessages]);
 
   const submit = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      // Mint an id on first submit when the caller didn't provide one,
-      // so the persistence path has something to dedupe on.
-      if (!providedSessionId && seededForRef.current === null) {
-        seededForRef.current = chatSessionId;
+      // A fresh session minted by this submit has no persisted transcript —
+      // mark it seeded so late hydration can never overwrite the live turn.
+      if (!providedSessionId) {
+        config.seeded = true;
       }
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
@@ -287,12 +263,12 @@ export function useMcpjamAgentSession(
         session_id: chatSessionId,
         message_index: turnIndexRef.current,
         prompt_length: trimmed.length,
-        model_id: modelRef.current?.id ?? null,
-        provider: modelRef.current?.provider ?? null,
+        model_id: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
       });
       void sendMessage({ text: trimmed });
     },
-    [chatSessionId, posthog, providedSessionId, sendMessage, surface]
+    [chatSessionId, config, posthog, providedSessionId, sendMessage, surface]
   );
 
   return {
