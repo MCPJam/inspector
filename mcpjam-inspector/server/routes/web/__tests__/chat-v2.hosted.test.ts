@@ -282,6 +282,49 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistArgs.hostConfig).toBeUndefined();
   });
 
+  it("validates uiTools on direct turns but strips them from chatbox-bound turns", async () => {
+    const { app, token } = createWebTestApp();
+    const uiTools = [
+      { name: "ui_navigate", description: "Navigate", readOnly: false },
+    ];
+    const baseBody = {
+      projectId: "project-1",
+      selectedServerIds: ["server-1"],
+      chatSessionId: "chat-session-1",
+      messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      uiTools,
+    };
+
+    // Direct hosted chat: the snapshot crosses the validation boundary and
+    // reaches prepareChatV2.
+    const direct = await postJson(app, "/api/web/chat-v2", baseBody, token);
+    expect(direct.status).toBe(200);
+    expect(validateUiToolEntriesMock).toHaveBeenCalledWith(uiTools);
+    // The route forwards the validator's return value (the mock yields []).
+    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ uiTools: [] })
+    );
+    const directValidateCalls = validateUiToolEntriesMock.mock.calls.length;
+
+    // Chatbox-bound turn: ui_* tools drive the inspector UI, which is not
+    // part of the chatbox surface — the snapshot is ignored wholesale (not
+    // even validated), so a stale/tampered client can't re-advertise them.
+    const chatbox = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...baseBody, chatboxId: "cbx_1", accessVersion: 1, surface: "preview" },
+      token
+    );
+    expect(chatbox.status).toBe(200);
+    expect(validateUiToolEntriesMock.mock.calls.length).toBe(
+      directValidateCalls
+    );
+    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ uiTools: undefined })
+    );
+  });
+
   // PR3: host-bound direct session (Playground previewing a saved host).
   it("a direct session with hostId fetches the authoritative host runtime-config and routes through", async () => {
     const { app, token } = createWebTestApp();

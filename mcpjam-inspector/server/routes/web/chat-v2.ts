@@ -421,15 +421,24 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools.
+    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
+    // turns never accept them — ui_* tools drive the inspector UI, which is
+    // not part of the published/preview chatbox surface, so a stale or
+    // tampered client snapshot must not re-advertise them here.
     let validatedUiTools;
-    try {
-      validatedUiTools = validateUiToolEntries(body.uiTools);
-    } catch (error) {
-      if (error instanceof UiToolValidationError) {
-        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    if (!isChatboxSession) {
+      try {
+        validatedUiTools = validateUiToolEntries(body.uiTools);
+      } catch (error) {
+        if (error instanceof UiToolValidationError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message
+          );
+        }
+        throw error;
       }
-      throw error;
     }
 
     let validatedWidgetModelContext;
