@@ -17,6 +17,7 @@ import {
   navigateAction,
   resolveUiNavigationTarget,
 } from "../ui-actions";
+import { HOSTED_HASH_BLOCKED_TABS } from "@/lib/hosted-tab-policy";
 
 describe("ui-actions (hosted mode)", () => {
   beforeEach(() => {
@@ -25,7 +26,8 @@ describe("ui-actions (hosted mode)", () => {
 
   it("excludes hosted-blocked tabs from the advertised targets", () => {
     const targets = listUiNavigationTargets();
-    for (const blocked of ["skills", "tasks", "tracing", "auth"]) {
+    expect(HOSTED_HASH_BLOCKED_TABS.length).toBeGreaterThan(0);
+    for (const blocked of HOSTED_HASH_BLOCKED_TABS) {
       expect(targets).not.toContain(blocked);
     }
     expect(targets).toContain("playground");
@@ -41,7 +43,7 @@ describe("ui-actions (hosted mode)", () => {
   });
 
   it("navigateAction never dispatches a blocked target", async () => {
-    const result = await navigateAction("skills");
+    const result = await navigateAction("tasks");
     expect(result.ok).toBe(false);
     expect(executeInspectorCommandMock).not.toHaveBeenCalled();
   });
