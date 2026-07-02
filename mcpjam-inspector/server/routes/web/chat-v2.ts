@@ -136,18 +136,26 @@ chatV2.post("/", async (c) => {
           unknown
         >;
       } else {
-        // Don't fail the chat send on a transient Convex blip — fall
-        // through to client-supplied values and warn. The chat will run
-        // with potentially stale config, which is the current behavior;
-        // the host-side override is best-effort hardening, not a
-        // hard gate.
+        // FAIL CLOSED, matching the host-bound branch below. The fetched
+        // config is the ONLY source of `harness`/`computer` (deliberately
+        // excluded from ExecutionOverrides so the body can't set them) and of
+        // every host-wins protection. Falling back to body values would (a)
+        // silently run a harness-published chatbox on the emulated engine —
+        // misrepresenting the runtime — and (b) let client-supplied
+        // model/approval/server values govern a share-link-reachable turn,
+        // the exact tampered-body window this fetch exists to close.
         logger.warn(
-          "[chat-v2] runtime-config fetch failed; using body values",
+          "[chat-v2] runtime-config fetch failed; failing closed",
           {
             chatboxId,
             status: runtime.status,
             error: runtime.error,
           }
+        );
+        throw new WebRouteError(
+          runtime.status >= 500 ? 502 : runtime.status,
+          ErrorCode.INTERNAL_ERROR,
+          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
         );
       }
     } else if (!isChatboxSession && hostId) {
@@ -367,16 +375,21 @@ chatV2.post("/", async (c) => {
     // the emulated chat path wires the listSkills/loadSkill tools for any
     // signed-in member with a project. Gate only on:
     //   - not a guest (a share-link/chatbox guest gets no skill tools), and
-    //   - the turn will NOT run the real Claude Code harness — which delivers
-    //     skills via the adapter `skills` param instead, so advertising the tools
-    //     here would be a prompt/tool mismatch.
-    // The harness runs ONLY for harness:"claude-code" hosts on an MCPJam model; a
-    // BYOK model on such a host still runs emulated (web-chat-turn), so gate on
-    // the actual engine (model), not host config alone.
+    //   - the turn will NOT run a real harness runtime — Claude Code delivers
+    //     skills via the adapter `skills` param instead (Codex delivers none),
+    //     so advertising the tools here would be a prompt/tool mismatch.
+    // The harness runs only for harness hosts on an MCPJam model; a BYOK model
+    // on such a host is rejected by the availability preflight above, so gate
+    // on the actual engine (harness id + canonicalized model), not host config
+    // alone.
     const cloudSkillsEnabled = shouldEnableCloudSkillTools({
       isGuest: Boolean(c.get("guestId")),
       harness: resolvedExecution.harness,
       modelId: String(modelDefinition.id),
+      // Provider is required so bare hosted ids canonicalize — without it a
+      // bare-id harness turn would be mis-detected as emulated and get the
+      // emulated skill tools on top of adapter-delivered skills.
+      provider: modelDefinition.provider,
       hasProjectId: Boolean(hostedBody.projectId),
     });
 
