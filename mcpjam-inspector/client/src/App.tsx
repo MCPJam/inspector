@@ -1754,8 +1754,10 @@ export default function App() {
   useInspectorCommandBus();
   // WebMCP UI tools: registered in both modes; advertised to MCPJam's chat
   // agents via the chat POST snapshot and mirrored to the browser's native
-  // modelContext when present.
-  useRegisterUiTools();
+  // modelContext when present. Disabled on the standalone chatbox chat route:
+  // its end user is not the inspector operator, so inspector-driving tools
+  // must not exist on that page (chat snapshot OR native mirror).
+  useRegisterUiTools({ enabled: !isChatboxChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({

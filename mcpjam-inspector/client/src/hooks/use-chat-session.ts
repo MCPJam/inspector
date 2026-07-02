@@ -1725,7 +1725,12 @@ export function useChatSession(
             .snapshotForChatBody(chatSessionIdRef.current),
           // WebMCP UI tools snapshot — same drain-fresh contract as appTools;
           // the server defends the boundary again in `validateUiToolEntries`.
-          uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+          // Omitted for chatbox sessions (published/share-link AND owner
+          // preview): those turns render the end-user chatbox surface, which
+          // must not advertise inspector-driving ui_* tools to the model.
+          ...(hostedChatboxId
+            ? {}
+            : { uiTools: useUiToolsRegistry.getState().snapshotForChatBody() }),
           ...(widgetModelContext && widgetModelContext.length > 0
             ? { widgetModelContext }
             : {}),
