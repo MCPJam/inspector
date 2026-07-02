@@ -130,7 +130,7 @@ Update available: @mcpjam/cli 1.2.0 -> 1.3.0
 Run npm install -g @mcpjam/cli to update
 ```
 
-The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice only appears on interactive terminals (when stderr is a TTY) and is suppressed automatically in CI.
+The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice is written to stderr only and never touches stdout or JSON output, so it is safe for both interactive terminals and AI agents (Claude Code, Cursor, etc.) that capture stderr. It is suppressed automatically in CI.
 
 To opt out, set one of these environment variables before running any command:
 
