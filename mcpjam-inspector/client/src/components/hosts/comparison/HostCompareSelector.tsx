@@ -146,15 +146,16 @@ export function HostCompareSelector({
               ] as const
             ).map((v) => {
               const active = viewMode === v.value;
-              const disabled = v.value === "list" && disableListView;
+              const viewModeDisabled =
+                disabled || (v.value === "list" && disableListView);
               return (
                 <button
                   key={v.value}
                   type="button"
                   aria-pressed={active}
-                  disabled={disabled}
+                  disabled={viewModeDisabled}
                   title={
-                    disabled
+                    viewModeDisabled
                       ? "Turn descriptions off before switching to list view"
                       : undefined
                   }
@@ -222,7 +223,8 @@ export function HostCompareSelector({
         <label
           className={cn(
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
-            descriptionsDisabled && "cursor-not-allowed opacity-40",
+            (disabled || descriptionsDisabled) &&
+              "cursor-not-allowed opacity-40",
             mobileOptimized && "shrink-0"
           )}
           title={

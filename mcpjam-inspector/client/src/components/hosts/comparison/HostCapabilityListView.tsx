@@ -178,10 +178,7 @@ function HostListColumn({
                   key={label}
                   level={level}
                   label={label}
-                  className={cn(
-                    mobileOptimized && "max-w-full",
-                    level === "neutral" && "opacity-90"
-                  )}
+                  className={cn(level === "neutral" && "opacity-90")}
                   truncateLabel={mobileOptimized}
                 />
               ))}

@@ -15,6 +15,11 @@ vi.mock("@/hooks/useClients", () => ({
   useHost: () => ({ host: null, isLoading: false }),
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+  usePostHog: () => ({ capture: () => undefined }),
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
 }));

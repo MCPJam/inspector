@@ -116,15 +116,10 @@ export function HostConfigCompareView({
   }, [claudeCodeEnabled]);
   const presets = useMemo(
     () =>
-      buildPresetCompareEntries(
-        themeMode,
-        presetOnly
-          ? {
-              excludedTemplateIds: excludedPresetTemplateIds,
-            }
-          : undefined
-      ),
-    [themeMode, presetOnly, excludedPresetTemplateIds]
+      buildPresetCompareEntries(themeMode, {
+        excludedTemplateIds: excludedPresetTemplateIds,
+      }),
+    [themeMode, excludedPresetTemplateIds]
   );
 
   // Real created hosts first, then presets — what the selector chips iterate.
@@ -569,6 +564,9 @@ function CompareSearchBar({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const searchAnchorRef = useRef<HTMLDivElement | null>(null);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const mcpJamLogoSrc =
+    themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png";
   const fieldGroups = useMemo(
     () =>
       groupHostConfigFields(
@@ -717,9 +715,10 @@ function CompareSearchBar({
       {mobileOptimized && (
         <span className="inline-flex shrink-0 items-center gap-2">
           <span
-            aria-hidden
+            aria-label="Search MCP client capabilities across default clients"
+            tabIndex={0}
             title="Search MCP client capabilities across default clients"
-            className="text-[24px] font-semibold leading-none text-foreground"
+            className="text-[24px] font-semibold leading-none text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             ?
           </span>
@@ -747,7 +746,7 @@ function CompareSearchBar({
           >
             <span>Brought to you by</span>
             <img
-              src="/mcp_jam_light.png"
+              src={mcpJamLogoSrc}
               alt="MCPJam"
               className="h-3.5 w-auto"
             />
