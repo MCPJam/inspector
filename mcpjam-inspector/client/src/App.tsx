@@ -647,9 +647,6 @@ export function HostsRoute() {
   );
 }
 
-/** Where the embed (caniuse.dev) entry point sends people for the full product. */
-const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
-
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
@@ -659,6 +656,7 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
     <HostConfigCompareView
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      presetOnly={bare}
     />
   );
 
@@ -3307,25 +3305,8 @@ export default function App() {
   // Still nested inside every provider in the return below, so auth, project,
   // and the guest session resolve exactly as on the normal route.
   const bareCompareContent = (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
-      {/* Subtle branding + entry point back to the full product. */}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
-        <a
-          href={MAIN_PRODUCT_URL}
-          className="text-[15px] font-semibold tracking-tight text-foreground"
-          aria-label="MCPJam home"
-        >
-          MCP<span className="text-primary">Jam</span>
-        </a>
-        <a
-          href={MAIN_PRODUCT_URL}
-          className="inline-flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Open the full app
-          <span aria-hidden>↗</span>
-        </a>
-      </div>
-      <div className="min-h-0 flex-1">
+    <div className="flex h-[100dvh] min-w-0 max-w-full flex-col overflow-hidden bg-background">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <AppRouteReactContext.Provider value={routeContext}>
           {locationContext ? (
             <Outlet context={routeContext} />
