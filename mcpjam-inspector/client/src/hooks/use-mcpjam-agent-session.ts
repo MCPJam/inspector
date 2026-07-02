@@ -112,17 +112,24 @@ export function useMcpjamAgentSession(
   // an in-flight stream survives this hook unmounting — e.g. a `ui_navigate`
   // tool call leaving the Home takeover mid-turn. The hook attaches via
   // `useChat({ chat })` and keeps the instance's mutable config current.
-  const { chat, config } = useMemo(
-    () => getOrCreateAgentChat(chatSessionId),
-    [chatSessionId]
-  );
-  // Whether this hook found the instance pristine. Distinguishes "we own the
-  // fresh instance and may seed it (even merging around a racing user send)"
-  // from "we adopted a live instance from another surface (panel adoption
-  // during a navigation handoff) and must never re-seed stale history".
-  const instanceWasPristineRef = useRef(
-    !config.seeded && chat.messages.length === 0 && chat.status === "ready"
-  );
+  // `instanceWasPristine`: whether this hook found the instance pristine at
+  // resolution time. Distinguishes "we own the fresh instance and may seed
+  // it (even merging around a racing user send)" from "we adopted a live
+  // instance from another surface (panel adoption during a navigation
+  // handoff) and must never re-seed stale history". Computed inside the
+  // memo — NOT a mount-scoped ref — so a `chatSessionId` change without a
+  // remount re-evaluates it for the new session's instance.
+  const { chat, config, instanceWasPristine } = useMemo(() => {
+    const entry = getOrCreateAgentChat(chatSessionId);
+    return {
+      chat: entry.chat,
+      config: entry.config,
+      instanceWasPristine:
+        !entry.config.seeded &&
+        entry.chat.messages.length === 0 &&
+        entry.chat.status === "ready",
+    };
+  }, [chatSessionId]);
   useEffect(() => {
     config.projectId = projectId ?? null;
     config.model = resolvedModel;
@@ -253,7 +260,7 @@ export function useMcpjamAgentSession(
     if (hydrating) return;
     if (initialMessages.length === 0) return;
     if (config.seeded) return;
-    if (!instanceWasPristineRef.current) return;
+    if (!instanceWasPristine) return;
     if (status !== "ready") return;
     config.seeded = true;
     if (chat.messages.length === 0) {
@@ -261,7 +268,15 @@ export function useMcpjamAgentSession(
     } else {
       setMessages([...initialMessages, ...chat.messages]);
     }
-  }, [chat, config, hydrating, initialMessages, setMessages, status]);
+  }, [
+    chat,
+    config,
+    hydrating,
+    initialMessages,
+    instanceWasPristine,
+    setMessages,
+    status,
+  ]);
 
   const submit = useCallback(
     (text: string) => {
