@@ -156,7 +156,7 @@ function normalizeFieldSearchText(value: string): string {
     .trim();
 }
 
-/** Free-text match against a field's label / description / id / path. */
+/** Free-text match against a field's label / subsection / description / id / path. */
 export function fieldMatchesQuery(
   field: HostConfigFieldDef,
   loweredQuery: string
@@ -167,7 +167,13 @@ export function fieldMatchesQuery(
   if (queryTokens.length === 0) return true;
 
   const haystackTokens = normalizeFieldSearchText(
-    [field.id, field.label, field.path, field.description ?? ""].join(" ")
+    [
+      field.id,
+      field.label,
+      field.subsection,
+      field.path,
+      field.description ?? "",
+    ].join(" ")
   )
     .split(/\s+/)
     .filter(Boolean);

@@ -645,9 +645,6 @@ export function HostsRoute() {
   );
 }
 
-/** Where the embed (caniuse.dev) entry point sends people for the full product. */
-const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
-
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
@@ -3292,25 +3289,6 @@ export default function App() {
   // and the guest session resolve exactly as on the normal route.
   const bareCompareContent = (
     <div className="flex h-[100dvh] min-w-0 max-w-full flex-col overflow-hidden bg-background">
-      <div className="shrink-0 px-4 pb-4 pt-5 text-center md:pb-5 md:pt-6">
-        <div className="text-[30px] font-bold leading-none tracking-tight text-foreground">
-          Can I use…
-        </div>
-        <div className="mt-2 flex min-w-0 items-center justify-center gap-2 text-[13px] leading-none text-muted-foreground">
-          <span className="shrink-0">Brought to you by</span>
-          <a
-            href={MAIN_PRODUCT_URL}
-            className="inline-flex min-w-0 items-center transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-            aria-label="Open MCPJam"
-          >
-            <img
-              src="/mcp_jam_light.png"
-              alt="MCPJam"
-              className="h-5 w-auto"
-            />
-          </a>
-        </div>
-      </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <AppRouteReactContext.Provider value={routeContext}>
           {locationContext ? (

@@ -48,6 +48,7 @@ import { cn } from "@/lib/utils";
 type CompareViewMode = "table" | "list";
 
 const HOSTS_QUERY_PARAM = "hosts";
+const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
 const MOBILE_COMPARE_MEDIA_QUERY = "(max-width: 640px)";
 const SEARCH_PICKER_HIDDEN_FIELD_IDS = new Set([
   "modelId",
@@ -445,6 +446,12 @@ export function HostConfigCompareView({
               selectedHostIds={selectedHostIds}
               subjectsByHost={allSubjects}
               onToggleHost={handleToggleHost}
+              matchCount={matchCount}
+              totalCount={totalFieldCount}
+              showCount={orderedSubjects.length > 0}
+              viewMode={viewMode}
+              onViewModeChange={handleViewModeChange}
+              disableListView={showDescriptions}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
               supportFilter={supportFilter}
@@ -607,14 +614,13 @@ function CompareSearchBar({
     []
   );
 
-  return (
-    <div
-      className={cn(
-        "mb-4 flex flex-wrap items-center gap-3",
-        mobileOptimized && "min-w-0 items-stretch"
-      )}
-    >
-      {!mobileOptimized && (
+  const searchRow = (
+    <>
+      {mobileOptimized ? (
+        <span className="shrink-0 text-[24px] font-semibold leading-none tracking-normal text-foreground">
+          Can I use…
+        </span>
+      ) : (
         <span className="shrink-0 text-[15px] font-medium tracking-tight text-foreground">
           Can I use…
         </span>
@@ -625,21 +631,38 @@ function CompareSearchBar({
             ref={searchAnchorRef}
             className={cn(
               mobileOptimized
-                ? "order-first min-w-0 flex-[1_1_100%]"
+                ? "min-w-0 max-w-full flex-1"
                 : "order-last w-full sm:order-none sm:w-auto sm:min-w-[240px] sm:flex-1"
             )}
           >
-            <SearchInput
-              value={query}
-              onValueChange={(next) => {
-                onQueryChange(next);
-                setPickerOpen(true);
-              }}
-              onFocus={() => setPickerOpen(true)}
-              placeholder="Search capabilities, fields, descriptions…"
-              aria-label="Search host config fields"
-              className="w-full"
-            />
+            {mobileOptimized ? (
+              <input
+                value={query}
+                onChange={(event) => {
+                  onQueryChange(event.target.value);
+                  setPickerOpen(true);
+                }}
+                onFocus={() => setPickerOpen(true)}
+                placeholder="Search capabilities, fields, descriptions…"
+                aria-label="Search host config fields"
+                type="search"
+                autoComplete="off"
+                spellCheck={false}
+                className="h-10 w-full border-0 border-b border-dotted border-muted-foreground/60 bg-transparent px-0 text-center text-sm text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground/60 focus:border-foreground focus:ring-0 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
+              />
+            ) : (
+              <SearchInput
+                value={query}
+                onValueChange={(next) => {
+                  onQueryChange(next);
+                  setPickerOpen(true);
+                }}
+                onFocus={() => setPickerOpen(true)}
+                placeholder="Search capabilities, fields, descriptions…"
+                aria-label="Search host config fields"
+                className="w-full"
+              />
+            )}
           </div>
         </PopoverAnchor>
         <PopoverContent
@@ -691,51 +714,95 @@ function CompareSearchBar({
           </Command>
         </PopoverContent>
       </Popover>
-      {showCount && (
+      {mobileOptimized && (
+        <span className="inline-flex shrink-0 items-center gap-2">
+          <span
+            aria-hidden
+            title="Search MCP client capabilities across default clients"
+            className="text-[24px] font-semibold leading-none text-foreground"
+          >
+            ?
+          </span>
+        </span>
+      )}
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        "mb-4 flex flex-wrap items-center gap-3",
+        mobileOptimized && "min-w-0 items-center gap-2"
+      )}
+    >
+      {mobileOptimized ? (
+        <div className="flex basis-full flex-col items-center gap-1 pb-2 pt-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,720px)_minmax(0,1fr)] sm:items-center sm:gap-2">
+          <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 sm:col-start-2">
+            {searchRow}
+          </div>
+          <a
+            href={MAIN_PRODUCT_URL}
+            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:justify-self-end"
+            aria-label="Open MCPJam"
+          >
+            <span>Brought to you by</span>
+            <img
+              src="/mcp_jam_light.png"
+              alt="MCPJam"
+              className="h-3.5 w-auto"
+            />
+          </a>
+        </div>
+      ) : (
+        searchRow
+      )}
+      {showCount && !mobileOptimized && (
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {matchCount} / {totalCount} fields
         </span>
       )}
-      <div
-        role="group"
-        aria-label="View mode"
-        className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
-      >
-        {(
-          [
-            { value: "table", label: "Tables" },
-            { value: "list", label: "List" },
-          ] as const
-        ).map((v) => {
-          const active = viewMode === v.value;
-          const disabled = v.value === "list" && disableListView;
-          return (
-            <button
-              key={v.value}
-              type="button"
-              aria-pressed={active}
-              disabled={disabled}
-              title={
-                disabled
-                  ? "Turn descriptions off before switching to list view"
-                  : undefined
-              }
-              data-testid={`compare-view-${v.value}`}
-              onClick={() => onViewModeChange(v.value)}
-              className={cn(
-                "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
-                "disabled:cursor-not-allowed disabled:opacity-40",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                active
-                  ? "bg-primary/10 text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {v.label}
-            </button>
-          );
-        })}
-      </div>
+      {!mobileOptimized && (
+        <div
+          role="group"
+          aria-label="View mode"
+          className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+        >
+          {(
+            [
+              { value: "table", label: "Tables" },
+              { value: "list", label: "List" },
+            ] as const
+          ).map((v) => {
+            const active = viewMode === v.value;
+            const disabled = v.value === "list" && disableListView;
+            return (
+              <button
+                key={v.value}
+                type="button"
+                aria-pressed={active}
+                disabled={disabled}
+                title={
+                  disabled
+                    ? "Turn descriptions off before switching to list view"
+                    : undefined
+                }
+                data-testid={`compare-view-${v.value}`}
+                onClick={() => onViewModeChange(v.value)}
+                className={cn(
+                  "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                  active
+                    ? "bg-primary/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {v.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

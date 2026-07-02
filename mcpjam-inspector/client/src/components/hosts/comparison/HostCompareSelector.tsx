@@ -51,6 +51,12 @@ interface HostCompareSelectorProps {
   selectedHostIds: ReadonlyArray<string>;
   subjectsByHost: Readonly<Record<string, HostComparisonSubject>>;
   onToggleHost: (hostId: string) => void;
+  matchCount?: number;
+  totalCount?: number;
+  showCount?: boolean;
+  viewMode?: "table" | "list";
+  onViewModeChange?: (mode: "table" | "list") => void;
+  disableListView?: boolean;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
   supportFilter: SupportFilterMode;
@@ -68,6 +74,12 @@ export function HostCompareSelector({
   selectedHostIds,
   subjectsByHost,
   onToggleHost,
+  matchCount,
+  totalCount,
+  showCount = false,
+  viewMode,
+  onViewModeChange,
+  disableListView = false,
   divergingOnly,
   onDivergingOnlyChange,
   supportFilter,
@@ -82,6 +94,8 @@ export function HostCompareSelector({
   const selectedSet = new Set(selectedHostIds);
   const inlineHosts = hosts.slice(0, INLINE_CHIP_LIMIT);
   const overflowHosts = hosts.slice(INLINE_CHIP_LIMIT);
+  const showMobileViewMode =
+    mobileOptimized && viewMode !== undefined && onViewModeChange !== undefined;
 
   return (
     <div
@@ -111,6 +125,56 @@ export function HostCompareSelector({
           disabled={disabled}
           themeMode={themeMode}
         />
+      ) : null}
+
+      {showMobileViewMode ? (
+        <>
+          {showCount && matchCount !== undefined && totalCount !== undefined ? (
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+              {matchCount} / {totalCount} fields
+            </span>
+          ) : null}
+          <div
+            role="group"
+            aria-label="View mode"
+            className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+          >
+            {(
+              [
+                { value: "table", label: "Tables" },
+                { value: "list", label: "List" },
+              ] as const
+            ).map((v) => {
+              const active = viewMode === v.value;
+              const disabled = v.value === "list" && disableListView;
+              return (
+                <button
+                  key={v.value}
+                  type="button"
+                  aria-pressed={active}
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? "Turn descriptions off before switching to list view"
+                      : undefined
+                  }
+                  data-testid={`compare-view-${v.value}`}
+                  onClick={() => onViewModeChange(v.value)}
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                    "disabled:cursor-not-allowed disabled:opacity-40",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    active
+                      ? "bg-primary/10 text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
       ) : null}
 
       <div
@@ -178,11 +242,13 @@ export function HostCompareSelector({
         <label
           className={cn(
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
+            disabled && "cursor-not-allowed opacity-40",
             mobileOptimized && "shrink-0"
           )}
         >
           <Switch
             checked={divergingOnly}
+            disabled={disabled}
             onCheckedChange={onDivergingOnlyChange}
             aria-label="Show only diverging fields"
           />

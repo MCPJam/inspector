@@ -74,7 +74,7 @@ describe("HostConfigCompareView public mode", () => {
     expect(
       screen.getByLabelText("Search host config fields")
     ).toBeInTheDocument();
-    expect(screen.queryByText("Can I use…")).not.toBeInTheDocument();
+    expect(screen.getByText("Can I use…")).toBeInTheDocument();
     expect(
       screen.getByTestId("host-compare-chip-preset:claude")
     ).toBeInTheDocument();
