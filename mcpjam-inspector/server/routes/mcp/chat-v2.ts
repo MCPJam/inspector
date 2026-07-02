@@ -676,6 +676,9 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
+        ...(resolvedExecution.harness
+          ? { harness: resolvedExecution.harness }
+          : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.

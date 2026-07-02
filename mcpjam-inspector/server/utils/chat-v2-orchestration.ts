@@ -17,7 +17,7 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, type Harness } from "@mcpjam/sdk";
 import {
   filterAppOnlyTools,
   type ModelVisibleMcpToolResults,
@@ -478,6 +478,11 @@ export interface PrepareChatV2Options {
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
   /**
+   * Resolved host harness. Harness runtimes own native tool discovery, so
+   * MCPJam's progressive meta-tools must stay out of their prepared tool set.
+   */
+  harness?: Harness;
+  /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
    * resets every request and any tools the model loaded earlier in the
@@ -562,6 +567,7 @@ export async function prepareChatV2(
     appTools,
     builtInTools,
     cloudSkills,
+    harness,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -695,13 +701,15 @@ export async function prepareChatV2(
       catalog
     );
   }
-  const envOverride = parseProgressiveToolsEnv(
-    process.env.MCPJAM_PROGRESSIVE_TOOLS
-  );
+  const envOverride = harness
+    ? false
+    : parseProgressiveToolsEnv(process.env.MCPJAM_PROGRESSIVE_TOOLS);
   const progressivePlan = decideProgressivePlan({
     catalog,
     modelContextLength: modelDefinition.contextLength,
-    options: options.progressiveToolDiscovery,
+    options: harness
+      ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
+      : options.progressiveToolDiscovery,
     envOverride,
   });
 

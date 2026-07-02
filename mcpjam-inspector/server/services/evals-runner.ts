@@ -2420,6 +2420,9 @@ const runLocalIteration = async ({
         temperature,
         respectToolVisibility: hostPolicy?.respectToolVisibility,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
+        ...(resolvedExecution.harness
+          ? { harness: resolvedExecution.harness }
+          : {}),
         customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
@@ -3279,6 +3282,9 @@ const runHostedIterationWithBrowser = async (
       temperature,
       respectToolVisibility: hostPolicy?.respectToolVisibility,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
+      ...(resolvedExecution.harness
+        ? { harness: resolvedExecution.harness }
+        : {}),
       ...(backendCustomProviders?.length
         ? { customProviders: backendCustomProviders }
         : {}),

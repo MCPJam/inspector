@@ -3737,6 +3737,7 @@ export function PlaygroundMain({
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
                             oauthTokens: hostedOAuthTokens,
+                            hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
                           displayMode={displayMode}
@@ -3828,6 +3829,9 @@ export function PlaygroundMain({
                               projectId: convexProjectId,
                               selectedServerIds: hostedSelectedServerIds,
                               oauthTokens: hostedOAuthTokens,
+                              ...(previewedHostId
+                                ? { hostId: previewedHostId }
+                                : {}),
                             }}
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}

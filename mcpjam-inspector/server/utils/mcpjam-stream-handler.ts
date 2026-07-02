@@ -2723,6 +2723,7 @@ export async function runChatEngineLoop(
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     modelId,
+    engine: "emulated",
     traceBaseMs: traceTurn.turnStartedAt,
     spans: traceTurn.turnSpans,
     onStepFinish,

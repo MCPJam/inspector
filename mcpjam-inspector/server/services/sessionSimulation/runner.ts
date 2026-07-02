@@ -604,6 +604,7 @@ async function runOneSession(args: {
       requireToolApproval,
       respectToolVisibility,
       modelVisibleMcpToolResults,
+      ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
             progressiveToolDiscovery: {
