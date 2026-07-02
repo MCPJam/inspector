@@ -1,0 +1,261 @@
+---
+title: "Headless widget rendering"
+description: "Render MCP App widgets headlessly and drive interactive sessions from the CLI"
+icon: "monitor-play"
+---
+
+The `apps render` and `apps session` commands render MCP App widgets in a headless Chromium browser managed by the local Inspector. Use them to capture screenshots, automate UI flows, and let an external agent step through a widget interactively — without a visible browser window.
+
+<Note>
+  Both commands require the local Inspector to be running and Chromium to be
+  installed. If Chromium is missing, the response includes
+  `"status": "browser_unavailable"` and the hint `npx playwright install chromium`.
+</Note>
+
+## `apps render` — one-shot render
+
+Render a widget once, capture a screenshot, and exit. The browser is disposed immediately after the render.
+
+```bash
+mcpjam apps render \
+  --url https://your-server.com/mcp \
+  --tool-name show_seats \
+  --tool-args '{"flight":"AA100"}' \
+  --screenshot-out frame.png
+```
+
+The command connects the MCP server to the local Inspector, calls the tool, mounts the widget in headless Chromium, and writes the first-frame screenshot to `frame.png`.
+
+### Output
+
+```json
+{
+  "status": "rendered",
+  "toolName": "show_seats",
+  "serverName": "my-server",
+  "observation": {
+    "resourceUri": "ui://widget/seats",
+    "bridgeInitialized": true,
+    "elapsedMs": 1240
+  },
+  "screenshotCaptured": true,
+  "screenshotPath": "frame.png"
+}
+```
+
+`status` is `rendered` when the widget mounted successfully. Other values indicate why the render was skipped:
+
+| Status | Meaning |
+|--------|---------|
+| `rendered` | Widget mounted and screenshot captured |
+| `no_ui_resource` | Tool has no `_meta.ui.resourceUri` — not an MCP App tool |
+| `browser_unavailable` | Chromium is not installed |
+| `blank` | Widget mounted but produced a blank frame |
+| `bridge_timeout` | Widget mounted but the host bridge did not initialize in time |
+
+Use `--require-render` to exit nonzero when `status !== "rendered"`.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <tool>` | Tool name to render |
+| `--tool-args <json>` | Tool parameters as inline JSON, `@path`, or `-` for stdin |
+| `--tool-args-stdin` | Read tool parameters from stdin |
+| `--screenshot-out <path>` | Write the screenshot to a file (PNG) |
+| `--screenshot-base64` | Include the screenshot inline as base64 in the JSON output |
+| `--viewport <WxH>` | Headless viewport size, e.g. `1280x800` |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` (default) or `openai-sdk` |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--inspector-url <url>` | Local Inspector base URL |
+| `--require-render` | Exit nonzero unless `status === "rendered"` |
+
+Plus the shared connection flags (`--url`, `--command`, `--access-token`, etc.).
+
+---
+
+## `apps session` — interactive session
+
+`apps session` keeps the widget **mounted** across multiple steps. An external agent calls `start` to render the widget and get a `sessionId`, then drives it with `action` (click, type, scroll, etc.), and finally calls `close` to dispose the browser.
+
+```bash
+# 1. Start a session
+mcpjam apps session start \
+  --url https://your-server.com/mcp \
+  --tool-name show_seats \
+  --tool-args '{"flight":"AA100"}' \
+  --screenshot-out first-frame.png
+
+# 2. Click a seat
+mcpjam apps session action \
+  --session <sessionId> \
+  --action left_click \
+  --coordinate 640,400 \
+  --screenshot-out after-click.png
+
+# 3. Close the session
+mcpjam apps session close --session <sessionId>
+```
+
+Sessions are held server-side by the local Inspector. The CLI exposes the session; the external agent drives the steps — no LLM is embedded.
+
+### `apps session start`
+
+Renders the widget with `keepMounted: true` and registers a session. On success, returns a `sessionId` and the first-frame screenshot.
+
+```bash
+mcpjam apps session start \
+  --url https://your-server.com/mcp \
+  --tool-name show_seats \
+  --tool-args '{"flight":"AA100"}' \
+  --screenshot-out first-frame.png \
+  --format json
+```
+
+```json
+{
+  "status": "rendered",
+  "sessionId": "a1b2c3d4-...",
+  "mountedWidgetId": "widget-abc",
+  "viewport": { "width": 1280, "height": 800 },
+  "expiresAt": 1718000000000,
+  "idleTimeoutMs": 300000,
+  "toolName": "show_seats",
+  "serverName": "my-server",
+  "observation": {
+    "resourceUri": "ui://widget/seats",
+    "bridgeInitialized": true,
+    "elapsedMs": 1350
+  },
+  "screenshotCaptured": true,
+  "screenshotPath": "first-frame.png"
+}
+```
+
+When `status` is not `rendered` (e.g. `no_ui_resource`, `browser_unavailable`), no `sessionId` is returned — there is nothing to step through.
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <tool>` | Tool name to render |
+| `--tool-args <json>` | Tool parameters as inline JSON, `@path`, or `-` for stdin |
+| `--tool-args-stdin` | Read tool parameters from stdin |
+| `--screenshot-out <path>` | Write the first-frame screenshot to a file (PNG) |
+| `--screenshot-base64` | Include the screenshot inline as base64 in the JSON output |
+| `--viewport <WxH>` | Headless viewport size, e.g. `1280x800` |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` (default) or `openai-sdk` |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--inspector-url <url>` | Local Inspector base URL |
+| `--require-render` | Exit nonzero unless `status === "rendered"` |
+
+Plus the shared connection flags.
+
+### `apps session action`
+
+Drives a Computer-Use action on the mounted widget and returns the post-action frame plus any `tools/call` requests the widget triggered.
+
+```bash
+mcpjam apps session action \
+  --session a1b2c3d4-... \
+  --action left_click \
+  --coordinate 640,400 \
+  --screenshot-out after-click.png \
+  --format json
+```
+
+```json
+{
+  "action": { "action": "left_click", "coordinate": [640, 400] },
+  "widgetToolCalls": [
+    { "name": "reserve_seat", "args": { "seat": 12 }, "ok": true, "elapsedMs": 45 }
+  ],
+  "screenshotCaptured": true,
+  "screenshotPath": "after-click.png",
+  "elapsedMs": 312,
+  "expiresAt": 1718000300000
+}
+```
+
+`widgetToolCalls` lists every `tools/call` the widget sent to the host during the action. Each entry includes `name`, `args`, `ok`, and `elapsedMs`; a failed call also includes `error`.
+
+Each action refreshes the session's idle TTL (`expiresAt`).
+
+#### Supported actions
+
+| `--action` | Required flags | Description |
+|------------|---------------|-------------|
+| `screenshot` | — | Capture the current frame without interacting |
+| `left_click` | `--coordinate x,y` | Left-click at the given coordinates |
+| `double_click` | `--coordinate x,y` | Double-click at the given coordinates |
+| `right_click` | `--coordinate x,y` | Right-click at the given coordinates |
+| `mouse_move` | `--coordinate x,y` | Move the mouse without clicking |
+| `type` | `--text <text>` | Type text into the focused element |
+| `key` | `--text <key>` | Press a key (e.g. `Enter`, `Tab`) |
+| `scroll` | `--scroll-direction <dir>`, `--scroll-amount <n>` | Scroll in a direction (`up`, `down`, `left`, `right`) |
+| `wait` | `--duration <ms>` | Wait for the given number of milliseconds |
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--session <id>` | Session ID from `apps session start` (required) |
+| `--action <type>` | Action type (required) |
+| `--coordinate <x,y>` | Click or move target, e.g. `640,400` |
+| `--text <text>` | Text to type, or key name to press |
+| `--scroll-direction <dir>` | Scroll direction: `up`, `down`, `left`, or `right` |
+| `--scroll-amount <n>` | Scroll amount (wheel notches, must be > 0) |
+| `--duration <ms>` | Wait duration in milliseconds (must be ≥ 0) |
+| `--screenshot-out <path>` | Write the post-action screenshot to a file (PNG) |
+| `--screenshot-base64` | Include the screenshot inline as base64 in the JSON output |
+| `--inspector-url <url>` | Local Inspector base URL |
+
+### `apps session close`
+
+Disposes the session and its browser.
+
+```bash
+mcpjam apps session close --session a1b2c3d4-... --format json
+```
+
+```json
+{ "closed": true }
+```
+
+`closed` is `false` when the session ID is not found (already closed or expired).
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--session <id>` | Session ID to close (required) |
+| `--inspector-url <url>` | Local Inspector base URL |
+
+---
+
+## Session lifecycle
+
+Sessions are managed by the local Inspector with a strict browser lifecycle:
+
+- **Idle TTL** — each action refreshes the session's expiry. An idle session is swept automatically.
+- **Concurrent session cap** — the Inspector limits the number of live sessions. A `429` response from `start` means the cap is reached; close an existing session and retry.
+- **Shutdown cleanup** — all sessions are disposed when the Inspector process exits.
+
+If a session expires between an `action` call and the response, the command exits with a nonzero code and an error indicating the session was not found.
+
+---
+
+## Screenshot conventions
+
+Both `apps render` and `apps session` use the same screenshot flags:
+
+- `--screenshot-out <path>` writes the PNG to a file. The output JSON includes `screenshotPath` and `screenshotCaptured: true`.
+- `--screenshot-base64` includes the raw base64 string inline in the JSON output under `screenshotBase64`. Omit this flag when writing to a file to keep output compact.
+- Both flags can be combined to write the file and include the base64 in the same run.
+
+---
+
+## Related commands
+
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
+- [Command reference](/cli/reference) — full flag tables for every command

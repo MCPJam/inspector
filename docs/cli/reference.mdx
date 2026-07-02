@@ -329,6 +329,70 @@ Apps commands share the same transport inference rules as the rest of the CLI:
 `--url` implies HTTP, `--command` implies stdio, and `--transport` is an
 optional explicit override.
 
+### `apps render`
+
+One-shot headless widget render. Uses shared connection flags plus:
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <tool>` | Tool name to render |
+| `--name <tool>` | Alias for `--tool-name` |
+| `--tool-args <json>` | Tool parameters as inline JSON, `@path`, or `-` for stdin |
+| `--params <json>` | Alias for `--tool-args` |
+| `--tool-args-stdin` | Read tool parameters from stdin |
+| `--screenshot-out <path>` | Write the screenshot to a file (PNG) |
+| `--screenshot-base64` | Include the screenshot inline as base64 in the JSON output |
+| `--viewport <WxH>` | Headless viewport size, e.g. `1280x800` |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` (default) or `openai-sdk` |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--inspector-url <url>` | Local Inspector base URL |
+| `--require-render` | Exit nonzero unless `status === "rendered"` |
+
+### `apps session start`
+
+Render a widget and keep it mounted for stepping. Uses shared connection flags plus:
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <tool>` | Tool name to render |
+| `--name <tool>` | Alias for `--tool-name` |
+| `--tool-args <json>` | Tool parameters as inline JSON, `@path`, or `-` for stdin |
+| `--params <json>` | Alias for `--tool-args` |
+| `--tool-args-stdin` | Read tool parameters from stdin |
+| `--screenshot-out <path>` | Write the first-frame screenshot to a file (PNG) |
+| `--screenshot-base64` | Include the screenshot inline as base64 in the JSON output |
+| `--viewport <WxH>` | Headless viewport size, e.g. `1280x800` |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` (default) or `openai-sdk` |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--inspector-url <url>` | Local Inspector base URL |
+| `--require-render` | Exit nonzero unless `status === "rendered"` |
+
+### `apps session action`
+
+Drive a Computer-Use action on a mounted widget session.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--session <id>` | Yes | Session ID from `apps session start` |
+| `--action <type>` | Yes | `left_click`, `double_click`, `right_click`, `mouse_move`, `type`, `key`, `scroll`, `wait`, or `screenshot` |
+| `--coordinate <x,y>` | No | Click/move target, e.g. `640,400` |
+| `--text <text>` | No | Text to type or key name to press |
+| `--scroll-direction <dir>` | No | `up`, `down`, `left`, or `right` |
+| `--scroll-amount <n>` | No | Scroll amount in wheel notches (must be > 0) |
+| `--duration <ms>` | No | Wait duration in milliseconds (must be ≥ 0) |
+| `--screenshot-out <path>` | No | Write the post-action screenshot to a file (PNG) |
+| `--screenshot-base64` | No | Include the screenshot inline as base64 in the JSON output |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+### `apps session close`
+
+Close a widget session and dispose its browser.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--session <id>` | Yes | Session ID to close |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
 ### `apps conformance`
 
 MCP Apps server-side conformance checks. Uses shared connection flags plus:
