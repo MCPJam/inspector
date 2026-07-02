@@ -55,6 +55,17 @@ export function useComposerOnboarding({
 
   const skipNextComposerClearFromSessionResetRef = useRef(false);
 
+  // Tracks the last value the non-typewriter seeding below pushed into the
+  // composer, so it can keep following a changing `initialInput` (e.g. the eval
+  // editor's left-pane prompt typed live) WITHOUT clobbering text the user
+  // typed straight into the chat box. Seeded with the same initial value as
+  // `input` above so an already-populated prompt is considered "in sync".
+  const lastSeededInputRef = useRef<string>(
+    initialInputTypewriter && initialInput && !showPostConnectGuide
+      ? ""
+      : (initialInput ?? ""),
+  );
+
   // --- Typewriter ---
 
   const { text: typewriterText, isComplete: typewriterComplete } =
@@ -95,10 +106,20 @@ export function useComposerOnboarding({
     typewriterSupersededByUser,
   ]);
 
-  // Non-typewriter initialInput seeding
+  // Non-typewriter initialInput seeding. Mirror `initialInput` into the composer
+  // live (so typing the prompt on the left shows on the right), but stop the
+  // moment the user diverges by typing their own text into the chat box — at
+  // that point `prev` no longer matches what we last seeded, so we leave it be.
   useEffect(() => {
-    if (showPostConnectGuide || !initialInput || initialInputTypewriter) return;
-    setInput((prev) => (prev === "" ? initialInput : prev));
+    if (showPostConnectGuide || initialInputTypewriter) return;
+    const next = initialInput ?? "";
+    setInput((prev) => {
+      if (prev === "" || prev === lastSeededInputRef.current) {
+        lastSeededInputRef.current = next;
+        return next;
+      }
+      return prev;
+    });
   }, [initialInput, showPostConnectGuide, initialInputTypewriter]);
 
   // Post-connect guided prompt seeding

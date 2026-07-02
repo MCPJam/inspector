@@ -16,7 +16,7 @@ import {
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import type { ContentBlock } from "@modelcontextprotocol/client";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {
@@ -1391,8 +1391,19 @@ export function ChatTabV2({
       setSelectedModelIds([String(selectedModel.id)]);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const seedApplied = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    // A widget in the eval preview fired a `ui/message` follow-up: send it once
+    // the seeded conversation is applied, so the playground replies live just
+    // like chat would. Chained on the hydration promise to avoid sending into
+    // a not-yet-hydrated thread.
+    const pendingUserMessage = evalChatHandoff.pendingUserMessage;
+    if (pendingUserMessage) {
+      void seedApplied.then(() => {
+        sendMessage({ text: pendingUserMessage, metadata: outgoingSenderMetadata });
+      });
+    }
 
     if (typeof handoffExec.systemPrompt === "string") {
       setSystemPrompt(handoffExec.systemPrompt);
@@ -1413,7 +1424,9 @@ export function ChatTabV2({
     evalChatHandoff,
     isSessionBootstrapComplete,
     onEvalChatHandoffConsumed,
+    outgoingSenderMetadata,
     selectedModel,
+    sendMessage,
     setMultiModelEnabled,
     setSelectedModel,
     setSelectedModelIds,

@@ -39,12 +39,14 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 vi.mock("../trace-viewer", () => ({
   TraceViewer: (props: {
     chromeDensity?: string;
+    fillContent?: boolean;
     expectedToolCalls?: unknown[];
     actualToolCalls?: unknown[];
   }) => (
     <div
       data-testid="mock-trace-viewer"
       data-chrome-density={props.chromeDensity ?? "default"}
+      data-fill-content={String(props.fillContent ?? false)}
       data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
       data-actual-tool-count={String(props.actualToolCalls?.length ?? 0)}
     />
@@ -171,6 +173,7 @@ describe("IterationDetails full layout (trace-first)", () => {
     const viewer = await screen.findByTestId("mock-trace-viewer");
 
     expect(viewer).toHaveAttribute("data-chrome-density", "compact");
+    expect(viewer).toHaveAttribute("data-fill-content", "true");
     expect(viewer).toHaveAttribute("data-expected-tool-count", "1");
     expect(viewer).toHaveAttribute("data-actual-tool-count", "1");
 

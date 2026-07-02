@@ -24,7 +24,7 @@ export type TokensChartDatum = {
 function completedIterations(iterations: EvalIteration[]): EvalIteration[] {
   return iterations.filter((it) => {
     const result = computeIterationResult(it);
-    return result === "passed" || result === "failed";
+    return result === "passed" || result === "failed" || result === "timed_out";
   });
 }
 

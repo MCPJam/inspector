@@ -5,7 +5,7 @@
  *   - Server tools (passed in via `tools` prop)
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { RefreshCw } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/client";
@@ -17,8 +17,8 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
-
-type SourceFilter = "all" | "server" | "app";
+import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 
 interface AppEntry {
   alias: string;
@@ -38,6 +38,12 @@ interface ToolListProps {
   onSearchQueryChange: (q: string) => void;
   onSelectTool: (name: string) => void;
   onCollapseList: () => void;
+  /** Harness native built-in tools. Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
+  /** Currently-selected built-in tool key (so its row highlights). */
+  selectedBuiltinKey?: string | null;
+  /** Select a built-in tool (drives the same detail+Run flow as server tools). */
+  onSelectBuiltin?: (key: string) => void;
 }
 
 export function ToolList({
@@ -50,9 +56,10 @@ export function ToolList({
   onSearchQueryChange,
   onSelectTool,
   onCollapseList,
+  builtinTools = [],
+  selectedBuiltinKey = null,
+  onSelectBuiltin,
 }: ToolListProps) {
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-
   // App-provided tools are widget-lifecycle. Pull them out of the registry
   // as a flat list of `AppEntry`. `useShallow` keeps the selector stable
   // across renders that didn't actually change the array.
@@ -97,12 +104,21 @@ export function ToolList({
     );
   }, [appEntries, searchQuery]);
 
-  const showServer = sourceFilter !== "app";
-  const showApp = sourceFilter !== "server";
-  const serverShown = showServer ? filteredToolNames.length : 0;
-  const appShown = showApp ? filteredAppEntries.length : 0;
-  const totalShown = serverShown + appShown;
-  const hasAppTools = appEntries.length > 0;
+  // Built-in (harness-native) tools filter against the same search box; the
+  // section component owns the actual filtering, so we only need a count here
+  // for the empty-state.
+  const filteredBuiltinCount = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return builtinTools.length;
+    return builtinTools.filter((t) =>
+      `${t.name} ${t.commonName ?? ""} ${t.description ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    ).length;
+  }, [builtinTools, searchQuery]);
+
+  const totalShown =
+    filteredToolNames.length + filteredAppEntries.length + filteredBuiltinCount;
 
   return (
     <div className="h-full flex flex-col">
@@ -114,40 +130,6 @@ export function ToolList({
           placeholder="Search tools..."
         />
       </div>
-
-      {/* Source filter chips — only shown once an app has registered tools,
-          so the bar doesn't take up space for server-only setups. */}
-      {hasAppTools && (
-        <div className="flex items-center gap-1 px-3 pb-1.5 flex-shrink-0">
-          <span className="text-[10px] leading-4 text-muted-foreground mr-0.5">
-            Source:
-          </span>
-          {(
-            [
-              { key: "all", label: "all", count: filteredToolNames.length + filteredAppEntries.length },
-              { key: "server", label: "server", count: filteredToolNames.length },
-              { key: "app", label: "app", count: filteredAppEntries.length },
-            ] as const
-          ).map((chip) => {
-            const active = sourceFilter === chip.key;
-            return (
-              <button
-                key={chip.key}
-                type="button"
-                onClick={() => setSourceFilter(chip.key)}
-                className={`font-mono text-[10px] leading-4 px-2 py-0 rounded border transition-colors ${
-                  active
-                    ? "bg-primary/10 text-primary border-primary/30"
-                    : "bg-background text-muted-foreground border-border hover:text-foreground"
-                }`}
-              >
-                {chip.label}{" "}
-                <span className="opacity-70">{chip.count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {/* Tool List */}
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
@@ -166,8 +148,7 @@ export function ToolList({
           </div>
         ) : (
           <div className="space-y-0.5">
-            {showServer &&
-              filteredToolNames.map((name) => {
+            {filteredToolNames.map((name) => {
               const tool = tools[name];
               const isSelected = selectedToolName === name;
               const uiType = detectUIType(tool._meta, undefined);
@@ -252,8 +233,7 @@ export function ToolList({
                 </button>
               );
             })}
-            {showApp &&
-              filteredAppEntries.map((entry) => {
+            {filteredAppEntries.map((entry) => {
                 const isSelected = selectedToolName === entry.alias;
                 return (
                   <button
@@ -298,6 +278,14 @@ export function ToolList({
                   </button>
                 );
               })}
+            {onSelectBuiltin && (
+              <HarnessBuiltinToolsSection
+                tools={builtinTools}
+                searchQuery={searchQuery}
+                selectedKey={selectedBuiltinKey}
+                onSelect={onSelectBuiltin}
+              />
+            )}
           </div>
         )}
       </div>

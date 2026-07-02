@@ -138,7 +138,7 @@ interface MultiModelPlaygroundCardProps {
   hostStyle: ChatboxHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
-  hideSaveViewButton?: boolean;
+  hideInlineEdit?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   isExecuting?: boolean;
@@ -210,7 +210,7 @@ export function MultiModelPlaygroundCard({
   hostStyle,
   effectiveThreadTheme,
   deviceType,
-  hideSaveViewButton = false,
+  hideInlineEdit = false,
   onWidgetStateChange,
   toolRenderOverrides = {},
   isExecuting = false,
@@ -804,7 +804,7 @@ export function MultiModelPlaygroundCard({
                       onFullscreenChange={setIsWidgetFullscreen}
                       onToolApprovalResponse={addToolApprovalResponse}
                       toolRenderOverrides={mergedToolRenderOverrides}
-                      showSaveViewButton={!hideSaveViewButton}
+                      showInlineEdit={!hideInlineEdit}
                       fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                       onFullscreenChatStop={stop}
                       reasoningDisplayMode={reasoningDisplayMode}

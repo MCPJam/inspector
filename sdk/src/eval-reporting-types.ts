@@ -37,6 +37,16 @@ export type EvalTraceSpanInput = {
   totalTokens?: number;
   messageStartIndex?: number;
   messageEndIndex?: number;
+  // GenAI harness metadata (step/llm spans). Mirror of inspector
+  // shared/eval-trace.ts EvalTraceSpan; kept in parity via the shared fixture.
+  finishReason?: string;
+  provider?: string;
+  responseId?: string;
+  responseTimestamp?: string;
+  ttfcMs?: number;
+  // MCP server-contract metadata (tool spans). JSON-RPC error code from a
+  // failed tools/call (OTel rpc.response.status_code).
+  mcpErrorCode?: number;
 };
 
 export type EvalTraceInput =

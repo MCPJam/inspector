@@ -4,138 +4,22 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "The mcpjam-agent MCP server now exposes the full platform catalog — eval, chatbox, and project tools plus live MCP server operations — advertises the `io.modelcontextprotocol/ui` capability, and connects the platform MCP server for native widget rendering.",
-      "id": "agent-platform-catalog"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add MCPJam tunnels to the platform surface and CLI. The SDK gains `createTunnel`/`closeTunnel` on `PlatformApiClient` plus the `create_tunnel`/`close_tunnel` operations (`@mcpjam/sdk/platform`); the CLI gains `mcpjam tunnel`, which exposes a local MCP server (HTTP URL or stdio command) through a public MCPJam tunnel URL and registers it as a server in your hosted project. The CLI's tunnel command requires this SDK version's platform exports, so the two release together.",
-      "id": "cli-tunnel-command"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Computer Use grows up: evals accept any vision + tool-calling model (not just a hardcoded allowlist), computers delegate to a remote data plane so credential-less inspectors can still drive sessions, synthetic sessions run through the same eval browser pipeline (render observations + Computer Use), and the computer terminal gets a themed UI with a toolbar and clipboard support.",
-      "id": "computer-use-expansion"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "The app now lands on Home instead of Connect. Home resolves the org from the active project and shows a skeleton while context loads, and the Host tab's focus panel starts expanded.",
-      "id": "home-landing-default"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Clients can use models configured at the org level, and model pickers share one availability pipeline so chat, host, and evals agree on which models are offered.",
-      "id": "org-models-availability"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Local OSS development points at the open community backend by default.",
-      "id": "oss-community-backend"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "MCPJam relay tunneling replaces ngrok for exposing local MCP servers. Tunnel URLs are edge-secured bearer URLs with a transparent bridge and per-server isolation.",
-      "id": "relay-tunnels"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "`run_eval_suite` no longer guesses a server default client-side: when `servers` is omitted, the request omits `serverIds` and the platform connects the suite's saved server selection — the exact set the run snapshot references (the previous all-enabled-HTTP default could miss it and fail the run after the 202). The resolved set comes back in the result, and `PlatformEvalRunCreated` gains the matching optional `servers` field. Explicit `servers` overrides keep their client-side resolution and validation. Requires a platform deployment where `POST /eval-runs` accepts rerun bodies without `serverIds`; older deployments answer with an actionable `VALIDATION_ERROR`.",
-      "id": "run-eval-suite-saved-selection"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "`mcpjam tunnel` shutdown revokes the grant by calling the close endpoint directly with the project ID already resolved at startup, instead of going through the `close_tunnel` operation's project re-resolution. This removes a `listProjects` round-trip from the 5s revocation grace window and an independent failure mode where a listing hiccup could skip a revocation that would have succeeded.",
-      "id": "tunnel-close-direct"
+      "summary": "Remove the guest free daily credits block from the sidebar.",
+      "id": "sidebar-guest-credit-block"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.11.0",
+      "type": "patch",
+      "oldVersion": "2.22.0",
       "changesets": [
-        "agent-platform-catalog",
-        "computer-use-expansion",
-        "home-landing-default",
-        "org-models-availability",
-        "oss-community-backend",
-        "relay-tunnels"
+        "sidebar-guest-credit-block"
       ],
-      "newVersion": "2.12.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.16.0",
-      "changesets": [
-        "cli-tunnel-command",
-        "run-eval-suite-saved-selection"
-      ],
-      "newVersion": "1.17.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.5.0",
-      "changesets": [
-        "cli-tunnel-command",
-        "tunnel-close-direct"
-      ],
-      "newVersion": "3.6.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.22.1"
     }
   ]
 }

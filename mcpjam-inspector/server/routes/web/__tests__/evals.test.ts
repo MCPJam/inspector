@@ -14,6 +14,7 @@ import {
 
 const {
   runEvalsWithManagerMock,
+  prepareEvalRunMock,
   runEvalTestCaseWithManagerMock,
   streamEvalTestCaseWithManagerMock,
   generateEvalTestsWithManagerMock,
@@ -22,6 +23,7 @@ const {
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
   runEvalsWithManagerMock: vi.fn(),
+  prepareEvalRunMock: vi.fn(),
   runEvalTestCaseWithManagerMock: vi.fn(),
   streamEvalTestCaseWithManagerMock: vi.fn(),
   generateEvalTestsWithManagerMock: vi.fn(),
@@ -66,6 +68,7 @@ vi.mock("../../shared/evals.js", async () => {
     ...actual,
     runEvalsWithManager: (...args: unknown[]) =>
       runEvalsWithManagerMock(...args),
+    prepareEvalRun: (...args: unknown[]) => prepareEvalRunMock(...args),
     runEvalTestCaseWithManager: (...args: unknown[]) =>
       runEvalTestCaseWithManagerMock(...args),
     streamEvalTestCaseWithManager: (...args: unknown[]) =>
@@ -85,32 +88,6 @@ type EndpointCase = {
 };
 
 const endpointCases: EndpointCase[] = [
-  {
-    path: "/api/web/evals/run",
-    body: {
-      projectId: "project-1",
-      serverIds: ["server-1"],
-      suiteName: "Hosted Suite",
-      tests: [
-        {
-          title: "Test",
-          query: "Hello",
-          runs: 1,
-          model: "openai/gpt-5-mini",
-          provider: "openai",
-          expectedToolCalls: [],
-          advancedConfig: {
-            toolChoice: {
-              type: "tool",
-              toolName: "search_docs",
-            },
-          },
-        },
-      ],
-    },
-    successBody: { success: true, suiteId: "suite-1", runId: "run-1" },
-    successMock: runEvalsWithManagerMock,
-  },
   {
     path: "/api/web/evals/run-test-case",
     body: {
@@ -151,6 +128,43 @@ const endpointCases: EndpointCase[] = [
     successMock: generateNegativeEvalTestsWithManagerMock,
   },
 ];
+
+const runSuiteBody = {
+  projectId: "project-1",
+  serverIds: ["server-1"],
+  suiteName: "Hosted Suite",
+  tests: [
+    {
+      title: "Test",
+      query: "Hello",
+      runs: 1,
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      expectedToolCalls: [],
+      advancedConfig: {
+        toolChoice: {
+          type: "tool",
+          toolName: "search_docs",
+        },
+      },
+    },
+  ],
+};
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushPromises() {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+}
 
 function createEvalsTestApp(options?: { bearerToken?: string }) {
   const app = new Hono();
@@ -369,11 +383,138 @@ describe("web routes — evals", () => {
     },
   );
 
-  it("passes hosted server names through to eval suite runs", async () => {
-    runEvalsWithManagerMock.mockResolvedValueOnce({
+  it("starts hosted suite runs asynchronously and keeps MCP connections until execution settles", async () => {
+    const execution = deferred();
+    const execute = vi.fn(() => execution.promise);
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize },
+      execute,
+    });
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      {
+        ...runSuiteBody,
+        serverNames: ["Server One"],
+        clientInfo: { name: "Pinned Client", version: "1.0.0" },
+        supportedProtocolVersions: ["2025-11-25"],
+        mcpProtocolVersionsByServerId: { "server-1": "2025-11-25" },
+      },
+      token,
+    );
+    const { status, data } = await expectJson<{
+      success: true;
+      suiteId: string;
+      runId: string;
+      status: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(202);
+    expect(data).toMatchObject({
       success: true,
       suiteId: "suite-1",
       runId: "run-1",
+      status: "running",
+      message: "Eval run started. Results will appear shortly.",
+    });
+    expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        ...runSuiteBody,
+        // The wire transform projects this legacy body (query/expectedToolCalls,
+        // no `steps`) onto the steps-first contract before prepareEvalRun runs.
+        tests: [
+          expect.objectContaining({
+            ...runSuiteBody.tests[0],
+            steps: [{ id: "step-1-prompt", kind: "prompt", prompt: "Hello" }],
+          }),
+        ],
+        serverNames: ["Server One"],
+        convexAuthToken: token,
+      }),
+    );
+    expect(managerConfigsMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        "server-1": expect.objectContaining({
+          clientInfo: { name: "Pinned Client", version: "1.0.0" },
+          supportedProtocolVersions: ["2025-11-25"],
+          mcpProtocolVersion: "2025-11-25",
+        }),
+      }),
+    );
+    expect(disconnectAllServersMock).not.toHaveBeenCalled();
+
+    execution.resolve(undefined);
+    await flushPromises();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks hosted suite runs failed when detached execution rejects", async () => {
+    const execution = deferred();
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize },
+      execute: vi.fn(() => execution.promise),
+    });
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      runSuiteBody,
+      token,
+    );
+
+    expect(response.status).toBe(202);
+    execution.reject(new Error("model provider unavailable"));
+    await flushPromises();
+
+    expect(finalize).toHaveBeenCalledWith({
+      status: "failed",
+      notes: "model provider unavailable",
+    });
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("disconnects immediately when hosted suite run setup fails before detaching", async () => {
+    prepareEvalRunMock.mockRejectedValueOnce(new Error("quota exceeded"));
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      runSuiteBody,
+      token,
+    );
+    const { status, data } = await expectJson<{ code: string; message: string }>(
+      response,
+    );
+
+    expect(status).toBe(500);
+    expect(data.message).toContain("quota exceeded");
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes hosted server names through to eval suite runs", async () => {
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize: vi.fn().mockResolvedValue(undefined) },
+      execute: vi.fn().mockResolvedValue(undefined),
     });
 
     const { app, token } = createEvalsTestApp();
@@ -399,8 +540,8 @@ describe("web routes — evals", () => {
       token,
     );
 
-    expect(response.status).toBe(200);
-    expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
+    expect(response.status).toBe(202);
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         projectId: "project-1",
         serverIds: ["srv-1"],
@@ -408,6 +549,7 @@ describe("web routes — evals", () => {
         convexAuthToken: token,
       }),
     );
+    await flushPromises();
   });
 
   it("streams hosted compare quick runs from /api/web/evals/stream-test-case", async () => {
@@ -486,10 +628,12 @@ describe("web routes — evals", () => {
   });
 
   it("allows guests to run full eval suites", async () => {
-    runEvalsWithManagerMock.mockResolvedValueOnce({
-      success: true,
+    prepareEvalRunMock.mockResolvedValueOnce({
       suiteId: "guest-suite-1",
       runId: "guest-run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize: vi.fn().mockResolvedValue(undefined) },
+      execute: vi.fn().mockResolvedValue(undefined),
     });
 
     const { app } = createEvalsTestApp();
@@ -517,14 +661,15 @@ describe("web routes — evals", () => {
       token,
     );
 
-    expect(response.status).toBe(200);
-    expect(runEvalsWithManagerMock).toHaveBeenCalledTimes(1);
-    expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
+    expect(response.status).toBe(202);
+    expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         projectId: "guest-project-1",
         serverIds: ["guest-srv-1"],
         convexAuthToken: token,
       }),
     );
+    await flushPromises();
   });
 });

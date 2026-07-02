@@ -5,13 +5,10 @@ import { PartSwitch } from "../thread/part-switch";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
-  () => ({
-    mockUseSaveView: vi.fn(),
-    mockDetectUIType: vi.fn(),
-    mockWidgetReplay: vi.fn(),
-  })
-);
+const { mockDetectUIType, mockWidgetReplay } = vi.hoisted(() => ({
+  mockDetectUIType: vi.fn(),
+  mockWidgetReplay: vi.fn(),
+}));
 
 // Mock all part components
 vi.mock("../thread/parts/text-part", () => ({
@@ -105,18 +102,8 @@ vi.mock("@/state/app-state-context", () => ({
     },
     activeProjectId: "default",
     selectedServer: "selected-server",
+    servers: {},
   }),
-}));
-
-vi.mock("@/hooks/useViews", () => ({
-  useViewQueries: () => ({ sortedViews: [] }),
-}));
-
-vi.mock("@/hooks/useSaveView", () => ({
-  useSaveView: (args: any) => {
-    mockUseSaveView(args);
-    return { saveViewInstant: vi.fn(), isSaving: false };
-  },
 }));
 
 // Mock thread-helpers
@@ -138,7 +125,12 @@ vi.mock("../thread/thread-helpers", () => ({
 // Mock mcp-tools-api
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   callTool: vi.fn(),
+  executeToolApi: vi.fn(),
   getToolServerId: () => "server-1",
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 // Mock mcp-apps-utils
@@ -357,32 +349,6 @@ describe("PartSwitch", () => {
       );
 
       expect(screen.getByTestId("tool-part")).toBeInTheDocument();
-    });
-
-    it("uses the tool server when configuring save views", () => {
-      const part = {
-        type: "tool-invocation",
-        toolName: "read_file",
-        toolCallId: "call-1",
-        state: "output-available",
-        input: { path: "/test.txt" },
-        output: { content: "file content" },
-      };
-
-      render(
-        <PartSwitch
-          {...defaultProps}
-          part={part as any}
-          toolsMetadata={{}}
-          toolServerMap={{}}
-        />
-      );
-
-      expect(mockUseSaveView).toHaveBeenCalledWith(
-        expect.objectContaining({
-          serverName: "server-1",
-        })
-      );
     });
 
     describe("host capability gate (Bug 1)", () => {

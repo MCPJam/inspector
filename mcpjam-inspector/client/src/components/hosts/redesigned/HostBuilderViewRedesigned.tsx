@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -19,6 +19,7 @@ import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServe
 import { useSharedAppState } from "@/state/app-state-context";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { HostSectionTabs } from "@/components/hosts/HostSectionTabs";
 import type { ServerFormData } from "@/shared/types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
@@ -34,6 +35,8 @@ import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useComputerStatus } from "@/hooks/useProjectComputer";
+import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
   hasBlockingErrors,
   useHostDraftValidation,
@@ -69,6 +72,11 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  // Project Computers canvas inputs. Both queries resolve to `undefined`
+  // until their backend functions are deployed and stay cheap when the
+  // feature flag is off (the islands they feed aren't emitted then).
+  const computerStatus = useComputerStatus(projectId);
+  const builtInToolCatalog = useBuiltInToolCatalog();
   const { updateHost } = useHostMutations();
   const { createServer } = useServerMutations();
 
@@ -262,6 +270,9 @@ export function HostBuilderViewRedesigned({
         isDirty,
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
+        computersEnabled,
+        computerStatus,
+        builtInToolCatalog,
       },
       attention
     );
@@ -273,6 +284,9 @@ export function HostBuilderViewRedesigned({
     availableServersForCanvas,
     attention,
     prevHostSnapshot,
+    computersEnabled,
+    computerStatus,
+    builtInToolCatalog,
   ]);
 
   const openFocus = useCallback(
@@ -403,6 +417,15 @@ export function HostBuilderViewRedesigned({
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
         <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+          {/* Host/Compare sub-nav sits inline beside Save — a single header
+              row instead of a second segmented bar stacked over the canvas. */}
+          <HostSectionTabs
+            value="host"
+            hostEnabled
+            onSelect={(next) => {
+              if (next === "compare") navigate("/host-compare");
+            }}
+          />
           <Button
             size="sm"
             onClick={() => void handleSave()}
@@ -434,8 +457,6 @@ export function HostBuilderViewRedesigned({
                   // The URL→state sync in HostsRoute will clear the
                   // selected host when /servers takes over.
                   navigate("/servers");
-                } else if (next === "compare") {
-                  navigate("/host-compare");
                 } else if (next === "computer") {
                   navigate("/computer");
                 }
@@ -443,7 +464,8 @@ export function HostBuilderViewRedesigned({
               options={[
                 { value: "servers", label: "Servers" },
                 { value: "host", label: "Host" },
-                { value: "compare", label: "Compare" },
+                // "Compare" is reached from the inline Host|Compare pill, not
+                // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled
                   ? [{ value: "computer", label: "Computer" }]
                   : []),
@@ -483,6 +505,8 @@ export function HostBuilderViewRedesigned({
                     onSelectNode={handleSelectNode}
                     onClearSelection={() => setSelectedNodeId(null)}
                     onAddServer={() => setShowAddServer(true)}
+                    onOpenComputer={() => navigate("/computer")}
+                    themeMode={themeMode}
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>

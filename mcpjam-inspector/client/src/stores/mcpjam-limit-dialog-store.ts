@@ -15,6 +15,8 @@ export interface MCPJamLimitNotifyInput {
 interface MCPJamLimitDialogState {
   isOpen: boolean;
   hasPendingLimit: boolean;
+  outOfCreditsHit: boolean;
+  outOfCreditsOrganizationId: string | null;
   authStatus: MCPJamLimitAuthStatus;
   intent: MCPJamLimitIntent | null;
   organizationId: string | null;
@@ -24,12 +26,13 @@ interface MCPJamLimitDialogState {
   pendingInput: MCPJamLimitNotifyInput | null;
   notifyLimitHit: (input?: MCPJamLimitNotifyInput) => void;
   setAuthStatus: (authStatus: MCPJamLimitAuthStatus) => void;
+  clearOutOfCreditsHit: (organizationId?: string | null) => void;
   close: () => void;
 }
 
 const intentForAuth = (
   authStatus: MCPJamLimitAuthStatus,
-  _input: MCPJamLimitNotifyInput,
+  _input: MCPJamLimitNotifyInput
 ): MCPJamLimitIntent | null => {
   if (authStatus === "guest") return "guest";
   if (authStatus === "signedIn") return "topup";
@@ -40,6 +43,8 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
     isOpen: false,
     hasPendingLimit: false,
+    outOfCreditsHit: false,
+    outOfCreditsOrganizationId: null,
     authStatus: "loading",
     intent: null,
     organizationId: null,
@@ -47,12 +52,25 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     notifyLimitHit: (input = {}) =>
       set((state) => {
         if (state.authStatus === "loading") {
-          return { hasPendingLimit: true, pendingInput: input };
+          return {
+            hasPendingLimit: true,
+            outOfCreditsHit: true,
+            outOfCreditsOrganizationId: input.organizationId ?? null,
+            pendingInput: input,
+          };
         }
         const intent = intentForAuth(state.authStatus, input);
-        if (!intent) return { hasPendingLimit: false };
+        if (!intent) {
+          return {
+            hasPendingLimit: false,
+            outOfCreditsHit: true,
+            outOfCreditsOrganizationId: input.organizationId ?? null,
+          };
+        }
         return {
           hasPendingLimit: false,
+          outOfCreditsHit: true,
+          outOfCreditsOrganizationId: input.organizationId ?? null,
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,
@@ -72,10 +90,27 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         return {
           authStatus,
           hasPendingLimit: false,
+          outOfCreditsHit: true,
+          outOfCreditsOrganizationId: input.organizationId ?? null,
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,
           pendingInput: null,
+        };
+      }),
+    clearOutOfCreditsHit: (organizationId) =>
+      set((state) => {
+        if (!state.outOfCreditsHit) return {};
+        if (
+          organizationId !== undefined &&
+          state.outOfCreditsOrganizationId &&
+          state.outOfCreditsOrganizationId !== organizationId
+        ) {
+          return {};
+        }
+        return {
+          outOfCreditsHit: false,
+          outOfCreditsOrganizationId: null,
         };
       }),
     close: () =>
@@ -86,5 +121,5 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         organizationId: null,
         pendingInput: null,
       }),
-  }),
+  })
 );

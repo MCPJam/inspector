@@ -220,6 +220,14 @@ export async function persistEvalTraceFanout(args: {
    */
   widgetRenderObservations?: SerializedWidgetRenderObservation[];
   browserInteractionSteps?: SerializedBrowserInteractionStep[];
+  /**
+   * Convex storageId for the iteration's replay `.webm`, already uploaded by
+   * `finalizeEvalIteration`. Iteration-level (one video per iteration), so it
+   * attaches to the LAST turn call only — mirroring `widgetSnapshots` — and the
+   * backend stores it on the iteration/session trace for `getTestIterationBlob`
+   * to resolve into a `videoUrl`.
+   */
+  videoBlobId?: string;
 }): Promise<FanoutResult> {
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
@@ -294,6 +302,11 @@ export async function persistEvalTraceFanout(args: {
           // runner used to splice into `messages` at finalize.
           ...(args.systemPrompt !== undefined
             ? { systemPrompt: args.systemPrompt }
+            : {}),
+          // Iteration-level replay video: attach to the last turn only (like
+          // widgetSnapshots). Backend stores it on the iteration trace.
+          ...(isLastTurn && args.videoBlobId
+            ? { videoBlobId: args.videoBlobId }
             : {}),
           turn: {
             promptIndex: turn.promptIndex,

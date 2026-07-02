@@ -1,11 +1,9 @@
 import { useEffect } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 
-import {
-  clearPendingTopup,
-  peekPendingTopup,
-} from "@/hooks/useCreditTopup";
+import { clearPendingTopup, peekPendingTopup } from "@/hooks/useCreditTopup";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 interface UseCreditTopupReturnFlowOptions {
   /** Active chat session id used to validate the pending stash on success. */
@@ -46,8 +44,7 @@ export function useCreditTopupReturnFlow({
     params.delete("topup");
     params.delete("session_id");
     const search = params.toString();
-    const cleanedUrl =
-      window.location.pathname + (search ? `?${search}` : "");
+    const cleanedUrl = window.location.pathname + (search ? `?${search}` : "");
     window.history.replaceState(null, "", cleanedUrl);
 
     if (topupParam === "cancelled") {
@@ -57,6 +54,8 @@ export function useCreditTopupReturnFlow({
       });
       return;
     }
+
+    useMCPJamLimitDialogStore.getState().clearOutOfCreditsHit();
 
     const pending = peekPendingTopup();
     const hadPendingStash = pending !== null;
@@ -75,7 +74,7 @@ export function useCreditTopupReturnFlow({
           clearPendingTopup();
         } catch {
           toast.error(
-            "Credits added, but we couldn't resend your last message. Please send it again.",
+            "Credits added, but we couldn't resend your last message. Please send it again."
           );
         }
       }
@@ -118,14 +117,15 @@ export function useCreditTopupReturnFlowBilling({
     params.delete("topup");
     params.delete("session_id");
     const search = params.toString();
-    const cleanedUrl =
-      window.location.pathname + (search ? `?${search}` : "");
+    const cleanedUrl = window.location.pathname + (search ? `?${search}` : "");
     window.history.replaceState(null, "", cleanedUrl);
 
     if (topupParam === "cancelled") {
       posthog?.capture("credit_topup_return_cancelled");
       return;
     }
+
+    useMCPJamLimitDialogStore.getState().clearOutOfCreditsHit();
 
     toast.success("Credits added.");
     posthog?.capture("credit_topup_return_success");

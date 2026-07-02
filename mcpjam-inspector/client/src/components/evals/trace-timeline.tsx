@@ -23,11 +23,17 @@ import {
   ListTree,
   MessageSquareQuote,
   Minus,
+  MousePointerClick,
   Plus,
   User,
   Wrench,
 } from "lucide-react";
-import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+  EvalTraceSpanCategory,
+} from "@/shared/eval-trace";
+import { mcpErrorCodeLabel } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -153,7 +159,75 @@ type SpanRow = {
   isExpanded: boolean;
 };
 
-type TimelineRow = PromptRow | SpanRow;
+/**
+ * A widget "Interact" step (click/type/etc.), rendered as a leaf row nested
+ * under the tool span that rendered its widget. These are app-side eval
+ * ARTIFACTS — not persisted trace spans — so they ride a structural `kind`
+ * discriminator instead of an `EvalTraceSpanCategory` (which would corrupt the
+ * span-centric counts/aggregation/filters). Timing is borrowed from the parent
+ * tool span: the interaction step's own wall-clock `ts` isn't on the span axis,
+ * and the parent window is where the interaction happened anyway.
+ */
+type InteractionRow = {
+  kind: "interaction";
+  key: string;
+  promptIndex: number;
+  depth: number;
+  step: EvalTraceBrowserInteractionStepView;
+  startMs: number;
+  endMs: number;
+  status: "ok" | "error" | "unknown";
+};
+
+type TimelineRow = PromptRow | SpanRow | InteractionRow;
+
+type TraceTurnRuntime = {
+  engine?: "emulated" | "harness";
+  harness?: string;
+};
+
+/** Human-readable verb for an interaction step's action enum. */
+function interactionActionVerb(action: string): string {
+  switch (action) {
+    case "left_click":
+      return "Click";
+    case "double_click":
+      return "Double-click";
+    case "right_click":
+      return "Right-click";
+    case "mouse_move":
+      return "Move";
+    case "type":
+      return "Type";
+    case "key":
+      return "Key";
+    case "scroll":
+      return "Scroll";
+    case "wait":
+      return "Wait";
+    case "screenshot":
+      return "Assert";
+    default:
+      return action;
+  }
+}
+
+/** Label for an interaction row, e.g. `Interact · Click "Add to cart"`. */
+function interactionRowLabel(step: EvalTraceBrowserInteractionStepView): string {
+  const verb = interactionActionVerb(step.action);
+  const target = step.locatorLabel?.trim();
+  return target ? `Interact · ${verb} ${target}` : `Interact · ${verb}`;
+}
+
+/** Verdict for an interaction step: asserts use `assertion`, actions use `ok`. */
+function interactionRowStatus(
+  step: EvalTraceBrowserInteractionStepView,
+): "ok" | "error" | "unknown" {
+  if (step.assertion) return step.assertion.passed ? "ok" : "error";
+  if (step.ok === true) return "ok";
+  if (step.ok === false) return "error";
+  return "unknown";
+}
 
 function aggregateLlmTokenTotals(spans: EvalTraceSpan[]): {
   inputTokens?: number;
@@ -219,6 +293,16 @@ function compareSpans(a: EvalTraceSpan, b: EvalTraceSpan): number {
   if (categoryDiff !== 0) return categoryDiff;
   if (a.endMs !== b.endMs) return a.endMs - b.endMs;
   return a.name.localeCompare(b.name);
+}
+
+/** Output tokens per second for an llm span, or null when not computable. */
+function spanThroughputPerSec(
+  outputTokens: number | undefined,
+  durationMs: number,
+): number | null {
+  // Guard against divide-by-near-zero (cached / sub-ms responses → Infinity).
+  if (typeof outputTokens !== "number" || durationMs < 50) return null;
+  return outputTokens / (durationMs / 1000);
 }
 
 function formatDuration(ms: number): string {
@@ -518,6 +602,11 @@ function getWaterfallBarClass(
   spanShowsFailure: boolean,
 ): string {
   if (row.kind === "prompt") return "trace-waterfall-bar-prompt";
+  if (row.kind === "interaction") {
+    return row.status === "error"
+      ? "trace-waterfall-bar-error"
+      : "trace-waterfall-bar-tool";
+  }
   if (row.kind === "span" && spanShowsFailure) {
     return "trace-waterfall-bar-error";
   }
@@ -537,7 +626,7 @@ function getWaterfallBarClass(
 }
 
 function getCategoryIconClass(
-  category: EvalTraceSpanCategory | "prompt",
+  category: EvalTraceSpanCategory | "prompt" | "interaction",
 ): string {
   switch (category) {
     case "prompt":
@@ -547,6 +636,7 @@ function getCategoryIconClass(
     case "llm":
       return "trace-waterfall-glyph-llm";
     case "tool":
+    case "interaction":
       return "trace-waterfall-glyph-tool";
     case "error":
       return "trace-waterfall-glyph-error";
@@ -561,6 +651,11 @@ function getRowBorderAccentClass(
 ): string {
   if (row.kind === "prompt") {
     return "trace-waterfall-row-accent-prompt";
+  }
+  if (row.kind === "interaction") {
+    return row.status === "error"
+      ? "trace-waterfall-row-accent-error"
+      : "trace-waterfall-row-accent-tool";
   }
   const cat = spanShowsFailure ? "error" : row.span.category;
   switch (cat) {
@@ -1018,7 +1113,7 @@ function CategoryGlyph({
   category,
   size = "sm",
 }: {
-  category: EvalTraceSpanCategory | "prompt";
+  category: EvalTraceSpanCategory | "prompt" | "interaction";
   size?: "sm" | "lg";
 }) {
   const iconClass = cn(
@@ -1032,6 +1127,8 @@ function CategoryGlyph({
       return <Bot className={iconClass} aria-hidden />;
     case "tool":
       return <Wrench className={iconClass} aria-hidden />;
+    case "interaction":
+      return <MousePointerClick className={iconClass} aria-hidden />;
     case "error":
       return <AlertCircle className={iconClass} aria-hidden />;
     case "step":
@@ -1087,6 +1184,8 @@ function getRowTokenStats(
       totalTokens: row.aggregatedTotalTokens,
     };
   }
+  // Interaction rows are app-side events, not model generation — no tokens.
+  if (row.kind === "interaction") return {};
   const base = {
     inputTokens: row.span.inputTokens,
     outputTokens: row.span.outputTokens,
@@ -1266,8 +1365,9 @@ function getRowTiming(row: TimelineRow): {
   endMs: number;
   durationMs: number;
 } {
-  const startMs = row.kind === "prompt" ? row.startMs : row.span.startMs;
-  const endMs = row.kind === "prompt" ? row.endMs : row.span.endMs;
+  const startMs =
+    row.kind === "span" ? row.span.startMs : row.startMs;
+  const endMs = row.kind === "span" ? row.span.endMs : row.endMs;
   return {
     startMs,
     endMs,
@@ -1354,14 +1454,129 @@ function PayloadPreview({
   );
 }
 
+const INTERACTION_STATUS_BADGE_CLASS: Record<
+  InteractionRow["status"],
+  string
+> = {
+  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  error: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+  unknown: "border-border/50 bg-muted/40 text-muted-foreground",
+};
+
+function InteractionDetailPane({ row }: { row: InteractionRow }) {
+  const { step } = row;
+  const statusLabel =
+    row.status === "ok" ? "OK" : row.status === "error" ? "Failed" : "Unknown";
+  const calls = step.widgetToolCalls ?? [];
+  // Computer Use steps target a pixel; surface it so the Trace tab carries the
+  // coordinate the retired Browser-tab timeline used to show.
+  const coordinate =
+    step.coordinateX != null && step.coordinateY != null
+      ? `(${step.coordinateX}, ${step.coordinateY})`
+      : null;
+  return (
+    <div
+      data-testid="trace-detail-pane"
+      className="flex min-h-[280px] flex-col gap-4 rounded-lg bg-muted/5 px-5 py-5"
+    >
+      <div className="flex items-center gap-2">
+        <CategoryGlyph category="interaction" size="lg" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">
+            {interactionRowLabel(step)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            App interaction · {step.elapsedMs}ms
+            {coordinate ? ` · ${coordinate}` : ""}
+          </p>
+        </div>
+        <Badge className={INTERACTION_STATUS_BADGE_CLASS[row.status]}>
+          {statusLabel}
+        </Badge>
+      </div>
+      {step.assertion && !step.assertion.passed && step.assertion.reason ? (
+        <p className="text-xs text-red-500">{step.assertion.reason}</p>
+      ) : null}
+      {step.screenshotUrl ? (
+        <img
+          src={step.screenshotUrl}
+          alt={interactionRowLabel(step)}
+          className="max-h-72 w-full rounded-md border border-border/50 object-contain"
+        />
+      ) : null}
+      {calls.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Widget tool calls
+          </p>
+          {calls.map((call, i) => (
+            <div
+              key={`${call.name}-${i}`}
+              className="flex items-center gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
+            >
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                  call.ok ? "bg-emerald-500" : "bg-destructive",
+                )}
+                aria-hidden
+              />
+              <span className="font-mono text-foreground">{call.name}</span>
+              {call.error ? (
+                <span className="truncate text-red-500">{call.error}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {step.followUps && step.followUps.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Sent message to chat
+          </p>
+          {step.followUps.map((text, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
+            >
+              <span aria-hidden>↳</span>
+              <span className="truncate text-foreground">{text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatHarnessName(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
+  if (runtime.engine === "harness") {
+    return runtime.harness ? formatHarnessName(runtime.harness) : "Harness";
+  }
+  if (runtime.engine === "emulated") {
+    return "Emulated";
+  }
+  return runtime.harness ? formatHarnessName(runtime.harness) : "Unknown";
+}
+
 function TimelineDetailPane({
   row,
   transcriptMessages,
   onRevealInTranscript,
+  turnRuntimeByPromptIndex,
 }: {
   row: TimelineRow | undefined;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
+  turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
 }) {
   if (!row) {
     return (
@@ -1382,6 +1597,10 @@ function TimelineDetailPane({
         </div>
       </div>
     );
+  }
+
+  if (row.kind === "interaction") {
+    return <InteractionDetailPane row={row} />;
   }
 
   const revealSelection =
@@ -1415,6 +1634,7 @@ function TimelineDetailPane({
           spanIndicatesTranscriptFailure(row.span, transcriptMessages)
         ? "error"
         : row.span.category;
+  const turnRuntime = turnRuntimeByPromptIndex?.get(row.promptIndex);
 
   const llmIo =
     row.kind === "span" &&
@@ -1514,6 +1734,23 @@ function TimelineDetailPane({
               <h3 className="text-sm font-bold leading-tight text-foreground">
                 {title}
               </h3>
+              {turnRuntime ? (
+                <Badge
+                  className="border-border/60 bg-muted/30 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                  data-testid="trace-turn-runtime-badge"
+                  title={
+                    turnRuntime.engine === "harness"
+                      ? "This turn ran through the harness adapter."
+                      : turnRuntime.engine === "emulated"
+                        ? "This turn ran through MCPJam's emulated chat engine."
+                        : turnRuntime.harness
+                          ? "This turn ran through the harness adapter."
+                          : "Runtime engine was not recorded for this turn."
+                  }
+                >
+                  Engine: {turnRuntimeLabel(turnRuntime)}
+                </Badge>
+              ) : null}
               {status === "error" ? (
                 <span
                   className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
@@ -1553,6 +1790,57 @@ function TimelineDetailPane({
                 </>
               ) : null}
             </div>
+
+            {row.kind === "span"
+              ? (() => {
+                  const span = row.span;
+                  const throughput =
+                    span.category === "llm"
+                      ? spanThroughputPerSec(span.outputTokens, durationMs)
+                      : null;
+                  const items: Array<{ label: string; value: string }> = [];
+                  if (span.provider)
+                    items.push({ label: "Provider", value: span.provider });
+                  if (span.finishReason)
+                    items.push({
+                      label: "Finish",
+                      value: span.finishReason,
+                    });
+                  if (typeof span.ttfcMs === "number")
+                    items.push({
+                      label: "TTFC",
+                      value: formatDuration(span.ttfcMs),
+                    });
+                  if (throughput !== null)
+                    items.push({
+                      label: "Throughput",
+                      value: `${throughput.toFixed(1)} tok/s`,
+                    });
+                  if (span.responseId)
+                    items.push({
+                      label: "Response ID",
+                      value: span.responseId,
+                    });
+                  if (items.length === 0) return null;
+                  return (
+                    <div
+                      data-testid="trace-span-metadata"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                    >
+                      {items.map((item) => (
+                        <span key={item.label} className="truncate">
+                          <span className="text-muted-foreground/70">
+                            {item.label}:{" "}
+                          </span>
+                          <span className="font-medium text-foreground">
+                            {item.value}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()
+              : null}
           </div>
         </div>
 
@@ -1607,6 +1895,18 @@ function TimelineDetailPane({
                 {toolErrorExcerpt}
               </pre>
             ) : null}
+            {typeof row.span.mcpErrorCode === "number" ? (
+              <div
+                data-testid="trace-mcp-error-code"
+                className="text-[11px] tabular-nums text-muted-foreground"
+                title="MCP-layer error code. -32602/-32601 etc. are server JSON-RPC errors; -32000 (connection closed) / -32001 (request timeout) are transport/client failures, not server faults."
+              >
+                <span className="text-muted-foreground/70">MCP error: </span>
+                <span className="font-medium text-foreground">
+                  {mcpErrorCodeLabel(row.span.mcpErrorCode)}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1616,6 +1916,12 @@ function TimelineDetailPane({
 
 export interface TraceTimelineProps {
   recordedSpans?: EvalTraceSpan[] | null;
+  /**
+   * Widget "Interact" steps (app-side eval artifacts). Rendered as leaf rows
+   * nested under the tool span that rendered each widget (matched by
+   * `toolCallId`). NOT persisted spans — see `InteractionRow`.
+   */
+  interactionSteps?: EvalTraceBrowserInteractionStepView[] | null;
   estimatedDurationMs?: number | null;
   transcriptMessageCount?: number;
   transcriptMessages?: TranscriptMessage[];
@@ -1632,12 +1938,15 @@ export interface TraceTimelineProps {
   onExpandedStepIdsChange?: (next: Set<string>) => void;
   /** Timeline axis ends at this many ms (≥ max span end); used for zoom. */
   viewportMaxMs?: number;
+  /** Runtime used for each live chat turn, keyed by promptIndex. */
+  turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
 }
 
 export function TraceTimeline({
   recordedSpans,
+  interactionSteps,
   estimatedDurationMs,
   transcriptMessageCount = 0,
   transcriptMessages = [],
@@ -1652,6 +1961,7 @@ export function TraceTimeline({
   expandedStepIds: expandedStepIdsProp,
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
+  turnRuntimeByPromptIndex,
   fillContent = false,
 }: TraceTimelineProps) {
   const shouldReduceMotion = useReducedMotion();
@@ -1665,6 +1975,20 @@ export function TraceTimeline({
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans],
   );
+  // Interaction steps grouped by the tool call whose widget they drove, so the
+  // flatten step can nest them under the matching tool span row.
+  const interactionsByToolCallId = useMemo(() => {
+    const map = new Map<string, EvalTraceBrowserInteractionStepView[]>();
+    for (const step of interactionSteps ?? []) {
+      const existing = map.get(step.toolCallId);
+      if (existing) existing.push(step);
+      else map.set(step.toolCallId, [step]);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.stepIndex - b.stepIndex);
+    }
+    return map;
+  }, [interactionSteps]);
   const maxEndMs = recordedSpans?.length
     ? recordedSpans.reduce((max, span) => Math.max(max, span.endMs), 1)
     : Math.max(estimatedDurationMs ?? 0, 1);
@@ -1786,6 +2110,12 @@ export function TraceTimeline({
 
     const nextRows: TimelineRow[] = [];
 
+    // A tool call's widget can be represented by more than one `tool` span in
+    // the recorded trace (a known span double-emit). Attach each toolCall's
+    // interaction steps to the FIRST matching tool span only, so clicks aren't
+    // rendered twice.
+    const emittedInteractionToolCallIds = new Set<string>();
+
     function rowSelfVisible(span: EvalTraceSpan): boolean {
       if (filter === "all") return true;
       if (filter === "error") {
@@ -1832,7 +2162,42 @@ export function TraceTimeline({
         return { hasVisibleContent: false, rows: [] };
       }
 
-      const showSelf = rowSelfVisible(node.span) || hasVisibleChildren;
+      // App-side interaction steps nested under the tool span that rendered
+      // their widget. Timing borrows the parent tool window (the step's own
+      // wall-clock `ts` isn't on the span axis).
+      const toolCallId = node.span.toolCallId;
+      const canEmitInteractions =
+        node.span.category === "tool" &&
+        !!toolCallId &&
+        !emittedInteractionToolCallIds.has(toolCallId);
+      if (canEmitInteractions && toolCallId) {
+        emittedInteractionToolCallIds.add(toolCallId);
+      }
+      const interactionRows: InteractionRow[] =
+        canEmitInteractions && toolCallId
+          ? (interactionsByToolCallId.get(toolCallId) ?? [])
+              .filter((step) => {
+                if (filter === "all" || filter === "tool") return true;
+                if (filter === "error")
+                  return interactionRowStatus(step) === "error";
+                return false;
+              })
+              .map((step, i) => ({
+                kind: "interaction" as const,
+                key: `interaction-${node.span.id}-${step.stepIndex}-${i}`,
+                promptIndex,
+                depth: depth + 1,
+                step,
+                startMs: node.span.startMs,
+                endMs: node.span.endMs,
+                status: interactionRowStatus(step),
+              }))
+          : [];
+
+      const showSelf =
+        rowSelfVisible(node.span) ||
+        hasVisibleChildren ||
+        interactionRows.length > 0;
 
       if (!showSelf) {
         return {
@@ -1856,6 +2221,7 @@ export function TraceTimeline({
         rows: [
           row,
           ...(row.hasChildren && row.isExpanded ? visibleChildRows : []),
+          ...interactionRows,
         ],
       };
     }
@@ -1913,6 +2279,7 @@ export function TraceTimeline({
     expandedStepIds,
     filter,
     groups,
+    interactionsByToolCallId,
     mode,
     transcriptMessages,
   ]);
@@ -1998,8 +2365,18 @@ export function TraceTimeline({
     const label =
       hoveredRow.kind === "prompt"
         ? (hoveredRow.conversationLabel ?? hoveredRow.label)
-        : derivedLabel!.title;
+        : hoveredRow.kind === "interaction"
+          ? interactionRowLabel(hoveredRow.step)
+          : derivedLabel!.title;
     const tokenStats = getRowTokenStats(hoveredRow, recordedSpans);
+    const glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction" =
+      hoveredRow.kind === "prompt"
+        ? "prompt"
+        : hoveredRow.kind === "interaction"
+          ? "interaction"
+          : hoveredRow.span.category === "tool" && spanShowsFailure
+            ? "error"
+            : hoveredRow.span.category;
     return {
       label,
       spanShowsFailure,
@@ -2008,11 +2385,7 @@ export function TraceTimeline({
         traceStartAnchorMs !== null ? traceStartAnchorMs + startMs : null,
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
-      glyphCategory: (hoveredRow.kind === "prompt"
-        ? "prompt"
-        : hoveredRow.span.category === "tool" && spanShowsFailure
-          ? "error"
-          : hoveredRow.span.category) as EvalTraceSpanCategory | "prompt",
+      glyphCategory,
     };
   }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages]);
 
@@ -2319,12 +2692,19 @@ export function TraceTimeline({
                         row.span,
                         transcriptMessages,
                       );
-                    const rowGlyphCategory: EvalTraceSpanCategory | "prompt" =
+                    const rowGlyphCategory:
+                      | EvalTraceSpanCategory
+                      | "prompt"
+                      | "interaction" =
                       row.kind === "prompt"
                         ? "prompt"
-                        : row.span.category === "tool" && spanShowsFailure
-                          ? "error"
-                          : row.span.category;
+                        : row.kind === "interaction"
+                          ? "interaction"
+                          : row.span.category === "tool" && spanShowsFailure
+                            ? "error"
+                            : row.span.category;
+                    const interactionShowsFailure =
+                      row.kind === "interaction" && row.status === "error";
                     const derivedLabel =
                       row.kind === "span"
                         ? deriveSpanLabel(row, transcriptMessages)
@@ -2332,12 +2712,16 @@ export function TraceTimeline({
                     const label =
                       row.kind === "prompt"
                         ? (row.conversationLabel ?? row.label)
-                        : derivedLabel!.title;
+                        : row.kind === "interaction"
+                          ? interactionRowLabel(row.step)
+                          : derivedLabel!.title;
                     const durationLabel = formatDuration(durationMs);
                     const canToggle =
                       row.kind === "prompt"
                         ? true
-                        : row.hasChildren || row.span.category === "llm";
+                        : row.kind === "interaction"
+                          ? false
+                          : row.hasChildren || row.span.category === "llm";
                     const gridRow = rowIndex + 2;
                     const borderAccent = getRowBorderAccentClass(
                       row,
@@ -2468,10 +2852,10 @@ export function TraceTimeline({
                                 aria-label={
                                   row.kind === "prompt"
                                     ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
-                                    : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
+                                    : `${"isExpanded" in row && row.isExpanded ? "Collapse" : "Expand"} ${label}`
                                 }
                               >
-                                {row.isExpanded ? (
+                                {"isExpanded" in row && row.isExpanded ? (
                                   <ChevronDown className="h-3.5 w-3.5" />
                                 ) : (
                                   <ChevronRight className="h-3.5 w-3.5" />
@@ -2508,7 +2892,8 @@ export function TraceTimeline({
                                   aria-label="Contains errors"
                                 />
                               ) : null}
-                              {row.kind === "span" && spanShowsFailure ? (
+                              {(row.kind === "span" && spanShowsFailure) ||
+                              interactionShowsFailure ? (
                                 <span
                                   className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
                                   title="Error"
@@ -2583,6 +2968,7 @@ export function TraceTimeline({
                 row={selectedRow}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
+                turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
               />
             </div>
           </ResizablePanel>
@@ -2611,7 +2997,7 @@ type HoveredRowInfo = {
   };
   rowStartTimestamp: number | null;
   rowEndTimestamp: number | null;
-  glyphCategory: EvalTraceSpanCategory | "prompt";
+  glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction";
 };
 
 function HoveredRowInspector({

@@ -27,7 +27,7 @@ import type { Context } from "hono";
 import { convertToModelMessages, type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { Harness, MCPClientManager } from "@mcpjam/sdk";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -58,6 +58,7 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import {
   ErrorCode,
@@ -115,6 +116,9 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
+   *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
+  harness?: Harness;
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -143,12 +147,20 @@ export interface WebChatTurnPrepareInputs {
   uiMessages: UIMessage[] | unknown[];
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
+  /** Resolved host harness. Harness runtimes own native tool discovery. */
+  harness?: Harness;
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   widgetModelContext?: WidgetModelContextEntry[];
+  /**
+   * When set, skills are sourced from the caller's Computer (E2B sandbox)
+   * rather than the local FS. Set by the hosted chat route only when the host
+   * actually has a computer. See `chat-v2-orchestration.ts`.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -211,12 +223,14 @@ export async function streamWebChatTurn(
       respectToolVisibility: prepare.respectToolVisibility,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
+      ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
       builtInTools: prepare.builtInTools,
+      ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -273,7 +287,8 @@ export async function streamWebChatTurn(
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
-      turnTrace: PersistedTurnTrace
+      turnTrace: PersistedTurnTrace,
+      harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -341,6 +356,9 @@ export async function streamWebChatTurn(
             }
           : {}),
         turnTrace,
+        // §3: chat-backed harness resume-state commit, applied atomically with
+        // the transcript inside the ingest mutation.
+        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
       });
     };
@@ -444,6 +462,7 @@ export async function streamWebChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
+    provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
@@ -459,6 +478,12 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    ...(persist.harness ? { harness: persist.harness } : {}),
+    // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
+    // so the harness path can hand MCPJam's server-executed built-ins
+    // (web_search) to HarnessAgent without the MCP-server tools, which the
+    // harness gets via .mcp.json.
+    ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: cleanupStream,

@@ -20,9 +20,12 @@
 export { canonicalizeHostConfigV2 } from "./canonicalize.js";
 export { sha256Hex, computeHostConfigHashV2 } from "./hash.js";
 export {
+  HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
+  isHarness,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
+export type { Harness } from "./types.js";
 export {
   DEFAULT_TEMPERATURE_V2,
   resolveEffectiveMcpProtocolVersion,
@@ -57,6 +60,8 @@ export type {
   HostExecutionPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
+export { hostConnectionProfile } from "./host-connection.js";
+export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
   compatPresetForHostStyle,

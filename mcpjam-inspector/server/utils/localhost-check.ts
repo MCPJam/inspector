@@ -114,6 +114,38 @@ export function mayServeSessionToken(options: {
 }
 
 /**
+ * Decision point for injecting the guest bootstrap bearer into the SPA
+ * document.
+ *
+ * Like `mayServeSessionToken`, the guest bearer is a credential and must
+ * never be injected for a tunnel/relay `Host`/`X-Forwarded-Host` — tunnels
+ * are denied BEFORE the allowlist is consulted so a misconfiguration that
+ * adds a tunnel domain to MCPJAM_ALLOWED_HOSTS cannot leak the bearer.
+ *
+ * UNLIKE the session token (localhost-only), the guest bearer is meant to be
+ * served to the hosted app host(s) (e.g. `app.mcpjam.com`). It therefore
+ * shares the `isAllowedHost` allowlist — in hosted mode that includes the
+ * configured `MCPJAM_ALLOWED_HOSTS`, which the hosted deployment sets to its
+ * canonical app host(s).
+ */
+export function mayServeGuestBootstrap(options: {
+  host: string | undefined;
+  forwardedHost?: string | undefined;
+  allowedHosts: string[];
+  hostedMode: boolean;
+  activeTunnelDomains?: string[];
+}): boolean {
+  const tunnelDomains = options.activeTunnelDomains ?? [];
+  if (
+    isTunnelHost(options.host, tunnelDomains) ||
+    isTunnelHost(options.forwardedHost, tunnelDomains)
+  ) {
+    return false;
+  }
+  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+}
+
+/**
  * Check if the request is from an allowed host.
  *
  * In hosted mode (cloud deployments), this allows both localhost and

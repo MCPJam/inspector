@@ -1,20 +1,24 @@
 /**
- * Collapsible "Pass criteria" section for the case-edit surface.
+ * Pass criteria for the case-edit surface — a gear popover (same affordance
+ * as suite settings) containing validators + checks overrides.
  *
- * Wraps {@link ValidatorsSection} and {@link CaseChecksSection} behind a
- * single disclosure. The case editor is an override surface — almost every
- * field inherits from the suite — so the default state is collapsed.
- * Authors who want to override expand the section and edit in place; an
- * "Overridden" badge appears on the collapsed header whenever any field
- * diverges from the suite default, so divergence stays visible at a glance.
- *
- * The suite-edit page does NOT use this wrapper: that's the primary edit
- * surface, where validators + checks should be fully expanded.
+ * The suite-edit page does NOT use this: that's the primary edit surface
+ * where validators + checks are fully expanded inline.
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { Settings } from "lucide-react";
 import {
   resolveMatchOptions,
   type CasePredicates,
@@ -24,7 +28,7 @@ import {
 import { CaseChecksSection } from "./checks-section";
 import { ValidatorsSection } from "./validators-section";
 
-interface CasePassCriteriaSectionProps {
+export interface CasePassCriteriaPopoverProps {
   matchOptions: EvalMatchOptions | undefined;
   onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
   suiteDefaultMatchOptions: EvalMatchOptions | undefined;
@@ -32,8 +36,8 @@ interface CasePassCriteriaSectionProps {
   predicates: CasePredicates | undefined;
   onPredicatesChange: (next: CasePredicates | undefined) => void;
   suiteDefaultPredicates: Predicate[];
-
   availableTools?: string[];
+  onAppendScenarioToSteps?: (scenarioAsserts: Predicate[]) => void;
 }
 
 function hasValidatorOverride(value: EvalMatchOptions | undefined): boolean {
@@ -50,7 +54,14 @@ function hasChecksOverride(value: CasePredicates | undefined): boolean {
   return value !== undefined && value.mode !== "inherit";
 }
 
-export function CasePassCriteriaSection({
+export function isCasePassCriteriaOverridden(
+  matchOptions: EvalMatchOptions | undefined,
+  predicates: CasePredicates | undefined,
+): boolean {
+  return hasValidatorOverride(matchOptions) || hasChecksOverride(predicates);
+}
+
+export function CasePassCriteriaPopover({
   matchOptions,
   onMatchOptionsChange,
   suiteDefaultMatchOptions,
@@ -58,76 +69,91 @@ export function CasePassCriteriaSection({
   onPredicatesChange,
   suiteDefaultPredicates,
   availableTools,
-}: CasePassCriteriaSectionProps) {
+  onAppendScenarioToSteps,
+}: CasePassCriteriaPopoverProps) {
   const resolvedMatch = resolveMatchOptions(suiteDefaultMatchOptions);
+  const isOverridden = isCasePassCriteriaOverridden(matchOptions, predicates);
+  const [open, setOpen] = useState(false);
 
-  const isOverridden =
-    hasValidatorOverride(matchOptions) || hasChecksOverride(predicates);
-
-  // Default collapsed when fully inherited; default open when the case
-  // overrides anything. Once mounted, leave open/closed up to the user — we
-  // don't snap it shut on reset because that hides their editing context.
-  const [open, setOpen] = useState<boolean>(isOverridden);
-
-  // If a parent state change pushes this case into overridden territory
-  // (e.g. preset applied), pop the section open so the change is visible.
   useEffect(() => {
     if (isOverridden) setOpen(true);
   }, [isOverridden]);
 
   return (
-    <div className="rounded-lg border bg-muted/20">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className={cn(
-          "flex w-full items-center gap-2 px-4 py-3 text-left",
-          "hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          open ? "rounded-t-lg" : "rounded-lg",
-        )}
-        data-testid="case-pass-criteria-toggle"
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="relative h-8 w-8 shrink-0 p-0"
+              aria-label="Pass criteria"
+              aria-expanded={open}
+              data-testid="case-pass-criteria-toggle"
+            >
+              <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {isOverridden ? (
+                <span
+                  className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
+                  data-testid="case-pass-criteria-overridden-badge"
+                  aria-hidden
+                />
+              ) : null}
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          className="px-2 py-1 text-[11px]"
+        >
+          {isOverridden
+            ? "Pass criteria — overrides active"
+            : "Pass criteria — validators and checks"}
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        className="w-[min(32rem,90vw)] max-h-[min(36rem,70vh)] space-y-4 overflow-y-auto p-4"
+        align="end"
+        sideOffset={6}
       >
-        <ChevronDown
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-            open ? "rotate-0" : "-rotate-90",
-          )}
-          aria-hidden
-        />
-        <span className="text-sm font-medium text-foreground">
-          Pass criteria
-        </span>
-        {isOverridden ? (
-          <span
-            className="text-xs font-medium text-primary"
-            data-testid="case-pass-criteria-overridden-badge"
-          >
-            Overridden
-          </span>
-        ) : null}
-      </button>
-
-      {open ? (
-        <div className="space-y-5 border-t border-border/60 px-4 pb-4 pt-3">
-          <ValidatorsSection
-            title="Validators"
-            description=""
-            value={matchOptions}
-            inheritedFrom={resolvedMatch}
-            onChange={onMatchOptionsChange}
-            showBadges
-          />
-          <div className="border-t border-border/40" />
-          <CaseChecksSection
-            value={predicates}
-            onChange={onPredicatesChange}
-            suiteDefaults={suiteDefaultPredicates}
-            availableTools={availableTools}
-            embedded
-          />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">Pass criteria</p>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Override validators and checks for this case. Inherited values come
+            from the suite defaults.
+          </p>
+          {isOverridden ? (
+            <p
+              className="text-xs font-medium text-primary"
+              data-testid="case-pass-criteria-overridden-label"
+            >
+              Overridden
+            </p>
+          ) : null}
         </div>
-      ) : null}
-    </div>
+        <ValidatorsSection
+          title="Validators"
+          description=""
+          value={matchOptions}
+          inheritedFrom={resolvedMatch}
+          onChange={onMatchOptionsChange}
+          showBadges
+        />
+        <div className="border-t border-border/40" />
+        <CaseChecksSection
+          value={predicates}
+          onChange={onPredicatesChange}
+          suiteDefaults={suiteDefaultPredicates}
+          availableTools={availableTools}
+          embedded
+          onAppendScenarioToSteps={onAppendScenarioToSteps}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }

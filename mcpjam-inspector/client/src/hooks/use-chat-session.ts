@@ -53,8 +53,10 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   GUEST_LOCKED_MODEL_REASON,
+  OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
+import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
@@ -89,7 +91,10 @@ import {
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
+import {
+  ingestHostedRpcLogs,
+  useTrafficLogStore,
+} from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
@@ -317,7 +322,7 @@ export interface UseChatSessionReturn {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
-  ) => void;
+  ) => Promise<void>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -1034,20 +1039,29 @@ function areAuthHeadersEqual(
 type HostedSessionScope = {
   projectId?: string | null;
   chatboxId?: string;
+  hostId?: string;
 };
 
 // `accessVersion` is intentionally NOT part of the scope. The chat-reset
 // path uses this comparison to decide when to blow away `chatSessionId` /
 // `messages`, which is only appropriate when *identity* changes (different
-// project, different chatbox). A pure `accessVersion` bump — e.g. from the
-// silent re-redeem triggered by `chatbox_access_stale` — keeps the same
-// chatbox and the same conversation; tearing the chat down on those bumps
-// would defeat the purpose of the recovery path.
-function areHostedSessionScopesEqual(
+// project, different chatbox, different previewed host). A pure `accessVersion`
+// bump — e.g. from the silent re-redeem triggered by `chatbox_access_stale` —
+// keeps the same chatbox and the same conversation; tearing the chat down on
+// those bumps would defeat the purpose of the recovery path.
+//
+// `hostId` IS part of the scope: switching the previewed host in the Playground
+// (same project, no chatbox) resolves future turns against a different host —
+// so the transcript must fork rather than append host B's turns onto host A's.
+export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
-  return a.projectId === b.projectId && a.chatboxId === b.chatboxId;
+  return (
+    a.projectId === b.projectId &&
+    a.chatboxId === b.chatboxId &&
+    a.hostId === b.hostId
+  );
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -1082,6 +1096,7 @@ export function useChatSession(
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedHostId = hostedContext?.hostId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   // Published-chatbox runtime sessions must use the org-aware web engine
@@ -1290,6 +1305,7 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (chatbox embeds resolve a host-provided project context).
+  const outOfCredits = useOutOfCredits();
   const availableModels = useMemo(
     () =>
       composeAvailableModels({
@@ -1301,6 +1317,7 @@ export function useChatSession(
         getOpenRouterSelectedModels,
         getAzureBaseUrl,
         customProviders,
+        outOfCredits,
       }),
     [
       hasToken,
@@ -1311,6 +1328,7 @@ export function useChatSession(
       isAuthenticated,
       customProviders,
       hostedOrgModelConfig,
+      outOfCredits,
     ]
   );
 
@@ -1347,7 +1365,14 @@ export function useChatSession(
 
       return (
         availableModels.find(
-          (model) => String(model.id) === modelId && !model.disabled
+          (model) =>
+            String(model.id) === modelId &&
+            // Keep an out-of-credits model selected so the existing send →
+            // limit-error → out-of-credits modal still fires. The gray-out
+            // must not silently switch the user off it. Other locks (guest,
+            // ollama-no-tools) stay unselectable.
+            (!model.disabled ||
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
         ) ?? null
       );
     };
@@ -1499,6 +1524,11 @@ export function useChatSession(
         selectedServerNames: resolvedServerNames,
         chatSessionId,
         ...(isHostedDirectChat ? { directVisibility } : {}),
+        // Host-bound direct preview: forward the saved host id so the server
+        // re-resolves the host's authoritative runtime config (harness/computer
+        // included). Only on the direct path — chatbox sessions own their host
+        // via chatboxId and the server ignores hostId when chatboxId is set.
+        ...(isHostedDirectChat && hostedHostId ? { hostId: hostedHostId } : {}),
         ...(hostedChatboxId && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
@@ -1533,6 +1563,12 @@ export function useChatSession(
                 // omitting it client-side keeps the body honest about the
                 // session kind.
                 ...(hostedChatboxId ? {} : { directVisibility }),
+                // Host-bound direct preview: forward the saved host id so the
+                // server re-resolves harness/computer authoritatively. Direct
+                // path only — omitted when a chatbox owns the host.
+                ...(!hostedChatboxId && hostedHostId
+                  ? { hostId: hostedHostId }
+                  : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
                 // Convex server Ids parallel to `selectedServers`. Only sent
@@ -1625,6 +1661,7 @@ export function useChatSession(
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedChatboxId,
+    hostedHostId,
     hostedAccessVersion,
     hostedChatboxSurface,
     getOllamaBaseUrl,
@@ -1789,16 +1826,19 @@ export function useChatSession(
           call.then(resolve, reject);
         });
         const sanitized = scrubAppToolResultForModel(raw);
-        recordAppToolInvocation({
-          alias: tc.toolName,
-          rawName: entry.rawName,
-          appName: entry.instance.appName,
-          serverId: entry.instance.serverId,
-          parentToolCallId: entry.instance.parentToolCallId,
-          bridgeId: entry.instance.bridgeId,
-          input: tc.input,
-          raw,
-        });
+        recordAppToolInvocation(
+          {
+            alias: tc.toolName,
+            rawName: entry.rawName,
+            appName: entry.instance.appName,
+            serverId: entry.instance.serverId,
+            parentToolCallId: entry.instance.parentToolCallId,
+            bridgeId: entry.instance.bridgeId,
+            input: tc.input,
+            raw,
+          },
+          useTrafficLogStore.getState().addLog,
+        );
         addToolOutput({
           tool: tc.toolName,
           toolCallId: tc.toolCallId,
@@ -2178,7 +2218,11 @@ export function useChatSession(
       }
     ) => {
       skipNextForkDetectionRef.current = true;
-      void queueSessionHydration({
+      // Return the hydration promise so callers can chain work that must run
+      // AFTER the seeded messages are applied (e.g. the eval handoff sending a
+      // widget's `ui/message` follow-up so the model replies to the seeded
+      // conversation). Existing callers ignore the return value.
+      const hydrationPromise = queueSessionHydration({
         sessionId: generateId(),
         messages,
         resumedVersion: null,
@@ -2186,6 +2230,7 @@ export function useChatSession(
         persistedSnapshotToolCallIds: [],
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
+      return hydrationPromise;
     },
     [queueSessionHydration]
   );
@@ -2390,6 +2435,7 @@ export function useChatSession(
         const currentHostedScope = {
           projectId: hostedProjectId,
           chatboxId: hostedChatboxId,
+          hostId: hostedHostId,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =

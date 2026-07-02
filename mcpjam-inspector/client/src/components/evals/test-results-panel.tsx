@@ -4,6 +4,7 @@ import type { EvalIteration, EvalCase } from "./types";
 import { formatDuration } from "./helpers";
 import { UI_CONFIG } from "./constants";
 import { computeIterationResult } from "./pass-criteria";
+import { stepsToPromptTurns } from "@/shared/steps";
 
 interface TestResultsPanelProps {
   iteration: EvalIteration | null;
@@ -31,10 +32,13 @@ export function TestResultsPanel({
   const completedAt = iteration?.updatedAt ?? iteration?.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
+  const snapshotSteps = iteration?.testCaseSnapshot?.steps;
   const turnCount =
     typeof iteration?.metadata?.turnCount === "number"
       ? iteration.metadata.turnCount
-      : (iteration?.testCaseSnapshot?.promptTurns?.length ?? 1);
+      : Array.isArray(snapshotSteps)
+        ? stepsToPromptTurns(snapshotSteps).length || 1
+        : (iteration?.testCaseSnapshot?.promptTurns?.length ?? 1);
   const firstFailedTurnIndex =
     typeof iteration?.metadata?.firstFailedTurnIndex === "number"
       ? iteration.metadata.firstFailedTurnIndex

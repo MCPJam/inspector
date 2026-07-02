@@ -5,6 +5,7 @@ import {
   listHostStyles,
   resolveEffectiveHostStyle,
   type ChatUiOverride,
+  type HostChatUi,
   type HostStyleFamily,
   type HostStyleId,
   type HostThemeMode,
@@ -20,7 +21,7 @@ export type ChatboxHostStyle = HostStyleId;
 type ChatboxShellStyle = CSSProperties & Record<`--${string}`, string>;
 
 export function normalizeChatboxHostStyleId(
-  hostStyle: unknown,
+  hostStyle: unknown
 ): ChatboxHostStyle | null {
   if (typeof hostStyle !== "string") return null;
   const trimmed = hostStyle.trim();
@@ -37,7 +38,7 @@ export function normalizeChatboxHostStyleId(
  */
 export function getChatboxHostLabel(
   hostStyle: ChatboxHostStyle,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): string {
   return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi.label;
 }
@@ -45,7 +46,7 @@ export function getChatboxHostLabel(
 /** User-facing label for chatbox builder surfaces (host style terminology). */
 export function getChatboxHostStyleShortLabel(
   hostStyle: ChatboxHostStyle,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): string {
   return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi
     .shortLabel;
@@ -54,14 +55,27 @@ export function getChatboxHostStyleShortLabel(
 export function getChatboxHostLogo(
   hostStyle: ChatboxHostStyle,
   chatUiOverride?: ChatUiOverride,
+  themeMode?: HostThemeMode | null
 ): string {
-  return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi
-    .logoSrc;
+  return getHostLogoSrc(
+    resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi,
+    themeMode
+  );
+}
+
+export function getHostLogoSrc(
+  chatUi: Pick<HostChatUi, "logoSrc" | "logoSrcByTheme">,
+  themeMode?: HostThemeMode | null
+): string {
+  return themeMode
+    ? chatUi.logoSrcByTheme?.[themeMode] ?? chatUi.logoSrc
+    : chatUi.logoSrc;
 }
 
 /** Match a saved host's display name to a built-in style logo when config is unavailable. */
 export function resolveHostLogoByDisplayName(
   displayName: string,
+  themeMode?: HostThemeMode | null
 ): string | null {
   const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
   if (!needle) return null;
@@ -73,7 +87,7 @@ export function resolveHostLogoByDisplayName(
       .toLowerCase()
       .replace(/\s+/g, "");
     if (needle === id || needle === label || needle === shortLabel) {
-      return getChatboxHostLogo(style.id);
+      return getChatboxHostLogo(style.id, undefined, themeMode);
     }
   }
   return null;
@@ -86,7 +100,7 @@ export function resolveHostLogoByDisplayName(
  * {@link getHostStyleOrDefault}, matching the rest of this file's fallback.
  */
 export function getChatboxProtocolOverride(
-  hostStyle: ChatboxHostStyle | null | undefined,
+  hostStyle: ChatboxHostStyle | null | undefined
 ): UIType | undefined {
   if (!hostStyle) return undefined;
   return getHostStyleOrDefault(hostStyle).mcp.protocolOverride;
@@ -104,7 +118,7 @@ export function getChatboxProtocolOverride(
  */
 export function getChatboxHostFamily(
   hostStyle: ChatboxHostStyle | null | undefined,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): HostStyleFamily | null {
   if (!hostStyle) return null;
   return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi.family;
@@ -113,7 +127,7 @@ export function getChatboxHostFamily(
 export function getChatboxChatBackground(
   hostStyle: ChatboxHostStyle | null | undefined,
   themeMode: HostThemeMode,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): string | undefined {
   if (!hostStyle) return undefined;
   return resolveEffectiveHostStyle({
@@ -125,7 +139,7 @@ export function getChatboxChatBackground(
 export function getChatboxShellStyle(
   hostStyle: ChatboxHostStyle,
   themeMode: HostThemeMode,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): CSSProperties {
   const definition = resolveEffectiveHostStyle({ hostStyle, chatUiOverride });
   const styleVariables = definition.mcp.resolveStyleVariables(themeMode);

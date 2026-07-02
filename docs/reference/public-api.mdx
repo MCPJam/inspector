@@ -41,6 +41,10 @@ What you can do with it today:
 - **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **Manage a project's hosts** — list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full host config),
+  rename, and delete the named model + capability profiles you run chats and
+  eval suites against
 - **List a project's chatboxes** — name, access mode, attached servers, and
   share link — and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
@@ -139,9 +143,12 @@ parameters.
 `nextCursor` as `cursor` in the next request (body field on `POST` lists,
 query parameter on `GET` lists). Cursors are opaque — don't parse them.
 
-**Async writes.** `POST /eval-runs` validates and creates the run
-synchronously, then detaches execution and responds `202` with a `runId`.
-Poll `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
+**Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
+(the suite plus its test cases) **synchronously** and responds `201` with the
+`suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
+is the async counterpart: it validates and creates a run synchronously, then
+detaches execution and responds `202` with a `runId`. Poll
+`GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
 `cancelled`.
 
 **IDs.** Every identifier the API takes is discoverable through the API
@@ -201,6 +208,8 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
 | `GET /projects/{projectId}/servers` | The project's saved MCP servers |
 | `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+| `GET`, `POST /projects/{projectId}/hosts` | List hosts, or create one from a template or full config |
+| `GET`, `PATCH`, `DELETE /projects/{projectId}/hosts/{hostId}` | Read, rename/edit, or delete a host |
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
@@ -223,6 +232,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 | Endpoint | What it does |
 | --- | --- |
+| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
 | `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
@@ -265,11 +275,21 @@ RUN_ID=$(curl -fsS -X POST \
     "serverIds": ["'$SERVER_ID'"],
     "tests": [{
       "title": "echo works",
-      "query": "Use the echo tool to say hi",
       "runs": 1,
       "model": "anthropic/claude-haiku-4.5",
       "provider": "anthropic",
-      "expectedToolCalls": [{ "toolName": "echo", "arguments": { "text": "hi" } }]
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "Use the echo tool to say hi" },
+        {
+          "id": "s2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "echo",
+            "args": { "args": { "text": "hi" } }
+          }
+        }
+      ]
     }]
   }' | jq -er .runId)
 

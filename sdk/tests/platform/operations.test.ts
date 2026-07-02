@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   callServerToolOperation,
   closeTunnelOperation,
+  createEvalSuiteOperation,
+  cancelEvalRunOperation,
   createTunnelOperation,
   diagnoseServerOperation,
   getChatboxOperation,
+  runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
   getServerPromptOperation,
   listChatboxesOperation,
   listChatSessionsOperation,
@@ -148,6 +152,30 @@ const ITERATIONS = [
   },
 ];
 
+const EVAL_CASES = [
+  {
+    id: "case-1",
+    suiteId: "suite-1",
+    title: "echo works",
+    steps: [],
+    expectedOutput: null,
+    iterations: 1,
+    isNegative: false,
+  },
+];
+
+const STEPS = [
+  { stepId: "s1", stepIndex: 0, kind: "prompt", status: "ok", reason: null },
+  {
+    stepId: "s2",
+    stepIndex: 1,
+    kind: "assert",
+    status: "fail",
+    reason: "clear-cart never called",
+    evidence: { screenshotUrl: "https://blob/s2.png", source: "scripted" },
+  },
+];
+
 const CHATBOXES = [
   {
     id: "box-1",
@@ -214,20 +242,45 @@ function makeClient(overrides: FixtureOverrides = {}): {
     if (/^\/api\/v1\/projects\/[^/]+\/servers$/.test(path)) {
       return Response.json({ items: servers });
     }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      const requestBody = JSON.parse(String(init?.body)) as {
+        name?: string;
+        serverIds?: string[];
+      };
+      return Response.json(
+        {
+          suiteId: "suite-created",
+          name: requestBody.name ?? null,
+          servers: (requestBody.serverIds ?? []).map((id) => ({ id })),
+          caseUpsert: { committed: [{ name: "case-1" }], failed: [] },
+        },
+        { status: 201 }
+      );
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/.test(path)) {
       return Response.json({ items: [RUN] });
     }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/cases$/.test(path) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      return Response.json({ items: EVAL_CASES });
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
       const requestBody = JSON.parse(String(init?.body)) as {
         serverIds?: string[];
+        caseIds?: string[];
       };
       return Response.json(
         {
-          runId: "run-9",
+          runId: requestBody.caseIds?.length ? "run-case" : "run-9",
           suiteId: "suite-1",
           status: "running",
           caseUpsert: { committed: [], failed: [] },
@@ -254,6 +307,19 @@ function makeClient(overrides: FixtureOverrides = {}): {
       )
     ) {
       return Response.json({ messages: [{ role: "user", content: "hi" }] });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/.test(
+        path
+      )
+    ) {
+      return Response.json({ items: STEPS });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/.test(path)
+    ) {
+      expect(init?.method).toBe("POST");
+      return Response.json({ ...RUN, status: "cancelled", result: "cancelled" });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/tunnels$/.test(path)) {
       expect(init?.method).toBe("POST");
@@ -555,6 +621,226 @@ describe("runEvalSuiteOperation", () => {
   });
 });
 
+describe("runEvalCaseOperation", () => {
+  it("runs one case as a persisted run, posting caseIds", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalCaseOperation.execute(
+      { project: "new", suite: "Smoke", case: "echo works" },
+      { client }
+    );
+
+    expect(result.case).toEqual({ id: "case-1", title: "echo works" });
+    expect(result.runId).toBe("run-case");
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body)) as {
+      suiteId: string;
+      caseIds: string[];
+    };
+    expect(body.suiteId).toBe("suite-1");
+    expect(body.caseIds).toEqual(["case-1"]);
+  });
+
+  it("requires a suite and a case", () => {
+    expect(
+      runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
+    ).toBe(false);
+    expect(
+      runEvalCaseOperation.inputSchema.safeParse({ case: "echo works" }).success
+    ).toBe(false);
+  });
+});
+
+describe("createEvalSuiteOperation", () => {
+  it("authors a suite from cases, resolving project and servers", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await createEvalSuiteOperation.execute(
+      {
+        project: "new",
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [
+              { id: "s1", kind: "prompt", prompt: "say hi" },
+              {
+                id: "s2",
+                kind: "assert",
+                assertion: {
+                  type: "toolCalledWith",
+                  toolName: "echo",
+                  args: { args: {} },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { client }
+    );
+
+    expect(result.suite).toEqual({ id: "suite-created", name: "Authored smoke" });
+    expect(result.servers).toEqual([{ id: "server-http", name: "Echo" }]);
+    expect(result.caseUpsert.committed).toEqual([{ name: "case-1" }]);
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(createCall).toBeTruthy();
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.name).toBe("Authored smoke");
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+    expect(body.model).toBe("anthropic/claude-haiku-4.5");
+    expect(body.tests).toHaveLength(1);
+    expect(body.tests[0]).toMatchObject({
+      title: "echo works",
+      steps: [
+        { id: "s1", kind: "prompt", prompt: "say hi" },
+        expect.objectContaining({ kind: "assert" }),
+      ],
+    });
+  });
+
+  it("rejects stdio servers before creating the suite", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Smoke",
+          servers: ["Docs"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "t",
+              steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("stdio");
+    const createCalls = fetchMock.mock.calls.filter(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(createCalls).toHaveLength(0);
+  });
+
+  it("forwards advanced case fields instead of stripping them", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.parse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        {
+          title: "t",
+          steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
+          advancedConfig: { system: "be terse", temperature: 0.2 },
+          matchOptions: { caseSensitive: false },
+          predicates: { mode: "replace", list: [] },
+        },
+      ],
+    }) as {
+      cases: Array<Record<string, unknown>>;
+    };
+    const authored = parsed.cases[0]!;
+    expect(authored.steps).toEqual([
+      { id: "s1", kind: "prompt", prompt: "q" },
+    ]);
+    expect(authored.advancedConfig).toEqual({
+      system: "be terse",
+      temperature: 0.2,
+    });
+    expect(authored.matchOptions).toEqual({ caseSensitive: false });
+    expect(authored.predicates).toEqual({ mode: "replace", list: [] });
+  });
+
+  it("caps cases at 100 and requires non-empty steps per case", () => {
+    const base = {
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+    };
+    const promptStep = { id: "s1", kind: "prompt", prompt: "q" };
+    // Over the cap is rejected before any network call.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: Array.from({ length: 101 }, (_, i) => ({
+          title: `t${i}`,
+          steps: [promptStep],
+        })),
+      }).success
+    ).toBe(false);
+    // A case without any steps is rejected...
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [{ title: "t" }],
+      }).success
+    ).toBe(false);
+    // ...but a single deterministic toolCall step (render-check) is accepted.
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        ...base,
+        cases: [
+          {
+            title: "probe",
+            steps: [
+              {
+                id: "s1",
+                kind: "toolCall",
+                serverName: "echo",
+                toolName: "echo",
+                arguments: {},
+              },
+            ],
+          },
+        ],
+      }).success
+    ).toBe(true);
+  });
+
+  it("requires a name, at least one server, and at least one case", () => {
+    expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
+      false
+    );
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        name: "n",
+        model: "m",
+        servers: [],
+        cases: [
+          { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      createEvalSuiteOperation.inputSchema.safeParse({
+        name: "n",
+        model: "m",
+        servers: ["s"],
+        cases: [],
+      }).success
+    ).toBe(false);
+  });
+});
+
 describe("eval run polling operations", () => {
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
@@ -623,6 +909,53 @@ describe("eval run polling operations", () => {
     expect(result.trace).toEqual({
       messages: [{ role: "user", content: "hi" }],
     });
+  });
+
+  it("returns per-authored-step results for an iteration", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getEvalRunStepsOperation.execute(
+      { project: "project-new", runId: "run-1", iterationId: "iter-1" },
+      { client }
+    );
+
+    expect(result.runId).toBe("run-1");
+    expect(result.iterationId).toBe("iter-1");
+    expect(result.steps).toEqual(STEPS);
+    expect(callsTo(fetchMock, "/steps")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/eval-runs/run-1/iterations/iter-1/steps"
+    );
+  });
+
+  it("requires project + runId + iterationId", () => {
+    expect(
+      getEvalRunStepsOperation.inputSchema.safeParse({
+        runId: "run-1",
+        iterationId: "iter-1",
+      }).success
+    ).toBe(false);
+    expect(
+      getEvalRunStepsOperation.inputSchema.safeParse({
+        project: "p",
+        runId: "run-1",
+      }).success
+    ).toBe(false);
+  });
+
+  it("cancels a run via POST and returns it cancelled", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await cancelEvalRunOperation.execute(
+      { project: "project-new", runId: "run-1" },
+      { client }
+    );
+
+    expect(result.run.status).toBe("cancelled");
+    expect(result.run.result).toBe("cancelled");
+    const cancelCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith("/eval-runs/run-1/cancel")
+    );
+    expect((cancelCall?.[1] as RequestInit | undefined)?.method).toBe("POST");
   });
 });
 
@@ -796,6 +1129,24 @@ describe("operation catalog consistency", () => {
     { operation: listEvalSuiteRunsOperation, minimalInput: { suite: "s" } },
     { operation: runEvalSuiteOperation, minimalInput: { suite: "s" } },
     {
+      operation: runEvalCaseOperation,
+      minimalInput: { suite: "s", case: "c" },
+    },
+    {
+      operation: createEvalSuiteOperation,
+      minimalInput: {
+        name: "s",
+        model: "anthropic/claude-haiku-4.5",
+        servers: ["echo"],
+        cases: [
+          {
+            title: "t",
+            steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
+          },
+        ],
+      },
+    },
+    {
       operation: getEvalRunOperation,
       minimalInput: { project: "p", runId: "r" },
     },
@@ -806,6 +1157,14 @@ describe("operation catalog consistency", () => {
     {
       operation: getEvalIterationTraceOperation,
       minimalInput: { project: "p", runId: "r", iterationId: "i" },
+    },
+    {
+      operation: getEvalRunStepsOperation,
+      minimalInput: { project: "p", runId: "r", iterationId: "i" },
+    },
+    {
+      operation: cancelEvalRunOperation,
+      minimalInput: { project: "p", runId: "r" },
     },
     { operation: listChatboxesOperation, minimalInput: {} },
     { operation: getChatboxOperation, minimalInput: { chatbox: "c" } },
@@ -848,6 +1207,9 @@ describe("operation catalog consistency", () => {
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
       "run_eval_suite",
+      "run_eval_case",
+      "cancel_eval_run",
+      "create_eval_suite",
       "call_server_tool",
       "create_tunnel",
       "close_tunnel",

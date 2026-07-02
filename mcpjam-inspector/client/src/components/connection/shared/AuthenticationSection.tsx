@@ -19,18 +19,26 @@ import {
 } from "@mcpjam/design-system/select";
 import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
 import type {
+  ServerFormAuthType,
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
-import { fetchHostedOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { XaaCredentialFields } from "./XaaCredentialFields";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
-  authType: "oauth" | "bearer" | "none";
-  onAuthTypeChange: (value: "oauth" | "bearer" | "none") => void;
+  authType: ServerFormAuthType;
+  onAuthTypeChange: (value: ServerFormAuthType) => void;
   showAuthSettings: boolean;
   bearerToken: string;
   onBearerTokenChange: (value: string) => void;
+  /** True when a saved bearer token exists but its value is hidden. */
+  hasStoredBearerToken?: boolean;
+  /** Hosted-mode reveal for the saved bearer token. */
+  onRevealBearerToken?: () => void;
+  isRevealingBearerToken?: boolean;
+  bearerRevealError?: string | null;
   oauthScopesInput: string;
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
@@ -54,6 +62,16 @@ interface AuthenticationSectionProps {
   /** Hosted-mode reveal context. Both must be provided to enable the Reveal button. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  // Cross-App Access (XAA) fields. Client id / secret / scopes reuse the props
+  // above; these are XAA-specific.
+  xaaAuthzIssuer?: string;
+  onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaSubject?: string;
+  onXaaSubjectChange?: (value: string) => void;
+  xaaEmail?: string;
+  onXaaEmailChange?: (value: string) => void;
+  /** Signed-in user's email — shown as the default for the simulated identity. */
+  signedInEmail?: string;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -82,6 +100,10 @@ export function AuthenticationSection({
   showAuthSettings,
   bearerToken,
   onBearerTokenChange,
+  hasStoredBearerToken = false,
+  onRevealBearerToken,
+  isRevealingBearerToken = false,
+  bearerRevealError = null,
   oauthScopesInput,
   onOauthScopesChange,
   oauthProtocolMode,
@@ -102,15 +124,28 @@ export function AuthenticationSection({
   clientSecretError,
   projectId = null,
   hostedServerId = null,
+  xaaAuthzIssuer = "",
+  onXaaAuthzIssuerChange,
+  xaaSubject = "",
+  onXaaSubjectChange,
+  xaaEmail = "",
+  onXaaEmailChange,
+  signedInEmail,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
+  const [revealedClientSecretContextKey, setRevealedClientSecretContextKey] =
+    useState<string | null>(null);
   const [isRevealedSecretVisible, setIsRevealedSecretVisible] = useState(false);
   const [isRevealingClientSecret, setIsRevealingClientSecret] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [didCopyRevealedSecret, setDidCopyRevealedSecret] = useState(false);
+  // True once the user edits the revealed value, so the field switches from
+  // showing the saved secret to showing their replacement (and won't refill
+  // itself if they clear it back to empty).
+  const [isReplacingSecret, setIsReplacingSecret] = useState(false);
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
 
   const canRevealClientSecret =
@@ -118,31 +153,56 @@ export function AuthenticationSection({
     !clearClientSecret &&
     !!projectId &&
     !!hostedServerId;
+  const revealContextKey = canRevealClientSecret
+    ? `${projectId}:${hostedServerId}`
+    : null;
+  const visibleRevealedClientSecret =
+    revealedClientSecretContextKey === revealContextKey
+      ? revealedClientSecret
+      : null;
+
+  const canRevealBearerToken =
+    hasStoredBearerToken &&
+    !bearerToken &&
+    !!projectId &&
+    !!hostedServerId &&
+    !!onRevealBearerToken;
 
   // Drop any revealed value if the saved-secret context disappears (e.g.
   // user pasted a replacement, toggled Clear, or switched servers).
   useEffect(() => {
-    if (!canRevealClientSecret) {
+    if (revealedClientSecretContextKey !== revealContextKey) {
       setRevealedClientSecret(null);
+      setRevealedClientSecretContextKey(null);
       setIsRevealedSecretVisible(false);
       setRevealError(null);
       setDidCopyRevealedSecret(false);
+      setIsReplacingSecret(false);
     }
-  }, [canRevealClientSecret, projectId, hostedServerId]);
+  }, [revealContextKey, revealedClientSecretContextKey]);
 
   const handleRevealClientSecret = async () => {
-    if (!projectId || !hostedServerId || isRevealingClientSecret) return;
+    if (
+      !projectId ||
+      !hostedServerId ||
+      !revealContextKey ||
+      isRevealingClientSecret
+    )
+      return;
     setIsRevealingClientSecret(true);
     setRevealError(null);
+    setIsReplacingSecret(false);
     try {
-      const result = await fetchHostedOAuthClientSecret({
+      const result = await fetchOAuthClientSecret({
         projectId,
         serverId: hostedServerId,
       });
       setRevealedClientSecret(result.clientSecret);
+      setRevealedClientSecretContextKey(revealContextKey);
       setIsRevealedSecretVisible(true);
     } catch (error) {
       setRevealedClientSecret(null);
+      setRevealedClientSecretContextKey(null);
       setIsRevealedSecretVisible(false);
       setRevealError(
         error instanceof Error
@@ -156,21 +216,45 @@ export function AuthenticationSection({
 
   const handleHideRevealedSecret = () => {
     setRevealedClientSecret(null);
+    setRevealedClientSecretContextKey(null);
     setIsRevealedSecretVisible(false);
     setRevealError(null);
     setDidCopyRevealedSecret(false);
+    // Collapsing back to the idle state removes the only input, so discard any
+    // in-progress replacement rather than leaving a hidden pending change.
+    if (isReplacingSecret) {
+      onClientSecretChange("");
+    }
+    setIsReplacingSecret(false);
   };
 
-  const handleCopyRevealedSecret = async () => {
-    if (!revealedClientSecret) return;
+  const handleClearClientSecret = () => {
+    onClientSecretChange("");
+    setRevealedClientSecret(null);
+    setRevealedClientSecretContextKey(null);
+    setIsRevealedSecretVisible(false);
+    setRevealError(null);
+    setDidCopyRevealedSecret(false);
+    setIsReplacingSecret(false);
+    onClearClientSecret?.();
+  };
+
+  const handleCopyRevealedSecret = async (value: string) => {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText(revealedClientSecret);
+      await navigator.clipboard.writeText(value);
       setDidCopyRevealedSecret(true);
       setTimeout(() => setDidCopyRevealedSecret(false), 2000);
     } catch {
       // Clipboard failures are non-fatal; surface nothing rather than overwrite reveal state.
     }
   };
+
+  // While the field is showing the saved secret (not yet edited) it renders the
+  // revealed value; once the user starts editing it tracks their replacement.
+  const secretFieldValue = isReplacingSecret
+    ? clientSecret
+    : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
     oauthRegistrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
@@ -214,7 +298,7 @@ export function AuthenticationSection({
           </label>
           <Select
             value={authType}
-            onValueChange={(value: "oauth" | "bearer" | "none") => {
+            onValueChange={(value: ServerFormAuthType) => {
               if (value !== "oauth") {
                 setShowAdvancedOAuth(false);
               }
@@ -228,6 +312,7 @@ export function AuthenticationSection({
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -235,15 +320,37 @@ export function AuthenticationSection({
         {/* Bearer Token Settings */}
         {showAuthSettings && authType === "bearer" && (
           <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
-            <label className="block text-sm font-medium text-foreground pt-3">
-              Bearer Token
-            </label>
+            <div className="flex items-center justify-between gap-3 pt-3">
+              <label className="block text-sm font-medium text-foreground">
+                Bearer Token
+              </label>
+              {canRevealBearerToken && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => onRevealBearerToken?.()}
+                  disabled={isRevealingBearerToken}
+                >
+                  {isRevealingBearerToken ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    "Reveal"
+                  )}
+                </Button>
+              )}
+            </div>
             <div className="relative">
               <Input
                 type={isBearerTokenVisible ? "text" : "password"}
                 value={bearerToken}
                 onChange={(e) => onBearerTokenChange(e.target.value)}
-                placeholder="Enter your bearer token"
+                placeholder={
+                  hasStoredBearerToken && !bearerToken
+                    ? "Saved — enter a new value to replace"
+                    : "Enter your bearer token"
+                }
                 className="h-10 pr-10"
               />
               <button
@@ -264,6 +371,15 @@ export function AuthenticationSection({
                 )}
               </button>
             </div>
+            {hasStoredBearerToken && !bearerToken && (
+              <p className="text-xs text-muted-foreground">
+                A saved token is hidden. Leave blank to keep it, or enter a new
+                value to replace it.
+              </p>
+            )}
+            {bearerRevealError && (
+              <p className="text-xs text-red-500">{bearerRevealError}</p>
+            )}
           </div>
         )}
 
@@ -407,23 +523,24 @@ export function AuthenticationSection({
                           Client Secret (Optional)
                         </label>
                         <div className="flex items-center gap-1">
-                          {canRevealClientSecret && !revealedClientSecret && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-2 text-xs"
-                              onClick={() => void handleRevealClientSecret()}
-                              disabled={isRevealingClientSecret}
-                            >
-                              {isRevealingClientSecret ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                "Reveal"
-                              )}
-                            </Button>
-                          )}
-                          {revealedClientSecret && (
+                          {canRevealClientSecret &&
+                            !visibleRevealedClientSecret && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-xs"
+                                onClick={() => void handleRevealClientSecret()}
+                                disabled={isRevealingClientSecret}
+                              >
+                                {isRevealingClientSecret ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  "Reveal"
+                                )}
+                              </Button>
+                            )}
+                          {visibleRevealedClientSecret && (
                             <Button
                               type="button"
                               variant="ghost"
@@ -440,7 +557,7 @@ export function AuthenticationSection({
                               variant="ghost"
                               size="sm"
                               className="h-8 px-2 text-xs"
-                              onClick={onClearClientSecret}
+                              onClick={handleClearClientSecret}
                             >
                               Clear
                             </Button>
@@ -458,17 +575,93 @@ export function AuthenticationSection({
                           )}
                         </div>
                       </div>
-                      <Input
-                        type="password"
-                        value={clientSecret}
-                        onChange={(e) => onClientSecretChange(e.target.value)}
-                        placeholder={
-                          hasStoredClientSecret
-                            ? "Enter a new value to replace."
-                            : "Your OAuth Client Secret"
-                        }
-                        className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
-                      />
+                      {hasStoredClientSecret && clearClientSecret ? (
+                        <p className="text-xs text-muted-foreground">
+                          Saved client secret will be removed when you save.
+                        </p>
+                      ) : visibleRevealedClientSecret !== null ? (
+                        <>
+                          <div className="relative">
+                            <Input
+                              type={
+                                isRevealedSecretVisible ? "text" : "password"
+                              }
+                              value={secretFieldValue}
+                              onChange={(e) => {
+                                if (!isReplacingSecret)
+                                  setIsReplacingSecret(true);
+                                onClientSecretChange(e.target.value);
+                              }}
+                              placeholder="Enter a new value to replace."
+                              data-testid="revealed-client-secret"
+                              className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
+                            />
+                            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                              <button
+                                type="button"
+                                aria-label={
+                                  isRevealedSecretVisible
+                                    ? "Hide client secret"
+                                    : "Show client secret"
+                                }
+                                title={
+                                  isRevealedSecretVisible
+                                    ? "Hide client secret"
+                                    : "Show client secret"
+                                }
+                                onClick={() =>
+                                  setIsRevealedSecretVisible((prev) => !prev)
+                                }
+                                className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                              >
+                                {isRevealedSecretVisible ? (
+                                  <EyeOff className="h-4 w-4" />
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Copy client secret"
+                                title="Copy client secret"
+                                onClick={() =>
+                                  void handleCopyRevealedSecret(secretFieldValue)
+                                }
+                                className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                              >
+                                {didCopyRevealedSecret ? (
+                                  <Check className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <Copy className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                          {!isReplacingSecret && (
+                            <p className="text-xs text-muted-foreground">
+                              Editing this replaces the saved secret when you
+                              save.
+                            </p>
+                          )}
+                        </>
+                      ) : canRevealClientSecret ? (
+                        <p className="text-xs text-muted-foreground">
+                          A client secret is saved. Reveal it to view or replace
+                          it.
+                        </p>
+                      ) : (
+                        <Input
+                          type="password"
+                          value={clientSecret}
+                          onChange={(e) => onClientSecretChange(e.target.value)}
+                          placeholder={
+                            hasStoredClientSecret
+                              ? "Enter a new value to replace."
+                              : "Your OAuth Client Secret"
+                          }
+                          className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
+                        />
+                      )}
                       {clientSecretError && (
                         <p className="text-xs text-red-500">
                           {clientSecretError}
@@ -477,66 +670,40 @@ export function AuthenticationSection({
                       {revealError && (
                         <p className="text-xs text-red-500">{revealError}</p>
                       )}
-                      {revealedClientSecret && (
-                        <div className="rounded-md border border-border bg-muted/40 p-2 text-xs">
-                          <div className="flex items-start gap-2">
-                            <div
-                              className="min-w-0 flex-1 break-all font-mono"
-                              data-testid="revealed-client-secret"
-                            >
-                              {isRevealedSecretVisible
-                                ? revealedClientSecret
-                                : "****************"}
-                            </div>
-                            <button
-                              type="button"
-                              aria-label={
-                                isRevealedSecretVisible
-                                  ? "Hide client secret"
-                                  : "Show client secret"
-                              }
-                              title={
-                                isRevealedSecretVisible
-                                  ? "Hide client secret"
-                                  : "Show client secret"
-                              }
-                              onClick={() =>
-                                setIsRevealedSecretVisible((prev) => !prev)
-                              }
-                              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
-                            >
-                              {isRevealedSecretVisible ? (
-                                <EyeOff className="h-3 w-3" />
-                              ) : (
-                                <Eye className="h-3 w-3" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Copy client secret"
-                              title="Copy client secret"
-                              onClick={() => void handleCopyRevealedSecret()}
-                              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
-                            >
-                              {didCopyRevealedSecret ? (
-                                <Check className="h-3 w-3 text-green-500" />
-                              ) : (
-                                <Copy className="h-3 w-3" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {hasStoredClientSecret && clearClientSecret && (
-                        <p className="text-xs text-muted-foreground">
-                          Saved client secret will be removed when you save.
-                        </p>
-                      )}
                     </div>
                   </div>
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Cross-App Access (XAA) Settings */}
+        {showAuthSettings && authType === "xaa" && (
+          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+            <XaaCredentialFields
+              clientId={clientId}
+              onClientIdChange={onClientIdChange}
+              clientIdError={clientIdError}
+              clientSecret={clientSecret}
+              onClientSecretChange={onClientSecretChange}
+              hasStoredClientSecret={hasStoredClientSecret}
+              clearClientSecret={clearClientSecret}
+              onClearClientSecret={onClearClientSecret}
+              onUndoClearClientSecret={onUndoClearClientSecret}
+              clientSecretError={clientSecretError}
+              scopes={oauthScopesInput}
+              onScopesChange={onOauthScopesChange}
+              xaaAuthzIssuer={xaaAuthzIssuer}
+              onXaaAuthzIssuerChange={(v) => onXaaAuthzIssuerChange?.(v)}
+              xaaSubject={xaaSubject}
+              onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
+              xaaEmail={xaaEmail}
+              onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
+              signedInEmail={signedInEmail}
+              projectId={projectId}
+              hostedServerId={hostedServerId}
+            />
           </div>
         )}
       </div>

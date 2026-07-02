@@ -492,6 +492,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -530,6 +531,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -559,6 +561,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -1476,6 +1479,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Upgrade to create more projects.",
+      { duration: Infinity },
     );
   });
 
@@ -1519,6 +1523,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      { duration: Infinity },
     );
   });
 
@@ -1559,6 +1564,7 @@ describe("useProjectState automatic project creation", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      { duration: Infinity },
     );
     expect(logger.error).toHaveBeenCalledTimes(2);
   });

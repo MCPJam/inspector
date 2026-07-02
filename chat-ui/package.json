@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/chat-ui",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
   "license": "MIT",
   "type": "module",
@@ -15,6 +15,21 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./thread-helpers": {
+      "types": "./dist/thread-helpers.d.ts",
+      "import": "./dist/thread-helpers.js",
+      "default": "./dist/thread-helpers.js"
+    },
+    "./trace": {
+      "types": "./dist/trace.d.ts",
+      "import": "./dist/trace.js",
+      "default": "./dist/trace.js"
+    },
+    "./trace-timeline": {
+      "types": "./dist/trace-timeline.d.ts",
+      "import": "./dist/trace-timeline.js",
+      "default": "./dist/trace-timeline.js"
     },
     "./styles.css": "./dist/styles.css"
   },

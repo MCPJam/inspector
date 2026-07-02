@@ -36,15 +36,17 @@ export type ToolServerMap = Record<string, string>;
  * Tier A only persists/forwards this opaquely (cached replay wiring for a
  * future Tier B); it never interprets the shape.
  */
-export type OpenAiAppsCapabilities = Record<string, unknown>;
+export type OpenAiAppsCapabilities = unknown;
 
 /**
- * Placeholders for the MCP Apps SDK types
- * (`@modelcontextprotocol/ext-apps/app-bridge`) so `ToolRenderOverride` carries
- * the same fields without depending on the widget runtime.
+ * Opaque placeholders for the MCP Apps SDK types
+ * (`@modelcontextprotocol/ext-apps/app-bridge`). Typed as `unknown` because the
+ * renderer never interprets them — it only forwards them for cached replay — so
+ * a host's real `McpUiResourceCsp` / `McpUiResourcePermissions` (interfaces
+ * without index signatures) bridge in without a cast.
  */
-export type WidgetCsp = Record<string, unknown>;
-export type WidgetPermissions = Record<string, unknown>;
+export type WidgetCsp = unknown;
+export type WidgetPermissions = unknown;
 
 /**
  * Per-tool render override. Fields mirror the inspector's `ToolRenderOverride`,

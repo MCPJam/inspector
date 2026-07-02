@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-app-state", () => ({}));
 vi.mock("@/lib/config", () => ({
@@ -11,8 +11,13 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 }));
 
 import { useServerForm } from "../use-server-form";
+import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 
 describe("useServerForm", () => {
+  beforeEach(() => {
+    vi.mocked(hasOAuthConfig).mockReturnValue(false);
+  });
+
   it("defaults OAuth protocol mode to explicit latest", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -76,6 +81,100 @@ describe("useServerForm", () => {
       oauthRegistrationMode: "dcr",
       oauthScopes: ["openid", "profile"],
     });
+  });
+
+  it("emits useXaa (not useOAuth) and the resource-AS credentials for the XAA auth type", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setShowAuthSettings(true);
+      result.current.setClientId("resource-client-id");
+      result.current.setOauthScopesInput("read:tools");
+      result.current.setXaaAuthzIssuer("https://idp.example.com");
+      result.current.setXaaSubject("alice");
+      result.current.setXaaEmail("alice@example.com");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      name: "XAA server",
+      type: "http",
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      clientId: "resource-client-id",
+      oauthScopes: ["read:tools"],
+      xaaAuthzIssuer: "https://idp.example.com",
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+    });
+  });
+
+  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      xaaSubject: "john@mcpjam.com",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
+  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
+    const { result } = renderHook(() =>
+      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
+    );
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("john");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "john",
+      xaaEmail: "john@mcpjam.com",
+    });
+  });
+
+  it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaAuthzIssuer: "https://idp.example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("xaa");
+    });
+
+    // The round-trip must keep it XAA — a silent rewrite to OAuth would be data
+    // corruption (see CLAUDE.local.md resolvedAuthType guard).
+    const built = result.current.buildFormData();
+    expect(built.useXaa).toBe(true);
+    expect(built.useOAuth).toBe(false);
   });
 
   it("retains bearer authorization headers even without custom headers", () => {
@@ -332,7 +431,10 @@ describe("useServerForm", () => {
     expect(result.current.authType).toBe("none");
     expect(result.current.customHeaders).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "Authorization", value: "Basic abc123" }),
+        expect.objectContaining({
+          key: "Authorization",
+          value: "Basic abc123",
+        }),
         expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
       ])
     );
@@ -390,6 +492,193 @@ describe("useServerForm", () => {
     expect(result.current.buildFormData()).toMatchObject({ useOAuth: true });
     // Revealing alone is not a pending change.
     expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("treats a redacted hasBearerToken flag as a hidden bearer token", async () => {
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("bearer");
+    });
+    // Token value is stripped, but the form knows one is saved and stays clean.
+    expect(result.current.bearerToken).toBe("");
+    expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("lets hidden bearer metadata win over stale stored OAuth config", async () => {
+    vi.mocked(hasOAuthConfig).mockReturnValue(true);
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("bearer");
+    });
+    expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasStoredHeaders).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("reads redacted bearer and header flags from config metadata", async () => {
+    const server = {
+      name: "Runtime redacted bearer server",
+      config: {
+        url: "https://example.com/mcp",
+        hasHeaders: true,
+        hasBearerToken: true,
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("bearer");
+    });
+    expect(result.current.hasStoredHeaders).toBe(true);
+    expect(result.current.hasStoredBearerToken).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("preserves the hidden bearer token when saving an unrelated change", async () => {
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredBearerToken).toBe(true);
+    });
+
+    act(() => {
+      result.current.setName("Renamed server");
+    });
+
+    // Renaming touches neither auth nor headers, so no reveal is needed and no
+    // header patch is sent — the backend keeps the saved Authorization header.
+    expect(result.current.needsStoredHeaderReveal).toBe(false);
+    const formData = result.current.buildFormData();
+    expect(formData.secretPatch).toBeUndefined();
+    expect(formData.headers).toBeUndefined();
+  });
+
+  it("reveals the stored bearer token into the bearer field", async () => {
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredBearerToken).toBe(true);
+    });
+
+    act(() => {
+      result.current.revealStoredHeaders({
+        Authorization: "Bearer secret-token",
+        "X-Api-Key": "secret",
+      });
+    });
+
+    expect(result.current.authType).toBe("bearer");
+    expect(result.current.bearerToken).toBe("secret-token");
+    expect(result.current.hasStoredBearerToken).toBe(false);
+    // Authorization moves to the bearer field, not the custom-header list.
+    expect(
+      result.current.customHeaders.some((h) => h.key === "Authorization")
+    ).toBe(false);
+    expect(result.current.customHeaders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
+      ])
+    );
+    // Revealing alone is not a pending change.
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("drops the hidden bearer token when switching to OAuth", async () => {
+    const server = {
+      name: "Bearer server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      hasBearerToken: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredBearerToken).toBe(true);
+    });
+
+    act(() => {
+      result.current.setAuthType("oauth");
+    });
+
+    expect(result.current.needsStoredHeaderReveal).toBe(true);
+    const formData = result.current.buildFormData({
+      revealedHeaders: {
+        Authorization: "Bearer old-token",
+        "X-Api-Key": "secret",
+      },
+    });
+    expect(formData.secretPatch).toEqual({
+      headers: {
+        "X-Api-Key": "secret",
+      },
+    });
+    expect(formData.useOAuth).toBe(true);
   });
 
   it("includes an exact client capabilities override when enabled", () => {

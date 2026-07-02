@@ -42,6 +42,6 @@ export async function exportServerSnapshot(
   return serializeServerSnapshot(snapshot, options);
 }
 
-function estimateTokensFromChars(text: string): number {
+export function estimateTokensFromChars(text: string): number {
   return Math.ceil(text.length / 4);
 }

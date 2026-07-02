@@ -106,9 +106,11 @@ describe("OAuthFlowTab", () => {
       />,
     );
 
-    expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
-      "No target configured",
-    );
+    // A non-HTTP selection has no OAuth target, so the tab stays in its empty
+    // state (just the sequence diagram, no logs sidebar) rather than rendering
+    // the logger for an auto-selected HTTP server.
+    expect(screen.getByTestId("oauth-sequence-diagram")).toBeInTheDocument();
+    expect(screen.queryByTestId("oauth-flow-logger")).not.toBeInTheDocument();
 
     await new Promise((r) => setTimeout(r, 50));
 

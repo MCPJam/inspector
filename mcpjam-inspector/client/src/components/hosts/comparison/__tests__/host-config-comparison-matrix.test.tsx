@@ -78,6 +78,21 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.getByText("Cursor")).toBeInTheDocument();
   });
 
+  it("uses the dark Goose logo in dark theme column headers", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_goose_001", "Goose", { hostStyle: "goose" }, "goose1"),
+        ]}
+        themeMode="dark"
+      />,
+    );
+
+    const header = screen.getByText("Goose").closest("th");
+    const logo = header?.querySelector("img");
+    expect(logo?.getAttribute("src")).toContain("goose_logo_dark");
+  });
+
   it("paints the diverge gutter on rows whose value differs across hosts", () => {
     render(
       <HostConfigComparisonMatrix
@@ -120,7 +135,7 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.queryByText("modelId")).not.toBeInTheDocument();
   });
 
-  it("renders boolean values as plain Yes/No text", () => {
+  it("renders boolean values as Yes/No support chips", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[
@@ -140,6 +155,94 @@ describe("HostConfigComparisonMatrix", () => {
       />,
     );
     expect(screen.getAllByText("Auto").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders client capabilities as Advertised / Not advertised chips", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+        ]}
+      />,
+    );
+    // sampling present → Advertised
+    expect(screen.getAllByText("Advertised").length).toBeGreaterThanOrEqual(1);
+    // roots/elicitation/experimental absent → Not advertised
+    expect(
+      screen.getAllByText("Not advertised").length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows a per-row coverage stat for capability rows", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+          makeSubject("h_b", "B", { clientCapabilities: {} }),
+        ]}
+      />,
+    );
+    // sampling supported by 1 of 2 hosts
+    expect(screen.getByTestId("coverage-capabilities.sampling")).toHaveTextContent(
+      "1/2",
+    );
+    // scalar rows get no coverage stat
+    expect(screen.queryByTestId("coverage-modelId")).not.toBeInTheDocument();
+  });
+
+  it("explodes the apps capability surface into per-dimension rows", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A", { hostStyle: "claude" })]}
+      />,
+    );
+    // Effective MCP Apps + OpenAI shim dimensions render as their own rows…
+    expect(screen.getByText("openLinks")).toBeInTheDocument();
+    expect(screen.getByText("serverTools")).toBeInTheDocument();
+    expect(screen.getByText("callTool")).toBeInTheDocument();
+    expect(screen.getByText("camera")).toBeInTheDocument();
+    // …and the old opaque override rows are gone.
+    expect(screen.queryByText("Spec-bridge overrides")).not.toBeInTheDocument();
+    expect(screen.queryByText("Permissions allow-list")).not.toBeInTheDocument();
+  });
+
+  it("filters rows live by search query", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A")]}
+        searchQuery="temperature"
+      />,
+    );
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state when nothing matches the search", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("h_a", "A")]}
+        searchQuery="zzz-no-such-field"
+      />,
+    );
+    expect(screen.getByText(/No fields match/i)).toBeInTheDocument();
+  });
+
+  it("filters to rows missing support when supportFilter=missing", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
+          makeSubject("h_b", "B", { clientCapabilities: { sampling: {} } }),
+        ]}
+        supportFilter="missing"
+      />,
+    );
+    // sampling supported by all → hidden
+    expect(screen.queryByText("Sampling")).not.toBeInTheDocument();
+    // roots not advertised by either → still shown
+    expect(screen.getByText("Roots")).toBeInTheDocument();
+    // scalar rows are hidden under a capability filter
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
   });
 
   it("renders column remove buttons when onRemoveHost is provided", async () => {

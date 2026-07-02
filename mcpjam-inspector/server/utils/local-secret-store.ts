@@ -19,6 +19,8 @@ export interface LocalSecretSpec {
   productionErrorMessage: string;
   /** Human-readable label used in log messages (e.g. "guest session shared secret"). */
   label: string;
+  /** Allow local-only packaged runtimes to persist this secret outside NODE_ENV=development. */
+  allowLocalFileOutsideDevelopment?: boolean;
 }
 
 function getLocalSecretDir(): string {
@@ -78,7 +80,10 @@ export function getOrCreateLocalSecret(spec: LocalSecretSpec): string {
     return envValue;
   }
 
-  if (process.env.NODE_ENV !== "development") {
+  if (
+    process.env.NODE_ENV !== "development" &&
+    !spec.allowLocalFileOutsideDevelopment
+  ) {
     throw new Error(spec.productionErrorMessage);
   }
 

@@ -3,34 +3,28 @@ import {
   Ban,
   CheckCircle2,
   Clock,
-  Keyboard,
   MonitorOff,
-  MousePointerClick,
-  Move,
-  ScrollText,
-  Type,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type {
-  EvalTraceBrowserAction,
-  EvalTraceBrowserInteractionStepView,
-  EvalTraceBrowserStepNote,
   EvalTraceWidgetRenderObservationView,
   EvalTraceWidgetRenderStatus,
-  EvalTraceWidgetToolCall,
 } from "@/shared/eval-trace";
 
 /**
- * PR 7 — eval replay "Browser" view. Renders what the headless-Chromium harness
- * captured for an iteration:
- *   - widgetRenderObservations: one status card per MCP App widget (the LATEST
+ * Eval replay "App" view. Renders the iteration-level artifacts the
+ * headless-Chromium harness captured that are NOT recoverable elsewhere:
+ *   - videoUrl: the `.webm` replay player.
+ *   - widgetRenderObservations: one status card per MCP App (the LATEST
  *     render outcome — the backend upserts per toolCallId), with a screenshot.
- *   - browserInteractionSteps: the model-driven Computer Use timeline, grouped
- *     by widget, each step showing its action, screenshot, and any
- *     widget-initiated tools/call.
+ *
+ * The per-step Computer Use / scripted interaction timeline is NOT rendered
+ * here anymore: it lives on the Trace tab as `Interact · …` spans (same
+ * `browserInteractionSteps` source), which is the canonical step view —
+ * screenshots, verdicts, coordinates, and the triggered widget tool calls all
+ * hang off each span. See `trace-timeline.tsx`.
  */
 
 type Tone = "success" | "warning" | "danger" | "neutral";
@@ -83,12 +77,12 @@ const STATUS_DESCRIPTION: Record<
 > = {
   rendered: undefined,
   bridge_timeout:
-    "Bridge handshake timed out — the widget may have a slow init path.",
+    "Bridge handshake timed out — the app may have a slow init path.",
   blank_screenshot: "Rendered but painted blank — check console errors.",
-  mount_failed: "Failed to mount in the browser.",
+  mount_failed: "Failed to mount the app in the browser.",
   render_error: "Render error during mount.",
-  resource_read_failed: "Couldn't fetch the widget HTML.",
-  no_ui_resource: "No widget HTML in the tool response.",
+  resource_read_failed: "Couldn't fetch the app HTML.",
+  no_ui_resource: "No app HTML in the tool response.",
   screenshot_failed: "Rendered, but screenshot capture failed.",
   browser_unavailable: "Browser sandbox unavailable (Chromium not installed).",
 };
@@ -101,28 +95,6 @@ function statusDescription(
   }
   return STATUS_DESCRIPTION[observation.status];
 }
-
-const ACTION_ICON: Record<EvalTraceBrowserAction, LucideIcon> = {
-  screenshot: Clock,
-  left_click: MousePointerClick,
-  double_click: MousePointerClick,
-  right_click: MousePointerClick,
-  mouse_move: Move,
-  type: Type,
-  key: Keyboard,
-  scroll: ScrollText,
-  wait: Clock,
-};
-
-const NOTE_META: Record<EvalTraceBrowserStepNote, { label: string; tone: Tone }> =
-  {
-    no_rendered_widget: { label: "No rendered widget", tone: "neutral" },
-    step_budget_exceeded: { label: "Step budget exceeded", tone: "warning" },
-    screenshot_budget_exceeded: {
-      label: "Screenshot budget exceeded",
-      tone: "warning",
-    },
-  };
 
 function Badge({
   tone,
@@ -146,44 +118,6 @@ function Badge({
   );
 }
 
-function coordinateSuffix(
-  step: EvalTraceBrowserInteractionStepView,
-): string {
-  return step.coordinateX != null && step.coordinateY != null
-    ? ` (${step.coordinateX}, ${step.coordinateY})`
-    : "";
-}
-
-/** One-line human label for a Computer Use action. */
-export function formatBrowserAction(
-  step: EvalTraceBrowserInteractionStepView,
-): string {
-  switch (step.action) {
-    case "left_click":
-      return `Left click${coordinateSuffix(step)}`;
-    case "double_click":
-      return `Double click${coordinateSuffix(step)}`;
-    case "right_click":
-      return `Right click${coordinateSuffix(step)}`;
-    case "mouse_move":
-      return `Mouse move${coordinateSuffix(step)}`;
-    case "type":
-      return `Type ${JSON.stringify(step.text ?? "")}`;
-    case "key":
-      return `Key ${step.text ?? ""}`.trim();
-    case "scroll":
-      return `Scroll ${step.scrollDirection ?? "down"}${
-        step.scrollAmount ? ` ×${step.scrollAmount}` : ""
-      }`;
-    case "wait":
-      return `Wait${step.duration ? ` ${step.duration}ms` : ""}`;
-    case "screenshot":
-      return "Screenshot";
-    default:
-      return step.action;
-  }
-}
-
 function Screenshot({ url, alt }: { url?: string | null; alt: string }) {
   if (!url) {
     return (
@@ -203,29 +137,14 @@ function Screenshot({ url, alt }: { url?: string | null; alt: string }) {
   );
 }
 
-function WidgetToolCallList({ calls }: { calls: EvalTraceWidgetToolCall[] }) {
-  if (calls.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-1">
-      {calls.map((call, i) => (
-        <div
-          key={`${call.name}-${i}`}
-          className="flex items-start gap-1.5 text-[11px]"
-        >
-          <Badge tone={call.ok ? "success" : "danger"}>
-            {call.ok ? "OK" : "ERR"}
-          </Badge>
-          <span className="min-w-0 break-all font-mono text-muted-foreground">
-            {call.name}
-            {call.error ? ` — ${call.error}` : ""}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RenderObservationCard({
+/**
+ * One MCP App's latest render outcome — status, timing, screenshot,
+ * resource URI, and console errors. Exported so the predicate gate can render it
+ * inline as the evidence behind a `widgetRendered` / `widgetRenderLatencyUnder`
+ * / `widgetNoConsoleErrors` assertion (same per-widget data the assertion
+ * grades on).
+ */
+export function RenderObservationCard({
   observation,
 }: {
   observation: EvalTraceWidgetRenderObservationView;
@@ -299,86 +218,23 @@ function RenderObservationCard({
   );
 }
 
-function InteractionStepRow({
-  step,
-}: {
-  step: EvalTraceBrowserInteractionStepView;
-}) {
-  const Icon = ACTION_ICON[step.action] ?? MousePointerClick;
-  const note = step.note ? NOTE_META[step.note] : undefined;
-  return (
-    <div className="flex gap-2" data-testid="interaction-step-row">
-      <div className="flex flex-col items-center">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/50 bg-background text-[10px] font-medium text-muted-foreground">
-          {step.stepIndex}
-        </div>
-        <div className="mt-1 w-px flex-1 bg-border/40" aria-hidden />
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5 pb-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-            <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-            {formatBrowserAction(step)}
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            {step.elapsedMs}ms
-          </span>
-          {note ? <Badge tone={note.tone}>{note.label}</Badge> : null}
-        </div>
-        {step.screenshotUrl ? (
-          <Screenshot
-            url={step.screenshotUrl}
-            alt={`step ${step.stepIndex} screenshot`}
-          />
-        ) : null}
-        {step.widgetToolCalls && step.widgetToolCalls.length > 0 ? (
-          <WidgetToolCallList calls={step.widgetToolCalls} />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 export function BrowserArtifactsView({
   observations = [],
-  steps = [],
+  videoUrl = null,
   className,
 }: {
   observations?: EvalTraceWidgetRenderObservationView[];
-  steps?: EvalTraceBrowserInteractionStepView[];
+  /** Iteration replay `.webm` URL; renders a "Replay" player when present. */
+  videoUrl?: string | null;
   className?: string;
 }) {
-  // Map toolCallId → display name so the step timeline can title each group.
-  const nameByToolCallId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const obs of observations) map.set(obs.toolCallId, obs.toolName);
-    return map;
-  }, [observations]);
-
-  // Group steps into per-widget timelines, preserving the backend's order.
-  const stepGroups = useMemo(() => {
-    const order: string[] = [];
-    const byTool = new Map<string, EvalTraceBrowserInteractionStepView[]>();
-    for (const step of steps) {
-      if (!byTool.has(step.toolCallId)) {
-        byTool.set(step.toolCallId, []);
-        order.push(step.toolCallId);
-      }
-      byTool.get(step.toolCallId)!.push(step);
-    }
-    return order.map((toolCallId) => ({
-      toolCallId,
-      steps: byTool.get(toolCallId)!,
-    }));
-  }, [steps]);
-
-  if (observations.length === 0 && steps.length === 0) {
+  if (observations.length === 0 && !videoUrl) {
     return (
       <div
         className="flex items-center justify-center rounded-md border border-dashed border-border/40 py-8 text-xs text-muted-foreground"
         data-testid="browser-artifacts-empty"
       >
-        No browser-rendered widgets in this iteration.
+        No MCP Apps in this iteration.
       </div>
     );
   }
@@ -388,12 +244,29 @@ export function BrowserArtifactsView({
       className={cn("flex min-h-0 flex-col gap-4 overflow-auto", className)}
       data-testid="browser-artifacts-view"
     >
+      {videoUrl ? (
+        <section className="flex flex-col gap-2" data-testid="browser-replay">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Replay
+            <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">
+              screen recording of MCP App interactions during this run
+            </span>
+          </h3>
+          <video
+            src={videoUrl}
+            controls
+            preload="metadata"
+            className="w-full rounded-md border border-border/60 bg-black"
+            data-testid="browser-replay-video"
+          />
+        </section>
+      ) : null}
       {observations.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Render observations
+            Render check
             <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">
-              latest render per widget
+              screenshot and status for each MCP App the agent invoked
             </span>
           </h3>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -402,41 +275,6 @@ export function BrowserArtifactsView({
                 key={`${obs.toolCallId}-${obs.ts}`}
                 observation={obs}
               />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {stepGroups.length > 0 ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Computer Use timeline
-          </h3>
-          <div className="flex flex-col gap-3">
-            {stepGroups.map((group) => (
-              <div
-                key={group.toolCallId}
-                className="rounded-md border border-border/40 bg-muted/10 p-3"
-                data-testid="interaction-step-group"
-              >
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="truncate font-mono text-xs font-medium">
-                    {nameByToolCallId.get(group.toolCallId) ?? group.toolCallId}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {group.steps.length} step
-                    {group.steps.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <div className="flex flex-col">
-                  {group.steps.map((step) => (
-                    <InteractionStepRow
-                      key={`${step.toolCallId}-${step.stepIndex}`}
-                      step={step}
-                    />
-                  ))}
-                </div>
-              </div>
             ))}
           </div>
         </section>

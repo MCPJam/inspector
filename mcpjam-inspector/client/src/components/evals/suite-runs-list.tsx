@@ -332,6 +332,7 @@ function StandaloneRunRow({
   const timestampLabel = formatTime(timestamp);
 
   const runResult = computeEffectiveRunResult(run, passRate);
+  const badge = runResultBadge(runResult);
 
   const creator = run.createdBy ? userMap?.get(run.createdBy) : undefined;
 
@@ -361,6 +362,16 @@ function StandaloneRunRow({
           <span className="truncate text-xs font-medium">
             Run {formatRunId(run._id)}
           </span>
+          {badge ? (
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                badge.className,
+              )}
+            >
+              {badge.label}
+            </span>
+          ) : null}
           {run.source === "schedule" ? (
             <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               Scheduled
@@ -444,7 +455,13 @@ function computeChildDuration(run: EvalSuiteRun): number | null {
 export function computeEffectiveRunResult(
   run: EvalSuiteRun,
   passRate: number | null,
-): "passed" | "failed" | "running" | "cancelled" | "pending" {
+):
+  | "passed"
+  | "failed"
+  | "running"
+  | "cancelled"
+  | "timed_out"
+  | "pending" {
   if (run.result) return run.result;
   if (run.status === "completed" && passRate !== null) {
     return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
@@ -452,9 +469,27 @@ export function computeEffectiveRunResult(
       : "failed";
   }
   if (run.status === "cancelled") return "cancelled";
+  if (run.status === "timed_out") return "timed_out";
   if (run.status === "running") return "running";
   if (run.status === "failed") return "failed";
   return "pending";
+}
+
+function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
+  switch (result) {
+    case "passed":
+      return { label: "Passed", className: "bg-success/50 text-foreground" };
+    case "failed":
+      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "cancelled":
+      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
+    case "timed_out":
+      return { label: "Timed out", className: "bg-warning/50 text-foreground" };
+    case "running":
+      return { label: "Running", className: "bg-warning/50 text-foreground" };
+    default:
+      return null;
+  }
 }
 
 function GroupRunRows({
@@ -520,15 +555,23 @@ function GroupRunRows({
   // helper the standalone rows use — checking only `run.result`/`run.status`
   // here misses children that the recorder finalized as `status: completed`
   // without setting `result: failed`, even though their passRate is below
-  // criteria. Order: running > failed > cancelled > pending > passed.
+  // criteria. Order: running > failed/timed out > cancelled > pending > passed.
   const effectiveResults = childStats.map((c) =>
     computeEffectiveRunResult(c.run, c.stats.passRate),
   );
   const anyRunning = effectiveResults.some((r) => r === "running");
-  const anyFailed = effectiveResults.some((r) => r === "failed");
+  const anyFailed = effectiveResults.some(
+    (r) => r === "failed" || r === "timed_out",
+  );
   const anyCancelled = effectiveResults.some((r) => r === "cancelled");
   const anyPending = effectiveResults.some((r) => r === "pending");
-  const groupResult: "running" | "failed" | "cancelled" | "passed" | "pending" =
+  const groupResult:
+    | "running"
+    | "failed"
+    | "cancelled"
+    | "passed"
+    | "pending"
+    | "timed_out" =
     anyRunning
       ? "running"
       : anyFailed
@@ -541,6 +584,7 @@ function GroupRunRows({
 
   const timestampLabel = formatTime(group.latestTimestamp);
   const shortGroupId = group.runGroupId.slice(0, 8);
+  const groupBadge = runResultBadge(groupResult);
 
   return (
     <div
@@ -575,6 +619,16 @@ function GroupRunRows({
           <span className="truncate text-xs font-medium">
             Run group g{shortGroupId}
           </span>
+          {groupBadge ? (
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                groupBadge.className,
+              )}
+            >
+              {groupBadge.label}
+            </span>
+          ) : null}
           <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
             {group.runs.length} hosts
           </span>

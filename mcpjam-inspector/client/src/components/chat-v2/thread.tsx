@@ -35,6 +35,7 @@ import {
   WidgetSurfaceHost,
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
+import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
 import type {
   AppToolInvocation,
@@ -67,7 +68,7 @@ interface ThreadProps {
   onFullscreenChatStop?: () => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
-  showSaveViewButton?: boolean;
+  showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -89,6 +90,15 @@ interface ThreadProps {
    */
   showSenderAvatars?: TranscriptThreadProps["showSenderAvatars"];
   resolveSenderAvatar?: TranscriptThreadProps["resolveSenderAvatar"];
+  /** Tier 3 recorder bundle, forwarded to TranscriptThread (default off). */
+  recorder?: TranscriptThreadProps["recorder"];
+  /**
+   * Frozen-replay override for `appToolInvocations`. When set (eval Chat tab),
+   * these reconstructed-from-trace invocations are rendered instead of the live
+   * host-bridge state — a completed run can't re-fire the bridge. Leave
+   * `undefined` on the live Playground/chat path so behavior is byte-identical.
+   */
+  appToolInvocationsOverride?: AppToolInvocation[];
 }
 
 function getWidgetOwnershipIds(toolCallId: string, displayWidgetId?: string) {
@@ -140,7 +150,7 @@ export function Thread({
   onFullscreenChatStop,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -153,6 +163,8 @@ export function Thread({
   renderUserMessageActions,
   showSenderAvatars,
   resolveSenderAvatar,
+  recorder,
+  appToolInvocationsOverride,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -329,7 +341,7 @@ export function Thread({
           toolServerMap={toolServerMap}
           onWidgetStateChange={onWidgetStateChange}
           onModelContextUpdate={onModelContextUpdate}
-          appToolInvocations={appToolInvocations}
+          appToolInvocations={appToolInvocationsOverride ?? appToolInvocations}
           onAppToolInvocationChange={handleAppToolInvocationChange}
           pipWidgetId={pipWidgetId}
           fullscreenWidgetId={fullscreenWidgetId}
@@ -343,7 +355,7 @@ export function Thread({
           onDisplayModeChange={onDisplayModeChange}
           onToolApprovalResponse={onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
-          showSaveViewButton={showSaveViewButton}
+          showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
           interactive={interactive}
           reasoningDisplayMode={reasoningDisplayMode}
@@ -361,8 +373,11 @@ export function Thread({
           renderUserMessageActions={renderUserMessageActions}
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
+          recorder={recorder}
         />
-        <WidgetSurfaceHost chatSessionId={chatSessionId} />
+        <InspectorWidgetHostProvider>
+          <WidgetSurfaceHost chatSessionId={chatSessionId} />
+        </InspectorWidgetHostProvider>
 
         {shouldShowStandaloneThinkingIndicator && (
           <div className="min-w-0 w-full max-w-4xl mx-auto px-4">

@@ -1,4 +1,4 @@
-import { normalizePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
+import { normalizePromptTurns, type PromptTurn } from "@/shared/steps";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 
 /**
@@ -16,12 +16,36 @@ export interface GenerateTestsRequest {
   serverIds: string[];
   toolSnapshot: ServerToolSnapshot;
   serverAttachment?: ServerAttachmentInput;
+  generationOptions?: GenerationOptions;
 }
 
 export interface ServerAttachmentInput {
   id?: string;
   name?: string;
   resolvedServerNames: string[];
+}
+
+/**
+ * Per-bucket case counts for configurable generation. Field names mirror the
+ * backend `CaseMix` (and the public SDK `caseMix`). Omitted buckets fall back to
+ * the backend's mode default.
+ */
+export interface CaseMixInput {
+  simple?: number;
+  multiTool?: number;
+  multiTurn?: number;
+  complex?: number;
+  negative?: number;
+}
+
+/**
+ * Optional generation knobs forwarded verbatim to the backend
+ * `/eval-generation/generate` body. Absent → today's default generation.
+ */
+export interface GenerationOptions {
+  caseMix?: CaseMixInput;
+  /** Condition cases on a generated persona slate for realistic phrasing. */
+  varyUserStyles?: boolean;
 }
 
 export interface GeneratedTestCase {
@@ -97,6 +121,7 @@ export async function generateTestCases(
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
   projectId?: string,
+  generationOptions?: GenerationOptions
 ): Promise<GeneratedTestCase[]> {
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
@@ -109,6 +134,10 @@ export async function generateTestCases(
       toolSnapshot,
       ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
+      ...(generationOptions?.caseMix
+        ? { caseMix: generationOptions.caseMix }
+        : {}),
+      ...(generationOptions?.varyUserStyles ? { varyUserStyles: true } : {}),
     }),
   });
 
@@ -125,7 +154,9 @@ export async function generateTestCases(
 
   if (!data.ok || !Array.isArray(data.tests)) {
     throw new Error(
-      `Invalid response from backend eval generation: ${data.error ?? "unknown error"}`,
+      `Invalid response from backend eval generation: ${
+        data.error ?? "unknown error"
+      }`
     );
   }
 

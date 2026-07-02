@@ -32,6 +32,10 @@ describe("HostCompareSelector", () => {
         onToggleHost={onToggleHost}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
       />,
     );
 
@@ -61,6 +65,10 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
       />,
     );
 
@@ -68,5 +76,28 @@ describe("HostCompareSelector", () => {
     expect(
       screen.queryByTestId("host-compare-chip-h_6"),
     ).not.toBeInTheDocument();
+  });
+
+  it("emits the chosen support filter mode", async () => {
+    const user = userEvent.setup();
+    const onSupportFilterChange = vi.fn();
+
+    render(
+      <HostCompareSelector
+        hosts={[makeHost("h_a", "Claude")]}
+        selectedHostIds={["h_a"]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={onSupportFilterChange}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("support-filter-missing"));
+    expect(onSupportFilterChange).toHaveBeenCalledWith("missing");
   });
 });

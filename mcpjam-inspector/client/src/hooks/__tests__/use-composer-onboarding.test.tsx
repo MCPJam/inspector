@@ -43,6 +43,39 @@ describe("useComposerOnboarding", () => {
     expect(result.current.input).toBe("Hello");
   });
 
+  it("follows a changing initialInput live while the composer is untouched", () => {
+    const { result, rerender } = renderHook(
+      ({ initialInput }) =>
+        useComposerOnboarding({ ...defaults, initialInput }),
+      { initialProps: { initialInput: "" as string } },
+    );
+    expect(result.current.input).toBe("");
+
+    // Simulate the left-pane prompt being typed character by character.
+    for (const next of ["s", "se", "sea", "search"]) {
+      rerender({ initialInput: next });
+      expect(result.current.input).toBe(next);
+    }
+  });
+
+  it("stops following initialInput once the user types in the composer", () => {
+    const { result, rerender } = renderHook(
+      ({ initialInput }) =>
+        useComposerOnboarding({ ...defaults, initialInput }),
+      { initialProps: { initialInput: "search" as string } },
+    );
+    expect(result.current.input).toBe("search");
+
+    act(() => {
+      result.current.handleInputChange("my own text");
+    });
+    expect(result.current.input).toBe("my own text");
+
+    // Further left-pane edits must not clobber what the user typed.
+    rerender({ initialInput: "search for redbull" });
+    expect(result.current.input).toBe("my own text");
+  });
+
   it("initializes input to empty when typewriter is on (animation starts from empty)", () => {
     const { result } = renderHook(() =>
       useComposerOnboarding({

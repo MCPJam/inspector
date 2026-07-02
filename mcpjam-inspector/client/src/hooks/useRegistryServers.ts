@@ -16,7 +16,7 @@ import {
   getExistingGuestBearerToken,
 } from "@/lib/guest-session";
 import { resetTokenCache } from "@/lib/apis/web/context";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 /**
  * Dev-only mock registry servers for local UI testing.

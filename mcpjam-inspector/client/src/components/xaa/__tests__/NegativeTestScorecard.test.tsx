@@ -17,7 +17,7 @@ const INPUT: NegativeTestsInput = {
 
 async function expand(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
-    screen.getByRole("button", { name: /negative-test scorecard/i }),
+    screen.getByRole("button", { name: /negative-test scorecard/i })
   );
 }
 
@@ -33,15 +33,15 @@ describe("NegativeTestScorecard", () => {
         input={null}
         unlocked={false}
         unavailableReason="MCPJam test auth server has nothing to test."
-      />,
+      />
     );
     await expand(user);
 
     expect(
-      screen.getByText("MCPJam test auth server has nothing to test."),
+      screen.getByText("MCPJam test auth server has nothing to test.")
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /run negative tests/i }),
+      screen.queryByRole("button", { name: /run negative tests/i })
     ).toBeNull();
   });
 
@@ -51,10 +51,10 @@ describe("NegativeTestScorecard", () => {
     await expand(user);
 
     expect(
-      screen.getByRole("button", { name: /run negative tests/i }),
+      screen.getByRole("button", { name: /run negative tests/i })
     ).toBeDisabled();
     expect(
-      screen.getByText(/run a successful flow first/i),
+      screen.getByText(/run a successful flow first/i)
     ).toBeInTheDocument();
   });
 
@@ -78,6 +78,11 @@ describe("NegativeTestScorecard", () => {
           outcome: "rejected",
           verdict: "pass",
           status: 400,
+          diff: {
+            field: "aud",
+            sent: "https://wrong-audience.example.com",
+            expected: "https://auth.example.com",
+          },
         },
       ],
     });
@@ -87,37 +92,42 @@ describe("NegativeTestScorecard", () => {
     await expand(user);
 
     await user.click(
-      screen.getByRole("button", { name: /run negative tests/i }),
+      screen.getByRole("button", { name: /run negative tests/i })
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
     );
     expect(screen.getByTestId("xaa-negtest-row-expired")).toHaveAttribute(
       "data-verdict",
-      "fail",
+      "fail"
     );
     expect(
-      screen.getByTestId("xaa-negtest-row-wrong_audience"),
+      screen.getByTestId("xaa-negtest-row-wrong_audience")
     ).toHaveAttribute("data-verdict", "pass");
+    // Outcome-based copy: a pass reads as a result, not an instruction.
+    expect(screen.getByText(/rejected as expected/i)).toBeInTheDocument();
+    expect(screen.getByText(/accepted — security risk/i)).toBeInTheDocument();
+    // Expected-vs-actual diff for the tampered claim.
+    expect(
+      screen.getByText(/https:\/\/wrong-audience\.example\.com/)
+    ).toBeInTheDocument();
     expect(runMock).toHaveBeenCalledWith(INPUT);
   });
 
-  it("unlocks via the typed override for the half-built-AS case", async () => {
+  it("unlocks via the owner checkbox for the half-built-AS case", async () => {
     runMock.mockResolvedValue({ failures: 0, results: [] });
 
     const user = userEvent.setup();
     render(<NegativeTestScorecard input={INPUT} unlocked={false} />);
     await expand(user);
 
-    // The run button stays disabled until the exact phrase is typed.
-    expect(screen.getByRole("button", { name: /^unlock$/i })).toBeDisabled();
+    // The run button stays disabled until the owner toggle is checked.
+    expect(
+      screen.getByRole("button", { name: /run negative tests/i })
+    ).toBeDisabled();
 
-    await user.type(
-      screen.getByLabelText("Override confirmation"),
-      "run anyway",
-    );
-    await user.click(screen.getByRole("button", { name: /^unlock$/i }));
+    await user.click(screen.getByRole("checkbox"));
 
     const runButton = screen.getByRole("button", {
       name: /run negative tests/i,
@@ -127,7 +137,7 @@ describe("NegativeTestScorecard", () => {
     await waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
   });
 
-  it("clears a stale result badge when the target changes (e.g. config cleared)", async () => {
+  it("clears stale results when the target changes (e.g. config cleared)", async () => {
     runMock.mockResolvedValue({
       failures: 1,
       results: [
@@ -152,13 +162,10 @@ describe("NegativeTestScorecard", () => {
       screen.getByRole("button", { name: /run negative tests/i }),
     );
 
-    // Badge reflects the completed run against this target.
     await waitFor(() =>
-      expect(screen.getByText("1 failing")).toBeInTheDocument(),
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
     );
 
-    // Clearing the configuration drops the target (input → null). The stale
-    // "1 failing" badge must not linger over the now-empty/locked body.
     rerender(
       <NegativeTestScorecard
         input={null}
@@ -168,7 +175,7 @@ describe("NegativeTestScorecard", () => {
     );
 
     await waitFor(() =>
-      expect(screen.queryByText("1 failing")).toBeNull(),
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull(),
     );
   });
 
@@ -179,13 +186,13 @@ describe("NegativeTestScorecard", () => {
     render(<NegativeTestScorecard input={INPUT} unlocked />);
     await expand(user);
     await user.click(
-      screen.getByRole("button", { name: /run negative tests/i }),
+      screen.getByRole("button", { name: /run negative tests/i })
     );
 
     await waitFor(() =>
       expect(screen.getByTestId("xaa-negtest-error")).toHaveTextContent(
-        "URL not allowed",
-      ),
+        "URL not allowed"
+      )
     );
   });
 });

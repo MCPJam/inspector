@@ -4,6 +4,32 @@ import { logger } from "../../utils/logger";
 
 const listTools = new Hono();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeToolMetadata(
+  toolMeta: Record<string, unknown> | undefined,
+  sidecarMeta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!toolMeta && !sidecarMeta) return undefined;
+
+  const toolUi = toolMeta?.ui;
+  const sidecarUi = sidecarMeta?.ui;
+  return {
+    ...(toolMeta ?? {}),
+    ...(sidecarMeta ?? {}),
+    ...(isRecord(toolUi) || isRecord(sidecarUi)
+      ? {
+          ui: {
+            ...(isRecord(toolUi) ? toolUi : {}),
+            ...(isRecord(sidecarUi) ? sidecarUi : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 listTools.post("/", async (c) => {
   try {
     const body = await c.req.json();
@@ -19,6 +45,9 @@ listTools.post("/", async (c) => {
       description?: string;
       inputSchema?: any;
       serverId: string;
+      // Carry `_meta` so clients can detect widget-rendering tools (the eval
+      // editor uses it to surface per-widget interaction checks).
+      _meta?: Record<string, unknown>;
     }> = [];
 
     for (const serverId of serverIds) {
@@ -29,12 +58,20 @@ listTools.post("/", async (c) => {
 
       try {
         const { tools } = await clientManager.listTools(serverId);
-        const serverTools = tools.map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          serverId,
-        }));
+        const toolsMetadata = clientManager.getAllToolsMetadata(serverId);
+        const serverTools = tools.map((tool: any) => {
+          const mergedMeta = mergeToolMetadata(
+            tool._meta as Record<string, unknown> | undefined,
+            toolsMetadata?.[tool.name] as Record<string, unknown> | undefined,
+          );
+          return {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            serverId,
+            ...(mergedMeta ? { _meta: mergedMeta } : {}),
+          };
+        });
         allTools.push(...serverTools);
       } catch (error) {
         logger.warn(`Failed to list tools for server ${serverId}`, {

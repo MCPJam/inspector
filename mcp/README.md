@@ -88,6 +88,11 @@ per-project authorization to listings, probes, and eval runs.
 Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
 `npm run dev` uses `--env staging` so local development binds against staging.
+For developing against the **Home/MCPJam agent** locally, use `npm run dev:local`
+(`--env dev`) instead — it binds to the dev AuthKit app and the local inspector
+(`http://localhost:6274/api/v1`). The inspector's own `npm run dev` starts this
+`dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
+run it by hand.
 Both tenants must have **Client ID Metadata Document** enabled under
 *Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.

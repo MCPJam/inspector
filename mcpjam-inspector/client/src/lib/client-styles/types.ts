@@ -346,6 +346,8 @@ export interface HostChatUi {
   pickerDescription: string;
   /** Public URL or imported asset for the brand logo. */
   logoSrc: string;
+  /** Optional theme-specific brand logos; `logoSrc` remains the default. */
+  logoSrcByTheme?: Record<HostThemeMode, string>;
   /** Visual rendering family this host maps onto. */
   family: HostStyleFamily;
   resolveChatBackground: (theme: HostThemeMode) => string;

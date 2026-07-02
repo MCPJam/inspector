@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostCompareSelector } from "./HostCompareSelector";
 import {
   parseHostsParam,
@@ -10,7 +11,22 @@ import {
   toggleHostCompareSelection,
   writeHostCompareSelection,
 } from "./host-compare-selection";
+import { buildPresetCompareEntries } from "./host-compare-presets";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
+import { HostCapabilityListView } from "./HostCapabilityListView";
+import {
+  computeVisibleFieldIds,
+  isSupportField,
+  type SupportFilterMode,
+} from "./support-level";
+import {
+  HOST_CONFIG_FIELDS,
+  hostConfigField,
+} from "@/lib/host-config-field-schema";
+import { SearchInput } from "@/components/ui/search-input";
+import { cn } from "@/lib/utils";
+
+type CompareViewMode = "table" | "list";
 
 const HOSTS_QUERY_PARAM = "hosts";
 
@@ -28,23 +44,51 @@ export function HostConfigCompareView({
   projectId,
   isAuthenticated,
 }: HostConfigCompareViewProps) {
-  const { hosts, isLoading: listLoading } = useHostList({
+  const { hosts: liveHosts, isLoading: listLoading } = useHostList({
     isAuthenticated,
     projectId,
   });
+
+  // Static host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
+  // comparison columns even when the user hasn't created them — the same
+  // best-effort profiles the server detail modal's Hosts tab renders. Threaded
+  // with the current theme so preset configs match the rest of the app.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const presets = useMemo(
+    () => buildPresetCompareEntries(themeMode),
+    [themeMode],
+  );
+
+  // Real created hosts first, then presets — what the selector chips iterate.
+  const hosts = useMemo(
+    () => [...liveHosts, ...presets.hosts],
+    [liveHosts, presets.hosts],
+  );
 
   const [subjectsByHost, setSubjectsByHost] = useState<
     Record<string, HostComparisonSubject>
   >({});
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
+  const [supportFilter, setSupportFilter] = useState<SupportFilterMode>("all");
+  const [fieldSearchQuery, setFieldSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<CompareViewMode>("table");
+  const [showDescriptions, setShowDescriptions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // Tracks whether the initial URL-driven selection has been applied.
   // After the first resolve, subsequent URL changes are ignored — Compare
   // becomes the source of truth and mirrors back into the URL.
   const urlConsumedRef = useRef(false);
 
+  // Real created hosts only — drives the default selection and the
+  // ?hosts=-is-default suppression. Presets are never part of the default.
   const liveHostIds = useMemo(
+    () => liveHosts.map((host) => host.hostId),
+    [liveHosts],
+  );
+  // Every selectable id (real + preset). URL / stored selections reconcile
+  // against this so a chosen preset column survives a reload.
+  const knownHostIds = useMemo(
     () => hosts.map((host) => host.hostId),
     [hosts],
   );
@@ -59,11 +103,12 @@ export function HostConfigCompareView({
       resolveInitialHostCompareSelection({
         projectId: projectId ?? "",
         liveHostIds,
+        knownHostIds,
         previousSelection: previous,
         urlSelection,
       }),
     );
-  }, [listLoading, liveHostIds, projectId, searchParams]);
+  }, [listLoading, liveHostIds, knownHostIds, projectId, searchParams]);
 
   useEffect(() => {
     if (!projectId || selectedHostIds.length === 0) return;
@@ -138,11 +183,18 @@ export function HostConfigCompareView({
     [selectedHostIds],
   );
 
+  // Preset subjects are static and available immediately; fetched real-host
+  // subjects (keyed by Convex id, no prefix collision) layer on top.
+  const allSubjects = useMemo(
+    () => ({ ...presets.subjects, ...subjectsByHost }),
+    [presets.subjects, subjectsByHost],
+  );
+
   const orderedSubjects = useMemo(() => {
     return selectedHostIds
-      .map((hostId) => subjectsByHost[hostId])
+      .map((hostId) => allSubjects[hostId])
       .filter((subject): subject is HostComparisonSubject => subject !== undefined);
-  }, [selectedHostIds, subjectsByHost]);
+  }, [selectedHostIds, allSubjects]);
 
   const loadedSelectedCount = orderedSubjects.length;
   const totalSelectedCount = selectedHostIds.length;
@@ -155,6 +207,32 @@ export function HostConfigCompareView({
     );
   }, []);
 
+  // "N / M fields" count for the search header — same predicate the matrix and
+  // list view use, so the number always matches what's rendered. In list mode
+  // only support-shaped rows render, so the count narrows to that subset too.
+  const matchCount = useMemo(() => {
+    const ids = computeVisibleFieldIds({
+      configs: orderedSubjects.map((s) => s.config),
+      divergingOnly,
+      supportFilter,
+      searchQuery: fieldSearchQuery,
+    });
+    if (viewMode !== "list") return ids.size;
+    let n = 0;
+    for (const id of ids) {
+      if (isSupportField(hostConfigField(id))) n += 1;
+    }
+    return n;
+  }, [orderedSubjects, divergingOnly, supportFilter, fieldSearchQuery, viewMode]);
+
+  const totalFieldCount = useMemo(
+    () =>
+      viewMode === "list"
+        ? HOST_CONFIG_FIELDS.filter(isSupportField).length
+        : HOST_CONFIG_FIELDS.length,
+    [viewMode],
+  );
+
   if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -166,7 +244,10 @@ export function HostConfigCompareView({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {selectedHostIds.map((hostId) => {
-        const host = hosts.find((entry) => entry.hostId === hostId);
+        // Only real hosts hydrate over the wire — preset subjects are already
+        // in `presets.subjects`, so a preset id finds no `liveHosts` row and
+        // mounts no fetcher (and fires no Convex query against a synthetic id).
+        const host = liveHosts.find((entry) => entry.hostId === hostId);
         if (!host) return null;
         return (
           <HostConfigFetcher
@@ -192,14 +273,29 @@ export function HostConfigCompareView({
           </div>
         ) : (
           <>
+            <CompareSearchBar
+              query={fieldSearchQuery}
+              onQueryChange={setFieldSearchQuery}
+              matchCount={matchCount}
+              totalCount={totalFieldCount}
+              showCount={orderedSubjects.length > 0}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
+
             <HostCompareSelector
               hosts={hosts}
               selectedHostIds={selectedHostIds}
-              subjectsByHost={subjectsByHost}
+              subjectsByHost={allSubjects}
               onToggleHost={handleToggleHost}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
+              supportFilter={supportFilter}
+              onSupportFilterChange={setSupportFilter}
+              showDescriptions={showDescriptions}
+              onShowDescriptionsChange={setShowDescriptions}
               disabled={listLoading}
+              themeMode={themeMode}
             />
 
             {totalSelectedCount === 0 ? (
@@ -217,13 +313,27 @@ export function HostConfigCompareView({
                     configs…
                   </div>
                 )}
-                <HostConfigComparisonMatrix
-                  subjects={orderedSubjects}
-                  divergingOnly={divergingOnly}
-                  onRemoveHost={
-                    selectedHostIdSet.size > 1 ? handleToggleHost : undefined
-                  }
-                />
+                {viewMode === "table" ? (
+                  <HostConfigComparisonMatrix
+                    subjects={orderedSubjects}
+                    divergingOnly={divergingOnly}
+                    supportFilter={supportFilter}
+                    searchQuery={fieldSearchQuery}
+                    showDescriptions={showDescriptions}
+                    themeMode={themeMode}
+                    onRemoveHost={
+                      selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                    }
+                  />
+                ) : (
+                  <HostCapabilityListView
+                    subjects={orderedSubjects}
+                    divergingOnly={divergingOnly}
+                    supportFilter={supportFilter}
+                    searchQuery={fieldSearchQuery}
+                    themeMode={themeMode}
+                  />
+                )}
               </>
             )}
           </>
@@ -264,6 +374,78 @@ function HostConfigFetcher({
   }, [host, hostId, hostName, hostConfigId, onLoaded]);
 
   return null;
+}
+
+/** caniuse-style "Can I use ___" search header + result count + view toggle. */
+function CompareSearchBar({
+  query,
+  onQueryChange,
+  matchCount,
+  totalCount,
+  showCount,
+  viewMode,
+  onViewModeChange,
+}: {
+  query: string;
+  onQueryChange: (q: string) => void;
+  matchCount: number;
+  totalCount: number;
+  /** Hidden while hosts are still loading — the count would be meaningless. */
+  showCount: boolean;
+  viewMode: CompareViewMode;
+  onViewModeChange: (mode: CompareViewMode) => void;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      <span className="shrink-0 text-[15px] font-medium tracking-tight text-foreground">
+        Can I use…
+      </span>
+      <SearchInput
+        value={query}
+        onValueChange={onQueryChange}
+        placeholder="Search capabilities, fields, descriptions…"
+        aria-label="Search host config fields"
+        className="order-last w-full sm:order-none sm:w-auto sm:min-w-[240px] sm:flex-1"
+      />
+      {showCount && (
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+          {matchCount} / {totalCount} fields
+        </span>
+      )}
+      <div
+        role="group"
+        aria-label="View mode"
+        className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+      >
+        {(
+          [
+            { value: "table", label: "Tables" },
+            { value: "list", label: "List" },
+          ] as const
+        ).map((v) => {
+          const active = viewMode === v.value;
+          return (
+            <button
+              key={v.value}
+              type="button"
+              aria-pressed={active}
+              data-testid={`compare-view-${v.value}`}
+              onClick={() => onViewModeChange(v.value)}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                active
+                  ? "bg-primary/10 text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {v.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function LoadingState({ label }: { label: string }) {

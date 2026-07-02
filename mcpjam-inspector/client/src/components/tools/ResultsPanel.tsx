@@ -1,14 +1,24 @@
+import { useState } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
+import {
+  CheckCircle,
+  Info,
+  ExternalLink,
+  Clock3,
+  Copy,
+  Check,
+} from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
@@ -61,8 +71,10 @@ export function ResultsPanel({
   // serverId the resolver looks up. The tools tab is single-server per
   // panel, so one lookup per render is all we need.
   const resolveHostCaps = useActiveHostCapsResolver();
+  const hostStyle = useChatboxHostStyle();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
-    resolveHostCaps(serverName)
+    resolveHostCaps(serverName),
+    { hostStyle },
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
@@ -72,6 +84,22 @@ export function ResultsPanel({
       : responseDurationMs < 1000
       ? `${Math.round(responseDurationMs)} ms`
       : `${(responseDurationMs / 1000).toFixed(2)} s`;
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAll = async () => {
+    let textToCopy: string;
+    try {
+      textToCopy = JSON.stringify(displayValue, null, 2) ?? "null";
+    } catch {
+      textToCopy = String(displayValue ?? "");
+    }
+    const success = await copyToClipboard(textToCopy);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col bg-background break-all">
@@ -95,6 +123,21 @@ export function ResultsPanel({
             </span>
           )}
         </div>
+        {!error && rawResult && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs px-2 flex-shrink-0"
+            onClick={handleCopyAll}
+          >
+            {copied ? (
+              <Check className="h-3 w-3 mr-1 text-success" />
+            ) : (
+              <Copy className="h-3 w-3 mr-1" />
+            )}
+            {copied ? "Copied!" : "Copy all"}
+          </Button>
+        )}
       </div>
 
       {/* Content - fills remaining space */}

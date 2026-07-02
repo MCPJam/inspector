@@ -74,6 +74,7 @@ const {
     },
     isLoading: false,
     isLoadingRemoteProjects: false,
+    areServersHydrated: true,
     projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
@@ -341,9 +342,6 @@ vi.mock("../components/EvalsTab", () => ({
 }));
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
-}));
-vi.mock("../components/ViewsTab", () => ({
-  ViewsTab: () => <div />,
 }));
 vi.mock("../components/ChatboxesTab", () => ({
   ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
@@ -709,7 +707,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the chatbox link and try again."
+        "Your guest session expired. Reopen the swarm link and try again."
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
@@ -2352,6 +2350,27 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/playground");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+  });
+
   it("does not auto-route a guest row already marked as having seen onboarding", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2507,6 +2526,75 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
+  it("does not flash Home while hosted auth is still loading on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "auth-loading";
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not flash Home while hosted guest auth is unresolved on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not flash Home while hosted project and server state hydrate on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: true,
+      areServersHydrated: false,
+      activeProjectId: "ws_local",
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
   it("does not hijack a non-default hash route for first-run guests", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2572,8 +2660,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);

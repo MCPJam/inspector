@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import {
   AlertDialog,
@@ -80,8 +81,10 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
+  getChatboxShellStyle,
+  type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { usePostHog } from "posthog-js/react";
@@ -93,8 +96,17 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useHost, useHostList, type HostDetail } from "@/hooks/useClients";
+import {
+  useHost,
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+  type HostDetail,
+} from "@/hooks/useClients";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
@@ -118,6 +130,7 @@ import {
 } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
+  ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
@@ -130,7 +143,6 @@ import {
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
-import { PlaygroundHostPicker } from "@/components/playground/PlaygroundHostPicker";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
@@ -145,6 +157,10 @@ import {
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import {
+  shouldAutoRunPreview,
+  shouldRunPreview,
+} from "./preview-autorun";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
@@ -162,6 +178,12 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
+import {
+  isToolPart,
+  isDynamicTool,
+  getToolInfo,
+} from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
@@ -200,6 +222,47 @@ const CUSTOM_DEVICE_BASE = {
 };
 
 type ThreadThemeMode = "light" | "dark";
+
+interface PlaygroundCompareThemeScopeProps {
+  children: ReactNode;
+  hostStyle: ChatboxHostStyle;
+  hostCapabilitiesOverride: Record<string, unknown> | undefined;
+  chatUiOverride: ChatUiOverride | undefined;
+  effectiveThreadTheme: ThreadThemeMode;
+  hostShellStyle: CSSProperties;
+}
+
+function PlaygroundCompareThemeScope({
+  children,
+  hostStyle,
+  hostCapabilitiesOverride,
+  chatUiOverride,
+  effectiveThreadTheme,
+  hostShellStyle,
+}: PlaygroundCompareThemeScopeProps) {
+  return (
+    <ChatboxHostStyleProvider value={hostStyle}>
+      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+        <ChatboxChatUiOverrideProvider value={chatUiOverride}>
+          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+            <div
+              className={cn(
+                "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark"
+              )}
+              data-testid="playground-compare-shell"
+              data-host-style={hostStyle}
+              data-thread-theme={effectiveThreadTheme}
+              style={hostShellStyle}
+            >
+              {children}
+            </div>
+          </ChatboxHostThemeProvider>
+        </ChatboxChatUiOverrideProvider>
+      </ChatboxHostCapabilitiesOverrideProvider>
+    </ChatboxHostStyleProvider>
+  );
+}
 
 interface PlaygroundMainProps {
   activeProjectId?: string | null;
@@ -245,7 +308,7 @@ interface PlaygroundMainProps {
   onTimeZoneChange?: (timeZone: string) => void;
   // View-mode controls
   disableChatInput?: boolean;
-  hideSaveViewButton?: boolean;
+  hideInlineEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -264,6 +327,55 @@ interface PlaygroundMainProps {
    */
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /**
+   * Suppress the "This is your playground for MCP" welcome hero in the empty
+   * state (the composer still shows). Used by the embedded eval preview, where
+   * that onboarding copy doesn't belong.
+   */
+  hideWelcomeHero?: boolean;
+  /**
+   * Hide the playground client-context chrome (Compare, locale, host caps, …)
+   * in the center header. Used by the embedded eval preview — those controls
+   * belong in Playground, not while authoring a case. Trace / Chat / Raw tabs
+   * may still show when supported.
+   */
+  hideCenterHeaderChrome?: boolean;
+  /**
+   * When set, auto-send this prompt once on mount (after session bootstrap +
+   * server readiness), fired a single time while the thread is still empty.
+   * Used by the eval preview to "run on open" when the case renders a widget.
+   */
+  autoRunInput?: string;
+  /**
+   * Increment to re-run the case in the live preview from outside (eval Quick
+   * Run). Each new value resets the thread and re-sends the case prompt
+   * (`initialInput`) fresh, once the session is ready.
+   */
+  runPreviewRequest?: number;
+  /**
+   * Fires whenever the live chat's messages change. Used by the eval preview to
+   * capture the conversation (prompts + observed tool calls) back into the case
+   * spec. Pass a STABLE callback (useCallback) — it's an effect dependency.
+   */
+  onMessagesChange?: (messages: UIMessage[]) => void;
+  /**
+   * Fires when the live chat's streaming state changes. The eval preview uses
+   * the true→false edge to detect that a Quick Run finished. Pass a STABLE
+   * callback (useCallback) — it's an effect dependency.
+   */
+  onStreamingChange?: (streaming: boolean) => void;
+  /**
+   * Silences the post-stream "this chat changed elsewhere" detach toast. The
+   * eval preview is an ephemeral sandbox whose own Quick Run / widget replay
+   * mutates the session, so that alarm is self-inflicted noise there.
+   */
+  suppressHistoryConflictToast?: boolean;
+  /**
+   * Tier-3 recorder (eval preview only). Forwarded to the single-pane Thread so
+   * the armed widget records interaction steps. `resolvePromptIndex` is injected
+   * here from the live messages (toolCallId → owning user-turn ordinal).
+   */
+  recorder?: RecorderProps;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -342,7 +454,7 @@ export function PlaygroundMain({
     "UTC",
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
-  hideSaveViewButton = false,
+  hideInlineEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
@@ -352,6 +464,14 @@ export function PlaygroundMain({
   onFirstMessageSent,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
+  hideWelcomeHero = false,
+  hideCenterHeaderChrome = false,
+  autoRunInput,
+  runPreviewRequest,
+  onMessagesChange,
+  onStreamingChange,
+  suppressHistoryConflictToast,
+  recorder,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -579,13 +699,16 @@ export function PlaygroundMain({
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
   // wrote under a different storage scope.
-  const [previewedHostId] = usePreviewedHostId(
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
     convexProjectId ?? activeProjectId,
   );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // Native built-in tools for the previewed harness (if any) — fed into the Raw
+  // tab so a harness host's empty `tools` is annotated rather than confusing.
+  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -638,6 +761,10 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
+      // Forward the previewed host id so the server re-resolves its
+      // authoritative runtime config (harness/computer) for this direct
+      // session, and so switching hosts forks the chat session.
+      ...(previewedHostId ? { hostId: previewedHostId } : {}),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
@@ -811,6 +938,7 @@ export function PlaygroundMain({
   const hostCapabilitiesOverride = usePreferencesStore(
     (s) => s.hostCapabilitiesOverride
   );
+  const chatUiOverride = usePreferencesStore((s) => s.chatUiOverride);
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode
   ) as ThreadThemeMode;
@@ -820,6 +948,11 @@ export function PlaygroundMain({
   const hostBackgroundColor =
     getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
+  const hostShellStyle = getChatboxShellStyle(
+    hostStyle,
+    effectiveThreadTheme,
+    chatUiOverride
+  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -872,10 +1005,82 @@ export function PlaygroundMain({
     multiHostEnabled,
     setMultiHostEnabled,
   } = usePersistedHost(multiHostProjectId);
-  const { hosts: hostList } = useHostList({
+  const { hosts: hostList, isLoading: hostListLoading } = useHostList({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
+  const { createHost: createPlaygroundHost } = useHostMutations();
+  const resolveFallbackHostId = useCallback(
+    (hosts: HostListItem[]): string | null => {
+      const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
+      if (mcpjamHost) return mcpjamHost.hostId;
+      const [firstHost] = [...hosts].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      return firstHost?.hostId ?? null;
+    },
+    []
+  );
+  // Seed backstop: the global host bar (which normally auto-creates the
+  // default "MCPJam" host for empty projects) is hidden on the playground,
+  // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
+  // + a per-project ref so it fires at most once per empty project and never
+  // blocks a different empty project from getting its own default host.
+  const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (
+      !isConvexAuthenticated ||
+      hostListLoading ||
+      !multiHostProjectId ||
+      hostList.length > 0 ||
+      playgroundSeededProjectIdsRef.current.has(multiHostProjectId)
+    ) {
+      return;
+    }
+    playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
+    createPlaygroundHost({
+      projectId: multiHostProjectId,
+      name: "MCPJam",
+      input: emptyHostConfigInputV2(),
+    })
+      .then(({ hostId }) => {
+        setPreviewedHostId(hostId);
+      })
+      .catch(() => {
+        playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
+      });
+  }, [
+    isConvexAuthenticated,
+    hostListLoading,
+    multiHostProjectId,
+    hostList.length,
+    createPlaygroundHost,
+    setPreviewedHostId,
+  ]);
+  useEffect(() => {
+    if (
+      !isConvexAuthenticated ||
+      hostListLoading ||
+      !multiHostProjectId ||
+      hostList.length === 0
+    ) {
+      return;
+    }
+    const previewedHostIsValid =
+      previewedHostId !== null &&
+      hostList.some((host) => host.hostId === previewedHostId);
+    if (previewedHostIsValid) return;
+    const fallbackHostId = resolveFallbackHostId(hostList);
+    if (fallbackHostId) setPreviewedHostId(fallbackHostId);
+  }, [
+    isConvexAuthenticated,
+    hostListLoading,
+    multiHostProjectId,
+    hostList,
+    previewedHostId,
+    resolveFallbackHostId,
+    setPreviewedHostId,
+  ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
@@ -1299,7 +1504,13 @@ export function PlaygroundMain({
       setRequireToolApproval(handoffExec.requireToolApproval);
     }
 
-    composer.setInput("");
+    // Only clear the composer when the handoff actually seeds a conversation
+    // (the "Continue in chat" flow). The eval live preview hands off an
+    // EMPTY-message config-only handoff with the case prompt prefilled via
+    // `initialInput`; clearing here would wipe that prefill.
+    if (evalChatHandoff.messages.length > 0) {
+      composer.setInput("");
+    }
     onEvalChatHandoffConsumed?.(evalChatHandoff.id);
   }, [
     availableModels,
@@ -1569,8 +1780,11 @@ export function PlaygroundMain({
     return { senderUserId: id };
   }, [showSenderAvatars, currentUserForSender?._id]);
 
+  const suppressHistoryConflictToastRef = useRef(suppressHistoryConflictToast);
+  suppressHistoryConflictToastRef.current = suppressHistoryConflictToast;
+
   const detachHistorySession = useCallback(
-    (toastMessage: string) => {
+    (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
@@ -1581,7 +1795,13 @@ export function PlaygroundMain({
           toolRenderOverrides: restoredToolRenderOverrides,
         });
       }
-      toast.error(toastMessage);
+      // The eval preview is an ephemeral sandbox: its own Quick Run / replay
+      // mutates the session (e.g. a replayed "Add to cart" click fires a tool
+      // call), so a "changed elsewhere" alarm there is self-inflicted noise. The
+      // detach still happens; we just skip the user-facing toast.
+      if (!opts?.silent) {
+        toast.error(toastMessage);
+      }
     },
     [
       cancelPendingHistorySelection,
@@ -2035,6 +2255,7 @@ export function PlaygroundMain({
         ) {
           detachHistorySession(
             "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+            { silent: suppressHistoryConflictToastRef.current },
           );
         }
       })().catch((error) => {
@@ -2339,6 +2560,63 @@ export function PlaygroundMain({
     ]
   );
 
+  // Auto-run: when `autoRunInput` is set (eval preview "run on open"), send it
+  // once after the session has bootstrapped and while the thread is still
+  // empty. `handleSendFollowUp` ensures the server is connected first. The ref
+  // makes it fire exactly once per mount even as deps change.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    const handoffPending =
+      !!evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
+    if (
+      !shouldAutoRunPreview({
+        autoRunInput,
+        alreadyRan: autoRanRef.current,
+        isSessionBootstrapComplete,
+        isThreadEmpty,
+        isStreaming,
+        handoffPending,
+      })
+    ) {
+      return;
+    }
+    autoRanRef.current = true;
+    handleSendFollowUp(autoRunInput as string);
+    // The prompt was just auto-sent, so clear it out of the composer. The
+    // composer is otherwise seeded with the same `initialInput` (so it mirrors
+    // the eval editor's left-pane prompt); leaving the sent text behind would
+    // both look stale and invite an accidental duplicate send. The mirror only
+    // re-seeds when `initialInput` itself changes, so this clear sticks.
+    composer.setInput("");
+  }, [
+    autoRunInput,
+    composer,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    isThreadEmpty,
+    isStreaming,
+    handleSendFollowUp,
+  ]);
+
+  // Surface the live conversation to embedders (eval preview captures it back
+  // into the case spec). Effect-driven so it tracks streaming updates too.
+  useEffect(() => {
+    onMessagesChange?.(messages);
+  }, [messages, onMessagesChange]);
+
+  // Surface "is the run busy" to embedders. The eval preview uses the
+  // true→false edge to know a Quick Run finished and grade/replay the result.
+  // It must stay true across the WHOLE agent loop — including client-side tool
+  // execution, when `isStreaming` briefly drops between the model's segments —
+  // or the preview would finalize mid-loop (replay clicks while the model is
+  // still calling tools). `isStreaming || isExecuting` only goes false when the
+  // model AND any tool execution are both done.
+  const isRunBusy = isStreaming || !!isExecuting;
+  useEffect(() => {
+    onStreamingChange?.(isRunBusy);
+  }, [isRunBusy, onStreamingChange]);
+
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
   const handleModelContextUpdate = useCallback(
     (
@@ -2553,6 +2831,58 @@ export function PlaygroundMain({
     return map;
   }, [messages]);
 
+  const recorderPromptIndexSnapshotRef = useRef<{
+    key: string;
+    entries: Array<[string, number]>;
+  } | null>(null);
+
+  // Tier-3 recorder: map each assistant tool call's toolCallId → the ordinal of
+  // the user turn that produced it, so part-switch can attribute a recorded
+  // widget step to the right turn in the live (span-less) preview. Streaming
+  // text changes `messages` often; keep the snapshot identity stable unless the
+  // actual toolCallId → promptIndex mapping changes.
+  const recorderPromptIndexSnapshot = useMemo(() => {
+    if (!recorder) {
+      const previous = recorderPromptIndexSnapshotRef.current;
+      if (previous?.key === "") return previous;
+      const next = { key: "", entries: [] };
+      recorderPromptIndexSnapshotRef.current = next;
+      return next;
+    }
+    const entries: Array<[string, number]> = [];
+    let userOrdinal = -1;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        userOrdinal += 1;
+        continue;
+      }
+      if (msg.role !== "assistant") continue;
+      for (const part of msg.parts ?? []) {
+        if (!isToolPart(part) && !isDynamicTool(part)) continue;
+        const info = getToolInfo(part as never);
+        if (info.toolCallId && userOrdinal >= 0) {
+          entries.push([info.toolCallId, userOrdinal]);
+        }
+      }
+    }
+    const key = JSON.stringify(entries);
+    const previous = recorderPromptIndexSnapshotRef.current;
+    if (previous?.key === key) return previous;
+    const next = { key, entries };
+    recorderPromptIndexSnapshotRef.current = next;
+    return next;
+  }, [recorder, messages]);
+
+  const recorderWithResolver = useMemo<RecorderProps | undefined>(() => {
+    if (!recorder) return undefined;
+    const toolCallPromptIndex = new Map(recorderPromptIndexSnapshot.entries);
+    return {
+      ...recorder,
+      resolvePromptIndex: (toolCallId: string) =>
+        toolCallPromptIndex.get(toolCallId),
+    };
+  }, [recorder, recorderPromptIndexSnapshot]);
+
   // Placeholder: Chat tab strings for either compare grid; playground
   // default for true single-pane.
   let placeholder = showPostConnectGuide
@@ -2582,74 +2912,133 @@ export function PlaygroundMain({
     signUp();
   };
 
-  // Submit handler
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // Submit handler — shared by the composer form and eval Quick Run.
+  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
     const hasContent =
       composer.input.trim() ||
       mcpPromptResults.length > 0 ||
       fileAttachments.length > 0;
-    if (hasContent && !sendBlocked) {
-      if (!(await ensureSelectedServerReadyForChat())) {
-        return;
-      }
+    if (!hasContent || sendBlocked) {
+      return false;
+    }
+    if (!(await ensureSelectedServerReadyForChat())) {
+      return false;
+    }
 
-      if (
-        !isCompareMode &&
-        displayMode === "fullscreen" &&
-        isWidgetFullscreen
-      ) {
-        setIsFullscreenChatOpen(true);
-      }
+    if (
+      !isCompareMode &&
+      displayMode === "fullscreen" &&
+      isWidgetFullscreen
+    ) {
+      setIsFullscreenChatOpen(true);
+    }
 
-      // Convert file attachments to FileUIPart[] format for the AI SDK
-      const files =
-        fileAttachments.length > 0
-          ? await attachmentsToFileUIParts(fileAttachments)
-          : undefined;
+    const files =
+      fileAttachments.length > 0
+        ? await attachmentsToFileUIParts(fileAttachments)
+        : undefined;
 
-      // Multi-host and multi-model both broadcast to per-card chat
-      // sessions; the hidden parent `sendMessage` is exclusively for
-      // true single-pane (one card, one root session). Pre-fix, host
-      // compare fell through the `else` branch and fired BOTH
-      // queueBroadcastRequest AND sendMessage, producing a duplicate
-      // hidden run plus a broken transcript-handoff baseline.
-      if (isCompareMode) {
-        queueBroadcastRequest({
+    if (isCompareMode) {
+      queueBroadcastRequest({
+        text: composer.input,
+        files,
+        prependMessages: [],
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
+    } else {
+      queueBroadcastRequest(
+        {
           text: composer.input,
           files,
           prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
-        setModelContextQueue([]);
-      } else {
-        queueBroadcastRequest(
-          {
-            text: composer.input,
-            files,
-            prependMessages: [],
-          },
-          { single_model_send: true }
-        );
-        sendMessage({
-          text: composer.input,
-          files,
-          metadata: outgoingSenderMetadata,
-          widgetModelContext: modelContextQueue,
-        });
-        setModelContextQueue([]); // Clear after sending
-      }
-
-      composer.setInput("");
-      setMcpPromptResults([]);
-      // Revoke object URLs and clear file attachments
-      revokeFileAttachmentUrls(fileAttachments);
-      setFileAttachments([]);
-
-      // Notify onboarding that the first message was sent
-      onFirstMessageSent?.();
+        },
+        { single_model_send: true }
+      );
+      sendMessage({
+        text: composer.input,
+        files,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     }
+
+    composer.setInput("");
+    setMcpPromptResults([]);
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
+    onFirstMessageSent?.();
+    return true;
+  }, [
+    composer,
+    mcpPromptResults.length,
+    fileAttachments,
+    sendBlocked,
+    ensureSelectedServerReadyForChat,
+    isCompareMode,
+    displayMode,
+    isWidgetFullscreen,
+    queueBroadcastRequest,
+    modelContextQueue,
+    sendMessage,
+    outgoingSenderMetadata,
+    onFirstMessageSent,
+  ]);
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await performComposerSubmit();
   };
+
+  // Eval Quick Run: re-run the case in the live preview. Two phases so the send
+  // never races the reset's `setMessages`:
+  //   1. On a new `runPreviewRequest` nonce, reset the thread and mark a pending
+  //      run. (If streaming or not yet bootstrapped, the gate defers — the nonce
+  //      is left unconsumed so the effect re-fires when those clear.)
+  //   2. Once the reset has flushed (thread empty, not streaming), send the
+  //      current case prompt (`initialInput`) fresh — NOT the composer content,
+  //      so an empty composer or a just-cleared one still re-runs.
+  const lastRunPreviewRequestRef = useRef(0);
+  const [quickRunPending, setQuickRunPending] = useState(false);
+  useEffect(() => {
+    const handoffPending =
+      !!evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
+    if (
+      !shouldRunPreview({
+        runPreviewRequest,
+        alreadyHandledRequest: lastRunPreviewRequestRef.current,
+        isSessionBootstrapComplete,
+        isStreaming,
+        handoffPending,
+      })
+    ) {
+      return;
+    }
+    lastRunPreviewRequestRef.current = runPreviewRequest!;
+    handleResetAllChats();
+    setQuickRunPending(true);
+  }, [
+    runPreviewRequest,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    isStreaming,
+    handleResetAllChats,
+  ]);
+  useEffect(() => {
+    if (!quickRunPending) return;
+    if (!isThreadEmpty || isStreaming) return;
+    const text = (initialInput ?? "").trim();
+    setQuickRunPending(false);
+    if (text) handleSendFollowUp(text);
+  }, [
+    quickRunPending,
+    isThreadEmpty,
+    isStreaming,
+    initialInput,
+    handleSendFollowUp,
+  ]);
 
   const errorMessage = formatErrorMessage(error);
 
@@ -2686,6 +3075,66 @@ export function PlaygroundMain({
       sendBlocked,
     ]
   );
+  // "Ask agent to run" (harness built-in tools): the rail builds a structured
+  // prompt and requests a send via the bridge; we route it through the SAME
+  // single-model send path as the composer (send-if-ready, else leave it in the
+  // composer as a draft). No bespoke execution path — it's a normal turn.
+  const submitAgentToolPrompt = useCallback(
+    async (text: string) => {
+      if (composerDisabled || sendBlocked) {
+        composer.setInput(text);
+        return;
+      }
+      if (!(await ensureSelectedServerReadyForChat())) {
+        composer.setInput(text);
+        return;
+      }
+      if (isCompareMode) {
+        queueBroadcastRequest({
+          text,
+          prependMessages: [],
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
+      } else {
+        queueBroadcastRequest(
+          { text, prependMessages: [] },
+          { single_model_send: true },
+        );
+        sendMessage({
+          text,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
+      }
+      onFirstMessageSent?.();
+    },
+    [
+      composer,
+      composerDisabled,
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      isCompareMode,
+      queueBroadcastRequest,
+      sendMessage,
+      outgoingSenderMetadata,
+      modelContextQueue,
+      onFirstMessageSent,
+    ],
+  );
+
+  const pendingAgentToolPrompt = useAgentToolPromptBridge((s) => s.pending);
+  const consumeAgentToolPrompt = useAgentToolPromptBridge((s) => s.consume);
+  const handledAgentToolNonce = useRef<number | null>(null);
+  useEffect(() => {
+    const req = pendingAgentToolPrompt;
+    if (!req || req.nonce === handledAgentToolNonce.current) return;
+    handledAgentToolNonce.current = req.nonce;
+    consumeAgentToolPrompt();
+    void submitAgentToolPrompt(req.prompt);
+  }, [pendingAgentToolPrompt, consumeAgentToolPrompt, submitAgentToolPrompt]);
+
   const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -2713,6 +3162,27 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    // Client chip in the chat input toolbar (sibling to the model chip).
+    // Replaces the standalone "Compare" button that used to live in the
+    // playground header. Shared sessions can't switch hosts, so leave it off.
+    clientSelector: isSharedSession
+      ? undefined
+      : {
+          hosts: hostList,
+          projectId: multiHostProjectId,
+          // Cloud skills are Convex-scoped: use the real Convex project id
+          // (null for the synthetic "Default" project), never the UUID fallback
+          // baked into `multiHostProjectId`, which 500s the listSkills query.
+          cloudProjectId: convexProjectId,
+          currentHostId: previewedHostId ?? null,
+          selectedHostIds,
+          multiHostEnabled,
+          onHostChange: (hostId: string) => setPreviewedHostId(hostId),
+          onSelectedHostIdsChange: setSelectedHostIds,
+          onMultiHostEnabledChange: handleMultiHostEnabledChange,
+          onPromoteLead: handlePromoteLead,
+          enableMultiHost: canEnableMultiHost,
+        },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
@@ -2840,7 +3310,7 @@ export function PlaygroundMain({
                     )}
                     <PostConnectGuide />
                   </div>
-                ) : (
+                ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
                       <img
@@ -2931,7 +3401,7 @@ export function PlaygroundMain({
                 onFullscreenChange={setIsWidgetFullscreen}
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
-                showSaveViewButton={!hideSaveViewButton}
+                showInlineEdit={!hideInlineEdit}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -2950,6 +3420,7 @@ export function PlaygroundMain({
                 }
                 showSenderAvatars={showSenderAvatars}
                 resolveSenderAvatar={resolveSenderAvatar}
+                recorder={recorderWithResolver}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -3058,8 +3529,8 @@ export function PlaygroundMain({
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
         </div>
       )}
-      {/* Center header strip — hidden during onboarding */}
-      {!showPostConnectGuide && (
+      {/* Center header strip — hidden during onboarding and embedded eval preview */}
+      {!showPostConnectGuide && !hideCenterHeaderChrome && (
         <PlaygroundCenterHeaderBar
           showTraceTabs={showTraceViewTabs}
           mode={activeTraceViewMode}
@@ -3074,23 +3545,9 @@ export function PlaygroundMain({
           leadHostInMultiHost={
             isMultiHostMode ? leadHost?.name ?? null : null
           }
-          leading={
-            // Phase 2: playground-scoped multi-host picker. Persists the
-            // multi-host array + toggle to localStorage but does NOT yet
-            // change the playground render path (that lands in Phase 4).
-            // The global `GlobalHostBar` remains the host pill for other
-            // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
-            isSharedSession ? null : (
-              <PlaygroundHostPicker
-                projectId={multiHostProjectId}
-                selectedHostIds={selectedHostIds}
-                multiHostEnabled={multiHostEnabled}
-                onSelectedHostIdsChange={setSelectedHostIds}
-                onMultiHostEnabledChange={handleMultiHostEnabledChange}
-                onPromoteLead={handlePromoteLead}
-              />
-            )
-          }
+          // The standalone "Compare" host picker moved into the chat-input
+          // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
+          // switching still lives in the global `GlobalHostBar`.
           trailing={
             effectiveHasMessages ? (
               <Tooltip>
@@ -3130,7 +3587,13 @@ export function PlaygroundMain({
 
       <div className="flex-1 min-h-0 overflow-hidden">
         {isMultiModelLayoutMode ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <PlaygroundCompareThemeScope
+            hostStyle={hostStyle}
+            hostCapabilitiesOverride={hostCapabilitiesOverride}
+            chatUiOverride={chatUiOverride}
+            effectiveThreadTheme={effectiveThreadTheme}
+            hostShellStyle={hostShellStyle}
+          >
             {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
               <MultiModelEmptyTraceDiagnosticsPanel
                 activeTraceViewMode={activeTraceViewMode}
@@ -3258,6 +3721,7 @@ export function PlaygroundMain({
                           projectId: convexProjectId,
                           selectedServerIds: hostedSelectedServerIds,
                           oauthTokens: hostedOAuthTokens,
+                          hostId: column.compareId,
                         }}
                         hostedOrgModelConfig={hostedOrgModelConfig}
                         displayMode={displayMode}
@@ -3265,7 +3729,7 @@ export function PlaygroundMain({
                         hostStyle={column.hostSnapshot.hostStyle}
                         effectiveThreadTheme={effectiveThreadTheme}
                         deviceType={storeDeviceType}
-                        hideSaveViewButton={hideSaveViewButton}
+                        hideInlineEdit={hideInlineEdit}
                         onWidgetStateChange={onWidgetStateChange}
                         toolRenderOverrides={externalToolRenderOverrides}
                         isExecuting={isExecuting}
@@ -3340,13 +3804,16 @@ export function PlaygroundMain({
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
                             oauthTokens: hostedOAuthTokens,
+                            ...(previewedHostId
+                              ? { hostId: previewedHostId }
+                              : {}),
                           }}
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={hostStyle}
                           effectiveThreadTheme={effectiveThreadTheme}
                           deviceType={storeDeviceType}
-                          hideSaveViewButton={hideSaveViewButton}
+                          hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}
                           isExecuting={isExecuting}
@@ -3388,7 +3855,7 @@ export function PlaygroundMain({
                 </div>
               ) : null}
             </div>
-          </div>
+          </PlaygroundCompareThemeScope>
         ) : (
           <>
             {showLiveTraceDiagnostics && (
@@ -3428,6 +3895,7 @@ export function PlaygroundMain({
                         entries: requestPayloadHistory,
                         hasUiMessages: !isThreadEmpty,
                       }}
+                      harnessBuiltinTools={harnessBuiltinTools}
                       rawEmptyTestId="playground-live-raw-pending"
                       timelineEmptyTestId="playground-live-trace-pending"
                       nonRawShellClassName="flex-1 min-h-0 overflow-hidden px-4 py-4"

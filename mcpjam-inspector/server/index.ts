@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -25,8 +26,16 @@ import {
   getSessionToken,
 } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import { mayServeSessionToken } from "./utils/localhost-check";
+import {
+  mayServeSessionToken,
+  mayServeGuestBootstrap,
+} from "./utils/localhost-check";
 import { getActiveTunnelDomains } from "./services/tunnel-registry";
+import {
+  appendGuestSessionSetCookie,
+  buildGuestBootstrapScript,
+  mintGuestSessionForDocument,
+} from "./routes/web/guest-session-shared";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -35,6 +44,7 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -106,6 +116,7 @@ import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
+import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
@@ -119,6 +130,7 @@ import {
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
+  CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
@@ -223,6 +235,7 @@ generateSessionToken();
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
+startLocalBrowserRenderingSetupInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -324,20 +337,9 @@ app.use(
   })
 );
 
-app.use(
-  "/api/web/*",
-  bodyLimit({
-    maxSize: 1024 * 1024,
-    onError: (c) =>
-      c.json(
-        {
-          code: "VALIDATION_ERROR",
-          message: "Request body exceeds 1MB limit",
-        },
-        400
-      ),
-  })
-);
+// 1MB JSON cap for /api/web/*, with a multipart carve-out for the cloud-skills
+// folder upload (bounded by the service caps instead). See `webBodyLimit`.
+app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
 app.use("/api/*", requestLogContextMiddleware);
@@ -390,6 +392,10 @@ app.use(
   })
 );
 app.route("/api/v1", v1Routes);
+
+if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
+  app.route("/user_management", workosAuthkitRoutes);
+}
 
 // In-process self-dispatch for the workspace built-in tools' platform
 // client (see utils/self-app.ts). Mirror of the registration in
@@ -486,6 +492,19 @@ if (process.env.NODE_ENV === "production") {
   // In-app browser redirect (before SPA fallback)
   app.use("/*", inAppBrowserMiddleware);
 
+  // Vanity-domain landing: caniuse.dev (the "Can I use" host-compare showcase)
+  // points at this same service, so send its root straight to the chrome-less
+  // comparison page (no sidebar/nav, NUX-bypassed). Deep links pass through
+  // untouched. Host-gated so app.mcpjam.com and every other domain keep their
+  // normal home.
+  app.use("/*", async (c, next) => {
+    const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
+    if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
+      return c.redirect("/embed/host-compare", 302);
+    }
+    return next();
+  });
+
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
   app.use("/*", serveStatic({ root: clientRoot }));
@@ -547,6 +566,52 @@ if (process.env.NODE_ENV === "production") {
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
+
+      // Guest bootstrap blob: mint a guest bearer server-side and inject it so
+      // a cold guest boots with a token already in hand (no render-blocking
+      // POST /api/web/guest-session). Gated on production + hosted + not
+      // locked-down + a host allowlist that includes the hosted app host(s)
+      // (mayServeGuestBootstrap), mirroring the session-token discipline.
+      //
+      // Wrapped in its OWN try/catch so a mint failure never 500s the
+      // document — we just serve without the blob and let the client fall
+      // back to its POST path.
+      if (
+        process.env.NODE_ENV === "production" &&
+        HOSTED_MODE &&
+        process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
+        mayServeGuestBootstrap({
+          host,
+          forwardedHost,
+          allowedHosts: ALLOWED_HOSTS,
+          hostedMode: HOSTED_MODE,
+          activeTunnelDomains: getActiveTunnelDomains(),
+        })
+      ) {
+        try {
+          const { session, setCookies } =
+            await mintGuestSessionForDocument(c);
+          if (session && session.expiresAt > Date.now()) {
+            const bootstrapScript = buildGuestBootstrapScript(session);
+            htmlContent = htmlContent.replace(
+              "</head>",
+              `${bootstrapScript}</head>`
+            );
+            for (const cookie of setCookies) {
+              appendGuestSessionSetCookie(c, cookie);
+            }
+          }
+        } catch (error) {
+          appLogger.warn(
+            "[guest-bootstrap] document mint failed; serving without blob",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
+
+      // The document may embed a per-guest bearer; never let a shared/browser
+      // cache replay one guest's blob to another.
+      c.header("Cache-Control", "no-store");
 
       return c.html(htmlContent);
     } catch (error) {

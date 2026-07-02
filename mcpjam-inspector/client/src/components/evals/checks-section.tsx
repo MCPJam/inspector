@@ -31,6 +31,7 @@ import {
 } from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Trash2, Plus, X } from "lucide-react";
+import { Combobox } from "@/components/ui/combobox";
 import { ArgLeafPicker } from "./arg-leaf-picker";
 import type {
   Predicate,
@@ -39,88 +40,40 @@ import type {
 } from "@/shared/eval-matching";
 import { predicateSchema } from "@mcpjam/sdk/predicates";
 import { OverrideBadge } from "./override-badge";
+import { cn } from "@/lib/utils";
+import {
+  splitPredicatesForMigration,
+  stripScenarioPredicatesFromList,
+} from "@/shared/predicate-migration";
+import {
+  blankPredicate,
+  filterKindsForMenu,
+  GLOBAL_POLICY_MENU_KINDS,
+  globalGateLabel,
+  isGlobalPolicyKind,
+  isScenarioPredicateKind,
+  KIND_LABELS,
+  KIND_ORDER,
+  type Kind,
+} from "./predicate-kind-meta";
+import { AddGlobalGateMenu } from "./global-gate-menu";
+import {
+  GlobalGateKindInfoHint,
+  GlobalGatesSectionInfoHint,
+} from "./global-gates-info";
 
-// ─── kind metadata ────────────────────────────────────────────────────────
-//
-// One source of truth for the Add-check menu + per-row label. UI wording
-// here is the user-facing "checks" vocabulary; the backend `type` discriminator
-// is unchanged (Phase 2 plan: "UI says 'checks' everywhere. Internal code keeps
-// `Predicate` … to match SDK names").
-
-type Kind = Predicate["type"];
-
-const KIND_LABELS: Record<Kind, string> = {
-  toolCalledWith: "Tool was called with…",
-  toolCalledAtLeastOnce: "Tool was called at least once",
-  toolNeverCalled: "Tool was never called",
-  firstToolWas: "First tool called was…",
-  responseContains: "Response contains…",
-  responseMatches: "Response matches regex…",
-  noToolErrors: "No tool errors",
-  finalAssistantMessageNonEmpty: "Final message non-empty",
-  tokenBudgetUnder: "Token budget under N",
-  widgetRendered: "Widget rendered",
-  widgetRenderLatencyUnder: "Widget rendered under N ms",
-  widgetNoConsoleErrors: "No widget console errors",
-};
-
-// Order chosen so tool-call checks cluster first, then response checks, then
-// no-arg checks, then resource checks. Matches the Phase 2 plan UI listing.
-const KIND_ORDER: Kind[] = [
-  "toolCalledWith",
-  "toolCalledAtLeastOnce",
-  "toolNeverCalled",
-  "firstToolWas",
-  "responseContains",
-  "responseMatches",
-  "noToolErrors",
-  "finalAssistantMessageNonEmpty",
-  "tokenBudgetUnder",
-  "widgetRendered",
-  "widgetRenderLatencyUnder",
-  "widgetNoConsoleErrors",
-];
-
-// Widget render checks ship behind the synthetic-monitors rollout. Existing
-// rows of these kinds always render (deleting another team member's check by
-// hiding it would be worse); only the Add-check menu is gated.
-const SYNTHETIC_MONITOR_KINDS: ReadonlySet<Kind> = new Set([
-  "widgetRendered",
-  "widgetRenderLatencyUnder",
-  "widgetNoConsoleErrors",
-]);
-
-/** Build a fresh, valid-by-default predicate skeleton for a newly-added row. */
-export function blankPredicate(kind: Predicate["type"]): Predicate {
-  switch (kind) {
-    case "toolCalledWith":
-      return { type: "toolCalledWith", toolName: "", args: { args: {} } };
-    case "toolCalledAtLeastOnce":
-      return { type: "toolCalledAtLeastOnce", toolName: "" };
-    case "toolNeverCalled":
-      return { type: "toolNeverCalled", toolName: "" };
-    case "firstToolWas":
-      return { type: "firstToolWas", toolName: "" };
-    case "responseContains":
-      return { type: "responseContains", needle: "" };
-    case "responseMatches":
-      return { type: "responseMatches", pattern: "" };
-    case "noToolErrors":
-      return { type: "noToolErrors" };
-    case "finalAssistantMessageNonEmpty":
-      return { type: "finalAssistantMessageNonEmpty" };
-    case "tokenBudgetUnder":
-      return { type: "tokenBudgetUnder", tokens: 1000 };
-    case "widgetRendered":
-      return { type: "widgetRendered" };
-    case "widgetRenderLatencyUnder":
-      return { type: "widgetRenderLatencyUnder", ms: 3000 };
-    case "widgetNoConsoleErrors":
-      return { type: "widgetNoConsoleErrors" };
-  }
-}
+// Re-export for step-list-editor and other callers.
+export { blankPredicate } from "./predicate-kind-meta";
 
 // ─── Top-level checks list editor (shared between suite + case) ───────────
+
+/**
+ * Per-tool JSON-schema `properties` map (`toolName → { argName: schema }`),
+ * used to drive the argument-name dropdown and value type hints in the
+ * `toolCalledWith` editor. Optional: callers without attached-server schemas
+ * (e.g. legacy suites) omit it and the argument key falls back to free text.
+ */
+export type ToolArgSchemas = Record<string, Record<string, any>>;
 
 export interface ChecksSectionProps {
   /** The list to render and edit. */
@@ -128,23 +81,37 @@ export interface ChecksSectionProps {
   onChange: (next: Predicate[]) => void;
   /** Tools available from the suite-attached server, for the tool dropdowns. */
   availableTools?: string[];
+  /** Per-tool input-schema properties, for the argument-name dropdown. */
+  toolArgSchemas?: ToolArgSchemas;
   /** Header label override. */
   title?: string;
   /** Subtitle/explainer. */
   description?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
+  /**
+   * Restrict the Add-check menu to these kinds when `globalGatesMenu` is false.
+   */
+  allowedKinds?: readonly Predicate["type"][];
+  /**
+   * Global gates surface: Add menu shows whole-run policy kinds only.
+   * Legacy scenario predicates on existing rows render read-only.
+   */
+  globalGatesMenu?: boolean;
 }
 
 export function ChecksSection({
   value,
   onChange,
   availableTools,
+  toolArgSchemas,
   title = "Default checks",
   description,
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
+  allowedKinds,
+  globalGatesMenu = false,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
@@ -187,34 +154,70 @@ export function ChecksSection({
             <li key={i}>
               <CheckRow
                 predicate={predicate}
-                onChange={readOnly ? () => {} : (next) => updateAt(i, next)}
-                onRemove={readOnly ? undefined : () => removeAt(i)}
+                onChange={
+                  readOnly || (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                    ? () => {}
+                    : (next) => updateAt(i, next)
+                }
+                onRemove={
+                  readOnly || (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                    ? undefined
+                    : () => removeAt(i)
+                }
                 availableTools={availableTools}
-                readOnly={readOnly}
+                toolArgSchemas={toolArgSchemas}
+                readOnly={
+                  readOnly ||
+                  (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                }
+                legacyScenarioGate={
+                  globalGatesMenu && isScenarioPredicateKind(predicate.type)
+                }
+                globalGate={
+                  globalGatesMenu && isGlobalPolicyKind(predicate.type)
+                }
               />
             </li>
           ))}
         </ul>
       )}
 
-      {!readOnly && !hideAddButton ? <AddCheckMenu onAdd={addOfKind} /> : null}
+      {!readOnly && !hideAddButton ? (
+        <AddCheckMenu
+          onAdd={addOfKind}
+          allowedKinds={
+            globalGatesMenu
+              ? GLOBAL_POLICY_MENU_KINDS
+              : allowedKinds
+          }
+          globalGatesMenu={globalGatesMenu}
+        />
+      ) : null}
     </div>
   );
 }
 
 export function AddCheckMenu({
   onAdd,
+  allowedKinds,
+  globalGatesMenu = false,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
+  /** When set, restrict the menu to these kinds. */
+  allowedKinds?: readonly Predicate["type"][];
+  globalGatesMenu?: boolean;
 }) {
-  // A controlled Select where picking a value fires `onAdd` and resets to
-  // the placeholder — simpler than a popover menu and reuses design-system
-  // primitives that already render correctly inside dialogs/sheets.
+  if (globalGatesMenu) {
+    return <AddGlobalGateMenu onAdd={onAdd} />;
+  }
+
   const [open, setOpen] = useState(false);
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const kinds = syntheticMonitorsEnabled
-    ? KIND_ORDER
-    : KIND_ORDER.filter((kind) => !SYNTHETIC_MONITOR_KINDS.has(kind));
+  const kinds = filterKindsForMenu(
+    KIND_ORDER,
+    !!syntheticMonitorsEnabled,
+    allowedKinds,
+  );
   return (
     <div className="flex items-center gap-2">
       <Select
@@ -250,7 +253,14 @@ export interface CheckRowProps {
   onChange: (next: Predicate) => void;
   onRemove?: () => void;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   readOnly?: boolean;
+  /** Strip outer card chrome + kind header when nested inside a step row. */
+  embedded?: boolean;
+  /** Scenario predicate still in Global gates list — prompt move to steps. */
+  legacyScenarioGate?: boolean;
+  /** Compact whole-run gate row (label + hint in header, minimal fields). */
+  globalGate?: boolean;
 }
 
 export function CheckRow({
@@ -258,7 +268,11 @@ export function CheckRow({
   onChange,
   onRemove,
   availableTools,
+  toolArgSchemas,
   readOnly = false,
+  embedded = false,
+  legacyScenarioGate = false,
+  globalGate = false,
 }: CheckRowProps) {
   // Zod-validate the current row so an in-progress edit (e.g. empty toolName,
   // malformed args JSON) surfaces an inline error and disables Save up the
@@ -273,21 +287,41 @@ export function CheckRow({
 
   return (
     <div
-      className={`rounded-md border p-3 ${
-        error ? "border-red-500/40 bg-red-500/5" : "border-border/60 bg-muted/10"
-      }`}
+      className={cn(
+        embedded
+          ? "min-w-0 space-y-3"
+          : cn(
+              "rounded-md border p-3",
+              error
+                ? "border-red-500/40 bg-red-500/5"
+                : "border-border/60 bg-muted/10",
+            ),
+      )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {KIND_LABELS[predicate.type]}
-          </div>
+        <div className="min-w-0 flex-1 space-y-3">
+          {!embedded ? (
+            globalGate ? (
+              <div className="flex items-center gap-1">
+                <div className="text-xs font-medium text-foreground">
+                  {globalGateLabel(predicate.type)}
+                </div>
+                <GlobalGateKindInfoHint kind={predicate.type} />
+              </div>
+            ) : (
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {KIND_LABELS[predicate.type]}
+              </div>
+            )
+          ) : null}
 
           <CheckFields
             predicate={predicate}
             onChange={onChange}
             availableTools={availableTools}
+            toolArgSchemas={toolArgSchemas}
             readOnly={readOnly}
+            compactGlobalGate={globalGate}
           />
 
           {error ? (
@@ -295,13 +329,18 @@ export function CheckRow({
               {error}
             </div>
           ) : null}
+          {legacyScenarioGate ? (
+            <p className="text-[11px] text-muted-foreground">
+              Scenario check — use Move to Steps to edit inline in the flow.
+            </p>
+          ) : null}
         </div>
         {onRemove ? (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0 text-muted-foreground"
+            className="h-7 w-7 shrink-0 p-0 text-muted-foreground"
             onClick={onRemove}
             aria-label="Remove check"
           >
@@ -317,12 +356,16 @@ function CheckFields({
   predicate,
   onChange,
   availableTools,
+  toolArgSchemas,
   readOnly,
+  compactGlobalGate = false,
 }: {
   predicate: Predicate;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
+  compactGlobalGate?: boolean;
 }) {
   switch (predicate.type) {
     case "toolCalledWith":
@@ -331,6 +374,7 @@ function CheckFields({
           predicate={predicate}
           onChange={onChange}
           availableTools={availableTools}
+          toolArgSchemas={toolArgSchemas}
           readOnly={readOnly}
         />
       );
@@ -364,6 +408,7 @@ function CheckFields({
         />
       );
     case "noToolErrors":
+      if (compactGlobalGate) return null;
       return (
         <div className="text-xs text-muted-foreground">
           Passes when no tool reported an error (neither MCP isError nor a
@@ -382,14 +427,15 @@ function CheckFields({
           predicate={predicate}
           onChange={onChange}
           readOnly={readOnly}
+          compact={compactGlobalGate}
         />
       );
     case "widgetRendered":
       return (
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">
-            Passes when at least one MCP App widget rendered during the
-            iteration. Fails when the run recorded no widget renders.
+            Passes when at least one MCP App view rendered during the
+            iteration. Fails when the run recorded no view renders.
           </div>
           <WidgetToolFilterField
             value={predicate.toolName}
@@ -415,6 +461,22 @@ function CheckFields({
         />
       );
     case "widgetNoConsoleErrors":
+      if (compactGlobalGate) {
+        return (
+          <WidgetToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) =>
+              onChange(
+                toolName === undefined
+                  ? { type: "widgetNoConsoleErrors" }
+                  : { type: "widgetNoConsoleErrors", toolName },
+              )
+            }
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+        );
+      }
       return (
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">
@@ -493,14 +555,20 @@ function ToolCalledWithFields({
   predicate,
   onChange,
   availableTools,
+  toolArgSchemas,
   readOnly,
 }: {
   predicate: Extract<Predicate, { type: "toolCalledWith" }>;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
 }) {
   const minCountId = useId();
+  // Schema properties for the currently-selected tool, if known. Drives the
+  // argument-name dropdown + value type hints below; empty/undefined falls
+  // back to free-text keys.
+  const argProperties = toolArgSchemas?.[predicate.toolName];
   return (
     <div className="space-y-3">
       <ToolNameField
@@ -512,6 +580,7 @@ function ToolCalledWithFields({
       <ArgMatcherSubform
         value={predicate.args}
         onChange={(args) => onChange({ ...predicate, args })}
+        argProperties={argProperties}
         readOnly={readOnly}
       />
       <div className="space-y-1">
@@ -584,6 +653,7 @@ function argsAreFlat(args: Record<string, unknown>): boolean {
 function ArgMatcherSubform({
   value,
   onChange,
+  argProperties,
   readOnly,
 }: {
   value: { args: Record<string, unknown>; argumentMatching?: ArgMatchMode };
@@ -591,6 +661,7 @@ function ArgMatcherSubform({
     args: Record<string, unknown>;
     argumentMatching?: ArgMatchMode;
   }) => void;
+  argProperties?: Record<string, any>;
   readOnly: boolean;
 }) {
   const modeId = useId();
@@ -605,7 +676,7 @@ function ArgMatcherSubform({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-end justify-between gap-2">
+      <div className="space-y-2">
         <div className="space-y-1">
           <Label htmlFor={modeId} className="text-[11px]">
             Argument matching
@@ -617,7 +688,7 @@ function ArgMatcherSubform({
             }
             disabled={readOnly}
           >
-            <SelectTrigger id={modeId} className="h-8 w-40 text-xs">
+            <SelectTrigger id={modeId} className="h-8 w-full text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -636,7 +707,7 @@ function ArgMatcherSubform({
         {/* Per-row "Raw JSON" toggle so power users can author nested
             shapes the structured editor can't express. Disabled in
             ignore mode (args aren't compared anyway). */}
-        <div className="flex items-center gap-1.5 pb-1">
+        <div className="flex items-center justify-end gap-2">
           <Switch
             id={`${modeId}-raw`}
             checked={useRaw}
@@ -646,7 +717,7 @@ function ArgMatcherSubform({
           />
           <Label
             htmlFor={`${modeId}-raw`}
-            className="text-[10px] text-muted-foreground"
+            className="text-[11px] text-muted-foreground"
           >
             Raw JSON
           </Label>
@@ -668,6 +739,7 @@ function ArgMatcherSubform({
           value={value.args ?? {}}
           onChange={(args) => onChange({ ...value, args })}
           mode={mode}
+          argProperties={argProperties}
           readOnly={readOnly}
         />
       )}
@@ -685,11 +757,13 @@ function StructuredArgsEditor({
   value,
   onChange,
   mode,
+  argProperties,
   readOnly,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   mode: ArgMatchMode;
+  argProperties?: Record<string, any>;
   readOnly: boolean;
 }) {
   // Stable ordering for the row list: insertion order via Object.entries.
@@ -737,6 +811,7 @@ function StructuredArgsEditor({
               persistedKey={key}
               value={val}
               mode={mode}
+              argProperties={argProperties}
               readOnly={readOnly}
               isKeyTaken={(candidate) =>
                 candidate !== key && Object.hasOwn(value, candidate)
@@ -777,6 +852,7 @@ function StructuredArgsRow({
   persistedKey,
   value,
   mode,
+  argProperties,
   readOnly,
   isKeyTaken,
   onCommitKey,
@@ -786,6 +862,7 @@ function StructuredArgsRow({
   persistedKey: string;
   value: unknown;
   mode: ArgMatchMode;
+  argProperties?: Record<string, any>;
   readOnly: boolean;
   isKeyTaken: (candidate: string) => boolean;
   onCommitKey: (next: string) => void;
@@ -803,66 +880,115 @@ function StructuredArgsRow({
   const collides = draftKey !== persistedKey && isKeyTaken(draftKey);
   const isEmpty = draftKey.length === 0;
 
+  // When the selected tool exposes an input schema, offer the argument name
+  // as a dropdown (parity with the tool dropdown) instead of free text. The
+  // JSON-schema entry for the current key also feeds value type hints into
+  // the leaf picker. Tools without a schema fall back to the free-text input.
+  const argKeys = argProperties ? Object.keys(argProperties) : [];
+  const useKeyDropdown = argKeys.length > 0;
+  const argSchema = argProperties?.[persistedKey] as
+    | { type?: string; description?: string }
+    | undefined;
+  // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
+  // schema property — show the placeholder so the user is prompted to pick.
+  const isPlaceholderKey =
+    /^arg\d*$/.test(persistedKey) && !argKeys.includes(persistedKey);
+  const keyItems = argKeys
+    // Hide names already used by sibling rows so the dropdown can't create a
+    // collision; keep the current row's own key selectable.
+    .filter((k) => k === persistedKey || !isKeyTaken(k))
+    .map((k) => {
+      const schema = argProperties![k] as
+        | { type?: string; description?: string }
+        | undefined;
+      let description = schema?.description || "";
+      if (schema?.type) {
+        description += description
+          ? ` (Type: ${schema.type})`
+          : `Type: ${schema.type}`;
+      }
+      return { value: k, label: k, description };
+    });
+
   return (
-    <li className="flex items-start gap-1.5 rounded-md bg-background/60 p-1.5 ring-1 ring-border/30">
-      <div className="flex flex-col">
-        <Input
-          value={draftKey}
-          onChange={(e) => {
-            const candidate = e.target.value;
-            setDraftKey(candidate);
-            // Only commit when the candidate is unique and non-empty;
-            // collisions / empties stay in local state so the user can
-            // finish typing without overwriting another row.
-            if (candidate === persistedKey) return;
-            if (candidate.length === 0) return;
-            if (isKeyTaken(candidate)) return;
-            onCommitKey(candidate);
-          }}
-          placeholder="key"
-          className={
-            "h-9 w-28 shrink-0 font-mono text-xs" +
-            (collides || isEmpty
-              ? " border-destructive focus-visible:ring-destructive"
-              : "")
-          }
-          disabled={readOnly}
-          aria-invalid={collides || isEmpty ? true : undefined}
-          aria-label="Argument key"
-          title={
-            collides
-              ? "Key already exists"
-              : isEmpty
-                ? "Key cannot be empty"
-                : undefined
-          }
-        />
-        {collides ? (
-          <span className="mt-0.5 text-[10px] text-destructive">
-            Key already exists
-          </span>
-        ) : null}
+    <li className="space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2.5">
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-[10px] text-muted-foreground">Argument</Label>
+          {!readOnly ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={onRemove}
+              aria-label={`Remove argument ${persistedKey}`}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+        {useKeyDropdown ? (
+          <Combobox
+            items={keyItems}
+            value={isPlaceholderKey ? "" : persistedKey}
+            onValueChange={(newKey) => onCommitKey(newKey)}
+            placeholder="Select arg…"
+            searchPlaceholder="Search arguments…"
+            emptyMessage="No arguments"
+            className="h-8 w-full justify-between font-mono text-xs"
+          />
+        ) : (
+          <>
+            <Input
+              value={draftKey}
+              onChange={(e) => {
+                const candidate = e.target.value;
+                setDraftKey(candidate);
+                if (candidate === persistedKey) return;
+                if (candidate.length === 0) return;
+                if (isKeyTaken(candidate)) return;
+                onCommitKey(candidate);
+              }}
+              placeholder="key"
+              className={cn(
+                "h-8 w-full font-mono text-xs",
+                (collides || isEmpty) &&
+                  "border-destructive focus-visible:ring-destructive",
+              )}
+              disabled={readOnly}
+              aria-invalid={collides || isEmpty ? true : undefined}
+              aria-label="Argument key"
+              title={
+                collides
+                  ? "Key already exists"
+                  : isEmpty
+                    ? "Key cannot be empty"
+                    : undefined
+              }
+            />
+            {collides ? (
+              <span className="text-[10px] text-destructive">
+                Key already exists
+              </span>
+            ) : null}
+          </>
+        )}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 space-y-1">
+        <Label className="text-[10px] text-muted-foreground">
+          Expected value
+        </Label>
         <ArgLeafPicker
           value={value}
           onChange={(next) => onChangeValue(next)}
           argumentMatching={mode}
+          inferredType={argSchema?.type}
+          inputPlaceholder={argSchema?.type ? `${argSchema.type}` : undefined}
           disabled={readOnly}
+          className="w-full"
         />
       </div>
-      {!readOnly ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          onClick={onRemove}
-          aria-label={`Remove argument ${persistedKey}`}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      ) : null}
     </li>
   );
 }
@@ -1162,16 +1288,18 @@ function TokenBudgetField({
   predicate,
   onChange,
   readOnly,
+  compact = false,
 }: {
   predicate: Extract<Predicate, { type: "tokenBudgetUnder" }>;
   onChange: (next: Predicate) => void;
   readOnly: boolean;
+  compact?: boolean;
 }) {
   const id = useId();
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Max tokens (strictly under)
+        {compact ? "Max tokens" : "Max tokens (strictly under)"}
       </Label>
       <Input
         id={id}
@@ -1211,6 +1339,8 @@ export interface CaseChecksSectionProps {
    * has-no-checks-and-case-inherits state is the boring default, not an alarm.
    */
   embedded?: boolean;
+  /** Append scenario predicates to steps (parent writes steps + strips global list). */
+  onAppendScenarioToSteps?: (scenarioAsserts: Predicate[]) => void;
 }
 
 /**
@@ -1229,6 +1359,7 @@ export function CaseChecksSection({
   suiteDefaults,
   availableTools,
   embedded = false,
+  onAppendScenarioToSteps,
 }: CaseChecksSectionProps) {
   const resolved = resolveCaseChecks(value);
   const mode = resolved.mode;
@@ -1250,28 +1381,61 @@ export function CaseChecksSection({
     const caseList = resolved.list;
     const hasOwnChecks = caseList.length > 0;
     const inheritedCount = suiteDefaults.length;
+    const { scenarioAsserts: caseScenarioAsserts } =
+      splitPredicatesForMigration(caseList);
+    const { scenarioAsserts: suiteScenarioAsserts } =
+      splitPredicatesForMigration(suiteDefaults);
     return (
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <h4 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Checks
-          </h4>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-1 min-w-0">
+            <h4 className="text-xs font-medium text-foreground">Global gates</h4>
+            <GlobalGatesSectionInfoHint />
+          </div>
           <AddCheckMenu
+            globalGatesMenu
             onAdd={(kind) =>
               setEmbeddedList([...caseList, blankPredicate(kind)])
             }
           />
         </div>
+        {suiteScenarioAsserts.length > 0 ? (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            Suite defaults include {suiteScenarioAsserts.length} scenario check
+            {suiteScenarioAsserts.length === 1 ? "" : "s"} — review in Suite
+            settings.
+          </p>
+        ) : null}
+        {caseScenarioAsserts.length > 0 ? (
+          <div className="rounded-md border border-border/50 bg-muted/20 p-2.5 space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              {caseScenarioAsserts.length} scenario check
+              {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to
+              Steps for inline checks.
+            </p>
+            {onAppendScenarioToSteps ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  onAppendScenarioToSteps(caseScenarioAsserts);
+                  setEmbeddedList(stripScenarioPredicatesFromList(caseList));
+                }}
+              >
+                Move to Steps (append at end)
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {inheritedCount > 0 ? (
           <p className="text-[11px] text-muted-foreground">
-            Inherits {inheritedCount} suite default check
-            {inheritedCount === 1 ? "" : "s"}. Add case-specific checks below
-            to extend them.
+            +{inheritedCount} from suite
           </p>
         ) : !hasOwnChecks ? (
           <p className="text-[11px] italic text-muted-foreground">
-            No checks gating this case yet. Add one above, or set suite
-            defaults in Suite settings.
+            None on this case yet
           </p>
         ) : null}
         {hasOwnChecks ? (
@@ -1279,6 +1443,7 @@ export function CaseChecksSection({
             title=""
             hideAddButton
             hideEmptyState
+            globalGatesMenu
             value={caseList}
             onChange={setEmbeddedList}
             availableTools={availableTools}

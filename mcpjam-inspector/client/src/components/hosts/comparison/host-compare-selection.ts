@@ -63,22 +63,32 @@ export function resolveInitialHostCompareSelection(args: {
   liveHostIds: ReadonlyArray<string>;
   previousSelection: ReadonlyArray<string>;
   urlSelection?: ReadonlyArray<string> | null;
+  /**
+   * Every id the user is allowed to select — real live hosts plus synthetic
+   * preset host ids. URL / stored / previous selections reconcile against this
+   * superset so a preset column survives a reload, while the default fallback
+   * stays real-hosts-only (presets are opt-in, never auto-selected). Defaults
+   * to `liveHostIds` when omitted (no presets in play).
+   */
+  knownHostIds?: ReadonlyArray<string>;
 }): string[] {
-  const live = new Set(args.liveHostIds);
-  if (live.size === 0) return [];
+  const known = new Set(args.knownHostIds ?? args.liveHostIds);
 
   if (args.urlSelection && args.urlSelection.length > 0) {
-    const fromUrl = reconcileHostCompareSelection(args.urlSelection, live);
+    const fromUrl = reconcileHostCompareSelection(args.urlSelection, known);
     if (fromUrl.length > 0) return fromUrl;
   }
 
   const stored = readHostCompareSelection(args.projectId);
   if (stored) {
-    const fromStorage = reconcileHostCompareSelection(stored, live);
+    const fromStorage = reconcileHostCompareSelection(stored, known);
     if (fromStorage.length > 0) return fromStorage;
   }
 
-  const fromPrevious = reconcileHostCompareSelection(args.previousSelection, live);
+  const fromPrevious = reconcileHostCompareSelection(
+    args.previousSelection,
+    known,
+  );
   if (fromPrevious.length > 0) return fromPrevious;
 
   return [...args.liveHostIds];

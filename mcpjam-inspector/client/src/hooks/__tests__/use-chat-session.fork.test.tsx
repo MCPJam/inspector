@@ -52,6 +52,9 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [baseModel]),
   getDefaultModel: vi.fn(() => baseModel),
+  isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
+    String(model.id).includes("/")
+  ),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -115,6 +118,9 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  // useChatSession reads the credit balance (to lock free models at 0
+  // credits); no balance in these tests → outOfCredits resolves false.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@ai-sdk/react", async () => {

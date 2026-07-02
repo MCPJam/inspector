@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { IdJagInspector } from "../IdJagInspector";
 import type { XAADecodedJwt } from "@/lib/xaa/types";
@@ -79,8 +80,32 @@ describe("IdJagInspector claim lint", () => {
 
     expect(screen.getByText(/2 failing/)).toBeInTheDocument();
     expect(screen.getByTestId("idjag-lint-aud")).toHaveTextContent(
-      "exactly match",
+      "https://wrong-audience.example.com",
     );
-    expect(screen.getByTestId("idjag-lint-exp")).toHaveTextContent("expired");
+    expect(screen.getByTestId("idjag-lint-exp")).toHaveTextContent(
+      "RFC 7523",
+    );
+  });
+
+  it("collapses and expands the inspector body", async () => {
+    const user = userEvent.setup();
+    render(
+      <IdJagInspector
+        rawJwt="aaa.bbb.ccc"
+        decoded={buildDecoded()}
+        negativeTestMode="valid"
+      />,
+    );
+
+    expect(screen.getByText("Claim lint")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("idjag-inspector-toggle"));
+
+    expect(screen.queryByText("Claim lint")).toBeNull();
+    expect(screen.getByText("All claims pass")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("idjag-inspector-toggle"));
+
+    expect(screen.getByText("Claim lint")).toBeInTheDocument();
   });
 });

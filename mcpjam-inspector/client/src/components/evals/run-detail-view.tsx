@@ -8,28 +8,34 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import {
-  formatRunId,
-} from "./helpers";
-import {
-  computeIterationPassed,
-} from "./pass-criteria";
+import { formatRunId } from "./helpers";
+import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
 import { AiTriageCard } from "./ai-triage-card";
+import {
+  computeRunPassRatePercent,
+  unifyTriageRows,
+} from "./ai-triage-helpers";
 import { GoalCompletionCard } from "./goal-completion-card";
+import {
+  buildJudgeCaseMap,
+  caseKeyForGroup,
+  deterministicCasePassed,
+  judgeDisagreesWithVerdict,
+  type JudgeCase,
+} from "./goal-completion-presentation";
+import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Download } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
-import {
-  caseListCardClassName,
-} from "./case-list-shared";
+import { caseListCardClassName } from "./case-list-shared";
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
@@ -42,6 +48,7 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
+import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -49,10 +56,10 @@ import {
 } from "@/components/ui/resizable";
 
 /** 3:2 default — test cases vs insight rail (option C). */
-const RUN_DETAIL_CASES_PANEL_DEFAULT = 60;
+const RUN_DETAIL_CASES_PANEL_DEFAULT = 58;
 const RUN_DETAIL_CASES_PANEL_MIN = 35;
-const RUN_DETAIL_CASES_PANEL_MAX = 75;
-const RUN_DETAIL_INSIGHTS_PANEL_MIN = 25;
+const RUN_DETAIL_CASES_PANEL_MAX = 72;
+const RUN_DETAIL_INSIGHTS_PANEL_MIN = 28;
 const RUN_DETAIL_INSIGHTS_PANEL_MAX = 65;
 
 const LG_MEDIA_QUERY = "(min-width: 1024px)";
@@ -94,6 +101,24 @@ interface RunDetailViewProps {
   hideCiMetadata?: boolean;
   /** When true, omit replay source line (shown in SuiteHeader instead). */
   hideReplayLineage?: boolean;
+  /**
+   * When true, hide the "Recent runs" chip strip in the accuracy hero — used
+   * when an external run switcher (the suite results rail) already lists runs.
+   */
+  hideRecentRuns?: boolean;
+  /**
+   * Replaces the built-in per-iteration case table. The unified suite results
+   * surface passes the scoped cross-host matrix here so the run view's table
+   * matches the All-runs / group tables (one shared case×host idiom).
+   */
+  caseTableSlot?: React.ReactNode;
+  /**
+   * Suppress the run's own KPI cards / accuracy hero. Used when the run is
+   * folded into the results split, where the shared suite metric strip (scoped
+   * to this run) already owns that real estate — avoids a duplicate band.
+   */
+  hideKpiStrip?: boolean;
+  hideAccuracyHero?: boolean;
   /** When true, only the iteration detail pane is shown (list lives in a parent sidebar). */
   omitIterationList?: boolean;
   onOpenRunInsights?: () => void;
@@ -123,6 +148,8 @@ interface RunDetailViewProps {
   hostNamesById?: Map<string, string | null>;
   /** Recent run pass rates for the accuracy sparkline in the insight rail. */
   runTrendData?: RunTrendPoint[];
+  /** Opens the OTLP trace-export modal for this run (rendered on the hero band). */
+  onExportTraces?: () => void;
   /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/ci-evals/...` instead of
@@ -170,6 +197,8 @@ export function RunIterationsSidebar({
    */
   showRunOverviewNav = true,
   showCaseCardHeader = false,
+  flushChrome = false,
+  judgeByCaseKey,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
@@ -192,6 +221,10 @@ export function RunIterationsSidebar({
   showRunOverviewNav?: boolean;
   /** Card title above the grouped case table (playground run detail main column). */
   showCaseCardHeader?: boolean;
+  /** Flush layout inside the run-detail split (no nested card chrome). */
+  flushChrome?: boolean;
+  /** Advisory judge verdicts by snapshot caseKey; rows show a badge when set. */
+  judgeByCaseKey?: Map<string, JudgeCase> | null;
 }) {
   const overviewStatsOverride = useMemo(() => {
     if (!runForOverview) return undefined;
@@ -226,11 +259,9 @@ export function RunIterationsSidebar({
 
   const groupedCaseCount = useMemo(
     () =>
-      groupRunIterationsByTestCase(
-        caseGroupsForSelectedRun,
-        runDetailSortBy,
-      ).length,
-    [caseGroupsForSelectedRun, runDetailSortBy],
+      groupRunIterationsByTestCase(caseGroupsForSelectedRun, runDetailSortBy)
+        .length,
+    [caseGroupsForSelectedRun, runDetailSortBy]
   );
 
   const sortHeaderControl = (
@@ -294,7 +325,9 @@ export function RunIterationsSidebar({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div
           className={cn(
-            caseListCardClassName,
+            flushChrome
+              ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card"
+              : caseListCardClassName,
             "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
@@ -309,6 +342,7 @@ export function RunIterationsSidebar({
               caseCount={showCaseCardHeader ? groupedCaseCount : undefined}
               headerEnd={sortHeaderControl}
               trailingGutter={Boolean(_onEditTestCase)}
+              judgeByCaseKey={judgeByCaseKey}
             />
           </div>
         </div>
@@ -342,6 +376,11 @@ export function RunDetailView({
   runTrendData = [],
   onSelectRun,
   currentSuiteJudgeConfig,
+  hideRecentRuns = false,
+  caseTableSlot,
+  hideKpiStrip = false,
+  hideAccuracyHero = false,
+  onExportTraces,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -374,6 +413,27 @@ export function RunDetailView({
   const { availableModels } = useAvailableModels({
     projectId: selectedRunDetails.projectId ?? null,
   });
+
+  // The frozen reproducible-env pin this run launched from (if any). Resolve a
+  // friendly name best-effort; fall back to the snapshot's environmentId if the
+  // environment was deleted since the run.
+  const runComputerEnv = selectedRunDetails.configSnapshot?.computerEnvironment;
+  // Durable id keyed off the frozen pin, falling back to the snapshot's
+  // environment.computerEnvironmentId — so a run that recorded the id without
+  // the newer frozen object still shows an Environment row.
+  const runComputerEnvId =
+    runComputerEnv?.environmentId ??
+    selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
+    null;
+  const runEnvironments = useEnvironments(
+    runComputerEnvId ? selectedRunDetails.projectId ?? null : null
+  );
+  // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
+  // the only durable identifier once the environment is deleted).
+  const runComputerEnvLabel = runComputerEnvId
+    ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
+        ?.name ?? runComputerEnvId
+    : null;
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,
@@ -396,6 +456,8 @@ export function RunDetailView({
     [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
   );
 
+  const embeddedInResultsSplit = hideKpiStrip;
+
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -408,6 +470,7 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+        embedded={embeddedInResultsSplit}
       />
     ) : null;
 
@@ -432,24 +495,74 @@ export function RunDetailView({
         error={goalCompletionError}
         onRun={(args, force) => requestGoalCompletion(args, force)}
         currentSuiteJudgeConfig={currentSuiteJudgeConfig}
+        embedded={embeddedInResultsSplit}
       />
     ) : null;
 
+  // Advisory judge verdicts by snapshot caseKey — surfaced inline on each case
+  // row (next to the deterministic pass/fail) so the judge isn't buried in the
+  // side card. Null when nothing is graded, which skips badge rendering.
+  const judgeByCaseKey = useMemo(
+    () => buildJudgeCaseMap(goalCompletionResult),
+    [goalCompletionResult]
+  );
+
+  // Run-level judge headline for the collapsed insight band (the per-case detail
+  // now lives in the matrix cells). meet-goal count + how many cases the judge
+  // disagrees with the deterministic pass/fail on (the actionable signal).
+  const judgeHeadline = useMemo(() => {
+    const cases = goalCompletionResult?.cases ?? [];
+    if (cases.length === 0) return null;
+    const meet = cases.filter((c) => c.passed).length;
+    const deterministicByCaseKey = new Map<string, boolean | null>();
+    for (const group of groupRunIterationsByTestCase(
+      caseGroupsForSelectedRun,
+      "test"
+    )) {
+      const key = caseKeyForGroup(group);
+      if (key) deterministicByCaseKey.set(key, deterministicCasePassed(group));
+    }
+    const disagreements = cases.filter((c) =>
+      judgeDisagreesWithVerdict(
+        deterministicByCaseKey.get(c.caseKey) ?? null,
+        c.passed
+      )
+    ).length;
+    return { meet, total: cases.length, disagreements };
+  }, [goalCompletionResult, caseGroupsForSelectedRun]);
+
+  // Progressive discovery: the band stays neutral (muted) unless there's
+  // something worth a click — a judge disagreement or a quality flag → amber;
+  // the worst quality findings (poor tool / excessive workflow) → red.
+  const insightSeverity: InsightSeverity = useMemo(() => {
+    const sq = serverQualityResult;
+    const hasAlert =
+      sq?.toolInsights?.some((t) => t.rating === "poor") ||
+      sq?.workflowInsights?.some((w) => w.efficiency === "excessive");
+    if (hasAlert) return "alert";
+    const hasWarn =
+      (judgeHeadline?.disagreements ?? 0) > 0 ||
+      sq?.toolInsights?.some((t) => t.rating === "needs_improvement") ||
+      sq?.workflowInsights?.some((w) => w.efficiency === "inefficient");
+    return hasWarn ? "warn" : "neutral";
+  }, [judgeHeadline, serverQualityResult]);
+
   const metricLabel = source === "sdk" ? "Pass rate" : "Accuracy";
 
-  const showAccuracyHero = shouldShowRunAccuracyHero({
-    run: selectedRunDetails,
-    iterations: caseGroupsForSelectedRun,
-    runTrendData,
-  });
+  const showAccuracyHero =
+    !hideAccuracyHero &&
+    shouldShowRunAccuracyHero({
+      run: selectedRunDetails,
+      iterations: caseGroupsForSelectedRun,
+      runTrendData,
+    });
 
   const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const runClient = useMemo(() => {
     const hostId = selectedRunDetails.namedHostId;
     if (!hostId) return null;
-    const displayName =
-      hostNamesById?.get(hostId) ?? formatRunId(hostId);
+    const displayName = hostNamesById?.get(hostId) ?? formatRunId(hostId);
     return { hostId, displayName };
   }, [selectedRunDetails.namedHostId, hostNamesById]);
 
@@ -462,6 +575,7 @@ export function RunDetailView({
       metricLabel={metricLabel}
       badgeMetricLabel={badgeMetricLabel}
       includeRunIdentity
+      hideRecentRuns={hideRecentRuns}
       hideReplayLineage={hideReplayLineage}
       runClient={runClient}
       onCompareWithRun={onCompareWithRun}
@@ -476,7 +590,7 @@ export function RunDetailView({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
-          }),
+          })
         );
       }}
       className="mb-4"
@@ -487,8 +601,93 @@ export function RunDetailView({
     <RunInsightRail
       triageCard={serverQualityTriage}
       goalCompletionCard={goalCompletionPanel}
+      embedded={embeddedInResultsSplit}
     />
   );
+
+  const hasInsightContent = Boolean(serverQualityTriage || goalCompletionPanel);
+
+  const triageFixCount = useMemo(
+    () =>
+      unifyTriageRows({
+        serverQuality: serverQualityResult ?? null,
+        iterations: caseGroupsForSelectedRun,
+      }).length,
+    [serverQualityResult, caseGroupsForSelectedRun]
+  );
+
+  const bandPassRatePercent = useMemo(() => {
+    if (!hideAccuracyHero) return null;
+    return computeRunPassRatePercent({
+      selectedRunDetails,
+      caseGroupsForSelectedRun,
+    });
+  }, [hideAccuracyHero, selectedRunDetails, caseGroupsForSelectedRun]);
+
+  // Collapsed summary for the run-level band (replaces the side rail in the
+  // embedded results view). Lead with the actionable signal; secondary line is
+  // context (pass rate, judge headline) the user can ignore until they expand.
+  const insightBandSummary = useMemo(() => {
+    const metricWord = metricLabel.toLowerCase();
+    const primary = (() => {
+      if (triageFixCount > 0) {
+        return `${triageFixCount} suggested fix${
+          triageFixCount === 1 ? "" : "es"
+        }`;
+      }
+      if ((judgeHeadline?.disagreements ?? 0) > 0) {
+        const n = judgeHeadline!.disagreements;
+        return `${n} judge disagreement${n === 1 ? "" : "s"}`;
+      }
+      if (judgeHeadline) {
+        return `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`;
+      }
+      return "Run insights";
+    })();
+
+    const secondaryParts: string[] = [];
+    if (bandPassRatePercent !== null) {
+      secondaryParts.push(`${bandPassRatePercent}% ${metricWord}`);
+    }
+    if (judgeHeadline && triageFixCount > 0) {
+      if (judgeHeadline.disagreements > 0) {
+        secondaryParts.push(
+          `${judgeHeadline.disagreements} judge disagreement${
+            judgeHeadline.disagreements === 1 ? "" : "s"
+          }`
+        );
+      } else {
+        secondaryParts.push(
+          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
+        );
+      }
+    } else if (
+      judgeHeadline &&
+      triageFixCount === 0 &&
+      judgeHeadline.disagreements === 0
+    ) {
+      secondaryParts.push(
+        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
+      );
+    }
+
+    return (
+      <>
+        <span className="font-medium text-foreground">{primary}</span>
+        {secondaryParts.length > 0 ? (
+          <span className="truncate text-xs text-muted-foreground">
+            {secondaryParts.join(" · ")}
+          </span>
+        ) : null}
+      </>
+    );
+  }, [bandPassRatePercent, judgeHeadline, metricLabel, triageFixCount]);
+
+  const insightBand = hasInsightContent ? (
+    <RunInsightBand summary={insightBandSummary} severity={insightSeverity}>
+      <div className="max-h-[55vh] overflow-y-auto">{insightRail}</div>
+    </RunInsightBand>
+  ) : null;
 
   const runMetadataBlock = (
     <>
@@ -501,13 +700,35 @@ export function RunDetailView({
           </div>
         )}
 
-      {runClient && !showAccuracyHero ? (
+      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Host</span>
-          <HostChip
-            name={runClient.displayName}
-            hostId={runClient.hostId}
-          />
+          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
+        </div>
+      ) : null}
+
+      {runComputerEnvId ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Environment</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+            title={
+              runComputerEnv
+                ? `Image ${runComputerEnv.e2bTemplateId}${
+                    runComputerEnv.baseImageDigests[0]
+                      ? ` · ${runComputerEnv.baseImageDigests[0]}`
+                      : ""
+                  } · ${runComputerEnv.provider}`
+                : undefined
+            }
+          >
+            <span className="text-foreground">{runComputerEnvLabel}</span>
+            {runComputerEnv ? (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {runComputerEnv.provider}
+              </span>
+            ) : null}
+          </span>
         </div>
       ) : null}
 
@@ -522,12 +743,11 @@ export function RunDetailView({
           </span>
         </p>
       ) : null}
-
     </>
   );
 
   const bodyKpiStrip =
-    kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
+    !hideKpiStrip && kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
       <div className="mb-4 shrink-0">
         <RunDetailKpiStrip kpis={runDashboardKpis} />
       </div>
@@ -560,24 +780,60 @@ export function RunDetailView({
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       showRunOverviewNav={false}
       showCaseCardHeader
+      flushChrome={embeddedInResultsSplit}
+      judgeByCaseKey={judgeByCaseKey}
     />
   );
+
+  // The unified results surface injects the shared cross-host matrix here so the
+  // run view's table matches All-runs / group; otherwise use the built-in
+  // per-iteration list (standalone run-detail page).
+  const caseTable = caseTableSlot ?? iterationsSidebar;
 
   return (
     <div
       className={cn(
         "relative flex min-h-0 w-full min-w-0 flex-1 flex-col",
-        useTwoColumnLayout ? "overflow-hidden p-4" : "overflow-y-auto p-4",
-        omitIterationList && "px-3 py-3",
+        useTwoColumnLayout
+          ? cn("overflow-hidden", embeddedInResultsSplit ? "p-0" : "p-4")
+          : "overflow-y-auto p-4",
+        omitIterationList && "px-3 py-3"
       )}
     >
+      {onExportTraces ? (
+        // Always-on run-level action — placed here (not the accuracy hero) so it
+        // survives the folded run-detail layout that hides the hero.
+        <div className="mb-3 flex shrink-0 justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportTraces}
+            className="gap-1.5"
+            data-testid="run-detail-export-traces"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </Button>
+        </div>
+      ) : null}
+
       <div className="shrink-0">{runMetadataBlock}</div>
 
       {useTwoColumnLayout ? (
         <>
           {bodyKpiStrip}
           {accuracyHero}
-          {lgUp ? (
+          {embeddedInResultsSplit ? (
+            // Sidebar dissolved: per-case insight lives in the matrix cells,
+            // run-level summary collapses into the band above a full-width
+            // matrix. (Standalone run-detail keeps the side rail below.)
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {insightBand}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                {caseTable}
+              </div>
+            </div>
+          ) : lgUp ? (
             <ResizablePanelGroup
               direction="horizontal"
               autoSaveId="evals-run-detail-cases-insights"
@@ -589,14 +845,20 @@ export function RunDetailView({
                 maxSize={RUN_DETAIL_CASES_PANEL_MAX}
                 className="flex min-h-0 min-w-0 flex-col overflow-hidden"
               >
-                {iterationsSidebar}
+                {caseTable}
               </ResizablePanel>
-              <ResizableHandle withHandle />
+              <ResizableHandle
+                withHandle={!embeddedInResultsSplit}
+                className={cn(
+                  embeddedInResultsSplit &&
+                    "w-px bg-border/60 after:w-0 [&>div]:hidden"
+                )}
+              />
               <ResizablePanel
                 defaultSize={100 - RUN_DETAIL_CASES_PANEL_DEFAULT}
                 minSize={RUN_DETAIL_INSIGHTS_PANEL_MIN}
                 maxSize={RUN_DETAIL_INSIGHTS_PANEL_MAX}
-                className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+                className="flex min-h-0 min-w-[17.5rem] flex-col overflow-hidden bg-card"
               >
                 <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
                   {insightRail}
@@ -606,7 +868,7 @@ export function RunDetailView({
           ) : (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
               <div className="flex min-h-[240px] min-w-0 flex-col overflow-hidden">
-                {iterationsSidebar}
+                {caseTable}
               </div>
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {insightRail}

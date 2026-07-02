@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Clock, Globe, Lock, Users } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import {
   type ChatboxMember,
@@ -182,7 +182,7 @@ export function ChatboxShareSection({
   if (!isAuthenticated) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
-        Sign in to manage chatbox access.
+        Sign in to manage swarm access.
       </p>
     );
   }
@@ -256,7 +256,7 @@ export function ChatboxShareSection({
                     {projectLabel}
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this project can open the chatbox
+                    Signed-in members of this project can open the swarm
                     with the link. Guests cannot.
                   </p>
                 </div>
@@ -271,7 +271,7 @@ export function ChatboxShareSection({
                     Invited users only
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Only people you invite by email can open this chatbox.
+                    Only people you invite by email can open this swarm.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -285,7 +285,7 @@ export function ChatboxShareSection({
                     Anyone with the link (guests included)
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Anyone with the link can open the chatbox, including guests
+                    Anyone with the link can open the swarm, including guests
                     without an account.
                   </p>
                 </div>

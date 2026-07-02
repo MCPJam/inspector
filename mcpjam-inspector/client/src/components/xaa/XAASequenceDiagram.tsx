@@ -86,7 +86,7 @@ export const XAASequenceDiagram = memo(
                 <Settings className="h-6 w-6 text-muted-foreground" />
               </div>
               <h3 className="text-lg font-semibold mb-2">
-                Configure XAA Target
+                Configure Server to Test
               </h3>
               <p className="text-sm text-muted-foreground mb-6">
                 Add an MCP server URL, client ID, and target authorization
@@ -94,7 +94,7 @@ export const XAASequenceDiagram = memo(
               </p>
               {onConfigure && (
                 <Button onClick={onConfigure} size="lg">
-                  Configure Target
+                  Configure Server to Test
                 </Button>
               )}
             </div>

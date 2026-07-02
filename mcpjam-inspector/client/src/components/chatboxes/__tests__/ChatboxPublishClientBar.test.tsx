@@ -100,7 +100,7 @@ describe("ChatboxPublishClientBar", () => {
       selectedServerIds: ["s1"],
     });
     expect(toastMock.success).toHaveBeenCalledWith(
-      'Chatbox now connects to 1 server via "Excalidraw".',
+      'Swarm now connects to 1 server via "Excalidraw".',
     );
   });
 
@@ -114,6 +114,7 @@ describe("ChatboxPublishClientBar", () => {
 
     expect(toastMock.error).toHaveBeenCalledWith(
       "Failed to save servers: nope",
+      { duration: Infinity },
     );
   });
 

@@ -7,9 +7,24 @@ import type { ServerDoctorResult } from "@mcpjam/sdk";
 import {
   buildCommandArtifactError,
   buildDebugArtifactEnvelope,
+  writeBinaryArtifact,
   writeCommandDebugArtifact,
 } from "../src/lib/debug-artifact.js";
 import { createCliRpcLogCollector } from "../src/lib/rpc-logs.js";
+
+test("writeBinaryArtifact writes verbatim bytes and creates parent directories", async () => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-binary-artifact-"),
+  );
+  const target = path.join(directory, "nested", "deep", "shot.png");
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03]);
+
+  const resolved = await writeBinaryArtifact(target, bytes);
+  assert.equal(resolved, target);
+
+  const written = await readFile(target);
+  assert.ok(written.equals(bytes));
+});
 
 function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarget> {
   return {

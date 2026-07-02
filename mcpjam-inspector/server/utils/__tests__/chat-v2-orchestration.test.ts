@@ -365,6 +365,37 @@ describe("prepareChatV2", () => {
       expect(result.progressivePlan.reasons).toEqual(["forced_on"]);
     });
 
+    it("keeps progressive meta-tools out of harness-prepared turns", async () => {
+      const previous = process.env.MCPJAM_PROGRESSIVE_TOOLS;
+      process.env.MCPJAM_PROGRESSIVE_TOOLS = "on";
+      try {
+        const manager = manyToolsManager(40);
+        const result = await prepareChatV2({
+          mcpClientManager: manager,
+          selectedServers: ["srv"],
+          modelDefinition: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            contextLength: 200_000,
+          } as any,
+          systemPrompt: "Base prompt.",
+          progressiveToolDiscovery: { enabled: true },
+          harness: "claude-code",
+        });
+
+        expect(result.progressivePlan.enabled).toBe(false);
+        expect(result.progressivePlan.reasons).toEqual(["forced_off"]);
+        expect(Object.keys(result.allTools)).not.toContain("search_mcp_tools");
+        expect(Object.keys(result.allTools)).not.toContain("load_mcp_tools");
+      } finally {
+        if (previous === undefined) {
+          delete process.env.MCPJAM_PROGRESSIVE_TOOLS;
+        } else {
+          process.env.MCPJAM_PROGRESSIVE_TOOLS = previous;
+        }
+      }
+    });
+
     it("supports the full search → load → real-tool-call loop end to end", async () => {
       // End-to-end exercise of the progressive flow on a large
       // catalog: the model uses `search_mcp_tools` to locate the

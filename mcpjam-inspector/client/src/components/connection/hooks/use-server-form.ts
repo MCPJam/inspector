@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
+  type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
   type ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
@@ -15,7 +16,7 @@ interface InitialFormValues {
   type: "stdio" | "http";
   url: string;
   commandInput: string;
-  authType: "oauth" | "bearer" | "none";
+  authType: ServerFormAuthType;
   bearerToken: string;
   oauthScopesInput: string;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
@@ -25,6 +26,7 @@ interface InitialFormValues {
   clientSecret: string;
   hasStoredClientSecret: boolean;
   clearClientSecret: boolean;
+  hasStoredBearerToken: boolean;
   hasStoredEnv: boolean;
   hasStoredHeaders: boolean;
   envVars: Array<{ key: string; value: string }>;
@@ -32,6 +34,9 @@ interface InitialFormValues {
   requestTimeout: string;
   clientCapabilitiesOverrideEnabled: boolean;
   clientCapabilitiesOverrideText: string;
+  xaaAuthzIssuer: string;
+  xaaSubject: string;
+  xaaEmail: string;
 }
 
 const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
@@ -95,6 +100,15 @@ function getAuthorizationHeaderValue(
   return undefined;
 }
 
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasEnv" | "hasHeaders" | "hasBearerToken"
+): boolean {
+  return (
+    !!config && typeof config === "object" && (config as any)[flag] === true
+  );
+}
+
 function toComparableHeaders(
   headers: Array<{ key: string; value: string }>
 ): Array<{ key: string; value: string }> {
@@ -106,6 +120,11 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
+    /**
+     * Signed-in user's email, used as the default XAA simulated identity
+     * (subject + email) when the Advanced override fields are left blank.
+     */
+    signedInEmail?: string;
   }
 ) {
   const [name, setName] = useState("");
@@ -123,8 +142,17 @@ export function useServerForm(
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
-  const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
+  // True when the server has a saved bearer token whose value was stripped
+  // from the config (hosted/redacted load). The field stays blank but the form
+  // knows auth is "bearer" and must not wipe the hidden token on save.
+  const [hasStoredBearerToken, setHasStoredBearerToken] = useState(false);
+  const [authType, setAuthType] = useState<ServerFormAuthType>("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
+  // Cross-App Access (XAA) fields. Client id / secret / scopes are shared with
+  // the OAuth preregistered path; these three are XAA-specific.
+  const [xaaAuthzIssuer, setXaaAuthzIssuer] = useState("");
+  const [xaaSubject, setXaaSubject] = useState("");
+  const [xaaEmail, setXaaEmail] = useState("");
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
@@ -182,6 +210,7 @@ export function useServerForm(
 
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
+      let hasServerOAuth = false;
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
@@ -199,11 +228,11 @@ export function useServerForm(
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        hasOAuth =
+        hasServerOAuth =
           server.useOAuth === true ||
           hasOAuthTokens ||
-          hasStoredOAuthConfig ||
           server.oauthFlowProfile != null;
+        hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`
@@ -233,22 +262,15 @@ export function useServerForm(
 
         const savedClientId =
           clientInfo?.client_id || server.oauthFlowProfile?.clientId || "";
-        const savedClientSecret =
-          clientInfo?.client_secret ||
-          server.oauthFlowProfile?.clientSecret ||
-          "";
+        const savedClientSecret = "";
         hasStoredClientSecretValue = server.hasClientSecret === true;
 
         // Keep runtime token metadata available for preregistered reconnects,
         // but only surface credential fields from saved client configuration.
         clientIdValue = storedTokens?.client_id || savedClientId;
-        // Only mask in hosted mode — there the secret lives in the Vault and
-        // never round-trips to the browser, so blanking the field protects it.
-        // In local mode the actual secret is in localStorage; blanking it would
-        // cause an unrelated edit + save to overwrite mcp-client-* without the
-        // secret, silently deleting it.
-        clientSecretValue =
-          HOSTED_MODE && hasStoredClientSecretValue ? "" : savedClientSecret;
+        clientSecretValue = hasStoredClientSecretValue
+          ? ""
+          : savedClientSecret;
 
         protocolModeValue = normalizeOauthProtocolMode(
           typeof oauthConfig.protocolMode === "string"
@@ -292,17 +314,34 @@ export function useServerForm(
             config.requestInit?.headers as Record<string, unknown> | undefined
           )
         : undefined;
+      const normalizedAuthorizationHeader = authorizationHeader?.trim();
       const hasBearer =
-        typeof authorizationHeader === "string" &&
-        authorizationHeader.startsWith("Bearer ");
+        typeof normalizedAuthorizationHeader === "string" &&
+        normalizedAuthorizationHeader.toLowerCase().startsWith("bearer ");
       const bearerTokenValue = hasBearer
-        ? authorizationHeader.replace("Bearer ", "")
+        ? normalizedAuthorizationHeader.slice("bearer ".length)
         : "";
-      const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
-        ? "oauth"
-        : hasBearer
-        ? "bearer"
-        : "none";
+      // Redacted configs strip the Authorization header but set hasBearerToken.
+      // Treat that as a bearer server whose token is stored-but-hidden, the
+      // same way hasClientSecret / hasHeaders flag other stripped secrets.
+      const hasStoredBearerTokenValue =
+        isHttpServer &&
+        !hasBearer &&
+        (server.hasBearerToken === true ||
+          getRedactedConfigFlag(config, "hasBearerToken"));
+      // XAA is checked FIRST: an XAA server keeps `useOAuth === false`, so
+      // without this branch it would fall through to the "oauth" catch-all and
+      // a save would silently rewrite it to OAuth. See CLAUDE.local.md guard.
+      const resolvedAuthType: ServerFormAuthType =
+        server.useXaa === true
+          ? "xaa"
+          : hasServerOAuth
+          ? "oauth"
+          : hasBearer || hasStoredBearerTokenValue
+          ? "bearer"
+          : hasOAuth
+          ? "oauth"
+          : "none";
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
@@ -323,6 +362,7 @@ export function useServerForm(
       setOauthRegistrationMode(registrationModeValue);
       setHasStoredClientSecret(hasStoredClientSecretValue);
       setClearClientSecret(false);
+      setHasStoredBearerToken(hasStoredBearerTokenValue);
       setRequestTimeout(timeoutValue);
       setClientCapabilitiesOverrideEnabled(
         clientCapabilitiesOverrideValue != null
@@ -332,8 +372,18 @@ export function useServerForm(
       );
       setClientCapabilitiesOverrideError(null);
 
+      // Read XAA-specific fields (issuer / simulated identity) from the server
+      // record so edit mode round-trips them. Client id / scopes reuse the
+      // OAuth-credential reads above.
+      setXaaAuthzIssuer(isHttpServer ? server.xaaAuthzIssuer ?? "" : "");
+      setXaaSubject(server.xaaSubject ?? "");
+      setXaaEmail(server.xaaEmail ?? "");
+
       // Set auth type based on multiple OAuth detection sources
-      if (resolvedAuthType === "oauth") {
+      if (resolvedAuthType === "xaa") {
+        setAuthType("xaa");
+        setShowAuthSettings(true);
+      } else if (resolvedAuthType === "oauth") {
         setAuthType("oauth");
         setShowAuthSettings(true);
       } else if (resolvedAuthType === "bearer") {
@@ -366,7 +416,9 @@ export function useServerForm(
       }
       setEnvVars(envArray);
       const hasStoredEnvValue =
-        !isHttpServer && server.hasEnv === true && envArray.length === 0;
+        !isHttpServer &&
+        (server.hasEnv === true || getRedactedConfigFlag(config, "hasEnv")) &&
+        envArray.length === 0;
       setHasStoredEnv(hasStoredEnvValue);
       setEnvRevealed(envArray.length > 0);
       setEnvDirty(false);
@@ -384,7 +436,11 @@ export function useServerForm(
       }
       setCustomHeaders(headersArray);
       const hasStoredHeadersValue =
-        isHttpServer && server.hasHeaders === true && headersArray.length === 0;
+        isHttpServer &&
+        (server.hasHeaders === true ||
+          getRedactedConfigFlag(config, "hasHeaders") ||
+          hasStoredBearerTokenValue) &&
+        headersArray.length === 0;
       setHasStoredHeaders(hasStoredHeadersValue);
       setHeadersRevealed(headersArray.length > 0);
       setHeadersDirty(false);
@@ -411,6 +467,7 @@ export function useServerForm(
         clientSecret: clientSecretValue,
         hasStoredClientSecret: hasStoredClientSecretValue,
         clearClientSecret: false,
+        hasStoredBearerToken: hasStoredBearerTokenValue,
         hasStoredEnv: hasStoredEnvValue,
         hasStoredHeaders: hasStoredHeadersValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
@@ -423,6 +480,9 @@ export function useServerForm(
           null,
           2
         ),
+        xaaAuthzIssuer: isHttpServer ? server.xaaAuthzIssuer ?? "" : "",
+        xaaSubject: server.xaaSubject ?? "",
+        xaaEmail: server.xaaEmail ?? "",
       };
     }
   }, [server]);
@@ -554,13 +614,35 @@ export function useServerForm(
   const revealStoredHeaders = (
     headers: Record<string, string> | null | undefined
   ) => {
-    const nextCustomHeaders = Object.entries(headers ?? {})
+    const entries = Object.entries(headers ?? {});
+    // Only a bearer-auth server pulls its Authorization header into the bearer
+    // field. OAuth/none servers keep Authorization as a normal custom header
+    // (e.g. Basic auth, or an OAuth access token surfaced as a header), so we
+    // don't silently switch their auth type or strip the row.
+    const authorizationValue = entries.find(([key]) =>
+      isAuthorizationHeader(key)
+    )?.[1];
+    const revealedBearerToken =
+      authType === "bearer" &&
+      typeof authorizationValue === "string" &&
+      authorizationValue.startsWith("Bearer ")
+        ? authorizationValue.replace("Bearer ", "")
+        : undefined;
+    const nextCustomHeaders = entries
+      .filter(
+        ([key]) =>
+          !(revealedBearerToken !== undefined && isAuthorizationHeader(key))
+      )
       .map(([key, value]) => createHeaderEntry(key, String(value)));
     setCustomHeaders(nextCustomHeaders);
     setHasStoredHeaders(false);
     setHeadersRevealed(true);
     setHeadersDirty(false);
     setShowConfiguration(true);
+    if (revealedBearerToken !== undefined) {
+      setBearerToken(revealedBearerToken);
+      setHasStoredBearerToken(false);
+    }
     if (initialValues.current) {
       initialValues.current = {
         ...initialValues.current,
@@ -569,6 +651,12 @@ export function useServerForm(
           key,
           value,
         })),
+        ...(revealedBearerToken !== undefined
+          ? {
+              bearerToken: revealedBearerToken,
+              hasStoredBearerToken: false,
+            }
+          : {}),
       };
     }
   };
@@ -681,25 +769,33 @@ export function useServerForm(
       .filter((s) => s.length > 0);
     const shouldUsePreregisteredCredentials =
       authType === "oauth" && oauthRegistrationMode === "preregistered";
+    const isXaa = authType === "xaa";
+    // XAA also collects resource-authorization-server client id / secret, so it
+    // shares the preregistered-credential emission path.
+    const usesClientCredentials = shouldUsePreregisteredCredentials || isXaa;
     const normalizedClientSecret = clientSecret.trim();
     const hasReplacementClientSecret = normalizedClientSecret.length > 0;
     // A typed replacement always wins over the clear toggle — the backend
     // rejects payloads that try to do both at once.
     const submittedClearClientSecret =
-      shouldUsePreregisteredCredentials &&
+      usesClientCredentials &&
       clearClientSecret &&
       !hasReplacementClientSecret;
     const nextHasClientSecret =
-      shouldUsePreregisteredCredentials &&
+      usesClientCredentials &&
       !submittedClearClientSecret &&
       (hasStoredClientSecret || hasReplacementClientSecret);
 
-    // Handle authentication
+    // Handle authentication. useOAuth and useXaa are mutually exclusive by
+    // construction — this else-if chain sets at most one.
     let useOAuth = false;
+    let useXaa = false;
     if (authType === "bearer" && bearerToken.trim()) {
       headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
     } else if (authType === "oauth") {
       useOAuth = true;
+    } else if (authType === "xaa") {
+      useXaa = true;
     }
     const explicitHeaders =
       Object.keys(headers).length > 0 ? headers : undefined;
@@ -716,20 +812,31 @@ export function useServerForm(
       ...(secretPatch ? { secretPatch } : {}),
       clientCapabilities,
       useOAuth,
+      useXaa,
+      authServerMode: useXaa ? "mcpjam" : undefined,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
       oauthRegistrationMode: useOAuth ? oauthRegistrationMode : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
-      clientId: shouldUsePreregisteredCredentials
+      clientId: usesClientCredentials
         ? clientId.trim() || undefined
         : undefined,
-      clientSecret: shouldUsePreregisteredCredentials
+      clientSecret: usesClientCredentials
         ? normalizedClientSecret || undefined
         : undefined,
-      hasClientSecret: shouldUsePreregisteredCredentials
-        ? nextHasClientSecret
-        : undefined,
-      clearClientSecret: shouldUsePreregisteredCredentials
+      hasClientSecret: usesClientCredentials ? nextHasClientSecret : undefined,
+      clearClientSecret: usesClientCredentials
         ? submittedClearClientSecret
+        : undefined,
+      xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
+      // Default the simulated identity to the signed-in user when blank, so the
+      // mint asserts a real subject instead of a placeholder test user. The
+      // resource server still decides what subject it accepts — this is just a
+      // sane, overridable default.
+      xaaSubject: useXaa
+        ? xaaSubject.trim() || options?.signedInEmail || undefined
+        : undefined,
+      xaaEmail: useXaa
+        ? xaaEmail.trim() || options?.signedInEmail || undefined
         : undefined,
       requestTimeout: reqTimeout,
     };
@@ -747,7 +854,11 @@ export function useServerForm(
     setClientSecret("");
     setHasStoredClientSecret(false);
     setClearClientSecret(false);
+    setXaaAuthzIssuer("");
+    setXaaSubject("");
+    setXaaEmail("");
     setBearerToken("");
+    setHasStoredBearerToken(false);
     setAuthType("none");
     setUseCustomClientId(false);
     setClientIdError(null);
@@ -789,12 +900,16 @@ export function useServerForm(
       clientSecret !== iv.clientSecret ||
       hasStoredClientSecret !== iv.hasStoredClientSecret ||
       clearClientSecret !== iv.clearClientSecret ||
+      hasStoredBearerToken !== iv.hasStoredBearerToken ||
       hasStoredEnv !== iv.hasStoredEnv ||
       hasStoredHeaders !== iv.hasStoredHeaders ||
       requestTimeout !== iv.requestTimeout ||
       clientCapabilitiesOverrideEnabled !==
         iv.clientCapabilitiesOverrideEnabled ||
       clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
+      xaaAuthzIssuer !== iv.xaaAuthzIssuer ||
+      xaaSubject !== iv.xaaSubject ||
+      xaaEmail !== iv.xaaEmail ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
       JSON.stringify(toComparableHeaders(customHeaders)) !==
         JSON.stringify(iv.customHeaders)
@@ -812,8 +927,8 @@ export function useServerForm(
 
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
-    authType === "oauth" &&
-    oauthRegistrationMode === "preregistered" &&
+    ((authType === "oauth" && oauthRegistrationMode === "preregistered") ||
+      authType === "xaa") &&
     validateClientId(clientId) !== null;
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
@@ -852,18 +967,26 @@ export function useServerForm(
     setHasStoredClientSecret,
     clearClientSecret,
     setClearClientSecret,
+    hasStoredBearerToken,
     bearerToken,
     setBearerToken: (value: string) => {
       setAuthDirty(true);
       setBearerToken(value);
     },
     authType,
-    setAuthType: (value: "oauth" | "bearer" | "none") => {
+    setAuthType: (value: ServerFormAuthType) => {
       setAuthDirty(true);
       setAuthType(value);
     },
     useCustomClientId,
     setUseCustomClientId,
+    // XAA-specific fields (client id / secret / scopes are shared above)
+    xaaAuthzIssuer,
+    setXaaAuthzIssuer,
+    xaaSubject,
+    setXaaSubject,
+    xaaEmail,
+    setXaaEmail,
     requestTimeout,
     setRequestTimeout,
     inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,

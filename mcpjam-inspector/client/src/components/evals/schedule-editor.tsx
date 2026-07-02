@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -164,7 +164,7 @@ export function ScheduleEditor({
         </div>
       ) : null}
       <p className="text-[11px] text-muted-foreground">
-        Runs the whole suite — widget probes and prompt tests — under your
+        Runs the whole suite — render checks and prompt tests — under your
         identity. Prompt tests use the organization&apos;s model
         configuration; failed scheduled runs raise an in-app notification.
       </p>

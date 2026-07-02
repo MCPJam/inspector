@@ -1,6 +1,13 @@
-import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
+import {
+  getHostLogoSrc,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-client-style";
 import { listHostStyles } from "@/lib/client-styles";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
 interface HostStylePillSelectorProps {
@@ -14,11 +21,13 @@ export function ClientStylePillSelector({
   onValueChange,
   className,
 }: HostStylePillSelectorProps) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+
   return (
     <div
       className={cn(
         "relative isolate w-full overflow-hidden rounded-full bg-muted/30 p-[1.5px] ring-1 ring-border/45",
-        className,
+        className
       )}
       data-selected-host-style={value}
     >
@@ -43,7 +52,7 @@ export function ClientStylePillSelector({
           >
             <span className="inline-flex min-w-0 items-center gap-1">
               <img
-                src={host.chatUi.logoSrc}
+                src={getHostLogoSrc(host.chatUi, themeMode)}
                 alt=""
                 aria-hidden="true"
                 className="h-3 w-3 shrink-0 object-contain"

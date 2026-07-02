@@ -116,6 +116,11 @@ export interface XAAFlowState {
   httpHistory?: Array<XAAHttpHistoryEntry>;
   infoLogs?: Array<XAAInfoLogEntry>;
   error?: string;
+  /** Outcome of a deliberately-broken (negative-mode) run once it reaches the
+   * authorization server. `rejected` is the success case — the server caught
+   * the broken assertion; `accepted` is the security risk — it issued a token
+   * anyway. Unset for the happy-path (valid) flow. */
+  negativeProbe?: { outcome: "rejected" | "accepted"; status?: number };
   compatibilityReport?: XAACompatibilityReport;
 }
 
@@ -159,6 +164,12 @@ export interface BaseXAAStateMachineConfig {
    * inline client secret; the server resolves the stored secret and forces
    * the outbound URL to the registration's stored token endpoint. */
   registrationId?: string;
+  /** Server-target confidential runs: sent to the token proxy instead of an
+   * inline client secret or token endpoint. The server resolves the stored
+   * secret AND discovers the token endpoint from the server's own config, so
+   * neither the secret nor the destination rides in from the browser. */
+  serverId?: string;
+  projectId?: string;
 }
 
 export interface XAAStateMachine {
@@ -238,6 +249,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   httpHistory: [],
   infoLogs: [],
   error: undefined,
+  negativeProbe: undefined,
   compatibilityReport: undefined,
 };
 

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ModelSelector } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -19,7 +20,7 @@ vi.mock("../chat-input/model/provider-logo", () => ({
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (
-    selector: (state: { themeMode: "light" | "dark" }) => unknown,
+    selector: (state: { themeMode: "light" | "dark" }) => unknown
   ) => selector({ themeMode: "light" }),
 }));
 
@@ -43,6 +44,21 @@ const models: ModelDefinition[] = [
     supportsTools: true,
     supportsVision: true,
     supportsStreaming: true,
+  },
+];
+
+const outOfCreditsModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5 (Free)",
+    provider: "anthropic",
+    disabled: true,
+    disabledReason: "You're out of credits. Top up or use your own key.",
+  },
+  {
+    id: "gpt-5-mini",
+    name: "GPT-5 Mini",
+    provider: "openai",
   },
 ];
 
@@ -96,7 +112,26 @@ function OpenChangeProbe({
   );
 }
 
+function ProviderIntentControlledModelSelector() {
+  const [currentModel, setCurrentModel] = useState<ModelDefinition>(
+    outOfCreditsModels[0]!
+  );
+
+  return (
+    <ModelSelector
+      currentModel={currentModel}
+      availableModels={outOfCreditsModels}
+      onModelChange={setCurrentModel}
+      respondToProviderTabIntent
+    />
+  );
+}
+
 describe("ModelSelector", () => {
+  beforeEach(() => {
+    useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+  });
+
   it("keeps the popover open when multiple models are enabled", async () => {
     const user = userEvent.setup();
 
@@ -106,13 +141,13 @@ describe("ModelSelector", () => {
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("switch", { name: "Use multiple models" }),
+      screen.getByRole("switch", { name: "Use multiple models" })
     );
 
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     expect(screen.getByText("Multiple models")).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Use multiple models" }),
+      screen.getByRole("switch", { name: "Use multiple models" })
     ).toHaveAttribute("aria-checked", "true");
   });
 
@@ -126,8 +161,8 @@ describe("ModelSelector", () => {
 
     expect(
       screen.queryByText(
-        /Compare up to 3 models in one composer\. The first in your selection runs first\./i,
-      ),
+        /Compare up to 3 models in one composer\. The first in your selection runs first\./i
+      )
     ).not.toBeInTheDocument();
   });
 
@@ -137,7 +172,7 @@ describe("ModelSelector", () => {
     const secondCallback = vi.fn();
 
     const { rerender } = render(
-      <OpenChangeProbe onOpenChange={firstCallback} />,
+      <OpenChangeProbe onOpenChange={firstCallback} />
     );
 
     await user.click(screen.getByRole("button", { name: /gpt-4\.1/i }));
@@ -166,7 +201,7 @@ describe("ModelSelector", () => {
         selectedModels={[models[0]]}
         onSelectedModelsChange={onSelectedModelsChange}
         onMultiModelEnabledChange={onMultiModelEnabledChange}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /gpt-4\.1/i }));
@@ -182,13 +217,33 @@ describe("ModelSelector", () => {
         selectedModels={[models[0], models[1]]}
         onSelectedModelsChange={onSelectedModelsChange}
         onMultiModelEnabledChange={onMultiModelEnabledChange}
-      />,
+      />
     );
 
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Use multiple models" }),
+      screen.getByRole("switch", { name: "Use multiple models" })
     ).toHaveAttribute("aria-checked", "true");
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveTextContent("GPT-4.1");
+    expect(trigger).toHaveTextContent("Claude 3.7 Sonnet");
+    expect(trigger).not.toHaveTextContent("+1");
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
+  });
+
+  it("selects the first enabled provider model when the BYOK intent opens providers", async () => {
+    render(<ProviderIntentControlledModelSelector />);
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /gpt-5 mini/i })).toBeVisible();
+    });
+
+    expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
   });
 });

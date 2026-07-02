@@ -137,18 +137,18 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("hides the Browser tab when the session has no browser artifacts", async () => {
+  it("hides the App tab when the session has no browser artifacts", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Browser" }),
+      screen.queryByRole("button", { name: "App" }),
     ).not.toBeInTheDocument();
   });
 
-  it("shows the Browser tab and renders the artifacts view when artifacts exist", async () => {
+  it("shows the App tab and renders the artifacts view when artifacts exist", async () => {
     mockBrowserArtifactsState.artifacts = {
       widgetRenderObservations: [
         {
@@ -179,17 +179,17 @@ describe("ShareUsageThreadDetail", () => {
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
-    const browserTab = await screen.findByRole("button", { name: "Browser" });
-    await userEvent.click(browserTab);
+    const appTab = await screen.findByRole("button", { name: "App" });
+    await userEvent.click(appTab);
 
-    // Render-observation card + the Computer Use timeline from
-    // BrowserArtifactsView (the same component the eval replay uses).
+    // Render-observation card from BrowserArtifactsView (the same component the
+    // eval replay uses). The per-step interaction timeline now lives on the
+    // Trace tab (`Interact · …` spans), not in the App tab.
     expect(
       await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
-    expect(screen.getByText("Computer Use timeline")).toBeInTheDocument();
-    expect(screen.getByText("Left click (10, 20)")).toBeInTheDocument();
+    expect(screen.queryByText("Computer Use timeline")).toBeNull();
   });
 
   it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {
@@ -214,7 +214,7 @@ describe("ShareUsageThreadDetail", () => {
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await userEvent.click(
-      await screen.findByRole("button", { name: "Browser" }),
+      await screen.findByRole("button", { name: "App" }),
     );
     expect(
       await screen.findByTestId("browser-artifacts-view"),
@@ -233,7 +233,7 @@ describe("ShareUsageThreadDetail", () => {
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Browser" }),
+      screen.queryByRole("button", { name: "App" }),
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous

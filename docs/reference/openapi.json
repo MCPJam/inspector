@@ -18,6 +18,14 @@
   "security": [{ "bearerAuth": [] }],
   "tags": [
     {
+      "name": "Hosts",
+      "description": "Project hosts: named model + capability profiles you run chats and eval suites against."
+    },
+    {
+      "name": "Computer environments",
+      "description": "Custom Computer images: digest-pinned Dockerfile environments your project's computers boot from."
+    },
+    {
       "name": "Server diagnostics",
       "description": "Connect-level health checks against a saved MCP server."
     },
@@ -55,6 +63,421 @@
     }
   ],
   "paths": {
+    "/harness/{harnessId}/builtin-tools": {
+      "get": {
+        "operationId": "listHarnessBuiltinTools",
+        "tags": ["Harness"],
+        "summary": "List a harness's native built-in tools",
+        "description": "The native tools an agent harness (e.g. `claude-code`) runs INSIDE its sandbox — Bash, Read, Edit, Glob, Grep, WebSearch, and the like. Display-only: these execute via the harness's own agent loop and are NOT callable through MCPJam. Static published-package metadata; no project scope.",
+        "parameters": [{ "name": "harnessId", "in": "path", "required": true, "schema": { "type": "string", "enum": ["claude-code"] }, "description": "The harness id." }],
+        "responses": {
+          "200": {
+            "description": "The harness's built-in tools.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "type": "object", "required": ["key", "name"], "properties": { "key": { "type": "string" }, "name": { "type": "string" }, "commonName": { "type": "string" }, "toolUseKind": { "type": "string" }, "description": { "type": "string" }, "inputSchema": { "type": "object", "additionalProperties": true } } } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments": {
+      "get": {
+        "operationId": "listComputerEnvironments",
+        "tags": ["Computer environments"],
+        "summary": "List a project's computer environments",
+        "description": "The custom Computer images (digest-pinned Dockerfile environments) saved in the project — your own personal drafts plus the project-shared ones.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's environments.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "post": {
+        "operationId": "createComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Create a computer environment",
+        "description": "Create a personal-draft environment from a Dockerfile and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentCreateRequest" },
+              "example": { "name": "scraper", "dockerfile": "FROM debian:bookworm-slim@sha256:...\nRUN apt-get update" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The environment was created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}": {
+      "get": {
+        "operationId": "getComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Get a computer environment",
+        "description": "One environment's Dockerfile, sharing, and latest build. An environment that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "patch": {
+        "operationId": "updateComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Update a computer environment",
+        "description": "Edit an environment's name and/or Dockerfile. Re-build it for the changes to take effect on a computer. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentUpdateRequest" },
+              "example": { "name": "scraper (v2)" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Delete a computer environment",
+        "description": "Permanently delete an environment. Computers booted from it fall back to the base image. Deleting a project-shared environment requires project admin. Bodyless — any field is rejected. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment was deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentDeleted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/builds": {
+      "get": {
+        "operationId": "listComputerEnvironmentBuilds",
+        "tags": ["Computer environments"],
+        "summary": "List an environment's builds",
+        "description": "An environment's builds, newest first, each with its status and capped log preview.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment's builds.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/build": {
+      "post": {
+        "operationId": "buildComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Build a computer environment",
+        "description": "Trigger a build of the environment's image and respond `202`. The build runs asynchronously — poll the builds list for status. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "202": {
+            "description": "The build was accepted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildStarted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/promote": {
+      "post": {
+        "operationId": "promoteComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Share an environment with the project",
+        "description": "Promote a personal-draft environment to a project-shared one. Requires project admin. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The now-shared environment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer-environments/{environmentId}/use": {
+      "post": {
+        "operationId": "useComputerEnvironment",
+        "tags": ["Computer environments"],
+        "summary": "Boot your computer from an environment",
+        "description": "Attach the environment to the caller's computer, which re-provisions it from the pinned image (installed files are wiped). The environment must have a `ready` build, and the computer provider must match the build's. Bodyless. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/environmentId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The environment was attached; the computer is re-provisioning.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerAttached" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/computer/reset": {
+      "post": {
+        "operationId": "resetComputer",
+        "tags": ["Computer environments"],
+        "summary": "Reset your computer to its image",
+        "description": "Reset the caller's computer back to its current image, wiping mutable state. Bodyless. Guest callers are denied (a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "The reset was requested.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerReset" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/hosts": {
+      "get": {
+        "operationId": "listHosts",
+        "tags": ["Hosts"],
+        "summary": "List a project's hosts",
+        "description": "The hosts saved in the project — the named model + capability profiles you attach to chats and eval suites. Returns the `id`s the host detail/update/delete routes take.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's hosts.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "post": {
+        "operationId": "createHost",
+        "tags": ["Hosts"],
+        "summary": "Create a host (from a template or a full config)",
+        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the same presets the inspector UI uses, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HostCreateRequest" },
+              "example": { "name": "Claude", "template": "claude", "theme": "dark" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The host was created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/projects/{projectId}/hosts/{hostId}": {
+      "get": {
+        "operationId": "getHost",
+        "tags": ["Hosts"],
+        "summary": "Get a host",
+        "description": "One host's full settings, including its resolved host config. A host that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host settings.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "patch": {
+        "operationId": "updateHost",
+        "tags": ["Hosts"],
+        "summary": "Update a host",
+        "description": "Edit a host's display name and/or its host config. Only the fields you pass change. Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HostUpdateRequest" },
+              "example": { "name": "Claude (renamed)" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated host settings.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteHost",
+        "tags": ["Hosts"],
+        "summary": "Delete a host",
+        "description": "Permanently delete a host from the project. Pass `{ \"force\": true }` to delete a host that is still referenced (e.g. by an eval suite). Guest callers are denied (a write).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/hostId" }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": { "type": "boolean", "description": "Delete even if the host is still referenced." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The host was deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDeleted" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}/validate": {
       "post": {
         "operationId": "validateServer",
@@ -475,12 +898,24 @@
                 "tests": [
                   {
                     "title": "echo works",
-                    "query": "Use the echo tool to say hi",
                     "runs": 1,
                     "model": "anthropic/claude-haiku-4.5",
                     "provider": "anthropic",
-                    "expectedToolCalls": [
-                      { "toolName": "echo", "arguments": { "text": "hi" } }
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "Use the echo tool to say hi"
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "echo",
+                          "args": { "args": { "text": "hi" } }
+                        }
+                      }
                     ]
                   }
                 ]
@@ -617,6 +1052,98 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps": {
+      "get": {
+        "operationId": "getEvalRunSteps",
+        "tags": ["Eval runs"],
+        "summary": "Get an iteration's step results",
+        "description": "One row per authored test step, in order, with `status` (`ok`/`fail`/`skipped`/`pending`), a `reason`, and any `evidence` (screenshots, replay-video offset, widget tool calls). The fastest way to see which step failed and why. Unlike `/trace`, a missing trace is not a `404` — step verdicts still return, just without evidence.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" },
+          { "$ref": "#/components/parameters/iterationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ordered step results as a page envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "description": "Authored steps in order with their verdict.",
+                      "items": {
+                        "type": "object",
+                        "required": ["stepId", "stepIndex", "kind", "status"],
+                        "properties": {
+                          "stepId": { "type": "string" },
+                          "stepIndex": { "type": "integer" },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["prompt", "toolCall", "interact", "assert"]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["ok", "fail", "skipped", "pending"]
+                          },
+                          "reason": { "type": ["string", "null"] },
+                          "evidence": {
+                            "type": "object",
+                            "description": "Optional, omitted when the step produced none.",
+                            "additionalProperties": true
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    },
+                    "nextCursor": { "type": "string" }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Cancel a run",
+        "description": "Request cancellation of an in-flight run; marks the run and its pending/running iterations `cancelled`. A no-op success when the run is already cancelled; returns `409` when the run already reached a terminal status (`completed`/`failed`/`timed_out`).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/runId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cancelled run.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalRun" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "The run already finished and cannot be cancelled."
+          },
           "429": { "$ref": "#/components/responses/RateLimited" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -805,6 +1332,66 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      },
+      "post": {
+        "operationId": "createEvalSuite",
+        "tags": ["Eval runs"],
+        "summary": "Create an eval suite (author-only, does not run)",
+        "description": "Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).\n\nGuest callers are denied (suite creation is a write).",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteCreateRequest"
+              },
+              "example": {
+                "name": "smoke",
+                "serverIds": ["srv_abc123"],
+                "model": "anthropic/claude-haiku-4.5",
+                "tests": [
+                  {
+                    "title": "lists files",
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "List the files in the project root."
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "list_files",
+                          "args": { "args": {} }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The suite was created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvalSuiteCreated" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -1056,6 +1643,20 @@
         "in": "path",
         "required": true,
         "description": "Chatbox ID, as returned by the project's chatbox list.",
+        "schema": { "type": "string" }
+      },
+      "hostId": {
+        "name": "hostId",
+        "in": "path",
+        "required": true,
+        "description": "Host ID, as returned by the project's host list.",
+        "schema": { "type": "string" }
+      },
+      "environmentId": {
+        "name": "environmentId",
+        "in": "path",
+        "required": true,
+        "description": "Computer environment ID, as returned by the project's environment list.",
         "schema": { "type": "string" }
       }
     },
@@ -1417,22 +2018,57 @@
         },
         "additionalProperties": true
       },
+      "EvalTestStep": {
+        "type": "object",
+        "description": "One authored test step (the unified test model). `kind` discriminates: `prompt` is a user message (model turn); `toolCall` is a deterministic, model-free tool call; `interact` is one pure widget action; `assert` is an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or a DOM `WidgetAssertion`).",
+        "required": ["id", "kind"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": "string",
+            "enum": ["prompt", "toolCall", "interact", "assert"]
+          },
+          "prompt": {
+            "type": "string",
+            "description": "User message (`kind: prompt`)."
+          },
+          "serverName": {
+            "type": "string",
+            "description": "Server that owns the tool (`kind: toolCall`)."
+          },
+          "toolName": {
+            "type": "string",
+            "description": "Tool name (`kind: toolCall` / `interact`)."
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Tool-call arguments (`kind: toolCall`).",
+            "additionalProperties": true
+          },
+          "action": {
+            "type": "object",
+            "description": "Widget action (`kind: interact`).",
+            "additionalProperties": true
+          },
+          "assertion": {
+            "type": "object",
+            "description": "Predicate or widget assertion (`kind: assert`).",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
       "EvalTestCase": {
         "type": "object",
-        "description": "Inline eval test case. Same shape the hosted eval editor produces.",
-        "required": [
-          "title",
-          "query",
-          "runs",
-          "model",
-          "provider",
-          "expectedToolCalls"
-        ],
+        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model).",
+        "required": ["title", "runs", "model", "provider", "steps"],
         "properties": {
           "title": { "type": "string" },
-          "query": {
-            "type": "string",
-            "description": "The user prompt the model is given."
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ordered test steps. The first `prompt` step is the case query; `toolCalledWith` asserts are the expected tool calls; a single model-free `toolCall` step is a render-check.",
+            "items": { "$ref": "#/components/schemas/EvalTestStep" }
           },
           "runs": {
             "type": "integer",
@@ -1448,18 +2084,6 @@
             "type": "string",
             "description": "Model provider, e.g. `anthropic`, `openai`."
           },
-          "expectedToolCalls": {
-            "type": "array",
-            "description": "Tool calls the model is expected to make. Empty array for negative tests.",
-            "items": {
-              "type": "object",
-              "required": ["toolName", "arguments"],
-              "properties": {
-                "toolName": { "type": "string" },
-                "arguments": { "type": "object", "additionalProperties": true }
-              }
-            }
-          },
           "isNegativeTest": {
             "type": "boolean",
             "description": "When `true`, the case passes if NO tools are called."
@@ -1472,6 +2096,141 @@
           }
         },
         "additionalProperties": true
+      },
+      "EvalSuiteCreateRequest": {
+        "type": "object",
+        "description": "Author-only suite-create body. A suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it.",
+        "required": ["name", "serverIds", "model", "tests"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Suite name."
+          },
+          "description": { "type": "string" },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Servers (by canonical project ID) the suite's cases run against.",
+            "items": { "type": "string" }
+          },
+          "serverNames": {
+            "type": "array",
+            "description": "Optional display names, parallel to `serverIds`.",
+            "items": { "type": "string" }
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Suite-level default model id (e.g. `anthropic/claude-haiku-4.5`). Used for any test that omits `model`."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional suite-level default provider. When omitted, the provider is derived from a `provider/model` id."
+          },
+          "passCriteria": {
+            "type": "object",
+            "properties": { "minimumPassRate": { "type": "number" } }
+          },
+          "tags": {
+            "type": "array",
+            "description": "Accepted for forward-compat; not persisted today (no-op).",
+            "items": { "type": "string" }
+          },
+          "tests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Test cases to create in the suite.",
+            "items": {
+              "type": "object",
+              "required": ["title", "steps"],
+              "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "steps": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Ordered test steps (the unified test model). The first `prompt` step is the case query; `toolCalledWith` asserts are the expected tool calls; a single model-free `toolCall` step is a render-check.",
+                  "items": { "$ref": "#/components/schemas/EvalTestStep" }
+                },
+                "runs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "description": "Iterations to execute for this case. Defaults to 1."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Per-case model override. Defaults to the suite-level `model`."
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Per-case provider override."
+                },
+                "expectedOutput": { "type": "string" },
+                "isNegativeTest": {
+                  "type": "boolean",
+                  "description": "When `true`, the case passes if NO tools are called."
+                },
+                "scenario": { "type": "string" },
+                "advancedConfig": {
+                  "type": "object",
+                  "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvalSuiteCreated": {
+        "type": "object",
+        "required": ["suiteId", "name", "caseUpsert"],
+        "properties": {
+          "suiteId": { "type": "string" },
+          "name": { "type": "string" },
+          "servers": {
+            "type": "array",
+            "description": "The servers attached to the suite. `name` is present when supplied.",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" }
+              }
+            }
+          },
+          "caseUpsert": {
+            "type": "object",
+            "description": "Per-case create outcomes. Partial failures don't abort the suite; an all-failed new suite is rejected with VALIDATION_ERROR.",
+            "properties": {
+              "committed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              },
+              "failed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "EvalRunCreateRequest": {
         "type": "object",
@@ -2144,6 +2903,173 @@
         "properties": {
           "serverId": { "type": "string" },
           "status": { "type": "string", "enum": ["closed"] }
+        }
+      },
+      "Host": {
+        "type": "object",
+        "description": "A host in a project, as returned by the host list.",
+        "required": ["id", "name", "hostConfigId", "modelId", "serverCount", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "hostConfigId": { "type": "string", "description": "ID of the content-addressed host config this host points at." },
+          "modelId": { "type": "string", "description": "Resolved model id, e.g. `anthropic/claude-haiku-4.5`." },
+          "serverCount": { "type": "integer", "description": "Number of MCP servers attached to the host config." },
+          "createdAt": { "type": "number", "description": "Unix epoch milliseconds." },
+          "updatedAt": { "type": "number", "description": "Unix epoch milliseconds." }
+        }
+      },
+      "HostPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Host" } }
+        }
+      },
+      "HostDetail": {
+        "type": "object",
+        "description": "A host plus its resolved host config (model, capabilities, host context, MCP profile).",
+        "required": ["id", "name", "config"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "config": { "type": "object", "additionalProperties": true, "description": "Host config v2 DTO. Opaque object; shape mirrors the inspector's host editor." }
+        }
+      },
+      "HostCreateRequest": {
+        "type": "object",
+        "description": "Create a host from a built-in template OR a full host config. Exactly one of `template` or `config` is required.",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "Display name for the new host." },
+          "template": {
+            "type": "string",
+            "description": "Built-in template id to seed the host config from.",
+            "enum": ["mcpjam", "claude", "claude-code", "chatgpt", "mistral", "cursor", "codex", "copilot", "vscode", "agentcore", "n8n", "perplexity"]
+          },
+          "theme": { "type": "string", "enum": ["light", "dark"], "description": "Theme stamped into the seeded config (template only)." },
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Full host config v2, used verbatim (alternative to `template`)." }
+        },
+        "oneOf": [{ "required": ["template"] }, { "required": ["config"] }]
+      },
+      "HostUpdateRequest": {
+        "type": "object",
+        "description": "Edit a host. Provide at least one of `name` or `config`; only the fields you pass change.",
+        "properties": {
+          "name": { "type": "string", "description": "New display name." },
+          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Replacement host config v2." }
+        },
+        "anyOf": [{ "required": ["name"] }, { "required": ["config"] }]
+      },
+      "HostDeleted": {
+        "type": "object",
+        "required": ["id", "deleted"],
+        "properties": {
+          "id": { "type": "string" },
+          "deleted": { "type": "boolean", "enum": [true] }
+        }
+      },
+      "ComputerEnvironmentBuild": {
+        "type": "object",
+        "description": "One build of an environment's image.",
+        "required": ["id", "status", "provider", "baseImageDigests", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "building", "ready", "failed"] },
+          "provider": { "type": "string", "enum": ["e2b", "stub"] },
+          "e2bBuildId": { "type": "string" },
+          "baseImageDigests": { "type": "array", "items": { "type": "string" }, "description": "Resolved sha256 digest of every FROM base (the reproducibility pin)." },
+          "logPreview": { "type": "string", "description": "Capped, ANSI-stripped tail of the build log." },
+          "error": { "type": "string" },
+          "createdAt": { "type": "number" },
+          "startedAt": { "type": "number" },
+          "finishedAt": { "type": "number" }
+        }
+      },
+      "ComputerEnvironment": {
+        "type": "object",
+        "description": "A project's custom Computer image: a digest-pinned Dockerfile plus its latest build.",
+        "required": ["id", "projectId", "name", "dockerfile", "contentHash", "sharing", "isOwner", "currentBuild", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": "string" },
+          "name": { "type": "string" },
+          "dockerfile": { "type": "string" },
+          "contentHash": { "type": "string" },
+          "sharing": { "type": "string", "enum": ["user", "project"], "description": "`user` = a personal draft; `project` = shared with the whole project." },
+          "isOwner": { "type": "boolean" },
+          "currentBuild": { "oneOf": [{ "$ref": "#/components/schemas/ComputerEnvironmentBuild" }, { "type": "null" }] },
+          "createdAt": { "type": "number" },
+          "updatedAt": { "type": "number" }
+        }
+      },
+      "ComputerEnvironmentPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironment" } },
+          "nextCursor": { "type": "string" }
+        }
+      },
+      "ComputerEnvironmentBuildPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironmentBuild" } },
+          "nextCursor": { "type": "string" }
+        }
+      },
+      "ComputerEnvironmentCreateRequest": {
+        "type": "object",
+        "description": "Create an environment from a Dockerfile. The Dockerfile must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
+        "required": ["name", "dockerfile"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "Display name for the new environment; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Dockerfile text." }
+        }
+      },
+      "ComputerEnvironmentUpdateRequest": {
+        "type": "object",
+        "description": "Edit an environment. Provide at least one of `name` or `dockerfile`; only the fields you pass change.",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "New display name; must be non-empty after trimming." },
+          "dockerfile": { "type": "string", "minLength": 1, "description": "Replacement Dockerfile text." }
+        },
+        "anyOf": [{ "required": ["name"] }, { "required": ["dockerfile"] }]
+      },
+      "ComputerEnvironmentDeleted": {
+        "type": "object",
+        "required": ["id", "deleted"],
+        "properties": {
+          "id": { "type": "string" },
+          "deleted": { "type": "boolean", "enum": [true] }
+        }
+      },
+      "ComputerEnvironmentBuildStarted": {
+        "type": "object",
+        "description": "A build was accepted (202). It runs in the background — poll the builds list for status.",
+        "required": ["id", "buildId", "reused"],
+        "properties": {
+          "id": { "type": "string", "description": "The environment id." },
+          "buildId": { "type": "string" },
+          "reused": { "type": "boolean", "description": "True when an identical prior build was reused instead of rebuilding." }
+        }
+      },
+      "ComputerAttached": {
+        "type": "object",
+        "required": ["environmentId", "computerId", "status"],
+        "properties": {
+          "environmentId": { "type": "string" },
+          "computerId": { "type": "string" },
+          "status": { "type": "string", "description": "The computer's lifecycle status after attaching (it re-provisions)." }
+        }
+      },
+      "ComputerReset": {
+        "type": "object",
+        "required": ["projectId", "reset"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "reset": { "type": "boolean" }
         }
       }
     },

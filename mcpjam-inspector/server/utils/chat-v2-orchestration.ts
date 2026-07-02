@@ -17,7 +17,7 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, type Harness } from "@mcpjam/sdk";
 import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
@@ -28,6 +28,7 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
+import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import { UI_TOOL_NAME_REGEX } from "@/shared/client-fulfilled-tools";
@@ -531,6 +532,44 @@ export function buildWidgetModelContextSystemPrompt(
   ].join("\n\n");
 }
 
+/**
+ * EVAL analogue of {@link buildWidgetModelContextSystemPrompt}: frame recorded
+ * widget→host tool CALLS (triggered by `Interact` steps) as current app state so
+ * a headless eval model reasons over a widget interaction on its next turn — the
+ * server-side analogue of Playground's browser-only `addToolOutput` +
+ * auto-continue, which can't run in the headless Node runner. Reuses the same
+ * content-block renderer. Per SEP-1865 the tool result's `content` is what's
+ * meant for model context (`structuredContent` is not), so we render `content`
+ * only. Callers pass model-visible calls only (app-only `visibility:["app"]`
+ * calls are UI-only and filtered upstream).
+ */
+export function buildWidgetInteractionContextSystemPrompt(
+  calls: ReadonlyArray<{ toolName: string; result?: unknown }>
+): string {
+  if (calls.length === 0) return "";
+
+  const sections = calls.map((call) => {
+    const result = call.result as
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
+    const content = result?.content ?? [];
+    const lines = [
+      `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
+    ];
+    if (content.length > 0) {
+      lines.push(...content.map((block) => renderWidgetContextContentBlock(block)));
+    } else {
+      lines.push("(no textual content)");
+    }
+    return lines.join("\n");
+  });
+
+  return [
+    "During this conversation the user performed interactions inside MCP App widgets. Each call below was triggered by a user action and executed against the server; treat the results as current app state for this turn, not as new user requests.",
+    ...sections,
+  ].join("\n\n");
+}
+
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -549,6 +588,11 @@ export interface PrepareChatV2Options {
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
   /**
+   * Resolved host harness. Harness runtimes own native tool discovery, so
+   * MCPJam's progressive meta-tools must stay out of their prepared tool set.
+   */
+  harness?: Harness;
+  /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
    * resets every request and any tools the model loaded earlier in the
@@ -560,6 +604,13 @@ export interface PrepareChatV2Options {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
+  /**
+   * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
+   * instead of the local filesystem — the hosted/`/web` path. Only set by
+   * callers whose host actually has a computer, so "advertise == enforce".
+   * Takes precedence over the local/HOSTED_MODE skill branches.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
 }
 
 /**
@@ -671,6 +722,8 @@ export async function prepareChatV2(
     appTools,
     uiTools,
     builtInTools,
+    cloudSkills,
+    harness,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -709,10 +762,20 @@ export async function prepareChatV2(
   if (respectToolVisibility !== false) {
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
+  // Skills source, in precedence order:
+  //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
+  //      with a provisioned computer. Lazy discovery (no upfront wake).
+  //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
+  //   3. local ⇒ the inspector's own filesystem.
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    HOSTED_MODE
-      ? { tools: {}, systemPromptSection: "" }
-      : await getSkillToolsAndPrompt();
+    cloudSkills
+      ? getCloudSkillToolsAndPrompt({
+          authHeader: cloudSkills.authHeader,
+          projectId: cloudSkills.projectId,
+        })
+      : HOSTED_MODE
+        ? { tools: {}, systemPromptSection: "" }
+        : await getSkillToolsAndPrompt();
 
   const finalSkillTools: Record<string, unknown> = requireToolApproval
     ? Object.fromEntries(
@@ -818,13 +881,15 @@ export async function prepareChatV2(
       catalog,
     );
   }
-  const envOverride = parseProgressiveToolsEnv(
-    process.env.MCPJAM_PROGRESSIVE_TOOLS,
-  );
+  const envOverride = harness
+    ? false
+    : parseProgressiveToolsEnv(process.env.MCPJAM_PROGRESSIVE_TOOLS);
   const progressivePlan = decideProgressivePlan({
     catalog,
     modelContextLength: modelDefinition.contextLength,
-    options: options.progressiveToolDiscovery,
+    options: harness
+      ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
+      : options.progressiveToolDiscovery,
     envOverride,
   });
 

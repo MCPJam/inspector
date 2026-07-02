@@ -59,6 +59,29 @@ export interface ServerWithName {
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  /**
+   * Whether a redacted HTTP config carried an `Authorization: Bearer …`
+   * header. The header value itself is stripped before reaching the browser
+   * (like env/headers), so the edit form relies on this flag to know the
+   * server uses bearer auth and to keep the saved token hidden-but-preserved.
+   */
+  hasBearerToken?: boolean;
+  /**
+   * Optional issuer override for the cross-app authorization test target.
+   * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
+   */
+  xaaAuthzIssuer?: string;
+  /**
+   * Cross-App Access (XAA) connect flag. When true the server authenticates via
+   * the XAA token-exchange flow (server mints the token) rather than standard
+   * OAuth. Mutually exclusive with `useOAuth`.
+   */
+  useXaa?: boolean;
+  /** Which IdP mints the XAA assertion. v1 only "mcpjam". */
+  authServerMode?: "mcpjam" | "own";
+  /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
+  xaaSubject?: string;
+  xaaEmail?: string;
 }
 
 export interface Project {

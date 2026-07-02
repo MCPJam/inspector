@@ -47,7 +47,14 @@ export interface RemoteServer {
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  hasBearerToken?: boolean;
   oauthResourceUrl?: string;
+  xaaAuthzIssuer?: string;
+  // Cross-App Access (XAA)
+  useXaa?: boolean;
+  authServerMode?: "mcpjam" | "own";
+  xaaSubject?: string;
+  xaaEmail?: string;
   createdAt: number;
   updatedAt: number;
 }

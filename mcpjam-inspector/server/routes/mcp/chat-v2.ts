@@ -8,6 +8,7 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
+  getCanonicalModelId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -16,6 +17,8 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -67,6 +70,7 @@ import {
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { type ExecutionScope } from "../../utils/execution-scope.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -212,6 +216,10 @@ function streamDirectChatWithLiveTrace(options: {
     execute: async ({ writer }) => {
       handle = runDirectChatTurn({
         ...turnOptions,
+        // Logical provider for span metadata (OTel gen_ai.provider.name).
+        // Pulled out of `turnOptions` above for error formatting; thread it
+        // back in so llm/step spans carry it.
+        provider,
         abortSignal,
         onPersist,
         onPersistError: (error) => {
@@ -270,6 +278,8 @@ chatV2.post("/", async (c) => {
       chatboxId?: string;
       accessVersion?: number;
       surface?: "preview" | "share_link";
+      // Saved host being previewed (Playground over /mcp). See web/chat-v2.ts.
+      hostId?: string;
     };
     const mcpClientManager = c.mcpClientManager;
     const {
@@ -285,6 +295,7 @@ chatV2.post("/", async (c) => {
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
+      hostId: bodyHostId,
     } = body;
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
@@ -343,6 +354,33 @@ chatV2.post("/", async (c) => {
           );
         }
       }
+    } else if (!isChatboxSession && bodyHostId) {
+      // Host-bound direct session (Playground). FAIL CLOSED on fetch failure —
+      // see web/chat-v2.ts for the rationale (a harness host must never quietly
+      // fall back to the emulated engine).
+      const bearer = c.req.header("authorization") ?? "";
+      const runtime = await fetchHostRuntimeConfig({
+        hostId: bodyHostId,
+        bearer,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (runtime.ok) {
+        hostRuntimeConfig = runtime.config as unknown as Record<
+          string,
+          unknown
+        >;
+      } else {
+        logger.warn(
+          "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
+          { hostId: bodyHostId, status: runtime.status, error: runtime.error }
+        );
+        return c.json(
+          {
+            error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+          },
+          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+        );
+      }
     }
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -354,7 +392,9 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         builtInToolIds: body.builtInToolIds,
       },
-      precedence: "host-wins",
+      // Chatbox: published host wins. Host preview: owner's body tweaks win,
+      // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
+      precedence: isChatboxSession ? "host-wins" : "override-wins",
     });
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
@@ -539,17 +579,66 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // Harness preflight: fail closed with a clear message when a host-resolved
+    // harness (claude-code | codex) can't run on this server (never silent-
+    // fallback). Capability-driven (computer / approval / MCP / model eligibility).
+    if (resolvedExecution.harness) {
+      const availability = checkHarnessRuntimeAvailable({
+        harnessId: resolvedExecution.harness,
+        requireToolApproval: resolvedExecution.requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Provider-aware: a bare model id (no creator prefix) needs the provider
+        // to resolve its canonical id, else a hosted MCPJam model is misjudged.
+        modelEligible: isMCPJamProvidedModel(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+        // Canonical id so the adapter's supportsModel check sees the prefixed
+        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
+        modelId: getCanonicalModelId(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+      });
+      if (!availability.ok) {
+        return c.json(
+          {
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          },
+          503
+        );
+      }
+    }
+
     // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
     // HTTP action, which needs a bearer + projectId to authorize. Local
     // requests without either (anonymous local mode, no project) omit the
     // tools — same degradation as a host that never enabled them.
     const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
+    // Phase 3: thread the server-resolved runtime config's executionScope into
+    // the computer-backed (bash) tool so the reserve call re-resolves live
+    // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
+    const executionScope = (
+      hostRuntimeConfig as
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
+    )?.executionScope;
+
     const builtInTools = resolveHostTools(
-      { builtInToolIds: resolvedExecution.builtInToolIds },
+      {
+        builtInToolIds: resolvedExecution.builtInToolIds,
+        // Computer comes from the server-resolved runtime config (chatbox OR
+        // host-by-id), never the request body.
+        computer: hostRuntimeConfig
+          ? (hostRuntimeConfig as { computer?: unknown }).computer
+          : undefined,
+      },
       builtInAuthHeader && typeof body.projectId === "string" && body.projectId
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
               : {}),
@@ -569,6 +658,9 @@ chatV2.post("/", async (c) => {
         respectToolVisibility,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
+        ...(resolvedExecution.harness
+          ? { harness: resolvedExecution.harness }
+          : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
@@ -665,6 +757,7 @@ chatV2.post("/", async (c) => {
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
+        provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
@@ -675,6 +768,12 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        ...(resolvedExecution.harness
+          ? { harness: resolvedExecution.harness }
+          : {}),
+        // Server-executed built-ins forwarded separately so the harness path
+        // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
+        ...(builtInTools ? { builtInTools } : {}),
         projectId: body.projectId,
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId

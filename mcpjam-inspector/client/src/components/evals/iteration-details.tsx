@@ -1,6 +1,10 @@
 import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
+import {
+  JudgeVerdictPanel,
+  type JudgeCase,
+} from "./goal-completion-presentation";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
 import {
@@ -8,6 +12,11 @@ import {
   parseIterationPredicates,
 } from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
+import {
+  TraceViewModeTabs,
+  type TraceViewMode,
+} from "./trace-view-mode-tabs";
+import { PreviewHeaderSlot } from "./preview/preview-header-slot";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import {
   MessageSquare,
@@ -39,9 +48,16 @@ import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  resolveIterationDisplayExpectedToolCalls,
-  resolvePromptTurns,
-} from "@/shared/prompt-turns";
+  isModelFree,
+  normalizeSteps,
+  promptTurnsToSteps,
+  resolveDisplayExpectedToolCalls,
+  type TestStep,
+} from "@/shared/steps";
+import {
+  parseStepStatusById,
+  type StepReplayMetadata,
+} from "@/shared/eval-step-replay";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
@@ -243,6 +259,7 @@ export function IterationDetails({
   serverNames = EMPTY_SERVER_NAMES,
   layoutMode = "compact",
   caseInsightSlot,
+  judgeCase = null,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -250,6 +267,8 @@ export function IterationDetails({
   layoutMode?: "compact" | "full";
   /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
   caseInsightSlot?: ReactNode;
+  /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
+  judgeCase?: JudgeCase | null;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -275,6 +294,23 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
+  type PreviewTraceMode = TraceViewMode | "browser" | "steps";
+  const [previewTraceMode, setPreviewTraceMode] =
+    useState<PreviewTraceMode>("chat");
+
+  // The authored steps this run executed (from its snapshot), so the replay can
+  // offer the same step-aligned "Steps" tab the live preview does. Falls back to
+  // the legacy promptTurns shape for pre-migration snapshots.
+  const snapshotSteps = useMemo<TestStep[]>(() => {
+    const steps = iteration.testCaseSnapshot?.steps;
+    if (Array.isArray(steps) && steps.length > 0) return normalizeSteps(steps);
+    return promptTurnsToSteps(
+      Array.isArray(iteration.testCaseSnapshot?.promptTurns)
+        ? iteration.testCaseSnapshot.promptTurns
+        : [],
+    );
+  }, [iteration.testCaseSnapshot]);
+  const hasSteps = snapshotSteps.length > 0;
 
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
@@ -322,7 +358,15 @@ export function IterationDetails({
   useEffect(() => {
     if (layoutMode !== "full") return;
     setToolCallsSectionOpen(iteration.result !== "passed");
-  }, [layoutMode, iteration._id, iteration.result]);
+    // Step-aligned cases (any interact/assert step) open on the Steps replay —
+    // the 1:1 mirror of the authored steps — matching the live preview default;
+    // pure prompt+grade cases keep Chat.
+    setPreviewTraceMode(
+      snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+        ? "steps"
+        : "chat",
+    );
+  }, [layoutMode, iteration._id, iteration.result, snapshotSteps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -420,67 +464,25 @@ export function IterationDetails({
   const traceEndedAtMs = iteration.updatedAt;
 
   // Aggregate expected tools across turns for display (snapshot wins over draft case).
-  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+  const expectedToolCalls = resolveDisplayExpectedToolCalls(
     iteration.testCaseSnapshot,
     testCase,
   );
   const actualToolCalls = iteration.actualToolCalls || [];
-  const promptSummaries = useMemo(() => {
-    if (Array.isArray(blob?.prompts) && blob.prompts.length > 0) {
-      return blob.prompts as Array<{
-        promptIndex: number;
-        prompt: string;
-        expectedToolCalls: Array<{
-          toolName: string;
-          arguments: Record<string, any>;
-        }>;
-        actualToolCalls: Array<{
-          toolName: string;
-          arguments: Record<string, any>;
-        }>;
-        expectedOutput?: string;
-        passed: boolean;
-        missing: Array<{ toolName: string; arguments: Record<string, any> }>;
-        unexpected: Array<{ toolName: string; arguments: Record<string, any> }>;
-        argumentMismatches: Array<{
-          toolName: string;
-          expectedArgs: Record<string, any>;
-          actualArgs: Record<string, any>;
-        }>;
-      }>;
+  const hasEvalToolCalls =
+    expectedToolCalls.length > 0 || actualToolCalls.length > 0;
+  const hasBrowserArtifacts = useMemo(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") {
+      return false;
     }
-
-    const promptTurns = resolvePromptTurns({
-      promptTurns: iteration.testCaseSnapshot?.promptTurns,
-      query: iteration.testCaseSnapshot?.query,
-      expectedToolCalls: iteration.testCaseSnapshot?.expectedToolCalls,
-      expectedOutput: iteration.testCaseSnapshot?.expectedOutput,
-    });
-
-    return promptTurns.map((turn, promptIndex) => ({
-      promptIndex,
-      prompt: turn.prompt,
-      expectedToolCalls: turn.expectedToolCalls,
-      actualToolCalls: promptIndex === 0 ? actualToolCalls : [],
-      expectedOutput: turn.expectedOutput,
-      passed: iteration.result === "passed",
-      missing: [],
-      unexpected: [],
-      argumentMismatches: [],
-    }));
-  }, [
-    actualToolCalls,
-    blob?.prompts,
-    iteration.result,
-    iteration.testCaseSnapshot?.expectedOutput,
-    iteration.testCaseSnapshot?.expectedToolCalls,
-    iteration.testCaseSnapshot?.promptTurns,
-    iteration.testCaseSnapshot?.query,
-  ]);
-  const firstFailedTurnIndex =
-    typeof iteration.metadata?.firstFailedTurnIndex === "number"
-      ? iteration.metadata.firstFailedTurnIndex
-      : promptSummaries.findIndex((summary) => !summary.passed);
+    const observations = (blob as { widgetRenderObservations?: unknown })
+      .widgetRenderObservations;
+    const videoUrl = (blob as { videoUrl?: unknown }).videoUrl;
+    return (
+      (Array.isArray(observations) && observations.length > 0) ||
+      (typeof videoUrl === "string" && videoUrl.length > 0)
+    );
+  }, [blob]);
 
   // Helper to format type information
   const formatType = (type: any): string => {
@@ -605,6 +607,28 @@ export function IterationDetails({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
   const traceFirst = layoutMode === "full" && hasTrace;
+  const previewTraceToolbar =
+    layoutMode === "full" && hasTrace && !loading && !error ? (
+      <PreviewHeaderSlot>
+        <TraceViewModeTabs
+          mode={
+            previewTraceMode === "browser" || previewTraceMode === "steps"
+              ? "timeline"
+              : previewTraceMode
+          }
+          onModeChange={setPreviewTraceMode}
+          showToolsTab={hasEvalToolCalls}
+          showBrowserTab={hasBrowserArtifacts}
+          browserActive={previewTraceMode === "browser"}
+          onSelectBrowser={() => setPreviewTraceMode("browser")}
+          showStepsTab={hasSteps}
+          stepsActive={previewTraceMode === "steps"}
+          onSelectSteps={() => setPreviewTraceMode("steps")}
+          appearance="segment"
+          className="w-full"
+        />
+      </PreviewHeaderSlot>
+    ) : null;
   const toolCallsSummary = formatToolCallsSummary(
     expectedToolCalls,
     actualToolCalls,
@@ -804,19 +828,63 @@ export function IterationDetails({
     () => parseIterationPredicates(iteration.metadata),
     [iteration.metadata],
   );
-  const predicatesSection = predicates ? (
-    <div className="space-y-2" data-testid="iteration-predicates-section">
-      <div className="flex items-center justify-between border-b border-border/40 pb-2">
-        <div className="text-xs font-semibold">Predicate Gate</div>
+  // Persisted per-step verdicts (`metadata.stepResults`), keyed by stepId — the
+  // completed-run analogue of the live step_status stream. Feeds the Steps tab so
+  // each assert/interact shows its own PASS/FAIL inline, which is why the gate
+  // footer below no longer repeats the step-scoped checks.
+  const stepStatusById = useMemo(
+    () =>
+      parseStepStatusById(
+        iteration.metadata as StepReplayMetadata | undefined,
+      ),
+    [iteration.metadata],
+  );
+  // A snapshot is a render check ("probe") when its steps are model-free (no
+  // `prompt` step). Probes get an artifacts-first layout with NO Steps tab, so
+  // the gate stays their canonical checks display (see below); every other case
+  // surfaces step verdicts inline on the Steps tab.
+  const isProbe = isModelFree(snapshotSteps);
+  // For the non-probe layout, only CASE-LEVEL (unscoped) predicates belong in the
+  // gate footer: every step-scoped check (toolCalledWith / widgetRendered / …)
+  // corresponds to an authored `assert` step and now renders its verdict inline
+  // on the Steps tab. So the footer carries just the global gates that have no
+  // per-step home, and disappears entirely when every check is step-scoped.
+  // Probes keep the FULL gate (no Steps tab to absorb the step-scoped rows).
+  const gateRows = useMemo(() => {
+    if (!predicates) return null;
+    return isProbe ? predicates : predicates.filter((p) => !p.scope);
+  }, [predicates, isProbe]);
+  // Per-widget render observations off the trace blob, so a `widgetRendered`
+  // (and friends) check can show the rendered widget inline as its evidence.
+  // Absent until the blob loads — the gate renders fine without it.
+  const blobObservations = useMemo<
+    import("@/shared/eval-trace").EvalTraceWidgetRenderObservationView[]
+  >(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") return [];
+    const raw = (blob as { widgetRenderObservations?: unknown })
+      .widgetRenderObservations;
+    return Array.isArray(raw) ? raw : [];
+  }, [blob]);
+  const predicatesSection =
+    gateRows && gateRows.length > 0 ? (
+      <div className="space-y-2" data-testid="iteration-predicates-section">
+        <div className="flex items-center justify-between border-b border-border/40 pb-2">
+          <div className="text-xs font-semibold">
+            {isProbe ? "Predicate Gate" : "Global Gates"}
+          </div>
+        </div>
+        <PredicatesList predicates={gateRows} observations={blobObservations} />
       </div>
-      <PredicatesList predicates={predicates} />
-    </div>
-  ) : null;
+    ) : null;
 
-  // Widget probes get an artifacts-first layout: checks + the rendered
-  // widget. Tool-call diff (expected vs actual is meaningless for a pinned
-  // call) and the full trace viewer (no LLM conversation) are hidden.
-  const isProbe = iteration.testCaseSnapshot?.caseType === "widget_probe";
+  // Widget probes get an artifacts-first layout: checks + the rendered widget.
+  // Tool-call diff (expected vs actual is meaningless for a pinned call) and the
+  // full trace viewer (no LLM conversation) are hidden. `isProbe` is computed
+  // above (next to the gate, which depends on it).
+  // Pure render checks hide the trace viewer (no LLM conversation), so they get
+  // a dedicated "Widget Render" section here. Every other case (prompt/hybrid)
+  // already surfaces the same observations via the trace viewer's Browser tab,
+  // so no separate section is added for them — see the layout below.
   const probeObservations = useMemo<
     import("@/shared/eval-trace").EvalTraceWidgetRenderObservationView[]
   >(() => {
@@ -837,9 +905,6 @@ export function IterationDetails({
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
-        // A failed artifact load must not masquerade as "no observation" —
-        // reuse the trace section's error panel (with retry) since the probe
-        // layout hides that section.
         <TraceBlobLoadErrorPanel
           error={error}
           layoutMode={layoutMode}
@@ -848,7 +913,7 @@ export function IterationDetails({
           onDetailsOpenChange={setIsBlobErrorDetailsOpen}
         />
       ) : probeObservations.length > 0 ? (
-        <BrowserArtifactsView observations={probeObservations} steps={[]} />
+        <BrowserArtifactsView observations={probeObservations} />
       ) : (
         <p className="text-xs italic text-muted-foreground">
           No render observation recorded for this iteration.
@@ -896,19 +961,29 @@ export function IterationDetails({
           />
         ) : (
           <TraceViewer
-            trace={blob}
-            model={traceModel}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            connectedServerIds={connectedServerIds}
-            traceStartedAtMs={traceStartedAtMs}
-            traceEndedAtMs={traceEndedAtMs}
-            estimatedDurationMs={estimatedDurationMs}
-            traceInsight={caseInsightSlot}
-            chromeDensity={layoutMode === "full" ? "compact" : "default"}
-            expectedToolCalls={expectedToolCalls}
-            actualToolCalls={actualToolCalls}
-          />
+              trace={blob}
+              model={traceModel}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              connectedServerIds={connectedServerIds}
+              traceStartedAtMs={traceStartedAtMs}
+              traceEndedAtMs={traceEndedAtMs}
+              estimatedDurationMs={estimatedDurationMs}
+              traceInsight={caseInsightSlot}
+              chromeDensity={layoutMode === "full" ? "compact" : "default"}
+              fillContent={layoutMode === "full"}
+              hideToolbar={layoutMode === "full"}
+              forcedViewMode={
+                layoutMode === "full" ? previewTraceMode : undefined
+              }
+              steps={snapshotSteps}
+              stepStatusById={
+                stepStatusById.size > 0 ? stepStatusById : undefined
+              }
+              iterationResult={iteration.result}
+              expectedToolCalls={expectedToolCalls}
+              actualToolCalls={actualToolCalls}
+            />
         )}
       </div>
     </div>
@@ -920,62 +995,6 @@ export function IterationDetails({
         {caseInsightSlot}
       </div>
     ) : null;
-  const promptSummarySection =
-    promptSummaries.length > 0 ? (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold">Turn Breakdown</div>
-          <div className="text-[10px] text-muted-foreground">
-            {promptSummaries.length} turn
-            {promptSummaries.length === 1 ? "" : "s"}
-            {firstFailedTurnIndex >= 0
-              ? ` · first failure on turn ${firstFailedTurnIndex + 1}`
-              : ""}
-          </div>
-        </div>
-        <div className="grid gap-2 md:grid-cols-2">
-          {promptSummaries.map((summary) => (
-            <div
-              key={`prompt-summary-${summary.promptIndex}`}
-              className="rounded-md border border-border/50 bg-muted/10 p-3 space-y-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium">
-                  Turn {summary.promptIndex + 1}
-                </div>
-                <div
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                    summary.passed
-                      ? "bg-success/50 text-foreground"
-                      : "bg-destructive/50 text-foreground",
-                  )}
-                >
-                  {summary.passed ? "Passed" : "Failed"}
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground whitespace-pre-wrap">
-                {summary.prompt || "No prompt recorded"}
-              </div>
-              <div className="text-[10px] text-muted-foreground">
-                Expected {summary.expectedToolCalls.length} · Actual{" "}
-                {summary.actualToolCalls.length}
-              </div>
-              {!summary.passed ? (
-                <div className="text-[10px] text-destructive">
-                  {formatToolCallsSummary(
-                    summary.expectedToolCalls,
-                    summary.actualToolCalls,
-                    120,
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </div>
-    ) : null;
-
   return (
     <div
       className={cn(
@@ -984,6 +1003,14 @@ export function IterationDetails({
         layoutMode === "full" ? "gap-3" : "gap-4 py-2",
       )}
     >
+      {previewTraceToolbar}
+      {/* Advisory judge verdict — pinned under the tab row so it's visible on
+          every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
+      {layoutMode === "full" && judgeCase ? (
+        <div className="shrink-0 px-3">
+          <JudgeVerdictPanel judgeCase={judgeCase} />
+        </div>
+      ) : null}
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
@@ -1028,7 +1055,6 @@ export function IterationDetails({
       )}
 
       {caseInsightFallback}
-      {promptSummarySection}
 
       {isProbe ? (
         <>

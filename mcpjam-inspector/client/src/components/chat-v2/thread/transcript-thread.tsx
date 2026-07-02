@@ -247,7 +247,7 @@ export function TranscriptThread({
   onDisplayModeChange,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -263,6 +263,7 @@ export function TranscriptThread({
   renderUserMessageActions,
   showSenderAvatars = false,
   resolveSenderAvatar,
+  recorder,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -565,7 +566,7 @@ export function TranscriptThread({
               onDisplayModeChange={onDisplayModeChange}
               onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={toolRenderOverrides}
-              showSaveViewButton={showSaveViewButton}
+              showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
@@ -574,6 +575,7 @@ export function TranscriptThread({
               renderUserMessageActions={renderUserMessageActions}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
+              recorder={recorder}
             />
             {messageAppToolInvocations.length > 0 && (
               <div className="mt-3 space-y-2">

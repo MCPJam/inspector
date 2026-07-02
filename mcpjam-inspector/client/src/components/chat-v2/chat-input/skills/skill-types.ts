@@ -4,6 +4,7 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "../../../../../../shared/skill-types";
+import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 
 /**
  * A selected file from a skill directory
@@ -23,6 +24,14 @@ export interface SkillResult extends Skill {
   // Skill already has all needed fields: name, description, content, path
   // Additional files selected by the user
   selectedFiles?: SelectedSkillFile[];
+  /**
+   * The source this skill was selected from, captured at selection time. Later
+   * file reads (expanding the card) use THIS, not whatever project is active
+   * now — so switching projects can't make a card fetch the wrong project's
+   * files. Absent for legacy/local selections (card falls back to the current
+   * source prop).
+   */
+  source?: SkillsSource;
 }
 
 // Re-export for convenience

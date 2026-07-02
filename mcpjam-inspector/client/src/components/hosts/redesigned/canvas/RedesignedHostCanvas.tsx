@@ -18,17 +18,23 @@ import {
   Handle,
   Position,
   ReactFlow,
+  type Edge,
   type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { Plus, Server } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Plus, Server, Settings, TerminalSquare } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
+import type { HostThemeMode } from "@/lib/client-styles";
+import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
 import {
   ADD_SERVER_NODE_ID,
+  HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
   type AddServerPillNodeData,
+  type BuiltinToolsNodeData,
+  type ComputerNodeData,
   type HostMatrixNodeData,
   type HostRedesignViewModel,
   type ServerCardNodeData,
@@ -56,6 +62,9 @@ const HostMatrixContext = createContext<{
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
   reportMatrixHeight: (height: number) => void;
+  themeMode: HostThemeMode;
+  /** Navigate to the Computer tab — threaded to the Computer island's "Open terminal" link. */
+  onOpenComputer?: () => void;
 } | null>(null);
 
 /* ============================================================
@@ -110,6 +119,7 @@ const HostMatrixNodeRenderer = memo(
           appsExtensionAdvertised={data.appsExtensionAdvertised}
           compatRuntime={data.compatRuntime}
           mcpAppsBridge={data.mcpAppsBridge}
+          themeMode={ctx?.themeMode ?? "light"}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />
@@ -289,11 +299,196 @@ const AddServerPillRenderer = memo(
 );
 AddServerPillRenderer.displayName = "AddServerPillRenderer";
 
+/* ============================================================
+   Project Computers islands. Built-in tools sit to the left of
+   the matrix; the Computer island to the right. Both are gated
+   in the builder behind `computersEnabled`, so they only ever
+   mount when the feature flag is on. A click anywhere on either
+   island routes to the Agent (Behavior) tab via onNodeClick →
+   onSelectNode → focusTabForNodeId.
+   ============================================================ */
+const BuiltinToolsNodeRenderer = memo(
+  (props: NodeProps<Node<BuiltinToolsNodeData, "redesignBuiltinTools">>) => {
+    const { data, selected } = props;
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
+        className={cn(
+          "flex w-full flex-col gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2.5 shadow-sm transition-shadow hover:shadow-md",
+          selected && "ring-2 ring-primary/40",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+            <Settings className="size-3.5" strokeWidth={1.75} />
+          </div>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-[13px] font-semibold text-foreground">
+              Built-in tools
+            </span>
+            <span className="text-[10.5px] text-muted-foreground">
+              {data.tools.length === 0
+                ? "None enabled"
+                : `${data.tools.length} enabled`}
+            </span>
+          </div>
+        </div>
+        {data.tools.length === 0 ? (
+          <span className="border-t border-dashed border-border/60 pt-2 text-[11px] text-muted-foreground">
+            No built-in tools
+          </span>
+        ) : (
+          <ul className="flex flex-col gap-1 border-t border-dashed border-border/60 pt-2">
+            {data.tools.map((tool) => (
+              <li
+                key={tool.id}
+                className="flex items-center justify-between gap-2 text-[11.5px]"
+              >
+                <span
+                  className="truncate font-medium text-foreground"
+                  title={tool.label}
+                >
+                  {tool.label}
+                </span>
+                {tool.requiresComputer ? (
+                  <span
+                    className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground"
+                    title="Runs on the attached computer"
+                  >
+                    <ArrowRight className="size-2.5" />
+                    <TerminalSquare className="size-3" strokeWidth={1.75} />
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Handle
+          type="target"
+          position={Position.Right}
+          id="right"
+          className={decorativeHandleClass}
+        />
+      </motion.div>
+    );
+  },
+);
+BuiltinToolsNodeRenderer.displayName = "BuiltinToolsNodeRenderer";
+
+const ComputerNodeRenderer = memo(
+  (props: NodeProps<Node<ComputerNodeData, "redesignComputer">>) => {
+    const { data, selected } = props;
+    const ctx = useContext(HostMatrixContext);
+    const onOpenComputer = ctx?.onOpenComputer;
+
+    if (!data.attached) {
+      // Ghost state — no attachment intent. A click routes to the Agent
+      // tab (via onNodeClick) where the "Personal computer" toggle lives.
+      return (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
+          className={cn(
+            "flex w-full flex-col gap-1 rounded-[10px] border border-dashed border-border/70 bg-card/60 px-3 py-2.5 text-muted-foreground shadow-sm transition-shadow hover:shadow-md",
+            selected && "ring-2 ring-primary/40",
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-md bg-muted/40">
+              <TerminalSquare className="size-3.5" strokeWidth={1.75} />
+            </div>
+            <span className="text-[13px] font-semibold">+ Computer</span>
+          </div>
+          <span className="text-[10.5px]">Attach your personal computer</span>
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="left"
+            className={decorativeHandleClass}
+          />
+        </motion.div>
+      );
+    }
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
+        className={cn(
+          "flex w-full flex-col gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2.5 shadow-sm transition-shadow hover:shadow-md",
+          selected && "ring-2 ring-primary/40",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+            <TerminalSquare className="size-3.5" strokeWidth={1.75} />
+          </div>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-[13px] font-semibold text-foreground">
+              Computer
+            </span>
+            <span className="truncate text-[10.5px] text-muted-foreground">
+              personal · {data.workdir ?? "~/"}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 border-t border-dashed border-border/60 pt-2">
+          {data.status === null ? (
+            // Attached in config, but no machine reserved yet — distinct
+            // from the chip's "Loading…"/"No computer" states.
+            <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] text-muted-foreground">
+              Not started
+            </span>
+          ) : (
+            <ComputerStatusChip status={data.status} />
+          )}
+        </div>
+        {data.backedToolLabels.length > 0 ? (
+          <span
+            className="truncate text-[11px] text-muted-foreground"
+            title={data.backedToolLabels.join(", ")}
+          >
+            ↳ {data.backedToolLabels.join(", ")}
+          </span>
+        ) : null}
+        {onOpenComputer ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              // Don't also fire the node's onSelectNode (→ Agent tab); this
+              // link owns navigation to the Computer tab/terminal.
+              event.stopPropagation();
+              onOpenComputer();
+            }}
+            className="flex items-center gap-0.5 self-start text-[11px] font-medium text-primary hover:underline"
+          >
+            Open terminal
+            <ArrowUpRight className="size-3" />
+          </button>
+        ) : null}
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="left"
+          className={decorativeHandleClass}
+        />
+      </motion.div>
+    );
+  },
+);
+ComputerNodeRenderer.displayName = "ComputerNodeRenderer";
+
 const nodeTypes = {
   redesignHostMatrix: HostMatrixNodeRenderer,
   redesignServersHub: ServersHubNodeRenderer,
   redesignServerCard: ServerCardNodeRenderer,
   redesignAddServer: AddServerPillRenderer,
+  redesignBuiltinTools: BuiltinToolsNodeRenderer,
+  redesignComputer: ComputerNodeRenderer,
 };
 
 /**
@@ -317,6 +512,35 @@ interface FixedEdgeData {
   fixedSourceY: number;
   fixedTargetX: number;
   fixedTargetY: number;
+}
+
+/**
+ * Shift the reflowed `hostBranch` edges (host→hub→server cards) down by
+ * `dy` to track the matrix card's measured-vs-estimated height delta.
+ *
+ * Project Computers island edges are deliberately EXCLUDED: they source
+ * from the matrix node (`HOST_MATRIX_NODE_ID`), which never reflows — it
+ * sits at y=0 and grows downward — while their target island nodes are
+ * anchored near the top and aren't part of the servers-block shift. Shifting
+ * their baked endpoints by `dy` would slide the connector off the (static)
+ * island node, reintroducing the detached-edge artifact the fixed-edge
+ * coordinates exist to prevent. Exported for direct unit testing.
+ */
+export function shiftReflowedBranchEdges(edges: Edge[], dy: number): Edge[] {
+  if (dy === 0) return edges;
+  return edges.map((edge) => {
+    if (edge.type !== "hostBranch" || !edge.data) return edge;
+    if (edge.source === HOST_MATRIX_NODE_ID) return edge;
+    const d = edge.data as unknown as FixedEdgeData;
+    return {
+      ...edge,
+      data: {
+        ...d,
+        fixedSourceY: d.fixedSourceY + dy,
+        fixedTargetY: d.fixedTargetY + dy,
+      },
+    };
+  });
 }
 
 const TRUNK_CORNER = 14;
@@ -414,6 +638,9 @@ interface RedesignedHostCanvasProps {
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   onAddServer: () => void;
+  /** Navigate to the Computer tab — wired to the Computer island's "Open terminal" link. */
+  onOpenComputer?: () => void;
+  themeMode?: HostThemeMode;
   shellStyle?: CSSProperties;
   /**
    * Read-only mode: rendered identically but inert.
@@ -441,6 +668,8 @@ export function RedesignedHostCanvas({
   onSelectNode,
   onClearSelection,
   onAddServer,
+  onOpenComputer,
+  themeMode = "light",
   shellStyle,
   readOnly = false,
   onRequestEdit,
@@ -502,21 +731,10 @@ export function RedesignedHostCanvas({
     });
   }, [filteredNodes, dy]);
 
-  const shiftedEdges = useMemo(() => {
-    if (dy === 0) return filteredEdges;
-    return filteredEdges.map((edge) => {
-      if (edge.type !== "hostBranch" || !edge.data) return edge;
-      const d = edge.data as unknown as FixedEdgeData;
-      return {
-        ...edge,
-        data: {
-          ...d,
-          fixedSourceY: d.fixedSourceY + dy,
-          fixedTargetY: d.fixedTargetY + dy,
-        },
-      };
-    });
-  }, [filteredEdges, dy]);
+  const shiftedEdges = useMemo(
+    () => shiftReflowedBranchEdges(filteredEdges, dy),
+    [filteredEdges, dy],
+  );
 
   const nodes = useMemo(
     () =>
@@ -543,9 +761,24 @@ export function RedesignedHostCanvas({
             selectedNodeId: null,
             onSelectNode: () => onRequestEdit?.(),
             reportMatrixHeight,
+            themeMode,
           }
-        : { selectedNodeId, onSelectNode, reportMatrixHeight },
-    [selectedNodeId, onSelectNode, readOnly, onRequestEdit, reportMatrixHeight],
+        : {
+            selectedNodeId,
+            onSelectNode,
+            reportMatrixHeight,
+            themeMode,
+            onOpenComputer,
+          },
+    [
+      selectedNodeId,
+      onSelectNode,
+      readOnly,
+      onRequestEdit,
+      reportMatrixHeight,
+      onOpenComputer,
+      themeMode,
+    ],
   );
 
   // Hold the canvas edges invisible until the server pills have landed at

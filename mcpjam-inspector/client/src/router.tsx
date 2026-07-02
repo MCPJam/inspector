@@ -6,6 +6,7 @@ import App, {
   ChatboxesRoute,
   CiEvalsRoute,
   ConformanceRoute,
+  CompatibilityRoute,
   ComputerRoute,
   EvalsRoute,
   HostCompareRoute,
@@ -28,7 +29,6 @@ import App, {
   TasksRoute,
   ToolsRoute,
   TracingRoute,
-  ViewsRoute,
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
@@ -47,6 +47,19 @@ export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
   const router = createBrowserRouter([
+    ...(import.meta.env.DEV
+      ? [
+          {
+            path: "__e2e/oauth-debugger",
+            lazy: async () => {
+              const { OAuthDebuggerE2EHarness } = await import(
+                "./components/e2e/OAuthDebuggerE2EHarness"
+              );
+              return { Component: OAuthDebuggerE2EHarness };
+            },
+          },
+        ]
+      : []),
     {
       element: <App />,
       children: [
@@ -64,6 +77,11 @@ export function createAppRouter(): AppRouter {
           loader: ({ params }) => redirect(buildHostsPath(params.hostId)),
         },
         { path: "host-compare", element: <HostCompareRoute /> },
+        // Chrome-less host-compare surface for vanity domains (caniuse.dev):
+        // App renders this full-bleed (no sidebar/header) and skips the
+        // first-run onboarding redirect. `bare` forces the no-sub-nav render
+        // even for signed-in users.
+        { path: "embed/host-compare", element: <HostCompareRoute bare /> },
         { path: "computer", element: <ComputerRoute /> },
         { path: "hosts", element: <HostsRoute /> },
         { path: "hosts/:hostId", element: <HostsRoute /> },
@@ -76,6 +94,7 @@ export function createAppRouter(): AppRouter {
         { path: "skills", element: <SkillsRoute /> },
         { path: "learning", element: <LearningRoute /> },
         { path: "conformance", element: <ConformanceRoute /> },
+        { path: "compatibility", element: <CompatibilityRoute /> },
         { path: "oauth-flow", element: <OAuthFlowRoute /> },
         { path: "xaa-flow", element: <XAAFlowRoute /> },
         { path: "tracing", element: <TracingRoute /> },
@@ -92,7 +111,6 @@ export function createAppRouter(): AppRouter {
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
-        { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },
         { path: "settings/api-keys", element: <ApiKeysSettingsRoute /> },

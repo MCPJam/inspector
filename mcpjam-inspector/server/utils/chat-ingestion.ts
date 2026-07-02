@@ -143,11 +143,7 @@ export interface PersistedTurnTrace {
 // boundary so a new surface can't be added without explicitly choosing one.
 // Backend still accepts undefined for historical-row compatibility; the
 // inspector pins to the closed set.
-export type ChatOrigin =
-  | "playground"
-  | "mcpjam_agent"
-  | "chatbox"
-  | "eval";
+export type ChatOrigin = "playground" | "mcpjam_agent" | "chatbox" | "eval";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -178,6 +174,24 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  /**
+   * §3: chat-backed Claude Code harness resume-state commit. Applied ATOMICALLY
+   * with the transcript inside the ingest mutation (a failed sidecar commit
+   * rolls back the transcript write). Opaque pass-through.
+   */
+  harnessSessionCommit?: {
+    ownerType: "direct-chat" | "chatbox-chat";
+    chatSessionId: string;
+    chatboxId?: string;
+    leaseId: string;
+    expectedStateVersion: number;
+    harnessId: "claude-code";
+    harnessSessionId: string;
+    resumeState: unknown;
+    computerId: string;
+    runtimeFingerprint: string;
+    skillsHash?: string;
+  };
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
@@ -200,6 +214,8 @@ interface PersistChatSessionOptions {
   synthetic?: boolean;
   personaId?: string;
   personaLabel?: string;
+  /** Durable roster row id; stamped onto `chatSessions.personaRefId`. */
+  personaRefId?: string;
   synthesisRunId?: string;
 }
 
@@ -385,15 +401,15 @@ export async function persistChatSessionToConvex(
           ? { expectedVersion: options.expectedVersion }
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
-        ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
-        ...(options.toolSnapshot
-          ? { toolSnapshot: options.toolSnapshot }
+        ...(options.harnessSessionCommit
+          ? { harnessSessionCommit: options.harnessSessionCommit }
           : {}),
+        ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
+        ...(options.toolSnapshot ? { toolSnapshot: options.toolSnapshot } : {}),
         ...(options.synthetic ? { synthetic: true } : {}),
         ...(options.personaId ? { personaId: options.personaId } : {}),
-        ...(options.personaLabel
-          ? { personaLabel: options.personaLabel }
-          : {}),
+        ...(options.personaLabel ? { personaLabel: options.personaLabel } : {}),
+        ...(options.personaRefId ? { personaRefId: options.personaRefId } : {}),
         ...(options.synthesisRunId
           ? { synthesisRunId: options.synthesisRunId }
           : {}),

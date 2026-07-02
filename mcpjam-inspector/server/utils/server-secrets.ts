@@ -257,3 +257,98 @@ export async function fetchXaaResourceAppSecret(args: {
       : null,
   };
 }
+
+export interface ServerClientSecretResult {
+  /** null for a public client (server with no stored secret). */
+  clientSecret: string | null;
+  /** The server's stored OAuth client id — pinned server-side. */
+  clientId: string | null;
+  /** The server's stored URL, used to discover the auth server when no
+   * explicit issuer is set. */
+  serverUrl: string | null;
+  /** Optional issuer override; takes precedence over serverUrl for discovery. */
+  xaaAuthzIssuer: string | null;
+}
+
+/**
+ * Resolve a server target's confidential client secret plus the non-secret
+ * config (client id, url, issuer) server-side, mirroring
+ * fetchXaaResourceAppSecret: the caller's bearer is forwarded as-is, so the
+ * backend enforces per-server ownership. The secret never reaches the browser
+ * and the inspector server — not the client — decides where it is posted.
+ */
+export async function fetchServerClientSecret(args: {
+  bearerToken: string;
+  serverId: string;
+  projectId: string;
+}): Promise<ServerClientSecretResult> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+  const REVEAL_TIMEOUT_MS = 10_000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REVEAL_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/xaa/server/reveal-secret`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.bearerToken}`,
+      },
+      body: JSON.stringify({
+        serverId: args.serverId,
+        projectId: args.projectId,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        (error as { code?: string }).code === "ABORT_ERR");
+    throw new WebRouteError(
+      isAbort ? 504 : 502,
+      ErrorCode.SERVER_UNREACHABLE,
+      isAbort
+        ? `Secret reveal service timed out after ${REVEAL_TIMEOUT_MS}ms`
+        : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    // ignored
+  }
+
+  if (!response.ok || !body?.success) {
+    const message =
+      typeof body?.error === "string"
+        ? body.error
+        : `Secret reveal failed (${response.status})`;
+    throw new WebRouteError(
+      response.ok ? 500 : response.status,
+      statusToErrorCode(response.ok ? 500 : response.status),
+      message
+    );
+  }
+
+  return {
+    clientSecret:
+      typeof body.clientSecret === "string" ? body.clientSecret : null,
+    clientId: typeof body.clientId === "string" ? body.clientId : null,
+    serverUrl: typeof body.serverUrl === "string" ? body.serverUrl : null,
+    xaaAuthzIssuer:
+      typeof body.xaaAuthzIssuer === "string" ? body.xaaAuthzIssuer : null,
+  };
+}

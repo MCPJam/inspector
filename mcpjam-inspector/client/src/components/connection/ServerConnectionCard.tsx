@@ -4,7 +4,7 @@ import {
   useCallback,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Separator } from "@mcpjam/design-system/separator";
@@ -70,6 +70,7 @@ import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
+import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -856,23 +857,24 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          {server.connectionStatus === "oauth-flow" && (
-            <div
-              className="mt-3 rounded-md border border-purple-300/40 bg-purple-500/10 p-2 text-xs text-muted-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Complete sign-in in the browser. Inspector will resume
-              automatically.
-            </div>
-          )}
+          {(isConnected || showTunnelActions) && (
+            <div className="mt-3 flex items-center gap-2">
+              {isConnected && (
+                <HostCompatStrip
+                  server={server}
+                  onOpenDetails={
+                    isDetailModalEnabled
+                      ? () => openDetailModal("compatibility", "card_click")
+                      : undefined
+                  }
+                />
+              )}
 
-          <div className="mt-3 flex items-center justify-end">
-            <div
-              className="flex flex-wrap items-center justify-end gap-2"
-              onClick={(e) => e.stopPropagation()}
-            >
               {showTunnelActions && (
-                <>
+                <div
+                  className="ml-auto flex flex-shrink-0 flex-wrap items-center justify-end gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {hasTunnel ? (
                     <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
                       <button
@@ -956,10 +958,20 @@ export function ServerConnectionCard({
                       </span>
                     </button>
                   )}
-                </>
+                </div>
               )}
             </div>
-          </div>
+          )}
+
+          {server.connectionStatus === "oauth-flow" && (
+            <div
+              className="mt-3 rounded-md border border-purple-300/40 bg-purple-500/10 p-2 text-xs text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Complete sign-in in the browser. Inspector will resume
+              automatically.
+            </div>
+          )}
 
           {showTunnelActions && hasTunnel && showTunnelRequests && (
             <div

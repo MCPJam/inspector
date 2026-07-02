@@ -101,7 +101,8 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
     fireEvent.click(toggle);
 
     expect(toast.error).toHaveBeenCalledWith(
-      "HTTP servers are not supported in hosted mode"
+      "HTTP servers are not supported in hosted mode",
+      { duration: Infinity }
     );
     expect(onReconnect).not.toHaveBeenCalled();
   });

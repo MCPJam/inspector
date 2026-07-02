@@ -1131,6 +1131,44 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     expect("result" in part).toBe(false);
   });
 
+  it("preserves the raw result for a toModelOutput tool that returns structuredContent (widget UI hydration)", async () => {
+    // MCP App tools define toModelOutput to scrub structuredContent from the
+    // model copy, but their widgets read `toolResult.structuredContent`. The
+    // raw result must still be stamped on the part (`result:`) for the UI.
+    // This is the agent's path: tools are passed directly (no clientManager).
+    const implResult = {
+      content: [{ type: "text", text: "8 servers" }],
+      structuredContent: {
+        project: { id: "p1", name: "Default" },
+        servers: [{ name: "notion" }],
+        widget: "servers",
+      },
+      _meta: { source: "platform" },
+    };
+    const tools = {
+      show_servers: {
+        execute: vi.fn().mockResolvedValue(implResult),
+        // scrub structuredContent for the model-facing copy
+        toModelOutput: ({ output }: { output: unknown }) => ({
+          type: "json" as const,
+          value: { content: (output as { content: unknown }).content },
+        }),
+      },
+    };
+
+    const messages = callMessage("show_servers");
+    const newMessages = await executeToolCallsFromMessages(messages, { tools });
+
+    const part = (newMessages[0] as any).content[0];
+    // Model copy is scrubbed (no structuredContent)...
+    expect(part.output).toEqual({
+      type: "json",
+      value: { content: implResult.content },
+    });
+    // ...but the raw result (with structuredContent + _meta) survives for the UI.
+    expect(part.result).toEqual(implResult);
+  });
+
   it("awaits an async toModelOutput", async () => {
     const tools = {
       computer: {

@@ -1,6 +1,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
@@ -23,7 +23,11 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveHostTools,
+  type HostComputerResource,
+} from "../../utils/built-in-tools/registry.js";
+import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
@@ -172,6 +176,19 @@ export interface RunSimulationOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Personal-computer attachment from the chatbox's pinned HostConfigV2. This
+   * is the resource gate for computer-backed built-ins like `bash`; capabilities
+   * still ride `builtInToolIds`.
+   */
+  computer?: HostComputerResource;
+  /**
+   * Host harness selector mirrored from the chatbox's pinned HostConfigV2.
+   * When "claude-code" the synthetic visitor's turns run the real Claude Code
+   * runtime; absent ⇒ emulated. Forward-compatible: only activates once the
+   * backend runtime-config endpoint serves it.
+   */
+  harness?: Harness;
+  /**
    * Optional hosted-chat access version. Forwarded into
    * `chatSessions:createWidgetSnapshot` so the optimistic-concurrency check
    * fires if the chatbox's access surface (mode/allowlist/grants) shifted
@@ -301,6 +318,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    computer,
+    harness,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -350,6 +369,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           respectToolVisibility,
           progressiveToolDiscovery,
           builtInToolIds,
+          computer,
+          harness,
           accessVersion,
           convexHttpUrl,
           convexAuthToken,
@@ -439,6 +460,8 @@ async function runOneSession(args: {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  computer?: HostComputerResource;
+  harness?: Harness;
   accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -460,6 +483,8 @@ async function runOneSession(args: {
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    computer,
+    harness,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -505,13 +530,42 @@ async function runOneSession(args: {
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
     const builtInTools = resolveHostTools(
-      { builtInToolIds },
+      { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
+        isChatboxSession: true,
+        requireToolApproval,
       }
     );
+
+    // Cloud Skills parity with a real chat-v2 visitor: a synthetic session is
+    // always member-initiated (the route authenticates the generator), so the
+    // guest gate never trips here. Skills are delivered the same two ways chat
+    // does — natively via the harness `skills` param when the turn runs the
+    // real Claude Code runtime, or as the emulated `listSkills`/`loadSkill`
+    // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
+    // harness path (it delivers skills itself), so this only wires the emulated
+    // tools, mirroring `web/chat-v2.ts`.
+    //
+    // BUT skip skills entirely when the chatbox requires tool approval. A
+    // synthetic visitor is headless and can't grant approval: the local-runtime
+    // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
+    // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
+    // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
+    // tools, even for a project with no skills) would turn an otherwise-toolless
+    // approval simulation into one that fails every session for no benefit.
+    const cloudSkillsEnabled =
+      !requireToolApproval &&
+      Boolean(authHeader) &&
+      Boolean(projectId) &&
+      shouldEnableCloudSkillTools({
+        isGuest: false,
+        harness,
+        modelId: String(modelDefinition.id),
+        hasProjectId: Boolean(projectId),
+      });
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -521,6 +575,7 @@ async function runOneSession(args: {
       temperature,
       requireToolApproval,
       respectToolVisibility,
+      ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
             progressiveToolDiscovery: {
@@ -529,6 +584,9 @@ async function runOneSession(args: {
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
+      ...(cloudSkillsEnabled
+        ? { cloudSkills: { authHeader, projectId } }
+        : {}),
     });
 
     // One browser context per session: renders MCP App tool results in the
@@ -539,6 +597,10 @@ async function runOneSession(args: {
     // below — the chatbox runtime config doesn't carry the flag.
     browser = await createBrowserSessionContext({
       model: String(modelDefinition.id),
+      // Session simulation is the ONE surface that opts into Computer Use: its
+      // agentic personas drive rendered widgets by screenshots. Evals stay
+      // deterministic and never enable it.
+      enableComputerUse: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
     });
@@ -609,6 +671,7 @@ async function runOneSession(args: {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
+        ...(harness ? { harness } : {}),
         chatboxId,
         // The chatbox runtime-config redeem returns an accessVersion that
         // /stream/org/resolve uses to authorize the actor against the
@@ -1191,6 +1254,10 @@ export async function drainAssistantTurn(
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
+    // Harness selector: when the chatbox host runs harness: "claude-code",
+    // synthetic turns run the real Claude Code runtime. requireToolApproval is
+    // already threaded above, so runHarnessTurn fail-closes correctly.
+    ...(args.harness ? { harness: args.harness } : {}),
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),

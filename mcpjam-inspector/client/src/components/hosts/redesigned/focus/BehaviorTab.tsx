@@ -17,22 +17,13 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
+import { harnessControlState } from "@/lib/harness-capabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
-import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
-import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
-import {
-  attachComputerPatch,
-  catalogHasComputerBackedTool,
-  detachComputerPatch,
-  shouldShowComputerToggle,
-  visibleBuiltInToolCatalog,
-} from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -43,14 +34,14 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
 function progressiveValueToTri(
-  value: boolean | undefined
+  value: boolean | undefined,
 ): ProgressiveTriState {
   if (value === true) return "on";
   if (value === false) return "off";
   return "auto";
 }
 function triToProgressiveValue(
-  value: ProgressiveTriState
+  value: ProgressiveTriState,
 ): boolean | undefined {
   if (value === "on") return true;
   if (value === "off") return false;
@@ -60,7 +51,7 @@ function triToProgressiveValue(
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -100,31 +91,6 @@ export function BehaviorTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
-  // Built-in tools catalog. `undefined` while loading or if the backend isn't
-  // deployed; `[]` on populated deployments with no enabled rows. Hide the
-  // FocusBlock entirely in both cases so empty installs don't render a dead card.
-  const builtInToolCatalog = useBuiltInToolCatalog();
-  const computersEnabled = useComputersEnabled();
-  // Render only the rows this user may see: with `computers-enabled` off,
-  // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
-  // already-selected id, which must remain visible to stay removable.
-  const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
-    computersEnabled,
-    selectedIds: draft.builtInToolIds,
-  });
-  const showBuiltInTools = (visibleBuiltInTools?.length ?? 0) > 0;
-  // The personal-computer toggle appears once the deployment exposes a
-  // computer-backed tool (the `bash` row ships disabled until launch) OR when
-  // the host already has a computer attached, so an existing attachment is
-  // always detachable even if no computer-backed tool is in the catalog.
-  const showComputerToggle =
-    computersEnabled &&
-    shouldShowComputerToggle({
-      catalogHasComputerBackedTool:
-        catalogHasComputerBackedTool(builtInToolCatalog),
-      computerAttached: draft.computer !== undefined,
-    });
-
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
   // Changing a label here would otherwise drift; lookups throw on a typo
@@ -135,6 +101,26 @@ export function BehaviorTab({
   const fVisibility = hostConfigField("respectToolVisibility");
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
+
+  // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
+  // cross into its runtime until the MCP proxy mediates them — and a few never
+  // can. Gray those out per-control (model + system prompt always apply, so
+  // they stay enabled) with an honest note, instead of letting the toggle look
+  // live while doing nothing. Un-graying is a one-line change in
+  // `harness-capabilities.ts` as each proxy phase lands.
+  const tempState = harnessControlState(draft.harness, "temperature");
+  const approvalState = harnessControlState(draft.harness, "requireToolApproval");
+  const visibilityState = harnessControlState(
+    draft.harness,
+    "respectToolVisibility",
+  );
+  const progressiveState = harnessControlState(
+    draft.harness,
+    "progressiveToolDiscovery",
+  );
+  const progressiveTriValue = progressiveState.enforced
+    ? progressiveValueToTri(draft.progressiveToolDiscovery)
+    : "off";
 
   return (
     <div className="flex flex-col gap-4">
@@ -180,13 +166,20 @@ export function BehaviorTab({
               })
             }
             aria-label={fTemp.label}
-            disabled={readOnly}
+            disabled={readOnly || !tempState.enforced}
           />
+          {!tempState.enforced ? (
+            <p className="text-[11px] text-muted-foreground">{tempState.note}</p>
+          ) : null}
         </div>
 
         <FieldRow
           label={fApproval.label}
-          description={fApproval.description}
+          description={
+            approvalState.enforced
+              ? fApproval.description
+              : `${fApproval.description} ${approvalState.note}`
+          }
           control={
             <Switch
               checked={draft.requireToolApproval}
@@ -194,14 +187,18 @@ export function BehaviorTab({
                 update({ requireToolApproval: checked })
               }
               aria-label={fApproval.label}
-              disabled={readOnly}
+              disabled={readOnly || !approvalState.enforced}
             />
           }
         />
 
         <FieldRow
           label={fVisibility.label}
-          description={fVisibility.description}
+          description={
+            visibilityState.enforced
+              ? fVisibility.description
+              : `${fVisibility.description} ${visibilityState.note}`
+          }
           control={
             <Switch
               checked={draft.respectToolVisibility}
@@ -209,7 +206,7 @@ export function BehaviorTab({
                 update({ respectToolVisibility: checked })
               }
               aria-label={fVisibility.label}
-              disabled={readOnly}
+              disabled={readOnly || !visibilityState.enforced}
             />
           }
         />
@@ -242,6 +239,9 @@ export function BehaviorTab({
               </Tooltip>
             </span>
           }
+          description={
+            progressiveState.enforced ? undefined : progressiveState.note
+          }
           /**
            * 3-state, not 2-state: the backend reads `undefined` as
            * "auto" and may enable progressive discovery above catalog/
@@ -253,7 +253,7 @@ export function BehaviorTab({
               type="single"
               size="sm"
               variant="outline"
-              value={progressiveValueToTri(draft.progressiveToolDiscovery)}
+              value={progressiveTriValue}
               onValueChange={(value) => {
                 // Radix calls onValueChange("") when the user
                 // re-clicks the active item. Treat that as no-op so
@@ -261,12 +261,12 @@ export function BehaviorTab({
                 if (!value) return;
                 update({
                   progressiveToolDiscovery: triToProgressiveValue(
-                    value as ProgressiveTriState
+                    value as ProgressiveTriState,
                   ),
                 });
               }}
               aria-label="Progressive MCP tool discovery"
-              disabled={readOnly}
+              disabled={readOnly || !progressiveState.enforced}
             >
               <ToggleGroupItem value="auto" aria-label="Auto (default)">
                 Auto
@@ -281,41 +281,6 @@ export function BehaviorTab({
           }
         />
       </FocusBlock>
-
-      {showBuiltInTools || showComputerToggle ? (
-        <FocusBlock title="Built-in tools">
-          {showComputerToggle ? (
-            <FieldRow
-              label="Personal computer"
-              description="Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash."
-              control={
-                <Switch
-                  checked={draft.computer !== undefined}
-                  onCheckedChange={(checked) =>
-                    update(
-                      checked
-                        ? attachComputerPatch()
-                        : detachComputerPatch(draft, builtInToolCatalog)
-                    )
-                  }
-                  aria-label="Personal computer"
-                  disabled={readOnly}
-                />
-              }
-            />
-          ) : null}
-          {showBuiltInTools ? (
-            <BuiltInToolCheckboxList
-              label="Attached"
-              selected={draft.builtInToolIds}
-              available={visibleBuiltInTools ?? []}
-              computerAttached={draft.computer !== undefined}
-              readOnly={readOnly}
-              onChange={(builtInToolIds) => update({ builtInToolIds })}
-            />
-          ) : null}
-        </FocusBlock>
-      ) : null}
 
       <FocusBlock title={fSystemPrompt.label}>
         <Textarea

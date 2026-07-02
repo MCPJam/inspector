@@ -157,10 +157,14 @@ export function useSuiteData(
       const model = iteration.testCaseSnapshot?.model || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
-      // Only count completed iterations - exclude pending/cancelled
+      // Only count terminal pass/fail iterations - exclude pending/cancelled.
       const result = computeIterationResult(iteration);
-      if (result !== "passed" && result !== "failed") {
-        return; // Skip pending/cancelled iterations
+      if (
+        result !== "passed" &&
+        result !== "failed" &&
+        result !== "timed_out"
+      ) {
+        return;
       }
 
       if (!modelMap.has(model)) {

@@ -31,34 +31,35 @@ import {
   runEvalTestCase,
   streamEvalTestCase,
 } from "../evals-api";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    buildServerBatchRequestMock.mockImplementation(
-      (serverNames: string[]) => {
-        const serverIds = serverNames.map((serverName) =>
-          serverName === "Server A"
-            ? "srv_a"
-            : serverName === "Server B"
-              ? "srv_b"
-              : serverName,
-        );
+    buildServerBatchRequestMock.mockImplementation((serverNames: string[]) => {
+      const serverIds = serverNames.map((serverName) =>
+        serverName === "Server A"
+          ? "srv_a"
+          : serverName === "Server B"
+          ? "srv_b"
+          : serverName
+      );
 
-        return {
-          projectId: "project-1",
-          serverIds,
-          oauthTokens: serverIds.includes("srv_a")
-            ? { srv_a: "oauth-token-a" }
-            : undefined,
-          clientCapabilities: { sampling: true },
-        };
-      },
-    );
+      return {
+        projectId: "project-1",
+        serverIds,
+        oauthTokens: serverIds.includes("srv_a")
+          ? { srv_a: "oauth-token-a" }
+          : undefined,
+        clientCapabilities: { sampling: true },
+      };
+    });
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
     useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
       hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -83,7 +84,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/run",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -104,14 +105,12 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
-      "Guest Server",
-    ]);
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith(["Guest Server"]);
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/run",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -136,7 +135,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -158,7 +157,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-negative-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -183,7 +182,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/run-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -204,8 +203,8 @@ describe("evals-api hosted mode", () => {
           code: "mcpjam_rate_limit",
           error: "Daily usage limit reached.",
         },
-        429,
-      ),
+        429
+      )
     );
 
     await expect(
@@ -216,7 +215,7 @@ describe("evals-api hosted mode", () => {
         provider: "openai",
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
-      }),
+      })
     ).rejects.toThrow("Daily usage limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
@@ -226,6 +225,8 @@ describe("evals-api hosted mode", () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",
       hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -238,8 +239,8 @@ describe("evals-api hosted mode", () => {
           error: "Daily credit limit reached.",
           limitKind: "total",
         },
-        429,
-      ),
+        429
+      )
     );
 
     await expect(
@@ -250,11 +251,63 @@ describe("evals-api hosted mode", () => {
         provider: "openai",
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
-      }),
+      })
     ).rejects.toThrow("Daily credit limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+  });
+
+  it("rebuilds the eval-iteration billing error so getBillingErrorMessage renders the upgrade message", async () => {
+    // The server forwards the original Convex billing payload on `details`
+    // (HTTP 402). runEvals must rethrow it as a ConvexError so the shared
+    // billing helpers recognize it instead of echoing the generic message.
+    const resetsAt = 1782000000000;
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "BILLING_LIMIT_REACHED",
+          message: 'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+          details: {
+            code: "billing_limit_reached",
+            message:
+              'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+            limit: "maxEvalIterationsPerMonth",
+            gateKey: "maxEvalIterationsPerMonth",
+            plan: "free",
+            currentValue: 31,
+            allowedValue: 25,
+            upgradePlan: "team",
+            enforcementState: "enforcing",
+            resetsAt,
+            windowKind: "day",
+          },
+        },
+        402
+      )
+    );
+
+    let caught: unknown;
+    try {
+      await runEvals({
+        projectId: "project-1",
+        suiteName: "Hosted Suite",
+        tests: [{ title: "Test", query: "Hello", runs: 1 }],
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = getBillingErrorMessage(caught, "Failed to start eval run");
+    // Matches the canonical billing-entitlements message:
+    // "This organization has reached its eval iteration limit (25). Resets …"
+    expect(message).toContain("eval iteration limit");
+    expect(message).not.toContain("Failed to start eval run");
+    // Billing limits must NOT trigger the rate-limit dialog.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("posts hosted guest quick runs with the project/server payload", async () => {
@@ -267,9 +320,7 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
-      "Guest Server",
-    ]);
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith(["Guest Server"]);
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
@@ -295,7 +346,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -319,7 +370,7 @@ describe("evals-api hosted mode", () => {
       "/api/web/evals/generate-negative-tests",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -344,8 +395,8 @@ describe("evals-api hosted mode", () => {
                   "",
                   'data: {"type":"complete","iteration":{"_id":"iter-1"}}',
                   "",
-                ].join("\n"),
-              ),
+                ].join("\n")
+              )
             );
             controller.close();
           },
@@ -353,8 +404,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     const events: unknown[] = [];
@@ -369,14 +420,14 @@ describe("evals-api hosted mode", () => {
       },
       (event) => {
         events.push(event);
-      },
+      }
     );
 
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/stream-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -410,17 +461,15 @@ describe("evals-api hosted mode", () => {
       new Response(
         new ReadableStream({
           start(controller) {
-            controller.enqueue(
-              encoder.encode('data: {"type":"complete"}\n\n'),
-            );
+            controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
             controller.close();
           },
         }),
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     await streamEvalTestCase(
@@ -433,14 +482,14 @@ describe("evals-api hosted mode", () => {
         convexAuthToken: "guest-convex-token",
         compareRunId: "cmp_guest",
       },
-      () => {},
+      () => {}
     );
 
     expect(authFetchMock).toHaveBeenCalledWith(
       "/api/web/evals/stream-test-case",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
@@ -466,8 +515,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 429,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     await expect(
@@ -480,11 +529,63 @@ describe("evals-api hosted mode", () => {
           serverIds: ["Server A"],
           convexAuthToken: "convex-token",
         },
-        () => {},
-      ),
+        () => {}
+      )
     ).rejects.toThrow("Daily usage limit reached.");
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("rebuilds the eval-iteration billing error on the stream path so getBillingErrorMessage renders the upgrade message", async () => {
+    // Streamed single-case runs hit the same 402 billing caps as buffered runs
+    // and must surface the same shared billing UX, not a generic failure.
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "BILLING_LIMIT_REACHED",
+          message: 'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+          details: {
+            code: "billing_limit_reached",
+            message:
+              'Limit "maxEvalIterationsPerMonth" reached on the free plan.',
+            limit: "maxEvalIterationsPerMonth",
+            gateKey: "maxEvalIterationsPerMonth",
+            plan: "free",
+            currentValue: 31,
+            allowedValue: 25,
+            upgradePlan: "team",
+            enforcementState: "enforcing",
+            resetsAt: 1782000000000,
+            windowKind: "day",
+          },
+        }),
+        { status: 402, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    let caught: unknown;
+    try {
+      await streamEvalTestCase(
+        {
+          projectId: "workspace-1",
+          testCaseId: "test-case-1",
+          model: "openai/gpt-5-mini",
+          provider: "openai",
+          serverIds: ["Server A"],
+          convexAuthToken: "convex-token",
+        },
+        () => {}
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = getBillingErrorMessage(caught, "Failed to start eval run");
+    expect(message).toContain("eval iteration limit");
+    expect(message).not.toContain("Failed to start eval run");
+    // Billing caps must NOT open the rate-limit dialog.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("opens the mcpjam-limit dialog for hosted stream error events", async () => {
@@ -498,8 +599,8 @@ describe("evals-api hosted mode", () => {
                 [
                   'data: {"type":"error","message":"Backend stream error: 429","details":"{\\"code\\":\\"mcpjam_rate_limit\\",\\"error\\":\\"Daily usage limit reached.\\"}"}',
                   "",
-                ].join("\n"),
-              ),
+                ].join("\n")
+              )
             );
             controller.close();
           },
@@ -507,8 +608,8 @@ describe("evals-api hosted mode", () => {
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
 
     const events: unknown[] = [];
@@ -521,7 +622,7 @@ describe("evals-api hosted mode", () => {
         serverIds: ["Server A"],
         convexAuthToken: "convex-token",
       },
-      (event) => events.push(event),
+      (event) => events.push(event)
     );
 
     expect(events).toEqual([
@@ -537,9 +638,25 @@ describe("evals-api hosted mode", () => {
     listHostedToolsMock
       .mockResolvedValueOnce({
         tools: [{ name: "tool_a", description: "Tool A" }],
+        toolsMetadata: {
+          tool_a: {
+            ui: { resourceUri: "ui://server-a/tool-a.html" },
+          },
+        },
       })
       .mockResolvedValueOnce({
-        tools: [{ name: "tool_b", description: "Tool B" }],
+        tools: [
+          {
+            name: "tool_b",
+            description: "Tool B",
+            _meta: { ui: { visibility: ["model", "app"] } },
+          },
+        ],
+        toolsMetadata: {
+          tool_b: {
+            ui: { resourceUri: "ui://server-b/tool-b.html" },
+          },
+        },
       });
 
     const result = await listEvalTools({
@@ -555,10 +672,19 @@ describe("evals-api hosted mode", () => {
       serverNameOrId: "Server B",
     });
     expect(result.tools.map((tool) => tool.name)).toEqual(["tool_a", "tool_b"]);
+    expect(result.tools[0]?._meta).toEqual({
+      ui: { resourceUri: "ui://server-a/tool-a.html" },
+    });
+    expect(result.tools[1]?._meta).toEqual({
+      ui: {
+        visibility: ["model", "app"],
+        resourceUri: "ui://server-b/tool-b.html",
+      },
+    });
     expect(
       authFetchMock.mock.calls.some(
-        (call) => typeof call[0] === "string" && call[0].includes("/api/mcp/"),
-      ),
+        (call) => typeof call[0] === "string" && call[0].includes("/api/mcp/")
+      )
     ).toBe(false);
   });
 });

@@ -28,6 +28,7 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { isModelFree } from "@/shared/steps";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -118,7 +119,9 @@ export function TestCaseListSidebar({
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
-  const selectedCaseIsProbe = selectedTestCase?.caseType === "widget_probe";
+  const selectedCaseIsProbe = selectedTestCase
+    ? isModelFree(selectedTestCase.steps)
+    : false;
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
     !selectedCaseIsProbe &&
@@ -212,7 +215,7 @@ export function TestCaseListSidebar({
                   : !selectedTestCase
                     ? "Select a case first"
                     : selectedCaseIsProbe
-                      ? "Widget probes run with the full suite or on its schedule"
+                      ? "Render checks run with the full suite or on its schedule"
                       : !selectedTestCase.models?.length
                         ? "Add a model first"
                         : !hasConfiguredSuiteServers

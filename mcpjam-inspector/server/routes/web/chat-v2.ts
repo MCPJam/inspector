@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
+import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -29,6 +31,9 @@ import {
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { type ExecutionScope } from "../../utils/execution-scope.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
@@ -64,6 +69,12 @@ chatV2.post("/", async (c) => {
       accessVersion?: number;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
+      // Saved host being previewed (Playground / host-bound direct chat). When
+      // present and NOT a chatbox session, the server re-fetches the host's
+      // authoritative runtime config (incl. harness/computer) by this id — the
+      // opaque pointer the client may forward; `harness` itself is never trusted
+      // from the body.
+      hostId?: string;
     };
 
     const {
@@ -78,6 +89,7 @@ chatV2.post("/", async (c) => {
       chatboxId,
       accessVersion,
       surface,
+      hostId,
     } = body;
     // True when this turn flows through a chatbox surface. sourceType +
     // accessScope decisions hinge on this.
@@ -138,6 +150,38 @@ chatV2.post("/", async (c) => {
           }
         );
       }
+    } else if (!isChatboxSession && hostId) {
+      // Host-bound direct session (Playground). The host config — including the
+      // server-authoritative `harness`/`computer` — is the source of truth for
+      // execution shaping. Unlike the chatbox path, FAIL CLOSED here: if we
+      // can't resolve the authoritative config we must not silently run the
+      // emulated engine, because the host may be a harness host and running
+      // emulated would misrepresent it as the real Claude Code runtime.
+      const runtime = await fetchHostRuntimeConfig({
+        hostId,
+        bearer: bearerToken,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (runtime.ok) {
+        hostRuntimeConfig = runtime.config as unknown as Record<
+          string,
+          unknown
+        >;
+      } else {
+        logger.warn(
+          "[chat-v2] host runtime-config fetch failed; failing closed",
+          {
+            hostId,
+            status: runtime.status,
+            error: runtime.error,
+          }
+        );
+        throw new WebRouteError(
+          runtime.status >= 500 ? 502 : runtime.status,
+          ErrorCode.INTERNAL_ERROR,
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
+        );
+      }
     }
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -149,7 +193,11 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         builtInToolIds: body.builtInToolIds,
       },
-      precedence: "host-wins",
+      // Chatbox: the published host wins (a share-link client can't override).
+      // Host preview (Playground): the owner's in-session tweaks win, while
+      // `harness`/`computer` stay host-only (not in ExecutionOverrides, so
+      // precedence can't leak them from the body).
+      precedence: isChatboxSession ? "host-wins" : "override-wins",
     });
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -200,12 +248,15 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId ?? null,
         auth: { bearerToken, chatboxId },
       });
-      logger.warn("[chat-v2] client model differs from host; using host model", {
-        chatboxId,
-        body: modelDefinition.id,
-        host: hostModelId,
-        provider: hostModel.provider,
-      });
+      logger.warn(
+        "[chat-v2] client model differs from host; using host model",
+        {
+          chatboxId,
+          body: modelDefinition.id,
+          host: hostModelId,
+          provider: hostModel.provider,
+        }
+      );
       modelDefinition = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
@@ -220,17 +271,64 @@ chatV2.post("/", async (c) => {
     // server-resolved runtime config — never the request body — so a
     // tampered client can't attach a shell the host didn't authorize; the
     // resolver also skips computer-backed tools for guest actors.
+    // Harness preflight: a host-bound turn whose resolved host runs a harness
+    // (claude-code | codex) must fail closed with a clear message when the
+    // runtime isn't available on this server — never silently degrade to the
+    // emulated engine. Capability-driven (computer / approval / MCP / model
+    // eligibility), so a new harness gets the right gates for free.
+    if (resolvedExecution.harness) {
+      const availability = checkHarnessRuntimeAvailable({
+        harnessId: resolvedExecution.harness,
+        requireToolApproval,
+        // Use the SERVER-resolved host server list, not the request body — a
+        // stale/tampered request mustn't send an empty array to bypass the
+        // "no MCP servers" fail-closed gate.
+        hasSelectedMcpServers:
+          (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
+        modelEligible: isMCPJamProvidedModel(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+        // Canonical id so the adapter's supportsModel check sees the prefixed
+        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
+        modelId: getCanonicalModelId(
+          String(modelDefinition.id),
+          modelDefinition.provider
+        ),
+      });
+      if (!availability.ok) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
+        );
+      }
+    }
+
+    // Phase 3: the server-resolved runtime config (chatbox OR host-by-id) carries
+    // an opaque executionScope; thread it into the computer-backed (bash) tool so
+    // the reserve call re-resolves live access (per-swarm isolation/caps). Absent
+    // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
+    const executionScope = (
+      hostRuntimeConfig as
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
+    )?.executionScope;
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
-        computer:
-          isChatboxSession && hostRuntimeConfig
-            ? (hostRuntimeConfig as { computer?: unknown }).computer
-            : undefined,
+        // Computer comes exclusively from the server-resolved runtime config —
+        // chatbox OR host-by-id — never the request body.
+        computer: hostRuntimeConfig
+          ? (hostRuntimeConfig as { computer?: unknown }).computer
+          : undefined,
       },
       {
         authHeader: bearerToken,
         projectId: hostedBody.projectId,
+        ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
         isChatboxSession,
@@ -238,6 +336,32 @@ chatV2.post("/", async (c) => {
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
       }
     );
+
+    // Cloud Skills: only when the (server-resolved) host actually has a
+    // computer — the SAME source the bash/computer built-in tool resolves from
+    // (`resolveHostTools` above), so skills wire wherever computer tools do.
+    // Today that's chatbox sessions (the only path that resolves
+    // hostRuntimeConfig); playground/direct host-config resolution lands later.
+    // Guests are excluded, mirroring the `isGuest` gate already applied to the
+    // computer-backed bash tool — a guest share-link/chatbox session must not
+    // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
+    // is called ("advertise == enforce").
+    // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
+    // the emulated chat path wires the listSkills/loadSkill tools for any
+    // signed-in member with a project. Gate only on:
+    //   - not a guest (a share-link/chatbox guest gets no skill tools), and
+    //   - the turn will NOT run the real Claude Code harness — which delivers
+    //     skills via the adapter `skills` param instead, so advertising the tools
+    //     here would be a prompt/tool mismatch.
+    // The harness runs ONLY for harness:"claude-code" hosts on an MCPJam model; a
+    // BYOK model on such a host still runs emulated (web-chat-turn), so gate on
+    // the actual engine (model), not host config alone.
+    const cloudSkillsEnabled = shouldEnableCloudSkillTools({
+      isGuest: Boolean(c.get("guestId")),
+      harness: resolvedExecution.harness,
+      modelId: String(modelDefinition.id),
+      hasProjectId: Boolean(hostedBody.projectId),
+    });
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -322,6 +446,9 @@ chatV2.post("/", async (c) => {
           respectToolVisibility,
           customProviders: body.customProviders,
           uiMessages: messages,
+          ...(resolvedExecution.harness
+            ? { harness: resolvedExecution.harness }
+            : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {
@@ -333,6 +460,14 @@ chatV2.post("/", async (c) => {
           uiTools: validatedUiTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          ...(cloudSkillsEnabled
+            ? {
+                cloudSkills: {
+                  authHeader: `Bearer ${bearerToken}`,
+                  projectId: hostedBody.projectId,
+                },
+              }
+            : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -344,6 +479,9 @@ chatV2.post("/", async (c) => {
           accessVersion,
           authenticatedUserId,
           originalMessages: messages,
+          ...(resolvedExecution.harness
+            ? { harness: resolvedExecution.harness }
+            : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-

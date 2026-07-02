@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
@@ -175,7 +175,7 @@ export function ProjectServerPickerList({
           <label
             key={server._id}
             className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-            title={insecure ? "Chatboxes require HTTPS server URLs" : undefined}
+            title={insecure ? "Swarms require HTTPS server URLs" : undefined}
           >
             <Checkbox
               checked={!insecure && selectedServerSet.has(server._id)}
@@ -482,7 +482,7 @@ export function SetupChecklistPanel({
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="space-y-2">
-                    <Label htmlFor="setup-chatbox-name">Chatbox name</Label>
+                    <Label htmlFor="setup-chatbox-name">Swarm name</Label>
                     <Input
                       id="setup-chatbox-name"
                       value={chatboxDraft.name}
@@ -589,7 +589,7 @@ export function SetupChecklistPanel({
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
                                 Signed-in members of this project can open the
-                                chatbox with the link. Guests cannot.
+                                swarm with the link. Guests cannot.
                               </span>
                             </span>
                           </label>
@@ -608,7 +608,7 @@ export function SetupChecklistPanel({
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
                                 Only people you invite by email can open this
-                                chatbox.
+                                swarm.
                               </span>
                             </span>
                           </label>
@@ -626,7 +626,7 @@ export function SetupChecklistPanel({
                                 Anyone with the link (guests included)
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Anyone with the link can open the chatbox,
+                                Anyone with the link can open the swarm,
                                 including guests without an account.
                               </span>
                             </span>
@@ -638,7 +638,7 @@ export function SetupChecklistPanel({
                             <p className="text-xs text-muted-foreground">
                               Invite-only is email-based. Project membership
                               does not auto-include everyone—you invite each
-                              address (or use the section below once the chatbox
+                              address (or use the section below once the swarm
                               is saved).
                             </p>
                             <div className="space-y-2">
@@ -689,7 +689,7 @@ export function SetupChecklistPanel({
                               </div>
                               {!inviteChatboxMember ? (
                                 <p className="text-xs text-muted-foreground">
-                                  Save the chatbox to invite people by email.
+                                  Save the swarm to invite people by email.
                                 </p>
                               ) : null}
                             </div>
@@ -697,7 +697,7 @@ export function SetupChecklistPanel({
                         ) : null}
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        Save the chatbox to manage invitations and access
+                        Save the swarm to manage invitations and access
                         settings for the hosted link.
                       </p>
                     </>
@@ -729,7 +729,7 @@ export function SetupChecklistPanel({
                       <p className="text-sm font-medium">Shown on first open</p>
                       <p className="text-xs text-muted-foreground">
                         A short intro shown the first time someone opens your
-                        chatbox link.
+                        swarm link.
                       </p>
                     </div>
                     <Switch
@@ -777,7 +777,7 @@ export function SetupChecklistPanel({
                       />
                       <p className="text-xs text-muted-foreground">
                         {chatboxDraft.chatUi.surfaces.welcome.body.trim()
-                          ? "Shown once, the first time someone opens your chatbox link."
+                          ? "Shown once, the first time someone opens your swarm link."
                           : "Leave blank to skip — no welcome will be shown."}
                       </p>
                     </div>

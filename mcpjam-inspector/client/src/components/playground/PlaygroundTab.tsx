@@ -14,6 +14,7 @@ import {
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import LoadingScreen from "@/components/LoadingScreen";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -28,7 +29,7 @@ import {
 } from "@/components/ui/resizable";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { LoggerView } from "@/components/logger-view";
+import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -219,6 +220,14 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
 
+  if (playgroundState.loadingState.kind === "skeleton") {
+    return (
+      <div className="fixed inset-0 z-[100] bg-background">
+        <LoadingScreen />
+      </div>
+    );
+  }
+
   return (
     <PlaygroundStateProvider value={playgroundState}>
       <ActiveMcpProfileProvider value={activeMcpProfile}>
@@ -274,7 +283,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             onCollapse={() => setIsLeftRailVisible(false)}
                             className="min-h-0 min-w-0 overflow-hidden"
                           >
-                            <PlaygroundLeftRail />
+                            <PlaygroundLeftRail
+                              previewedHostId={previewedHostId}
+                            />
                           </ResizablePanel>
                           <ResizableHandle withHandle />
                         </>
@@ -329,8 +340,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             className="min-h-0 overflow-hidden"
                           >
                             <div className="h-full min-h-0 overflow-hidden">
-                              <LoggerView
+                              <PlaygroundRightRail
                                 onClose={() => setIsRightRailVisible(false)}
+                                hostConfig={effectiveHostConfig}
+                                projectId={
+                                  props.sharedProjectId ??
+                                  props.activeProjectId ??
+                                  null
+                                }
+                                isAuthenticated={isConvexAuthenticated}
                               />
                             </div>
                           </ResizablePanel>

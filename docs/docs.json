@@ -62,7 +62,6 @@
             "icon": "layout-dashboard",
             "pages": [
               "inspector/playground",
-              "inspector/views",
               "inspector/evals",
               "inspector/host-templates"
             ]
@@ -104,6 +103,7 @@
             "icon": "map",
             "pages": [
               "cli/overview",
+              "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",

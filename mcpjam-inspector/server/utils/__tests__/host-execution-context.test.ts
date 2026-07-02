@@ -27,6 +27,67 @@
 import { describe, expect, it } from "vitest";
 import { resolveExecutionContext } from "../host-execution-context";
 
+describe("resolveExecutionContext — harness (host-only, server-authoritative)", () => {
+  it("reads harness from hostConfig, never from overrides, under override-wins", () => {
+    // The Playground (host-bound direct) path uses override-wins so the owner's
+    // in-session tweaks win — but harness/computer must still come from the host
+    // config, never the body. `overrides` has no harness field, so this also
+    // proves the resolver can't be tricked into sourcing it from the body.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        systemPrompt: "host prompt",
+        harness: "claude-code",
+      },
+      overrides: {
+        systemPrompt: "body prompt",
+        temperature: 0.3,
+      },
+      precedence: "override-wins",
+    });
+    // Body tweak wins for overridable fields...
+    expect(result.systemPrompt).toBe("body prompt");
+    expect(result.temperature).toBe(0.3);
+    // ...but harness is host-only.
+    expect(result.harness).toBe("claude-code");
+  });
+
+  it("yields harness undefined for a non-harness host (emulated path)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { systemPrompt: "host prompt" },
+      overrides: {},
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+
+  it("ignores an unknown harness value (closed read)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { harness: "totally-not-a-harness" },
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+
+  it("reads the codex harness (membership via the SDK source of truth)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { harness: "codex" },
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(result.harness).toBe("codex");
+  });
+
+  it("yields harness undefined when hostConfig is null (plain direct chat)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { systemPrompt: "body" },
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+});
+
 describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", () => {
   it("returns hostConfig values verbatim when host carries every field", () => {
     const result = resolveExecutionContext({

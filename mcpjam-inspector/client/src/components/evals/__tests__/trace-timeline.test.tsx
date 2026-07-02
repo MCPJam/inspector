@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+} from "@/shared/eval-trace";
 import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
 
 const mockCapture = vi.fn();
@@ -61,6 +64,116 @@ vi.mock("@/components/ui/json-editor", () => ({
 
 beforeEach(() => {
   mockCapture.mockClear();
+});
+
+describe("harness span metadata", () => {
+  const llmSpans = (finishReason?: string): EvalTraceSpan[] => [
+    { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 1000, stepIndex: 0 },
+    {
+      id: "step-0-llm",
+      parentId: "step-0",
+      name: "LLM",
+      category: "llm",
+      startMs: 0,
+      endMs: 1000,
+      stepIndex: 0,
+      modelId: "claude-opus-4-8",
+      provider: "anthropic",
+      outputTokens: 200,
+      responseId: "msg_abc",
+      ttfcMs: 240,
+      ...(finishReason ? { finishReason } : {}),
+    },
+  ];
+
+  it("shows provider, finish reason, TTFC, and throughput in the detail pane (llm row)", () => {
+    render(<TraceTimeline recordedSpans={llmSpans("length")} transcriptMessages={[]} />);
+    // Step rows are hidden; the llm row is the last label button.
+    const labelButtons = screen.getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    const meta = screen.getByTestId("trace-span-metadata");
+    expect(meta.textContent).toContain("anthropic");
+    // finish reason surfaces as plain text (no special badge).
+    expect(meta.textContent).toContain("length");
+    expect(meta.textContent).toContain("TTFC");
+    // 200 output tokens / 1.0s = 200.0 tok/s
+    expect(meta.textContent).toContain("200.0 tok/s");
+  });
+
+  it("omits throughput on non-llm rows", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "c1",
+        toolName: "read_me",
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByText(/tok\/s/)).toBeNull();
+  });
+
+  it("shows the JSON-RPC error code on a failed tool span", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "create_view",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        status: "error",
+        toolCallId: "c1",
+        toolName: "create_view",
+        mcpErrorCode: -32602,
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("create_view"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    const codeEl = screen.getByTestId("trace-mcp-error-code");
+    // Neutral "MCP error" label + standard code name (not "JSON-RPC … server").
+    expect(codeEl.textContent).toContain("-32602");
+    expect(codeEl.textContent).toContain("Invalid params");
+    expect(codeEl.textContent).not.toContain("JSON-RPC error code");
+  });
+
+  it("omits the error-code line when no mcpErrorCode is present", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      {
+        id: "tool-0",
+        parentId: "step-0",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "c1",
+        toolName: "read_me",
+      },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByTestId("trace-mcp-error-code")).toBeNull();
+  });
 });
 
 describe("selectAxisTickPercents", () => {
@@ -1482,5 +1595,113 @@ describe("TraceTimeline detail pane", () => {
       .find((el) => el.textContent?.includes('User: "save checkpoint"'));
     expect(secondAfter).toBeTruthy();
     expect(secondAfter!).toHaveClass("trace-waterfall-row-selected");
+  });
+});
+
+describe("TraceTimeline interaction rows", () => {
+  const toolSpan: EvalTraceSpan = {
+    id: "tool-a",
+    name: "search-products",
+    category: "tool",
+    startMs: 100,
+    endMs: 220,
+    toolCallId: "tc-1",
+    toolName: "search-products",
+  };
+
+  function interaction(
+    over: Partial<EvalTraceBrowserInteractionStepView> = {},
+  ): EvalTraceBrowserInteractionStepView {
+    return {
+      toolCallId: "tc-1",
+      stepIndex: 0,
+      promptIndex: 0,
+      action: "left_click",
+      source: "scripted",
+      locatorLabel: 'button "Add to cart"',
+      elapsedMs: 12,
+      ts: 1,
+      ok: true,
+      ...over,
+    };
+  }
+
+  it("renders a synthetic interaction row nested under its tool span", () => {
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan]}
+        interactionSteps={[interaction()]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("Interact"));
+    expect(interactionRow).toBeTruthy();
+    expect(interactionRow!.textContent).toContain("Add to cart");
+  });
+
+  it("renders even when traceStartedAtMs is null (no NaN crash)", () => {
+    expect(() =>
+      render(
+        <TraceTimeline
+          recordedSpans={[toolSpan]}
+          interactionSteps={[interaction()]}
+          traceStartedAtMs={null}
+          transcriptMessages={[{ role: "user", content: "hi" }]}
+        />,
+      ),
+    ).not.toThrow();
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((el) => el.textContent?.includes("Interact")),
+    ).toBe(true);
+  });
+
+  it("renders each click once even when the tool span is double-emitted", () => {
+    // The recorded trace can carry two `tool` spans for one tool call (known
+    // span double-emit). The interaction must attach to the first only.
+    const dupTool: EvalTraceSpan = {
+      id: "tool-a2",
+      name: "search-products",
+      category: "tool",
+      startMs: 120,
+      endMs: 240,
+      toolCallId: "tc-1",
+      toolName: "search-products",
+    };
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan, dupTool]}
+        interactionSteps={[interaction()]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRows = screen
+      .getAllByTestId("trace-row")
+      .filter((el) => el.textContent?.includes("Interact"));
+    expect(interactionRows).toHaveLength(1);
+  });
+
+  it("shows the interaction verdict in the detail pane when selected", async () => {
+    const user = userEvent.setup();
+    render(
+      <TraceTimeline
+        recordedSpans={[toolSpan]}
+        interactionSteps={[interaction({ ok: false })]}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const interactionRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("Interact"));
+    await user.click(interactionRow!);
+
+    const detail = screen.getByTestId("trace-detail-pane");
+    expect(detail.textContent).toContain("Failed");
   });
 });

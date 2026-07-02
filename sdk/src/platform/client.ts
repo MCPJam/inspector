@@ -7,7 +7,23 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
+  PlatformEvalCase,
+  PlatformEvalCaseDeleted,
+  PlatformEvalCasesGenerated,
   PlatformEvalSuite,
+  PlatformEvalSuiteCreated,
+  PlatformEvalSuiteDeleted,
+  PlatformEvalSuiteDetail,
+  PlatformEvalStepResult,
+  PlatformComputerAttached,
+  PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentBuild,
+  PlatformEnvironmentBuildStarted,
+  PlatformEnvironmentDeleted,
+  PlatformHost,
+  PlatformHostDeleted,
+  PlatformHostDetail,
   PlatformMe,
   PlatformPage,
   PlatformProject,
@@ -68,7 +84,10 @@ export class PlatformApiClient {
       ""
     );
     this.getAuth = options.getAuth;
-    this.fetchFn = options.fetch ?? fetch;
+    // Native fetch must run with `this` bound to the global scope. Storing the
+    // bare reference and calling it as `this.fetchFn(...)` rebinds `this` to the
+    // client instance, which throws "Illegal invocation" in Workers/browsers.
+    this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
   }
@@ -163,6 +182,233 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Hosts ────────────────────────────────────────────────────────────
+
+  listHosts(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformHost>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      {},
+      options
+    );
+  }
+
+  getHost(
+    params: { projectId: string; hostId: string },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/hosts` — create a host either from a built-in template
+   * (`{ name, template, theme? }`) or from a full host config
+   * (`{ name, config }`). Returns the created host detail.
+   */
+  createHost(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/hosts`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateHost(
+    params: { projectId: string; hostId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteHost(
+    params: {
+      projectId: string;
+      hostId: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformHostDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}`,
+      { body: params.body ?? {} },
+      options
+    );
+  }
+
+  // ── Computer environments ────────────────────────────────────────────
+
+  listEnvironments(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEnvironment>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      {},
+      options
+    );
+  }
+
+  getEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      {},
+      options
+    );
+  }
+
+  createEnvironment(
+    params: { projectId: string; body: { name: string; dockerfile: string } },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: { name?: string; dockerfile?: string };
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      {},
+      options
+    );
+  }
+
+  listEnvironmentBuilds(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEnvironmentBuild>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/builds`,
+      {},
+      options
+    );
+  }
+
+  /** `POST …/build` — async (202); poll `listEnvironmentBuilds` for status. */
+  buildEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentBuildStarted> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/build`,
+      {},
+      options
+    );
+  }
+
+  promoteEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/promote`,
+      {},
+      options
+    );
+  }
+
+  /** Attach the environment to the caller's computer (re-provisions from the
+   * pinned image). */
+  useEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformComputerAttached> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}/use`,
+      {},
+      options
+    );
+  }
+
+  /** Reset the caller's computer to its image (wipes mutable state). */
+  resetComputer(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformComputerReset> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/computer/reset`,
+      {},
+      options
+    );
+  }
+
   /**
    * `POST /projects/{p}/eval-runs` — validates and creates the run, then
    * detaches execution and responds 202. Poll `getEvalRun` until terminal.
@@ -174,6 +420,24 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-suites` — author a runnable suite from test-case
+   * definitions and return the new suite id. Synchronous (does NOT run the
+   * suite; execute it with `createEvalRun`). The same path serves `GET` for
+   * `listEvalSuites`.
+   */
+  createEvalSuite(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       { body: params.body },
       options
     );
@@ -229,6 +493,38 @@ export class PlatformApiClient {
     );
   }
 
+  /** Cancel an in-flight run; returns the run in its (now cancelled) state. */
+  cancelEvalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRun> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /** One row per authored step (status + reason + evidence) for one iteration. */
+  getEvalRunSteps(
+    params: { projectId: string; runId: string; iterationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalStepResult>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(
+        params.runId
+      )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
+      {},
+      options
+    );
+  }
+
   listEvalSuiteRuns(
     params: { projectId: string; suiteId: string; limit?: number },
     options?: RequestOptions
@@ -239,6 +535,175 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/runs`,
       { query: { limit: params.limit } },
+      options
+    );
+  }
+
+  // ── Eval suite/case editing ──────────────────────────────────────────
+
+  getEvalSuite(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      {},
+      options
+    );
+  }
+
+  updateEvalSuite(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEvalSuite(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
+      {},
+      options
+    );
+  }
+
+  setEvalSuiteSchedule(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalSuiteDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
+      { body: params.body },
+      options
+    );
+  }
+
+  listEvalCases(
+    params: { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalCase>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
+      {},
+      options
+    );
+  }
+
+  getEvalCase(
+    params: { projectId: string; suiteId: string; caseId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      {},
+      options
+    );
+  }
+
+  createEvalCase(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateEvalCase(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCase> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEvalCase(
+    params: { projectId: string; suiteId: string; caseId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCaseDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(
+        params.suiteId
+      )}/cases/${encodeURIComponent(params.caseId)}`,
+      {},
+      options
+    );
+  }
+
+  generateEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCasesGenerated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
+      { body: params.body },
       options
     );
   }
@@ -369,7 +834,7 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions
@@ -404,7 +869,10 @@ export class PlatformApiClient {
       }
     }
     const timeoutHandle = setTimeout(
-      () => controller.abort(new Error(`Request timed out after ${this.timeoutMs}ms`)),
+      () =>
+        controller.abort(
+          new Error(`Request timed out after ${this.timeoutMs}ms`)
+        ),
       this.timeoutMs
     );
 
@@ -425,7 +893,9 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         aborted
           ? `Request to ${path} timed out after ${this.timeoutMs}ms`
-          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(error)}`,
+          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
+              error
+            )}`,
         aborted ? "TIMEOUT" : "NETWORK_ERROR",
         { status: 0, endpoint: path, cause: error }
       );

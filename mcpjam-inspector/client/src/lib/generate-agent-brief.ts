@@ -7,7 +7,7 @@ import {
   EXPLORE_TO_SDK_EVALS_SKILL_MD,
   SKILL_MD,
 } from "@mcpjam/sdk/skill-reference";
-import { resolvePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
 
 export interface ExportedTool {
   name: string;

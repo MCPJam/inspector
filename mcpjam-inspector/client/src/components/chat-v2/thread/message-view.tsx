@@ -5,6 +5,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
+import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -21,6 +22,7 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
+import { MistralStaticAvatar } from "@/lib/client-styles/mistral-avatar";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -58,7 +60,7 @@ interface MessageViewProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
-  showSaveViewButton?: boolean;
+  showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -72,6 +74,8 @@ interface MessageViewProps {
    * sessionId + per-message id.
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /** Tier 3 recorder bundle, forwarded to the assistant tool PartSwitch. */
+  recorder?: RecorderProps;
   /**
    * Resolved sender for this message (shared sessions only). When absent, the
    * transcript renders today's identical-bubble behavior.
@@ -91,6 +95,24 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
       prevMessage.role === nextMessage.role &&
       prevMessage.parts === nextMessage.parts)
   );
+}
+
+// A React key for an assistant "step" group that is STABLE across re-derivations
+// of the same logical message. The trace adapter can split one assistant turn
+// into a different number of steps between the streaming envelope and the
+// persisted blob; keying the step <div> by array index then shifts the widget's
+// step key on completion, remounting the step (and its mounted MCP App widget
+// iframe, wiping live widget state). Derive the key from the first part that
+// carries a stable id (toolCallId / part.id) — for a widget-bearing step that's
+// the tool's `tool-<toolCallId>`, identical in both representations. Steps with
+// no stable part (plain text) fall back to the index; they hold no widget, so a
+// remount there is a harmless text re-render.
+function getStepKey(stepParts: MessagePart[], stepIndex: number) {
+  for (let i = 0; i < stepParts.length; i++) {
+    const key = getPartKey(stepParts[i], stepIndex, i);
+    if (!key.startsWith(`${stepIndex}-`)) return `step-${key}`;
+  }
+  return `step-idx-${stepIndex}`;
 }
 
 function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
@@ -152,7 +174,7 @@ function areMessageViewPropsEqual(
     prev.onDisplayModeChange === next.onDisplayModeChange &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
-    prev.showSaveViewButton === next.showSaveViewButton &&
+    prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
@@ -160,7 +182,11 @@ function areMessageViewPropsEqual(
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
     isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
-    prev.showSenderAvatar === next.showSenderAvatar
+    prev.showSenderAvatar === next.showSenderAvatar &&
+    // Tier 3: arming/disarming recording flips the recorder bundle's identity;
+    // without this the memo skips the re-render and recordMode never reaches
+    // the widget (the recorder appears "unavailable").
+    prev.recorder === next.recorder
   );
 }
 
@@ -186,7 +212,7 @@ function MessageViewImpl({
   onDisplayModeChange,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
@@ -195,6 +221,7 @@ function MessageViewImpl({
   renderUserMessageActions,
   senderAvatar,
   showSenderAvatar = false,
+  recorder,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -204,7 +231,9 @@ function MessageViewImpl({
     themeMode: chatboxHostTheme ?? themeMode,
     chatboxHostStyle,
   });
-  const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  const shouldRenderMistralAssistantAvatar = chatboxHostStyle === "mistral";
+  const shouldRenderAssistantAvatar =
+    chatboxHostStyle === null || shouldRenderMistralAssistantAvatar;
   // Copilot mimics show their own "Copilot + mascot" row above the
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
@@ -253,7 +282,7 @@ function MessageViewImpl({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
-                showSaveViewButton={showSaveViewButton}
+                showInlineEdit={showInlineEdit}
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
@@ -287,7 +316,7 @@ function MessageViewImpl({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
-                showSaveViewButton={showSaveViewButton}
+                showInlineEdit={showInlineEdit}
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
@@ -314,7 +343,12 @@ function MessageViewImpl({
           : "w-full min-w-0"
       }
     >
-      {shouldRenderAssistantAvatar ? (
+      {shouldRenderMistralAssistantAvatar ? (
+        <MistralStaticAvatar
+          ariaLabel="Mistral assistant"
+          className="mt-1 size-7 shrink-0 self-start"
+        />
+      ) : shouldRenderAssistantAvatar ? (
         <div
           className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
           aria-label={assistantAvatar.ariaLabel}
@@ -342,7 +376,7 @@ function MessageViewImpl({
         ) : null}
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
-            <div key={sIdx} className="space-y-3">
+            <div key={getStepKey(stepParts, sIdx)} className="space-y-3">
               {stepParts.map((part, pIdx) => (
                 <PartSwitch
                   key={getPartKey(part, sIdx, pIdx)}
@@ -368,10 +402,11 @@ function MessageViewImpl({
                   onToolApprovalResponse={onToolApprovalResponse}
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}
-                  showSaveViewButton={showSaveViewButton}
+                  showInlineEdit={showInlineEdit}
                   minimalMode={minimalMode}
                   interactive={interactive}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  {...recorder}
                 />
               ))}
             </div>

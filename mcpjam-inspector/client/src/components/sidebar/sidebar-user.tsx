@@ -45,7 +45,7 @@ interface SidebarUserProps {
 
 export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut } = useAuth();
+  const { user, signIn, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -101,6 +101,29 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
 
   const avatarUrl = profilePictureUrl;
 
+  const loadingState = (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton size="lg" disabled>
+          <RefreshCw className="size-4 animate-spin" />
+          <span className="truncate group-data-[collapsible=icon]:hidden">
+            Loading...
+          </span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+
+  // While WorkOS/Convex are still resolving the session, `user` is null even for
+  // signed-in users. Show the neutral loading state before the `!user` guest
+  // branch so authenticated users don't flash the "Sign in" footer on load.
+  const authResolving =
+    HOSTED_MODE && !user && (isWorkOsAuthLoading || isLoading);
+
+  if (authResolving) {
+    return loadingState;
+  }
+
   if (!user) {
     if (HOSTED_MODE) {
       return (
@@ -125,18 +148,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   }
 
   if (isLoading) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton size="lg" disabled>
-            <RefreshCw className="size-4 animate-spin" />
-            <span className="truncate group-data-[collapsible=icon]:hidden">
-              Loading...
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
+    return loadingState;
   }
 
   return (

@@ -20,9 +20,29 @@ const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
 );
+// Node-safe host-template seeds, aliased to source (mirrors internal above).
+const sdkHostConfigTemplatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-config/templates/index.ts",
+);
+// Tier B Phase 2: @mcpjam/sdk/widget-runtime advertises ./dist via package
+// exports; alias it to source so inspector vitest resolves it without a prior
+// `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
+);
 // Resolve @mcpjam/chat-ui from source (its published exports point at dist,
 // which a clean checkout hasn't built). Mirrors the SDK source aliases above.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
+const chatUiThreadHelpersEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/thread-helpers.ts",
+);
+const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+// Tier B Phase 3c: resolve @mcpjam/widget-react from source (its published
+// exports point at dist, which a clean checkout hasn't built).
+const widgetReactEntry = path.resolve(rootDir, "../widget-react/src/index.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -99,13 +119,28 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      // More specific subpaths must precede the bare alias (first match wins).
+      {
+        find: "@mcpjam/chat-ui/thread-helpers",
+        replacement: chatUiThreadHelpersEntry,
+      },
+      { find: "@mcpjam/chat-ui/trace", replacement: chatUiTraceEntry },
       { find: "@mcpjam/chat-ui", replacement: chatUiEntry },
+      { find: "@mcpjam/widget-react", replacement: widgetReactEntry },
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: sdkWidgetRuntimeEntry,
+      },
+      {
+        find: "@mcpjam/sdk/host-config/templates",
+        replacement: sdkHostConfigTemplatesEntry,
+      },
       {
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,

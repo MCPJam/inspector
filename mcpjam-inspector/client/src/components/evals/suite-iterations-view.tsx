@@ -2,6 +2,8 @@ import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { compareRunsBySequence } from "./helpers";
@@ -9,6 +11,7 @@ import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 import { shouldShowRunAccuracyHero } from "./run-insight-rail";
 import { RunTestCaseDetailView } from "./run-test-case-detail-view";
 import type { RunCaseGroup } from "./run-case-groups";
@@ -23,6 +26,8 @@ import {
   areAllChecksValid,
   blankPredicate,
 } from "./checks-section";
+import { GlobalGatesSectionInfoHint } from "./global-gates-info";
+import { splitPredicatesForMigration } from "@/shared/predicate-migration";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
@@ -30,6 +35,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { ScheduleEditor } from "./schedule-editor";
 import { EvalExportModal } from "./eval-export-modal";
+import { ExportTracesModal } from "./export-traces-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
@@ -89,12 +95,14 @@ export interface SuiteNavigation {
 function SettingsSection({
   label,
   hint,
+  labelAccessory,
   layout = "stack",
   children,
   inlineSlot,
 }: {
   label: string;
   hint?: string;
+  labelAccessory?: React.ReactNode;
   /**
    * "stack" — eyebrow on top, hint right-aligned next to it, content
    *           below in space-y-3 rows.
@@ -109,10 +117,18 @@ function SettingsSection({
   if (layout === "inline") {
     return (
       <section className="py-5 first:pt-2 last:pb-2">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            {label}
-          </h2>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+                {label}
+              </h2>
+              {labelAccessory}
+            </div>
+            {hint ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
+            ) : null}
+          </div>
           {inlineSlot}
         </div>
         {children ? <div className="mt-3 space-y-2">{children}</div> : null}
@@ -161,7 +177,6 @@ export function SuiteIterationsView({
   navigation,
   onSetupCi,
   onCreateTestCase,
-  onCreateWidgetProbe,
   onGenerateTestCases,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
@@ -214,7 +229,6 @@ export function SuiteIterationsView({
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
-  onCreateWidgetProbe?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
@@ -341,15 +355,39 @@ export function SuiteIterationsView({
   const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
     Predicate[]
   >(suite.defaultPredicates ?? []);
+  const suiteScenarioMigrationCount = useMemo(
+    () =>
+      splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
+        .length,
+    [draftDefaultPredicates]
+  );
   // Description editor is hidden in the current pass — handlers and draft
   // state were removed; re-add together when the About section returns.
   const [exportState, setExportState] = useState<{
     scope: "suite" | "test-case";
     cases: EvalExportCaseInput[];
   } | null>(null);
+  const [tracesExportOpen, setTracesExportOpen] = useState(false);
+  // chatSessionIds for the currently-selected run (unified-trace iterations
+  // only; legacy `blob`-only iterations have no chatSessions row to export).
+  const runChatSessionIds = useMemo(
+    () =>
+      selectedRunId
+        ? allIterations
+            .filter((it) => it.suiteRunId === selectedRunId && it.chatSessionId)
+            .map((it) => it.chatSessionId as string)
+        : [],
+    [allIterations, selectedRunId]
+  );
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
+  // Reproducible-evals env picker (gated by the computers feature flag). Only
+  // fetch the project's environments when the flag is on and we have a project.
+  const computersEnabled = useComputersEnabled();
+  const computerEnvironments = useEnvironments(
+    computersEnabled && projectId ? projectId : null
+  );
   // Hosts available to attach in the header's "+ Attach host" picker. The
   // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
@@ -692,6 +730,173 @@ export function SuiteIterationsView({
   const showSuiteHeader =
     !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
 
+  // The unified results split (run-group rail + scoped right pane) is the
+  // default suite surface; the single-run detail folds into its right pane
+  // wherever the dashboard renders (same guard as the overview SuiteDashboard
+  // branch so the two surfaces switch together).
+  const foldRunDetail = hideRunActions && !caseListInSidebar;
+
+  // Keep suite chrome (name, Run all, Generate) visible in run detail — run
+  // identity belongs in the body. CI opts out via omitSuiteHeader.
+  const headerViewMode =
+    !omitSuiteHeader && viewMode === "run-detail" ? "overview" : viewMode;
+
+  // The folded run view uses the SAME cross-host matrix as All-runs / a group,
+  // scoped to this one run's host (one column), so the table is visually
+  // identical across the three rail selections — only the column set + the
+  // surrounding run chrome (KPIs, AI insights, judge) change. Legacy suites with
+  // no host attachments fall through (`undefined`) to RunDetailView's built-in
+  // per-iteration table.
+  const runMatrixPane =
+    foldRunDetail &&
+    selectedRunDetails &&
+    (suite.hostAttachments?.length ?? 0) >= 1 ? (
+      <CrossHostDashboard
+        suite={
+          selectedRunDetails.namedHostId
+            ? {
+                ...suite,
+                hostAttachments: (suite.hostAttachments ?? []).filter(
+                  (a) => a.namedHostId === selectedRunDetails.namedHostId
+                ),
+              }
+            : suite
+        }
+        cases={cases}
+        runs={[selectedRunDetails]}
+        allIterations={caseGroupsForSelectedRun}
+        expanded
+        onTestCaseClick={(testCaseId) =>
+          navigation.toTestEdit(suite._id, testCaseId)
+        }
+        onCellOpen={(cell, _hostId, caseId) => {
+          // A cell is one (case, host) result → open that iteration in the
+          // standardized split editor (no `openCompare` → no legacy header).
+          const iteration = cell.iterations[0];
+          navigation.toTestEdit(
+            suite._id,
+            caseId,
+            iteration ? { iteration: iteration._id } : undefined
+          );
+        }}
+      />
+    ) : undefined;
+
+  // One factory so the overview branch and the folded-in run-detail branch
+  // share the exact same SuiteDashboard prop wiring.
+  const renderUnifiedDashboard = (
+    extra: {
+      selectedRunId?: string | null;
+      runDetailPane?: React.ReactNode;
+      onExitRun?: () => void;
+    } = {}
+  ) => (
+    <SuiteDashboard
+      suite={suite}
+      cases={cases}
+      allIterations={allIterations}
+      runs={runs}
+      runsLoading={runsLoading}
+      runTrendData={runTrendData}
+      modelStats={modelStats}
+      onTestCaseClick={(testCaseId) =>
+        navigation.toTestEdit(suite._id, testCaseId)
+      }
+      onOpenLastRun={(testCaseId, iterationId) =>
+        navigation.toTestEdit(suite._id, testCaseId, {
+          openCompare: true,
+          iteration: iterationId,
+        })
+      }
+      onOpenCaseIteration={(testCaseId, iterationId) =>
+        // Standardized split editor (no legacy compare header) focused on this
+        // iteration — `iteration` without `openCompare` keeps editorMode "config".
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
+      onRunClick={handleRunClick}
+      onDirectDeleteRun={onDirectDeleteRun}
+      onRunTestCase={onRunTestCaseWithOverride}
+      runningTestCaseId={runningTestCaseId}
+      blockTestCaseRuns={Boolean(
+        rerunningSuiteId || replayingRunId || evalRunsDisabledReason
+      )}
+      runTestCaseDisabledReason={evalRunsDisabledReason}
+      connectedServerNames={connectedServerNames}
+      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+      testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
+      userMap={userMap}
+      onGenerateTestCases={onGenerateTestCases}
+      canGenerateTestCases={canGenerateTestCases}
+      generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+      isGeneratingTestCases={isGeneratingTestCases}
+      onCreateTestCase={onCreateTestCase}
+      {...extra}
+    />
+  );
+
+  const runDetailView = selectedRunDetails ? (
+    <RunDetailView
+      selectedRunDetails={selectedRunDetails}
+      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
+      currentSuiteJudgeConfig={suite.judgeConfig ?? null}
+      source={suite.source}
+      runDetailSortBy={effectiveRunDetailSortBy}
+      onSortChange={effectiveRunDetailSortChange}
+      serverNames={suite.environment?.servers || []}
+      selectedIterationId={selectedIterationId}
+      onSelectIteration={handleSelectIteration}
+      selectedTestCaseId={selectedRunTestCaseId}
+      onSelectTestCase={handleSelectTestCase}
+      hostNamesById={hostNamesById}
+      compareBaseRun={previousCompletedRunForSelectedRun}
+      onCompareWithRun={(baseRunId) =>
+        handleCompareRuns(baseRunId, selectedRunDetails._id)
+      }
+      onSelectRun={(runId) => navigation.toRunDetail(suite._id, runId)}
+      kpiPlacement={
+        showSuiteHeader && viewMode === "run-detail" && !foldRunDetail
+          ? "header"
+          : "body"
+      }
+      hideReplayLineage
+      hideRecentRuns={foldRunDetail}
+      hideKpiStrip={foldRunDetail}
+      hideAccuracyHero={foldRunDetail}
+      caseTableSlot={runMatrixPane}
+      omitIterationList={omitRunIterationList}
+      onOpenRunInsights={
+        !omitRunIterationList && route.type === "run-detail"
+          ? () =>
+              navigation.toRunDetail(route.suiteId, route.runId, undefined, {
+                insightsFocus: true,
+              })
+          : undefined
+      }
+      runInsightsSelected={
+        !omitRunIterationList &&
+        route.type === "run-detail" &&
+        Boolean(route.insightsFocus && !route.iteration && !route.testCaseId)
+      }
+      onEditTestCase={onEditTestCase}
+      alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+      runTrendData={runTrendData}
+    />
+  ) : null;
+
+  // Keep the run-group rail mounted when opening a run — only the right pane
+  // swaps. Wrapping overview ↔ run-detail in AnimatePresence faded the whole
+  // split (rail included), which felt like a page transition on every click.
+  const showFoldedUnifiedDashboard =
+    foldRunDetail &&
+    (viewMode === "overview" ||
+      (viewMode === "run-detail" &&
+        selectedRunDetails &&
+        !selectedCompareBaseRunId &&
+        !selectedRunTestCaseId));
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Header */}
@@ -699,7 +904,7 @@ export function SuiteIterationsView({
         <div className="shrink-0">
           <SuiteHeader
             suite={suite}
-            viewMode={viewMode}
+            viewMode={headerViewMode}
             selectedRunDetails={selectedRunDetails}
             isEditMode={isEditMode}
             onRerun={onRerunWithOverride}
@@ -725,7 +930,6 @@ export function SuiteIterationsView({
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
-            onCreateWidgetProbe={onCreateWidgetProbe}
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
@@ -765,6 +969,7 @@ export function SuiteIterationsView({
                   projectId={projectId}
                   availableModels={availableModels}
                   suiteIterations={allIterations}
+                  suiteRuns={runs}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
@@ -775,13 +980,15 @@ export function SuiteIterationsView({
                   openCompareIterationId={
                     route.type === "test-edit" ? route.iteration ?? null : null
                   }
-                  onBackToList={() =>
-                    navigation.toSuiteOverview(suite._id, "test-cases")
-                  }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
                       openCompare: tab === "runs",
+                      replace: true,
+                    })
+                  }
+                  onDraftSaved={(newTestCaseId) =>
+                    navigation.toTestEdit(suite._id, newTestCaseId, {
                       replace: true,
                     })
                   }
@@ -833,6 +1040,21 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showFoldedUnifiedDashboard ? (
+              <div
+                key="unified-results-split"
+                className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+              >
+                {renderUnifiedDashboard(
+                  viewMode === "run-detail" && selectedRunDetails
+                    ? {
+                        selectedRunId: selectedRunDetails._id,
+                        runDetailPane: runDetailView,
+                        onExitRun: handleBackToOverview,
+                      }
+                    : {}
+                )}
+              </div>
             ) : viewMode === "overview" ? (
               hideRunActions && !caseListInSidebar ? (
                 <motion.div
@@ -843,39 +1065,9 @@ export function SuiteIterationsView({
                   transition={
                     shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                   }
-                  className="min-h-0 flex-1 overflow-y-auto p-0.5"
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
                 >
-                  <SuiteDashboard
-                    suite={suite}
-                    cases={cases}
-                    allIterations={allIterations}
-                    runs={runs}
-                    runsLoading={runsLoading}
-                    runTrendData={runTrendData}
-                    modelStats={modelStats}
-                    onTestCaseClick={(testCaseId) =>
-                      navigation.toTestEdit(suite._id, testCaseId)
-                    }
-                    onOpenLastRun={(testCaseId, iterationId) =>
-                      navigation.toTestEdit(suite._id, testCaseId, {
-                        openCompare: true,
-                        iteration: iterationId,
-                      })
-                    }
-                    onRunClick={handleRunClick}
-                    onRunTestCase={onRunTestCaseWithOverride}
-                    runningTestCaseId={runningTestCaseId}
-                    blockTestCaseRuns={Boolean(
-                      rerunningSuiteId ||
-                        replayingRunId ||
-                        evalRunsDisabledReason
-                    )}
-                    runTestCaseDisabledReason={evalRunsDisabledReason}
-                    connectedServerNames={connectedServerNames}
-                    onDeleteTestCasesBatch={onDeleteTestCasesBatch}
-                    testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
-                    userMap={userMap}
-                  />
+                  {renderUnifiedDashboard()}
                 </motion.div>
               ) : runsViewMode === "runs" ? (
                 <motion.div
@@ -1012,6 +1204,13 @@ export function SuiteIterationsView({
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
+                      onGenerateTestCases={onGenerateTestCases}
+                      canGenerateTestCases={canGenerateTestCases}
+                      generateTestCasesDisabledReason={
+                        generateTestCasesDisabledReason
+                      }
+                      isGeneratingTestCases={isGeneratingTestCases}
+                      onCreateTestCase={onCreateTestCase}
                     />
                   )}
                 </motion.div>
@@ -1052,57 +1251,7 @@ export function SuiteIterationsView({
                     serverNames={suite.environment?.servers || []}
                   />
                 ) : (
-                  <RunDetailView
-                    selectedRunDetails={selectedRunDetails}
-                    caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-                    currentSuiteJudgeConfig={suite.judgeConfig ?? null}
-                    source={suite.source}
-                    runDetailSortBy={effectiveRunDetailSortBy}
-                    onSortChange={effectiveRunDetailSortChange}
-                    serverNames={suite.environment?.servers || []}
-                    selectedIterationId={selectedIterationId}
-                    onSelectIteration={handleSelectIteration}
-                    selectedTestCaseId={selectedRunTestCaseId}
-                    onSelectTestCase={handleSelectTestCase}
-                    hostNamesById={hostNamesById}
-                    compareBaseRun={previousCompletedRunForSelectedRun}
-                    onCompareWithRun={(baseRunId) =>
-                      handleCompareRuns(baseRunId, selectedRunDetails._id)
-                    }
-                    onSelectRun={(runId) =>
-                      navigation.toRunDetail(suite._id, runId)
-                    }
-                    kpiPlacement={
-                      showSuiteHeader && viewMode === "run-detail"
-                        ? "header"
-                        : "body"
-                    }
-                    hideReplayLineage
-                    omitIterationList={omitRunIterationList}
-                    onOpenRunInsights={
-                      !omitRunIterationList && route.type === "run-detail"
-                        ? () =>
-                            navigation.toRunDetail(
-                              route.suiteId,
-                              route.runId,
-                              undefined,
-                              { insightsFocus: true }
-                            )
-                        : undefined
-                    }
-                    runInsightsSelected={
-                      !omitRunIterationList &&
-                      route.type === "run-detail" &&
-                      Boolean(
-                        route.insightsFocus &&
-                          !route.iteration &&
-                          !route.testCaseId
-                      )
-                    }
-                    onEditTestCase={onEditTestCase}
-                    alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-                    runTrendData={runTrendData}
-                  />
+                  runDetailView
                 )}
               </motion.div>
             ) : null}
@@ -1161,6 +1310,125 @@ export function SuiteIterationsView({
                 }
               />
 
+              {/* ── Minimum iterations ───────────────────────────────── */}
+              <SettingsSection
+                label="Minimum iterations"
+                layout="inline"
+                inlineSlot={
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                    value={suite.minIterations ?? ""}
+                    aria-label="Minimum iterations per case for every run"
+                    onChange={async (e) => {
+                      const raw = e.target.value;
+                      const next = raw === "" ? null : Number(raw);
+                      try {
+                        await updateSuite({
+                          suiteId: suite._id,
+                          minIterations: next,
+                        });
+                        toast.success(
+                          next == null
+                            ? "Minimum iterations cleared"
+                            : "Minimum iterations updated"
+                        );
+                      } catch (error) {
+                        toast.error(
+                          getBillingErrorMessage(
+                            error,
+                            "Failed to update suite"
+                          )
+                        );
+                        console.error(
+                          "Failed to update minimum iterations:",
+                          error
+                        );
+                      }
+                    }}
+                  >
+                    <option value="">Off</option>
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                }
+              >
+                <p className="text-[11px] text-muted-foreground/60">
+                  Every case runs at least this many times per run. A case set
+                  higher keeps its count; a per-run override still wins.
+                </p>
+              </SettingsSection>
+
+              {/* ── Computer environment (reproducible evals) ──────────
+                  Gated behind the computers feature flag. Pins a built Docker
+                  environment so each eval iteration boots a fresh sandbox from
+                  the same image — comparable results across runs/edits. */}
+              {computersEnabled && projectId ? (
+                <SettingsSection
+                  label="Computer environment"
+                  layout="inline"
+                  inlineSlot={
+                    <select
+                      className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      value={suite.environment?.computerEnvironmentId ?? ""}
+                      aria-label="Reproducible computer environment for eval runs"
+                      onChange={async (e) => {
+                        const next = e.target.value || undefined;
+                        try {
+                          await updateSuite({
+                            suiteId: suite._id,
+                            environment: {
+                              servers: suite.environment?.servers ?? [],
+                              serverBindings: suite.environment?.serverBindings,
+                              ...(next ? { computerEnvironmentId: next } : {}),
+                            },
+                          });
+                          toast.success(
+                            next
+                              ? "Computer environment set"
+                              : "Computer environment cleared"
+                          );
+                        } catch (error) {
+                          toast.error(
+                            getBillingErrorMessage(
+                              error,
+                              "Failed to update suite"
+                            )
+                          );
+                          console.error(
+                            "Failed to update computer environment:",
+                            error
+                          );
+                        }
+                      }}
+                    >
+                      <option value="">None (default image)</option>
+                      {(computerEnvironments ?? []).map((env) => {
+                        const ready = env.currentBuild?.status === "ready";
+                        return (
+                          <option
+                            key={env.environmentId}
+                            value={env.environmentId}
+                          >
+                            {env.name}
+                            {ready ? "" : " (not built)"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  }
+                >
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Each eval iteration boots a fresh sandbox from this image
+                    and the agent gets a <span className="font-mono">bash</span>{" "}
+                    tool in it. Build the environment before running, or the run
+                    fails fast.
+                  </p>
+                </SettingsSection>
+              ) : null}
+
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection
                 label="Tool calls"
@@ -1192,10 +1460,12 @@ export function SuiteIterationsView({
 
               {/* ── Checks ───────────────────────────────────────────── */}
               <SettingsSection
-                label="Checks"
+                label="Default global gates"
+                labelAccessory={<GlobalGatesSectionInfoHint />}
                 layout="inline"
                 inlineSlot={
                   <AddCheckMenu
+                    globalGatesMenu
                     onAdd={(kind) =>
                       setDraftDefaultPredicates((prev) => [
                         ...prev,
@@ -1205,6 +1475,13 @@ export function SuiteIterationsView({
                   />
                 }
               >
+                {suiteScenarioMigrationCount > 0 ? (
+                  <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-400">
+                    {suiteScenarioMigrationCount} scenario check
+                    {suiteScenarioMigrationCount === 1 ? "" : "s"} in defaults —
+                    migrate per case in Steps.
+                  </p>
+                ) : null}
                 {/* The list (when non-empty) renders under the eyebrow row.
                     Empty state copy + the inner AddCheckMenu are both
                     suppressed — the eyebrow row's AddCheckMenu is the only
@@ -1214,6 +1491,7 @@ export function SuiteIterationsView({
                   title=""
                   hideAddButton
                   hideEmptyState
+                  globalGatesMenu
                   value={draftDefaultPredicates}
                   onChange={setDraftDefaultPredicates}
                 />
@@ -1235,7 +1513,7 @@ export function SuiteIterationsView({
               {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection
                 label="LLM as Judge"
-                hint="Advisory grading against each case's objective. Calibrate per suite."
+                hint="Advisory scorer — grades each run automatically against its objective, inline next to pass/fail. Never changes pass/fail."
               >
                 <JudgesSection
                   chrome="bare"
@@ -1303,6 +1581,14 @@ export function SuiteIterationsView({
         cases={exportState?.cases ?? []}
         serverEntries={appState.servers}
       />
+      {tracesExportOpen ? (
+        <ExportTracesModal
+          open
+          onOpenChange={setTracesExportOpen}
+          projectId={projectId}
+          runChatSessionIds={runChatSessionIds}
+        />
+      ) : null}
     </div>
   );
 }

@@ -18,7 +18,7 @@ import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
   body: unknown,
-  init?: { status?: number; contentType?: string },
+  init?: { status?: number; contentType?: string }
 ): Response {
   return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
@@ -74,14 +74,14 @@ describe("mcp xaa routes", () => {
 
   it("serves the discovery document publicly without a session token", async () => {
     const response = await app.request(
-      "http://localhost/api/mcp/xaa/.well-known/openid-configuration",
+      "http://localhost/api/mcp/xaa/.well-known/openid-configuration"
     );
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.issuer).toBe("http://localhost/api/mcp/xaa");
     expect(body.jwks_uri).toBe(
-      "http://localhost/api/mcp/xaa/.well-known/jwks.json",
+      "http://localhost/api/mcp/xaa/.well-known/jwks.json"
     );
   });
 
@@ -95,14 +95,14 @@ describe("mcp xaa routes", () => {
           "x-forwarded-proto": "https",
           "x-forwarded-host": "evil.example.com",
         },
-      },
+      }
     );
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.issuer).toBe("http://localhost/api/mcp/xaa");
     expect(body.jwks_uri).toBe(
-      "http://localhost/api/mcp/xaa/.well-known/jwks.json",
+      "http://localhost/api/mcp/xaa/.well-known/jwks.json"
     );
   });
 
@@ -122,35 +122,44 @@ describe("mcp xaa routes", () => {
       "X-MCP-Session-Auth": `Bearer ${getSessionToken() || token}`,
     };
 
-    const authenticateResponse = await app.request("/api/mcp/xaa/authenticate", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        userId: "user-12345",
-        email: "demo.user@example.com",
-      }),
-    });
+    const authenticateResponse = await app.request(
+      "/api/mcp/xaa/authenticate",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          userId: "user-12345",
+          email: "demo.user@example.com",
+        }),
+      }
+    );
 
     expect(authenticateResponse.status).toBe(200);
     const authenticateBody = await authenticateResponse.json();
     expect(authenticateBody.id_token).toEqual(expect.any(String));
 
-    const tokenExchangeResponse = await app.request("/api/mcp/xaa/token-exchange", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        identityAssertion: authenticateBody.id_token,
-        audience: "https://auth.example.com",
-        resource: "https://mcp.example.com",
-        clientId: "mcpjam-debugger",
-        negativeTestMode: "wrong_audience",
-      }),
-    });
+    const tokenExchangeResponse = await app.request(
+      "/api/mcp/xaa/token-exchange",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          identityAssertion: authenticateBody.id_token,
+          audience: "https://auth.example.com",
+          resource: "https://mcp.example.com",
+          clientId: "mcpjam-debugger",
+          negativeTestMode: "wrong_audience",
+        }),
+      }
+    );
 
     expect(tokenExchangeResponse.status).toBe(200);
     const tokenExchangeBody = await tokenExchangeResponse.json();
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
+    // The ID token's email rides into the ID-JAG (spec RECOMMENDED) so the
+    // Resource AS can use it for subject resolution.
+    expect(payload.email).toBe("demo.user@example.com");
   });
 
   describe("POST /discover-as", () => {
@@ -237,7 +246,7 @@ describe("mcp xaa routes", () => {
           grant_types_supported: [
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
           ],
-        }),
+        })
       );
       vi.stubGlobal("fetch", fetchMock);
 
@@ -259,7 +268,7 @@ describe("mcp xaa routes", () => {
     it("returns 404 when no well-known endpoint has metadata", async () => {
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => new Response(null, { status: 404 })),
+        vi.fn(async () => new Response(null, { status: 404 }))
       );
 
       const response = await app.request("/api/mcp/xaa/discover-as", {
@@ -293,7 +302,7 @@ describe("hosted xaa outbound guards", () => {
         issuerBasePath: "/api/web",
         httpsOnlyProxy: true,
         trustForwardedHeaders: true,
-      }),
+      })
     );
   });
 
@@ -349,7 +358,7 @@ describe("hosted xaa outbound guards", () => {
         new Response(null, {
           status: 302,
           headers: { location: "http://169.254.169.254/" },
-        }),
+        })
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -409,7 +418,7 @@ describe("registration-backed /proxy/token", () => {
         issuerBasePath: "/api/web",
         httpsOnlyProxy: false,
         resolveRegistrationSecret: options.resolver,
-      }),
+      })
     );
     return app;
   }
@@ -464,8 +473,8 @@ describe("registration-backed /proxy/token", () => {
       async () =>
         new Response(
           JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -498,7 +507,7 @@ describe("registration-backed /proxy/token", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [calledUrl, calledInit] = fetchMock.mock.calls[0] as unknown as [
       string,
-      RequestInit,
+      RequestInit
     ];
     expect(calledUrl).toBe("https://stored-as.example.com/oauth/token");
 
@@ -570,7 +579,7 @@ describe("POST /negative-tests", () => {
       tokenEndpoint: string | null;
       targetClientId: string | null;
       scopes: string[] | null;
-    }>,
+    }>
   ) {
     const app = new Hono();
     app.route(
@@ -579,7 +588,7 @@ describe("POST /negative-tests", () => {
         issuerBasePath: "/api/web",
         httpsOnlyProxy: false,
         resolveRegistrationSecret: resolver,
-      }),
+      })
     );
     return app;
   }
@@ -596,8 +605,8 @@ describe("POST /negative-tests", () => {
       async () =>
         new Response(
           JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -610,13 +619,25 @@ describe("POST /negative-tests", () => {
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
-      results: Array<{ mode: string; verdict: string }>;
+      results: Array<{
+        mode: string;
+        verdict: string;
+        diff?: { field: string; sent: string; expected: string };
+      }>;
       failures: number;
     };
     expect(body.results).toHaveLength(11);
     expect(body.failures).toBe(11);
     const expired = body.results.find((r) => r.mode === "expired");
     expect(expired?.verdict).toBe("fail");
+
+    // Each broken case carries a "sent vs expected" diff for the tampered field.
+    const wrongAud = body.results.find((r) => r.mode === "wrong_audience");
+    expect(wrongAud?.diff).toEqual({
+      field: "aud",
+      sent: "https://wrong-audience.example.com",
+      expected: "https://auth.example.com",
+    });
   });
 
   it("marks cases green when the auth server rejects broken assertions", async () => {
@@ -625,7 +646,7 @@ describe("POST /negative-tests", () => {
         new Response(JSON.stringify({ error: "invalid_grant" }), {
           status: 400,
           headers: { "content-type": "application/json" },
-        }),
+        })
     );
     vi.stubGlobal("fetch", fetchMock);
 

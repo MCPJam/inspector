@@ -54,7 +54,7 @@ function makeCatalog() {
 async function execTool(
   toolset: ToolSet,
   name: string,
-  input: Record<string, unknown>,
+  input: Record<string, unknown>
 ): Promise<unknown> {
   const t = toolset[name] as { execute?: (...args: unknown[]) => unknown };
   if (!t?.execute) throw new Error(`tool ${name} has no execute`);
@@ -71,7 +71,7 @@ describe("createProgressiveMetaTools", () => {
       policy: DEFAULT_TOOL_DISCOVERY_POLICY,
     });
     expect(Object.keys(tools).sort()).toEqual(
-      [META_TOOL_SEARCH, META_TOOL_LOAD].sort(),
+      [META_TOOL_SEARCH, META_TOOL_LOAD].sort()
     );
   });
 
@@ -92,19 +92,28 @@ describe("createProgressiveMetaTools", () => {
     expect(res.matches[0]).not.toHaveProperty("inputSchema");
   });
 
-  it("search_mcp_tools respects serverIds filter", async () => {
+  it("search_mcp_tools ignores stray serverIds so guessed filters do not hide exact matches", async () => {
     const state = createDiscoveryState();
-    const catalog = makeCatalog();
+    const catalog = buildToolCatalog({
+      get_categories: makeMcpTool({
+        description: "Returns article categories as a nested tree",
+        serverId: "DataPalace - localhost:3000",
+      }),
+      search_articles: makeMcpTool({
+        description: "Search articles",
+        serverId: "DataPalace - localhost:3000",
+      }),
+    } as unknown as ToolSet);
     const tools = createProgressiveMetaTools({
       getCatalog: () => catalog,
       state,
       policy: DEFAULT_TOOL_DISCOVERY_POLICY,
     });
     const res = (await execTool(tools, META_TOOL_SEARCH, {
-      query: "create",
-      serverIds: ["linear"],
-    })) as { matches: { name: string }[] };
-    expect(res.matches.map((m) => m.name)).toEqual(["linear_create_issue"]);
+      query: "get_categories",
+      serverIds: ["gstack"],
+    })) as { matches: { name: string; serverId: string }[] };
+    expect(res.matches.map((m) => m.name)).toContain("get_categories");
   });
 
   it("search_mcp_tools clamps caller-supplied limit to bounded ceiling", async () => {
@@ -211,8 +220,6 @@ describe("createProgressiveMetaTools", () => {
       "asana::asana_create_task",
     ]);
     expect(res.notFound).toEqual(["nope::missing"]);
-    expect([...state.newlyLoadedToolIds]).toEqual([
-      "asana::asana_create_task",
-    ]);
+    expect([...state.newlyLoadedToolIds]).toEqual(["asana::asana_create_task"]);
   });
 });

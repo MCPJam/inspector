@@ -813,6 +813,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [serverName, isServerSyncing]);
 
   const isResolvingRemoteCompletion = onboarding.isResolvingRemoteCompletion;
+  const isConnectingFirstRunExcalidraw =
+    onboarding.phase === "connecting_excalidraw" &&
+    !onboarding.isGuidedPostConnect;
   const isBootstrappingFirstRunConnection =
     onboarding.isBootstrappingFirstRunConnection && !!onConnect;
   const isWaitingForServerSync =
@@ -833,6 +836,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   const loadingState: PlaygroundLoadingState =
     isResolvingRemoteCompletion ||
+    isConnectingFirstRunExcalidraw ||
     isBootstrappingFirstRunConnection ||
     isWaitingForServerSync
       ? { kind: "skeleton" }

@@ -50,6 +50,66 @@ export function buildDiscoveryCandidates(input: string): string[] {
   return Array.from(new Set(candidates));
 }
 
+const PRM_SUFFIX = "/.well-known/oauth-protected-resource";
+
+/**
+ * Build the ordered list of RFC 9728 protected-resource-metadata (PRM) URLs to
+ * probe for a resource (the MCP server URL). PRM is the document that names the
+ * authorization server(s) protecting the resource — the issuer is NOT the
+ * resource URL itself, so we read it from here rather than guessing.
+ *
+ * RFC 9728 §3.1 inserts the well-known segment between the host and the
+ * resource's path (`https://host/mcp` → `https://host/.well-known/oauth-protected-resource/mcp`);
+ * the path-less root form is the fallback some servers serve at the origin.
+ */
+export function buildResourceMetadataCandidates(input: string): string[] {
+  const url = new URL(input);
+  const origin = url.origin;
+  const root = `${origin}${PRM_SUFFIX}`;
+
+  const path = stripTrailingSlash(url.pathname);
+  if (path && path !== "") {
+    return Array.from(new Set([`${origin}${PRM_SUFFIX}${path}`, root]));
+  }
+
+  return [root];
+}
+
+function isParseableUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the first usable authorization-server issuer out of an RFC 9728 PRM
+ * document. Skips entries that aren't parseable URLs so a malformed entry
+ * doesn't abort discovery when a later entry is valid. Returns undefined when
+ * the document advertises none (e.g. the fetched URL wasn't actually PRM), so
+ * callers can fall back to another discovery path.
+ */
+export function extractAuthorizationServer(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const servers = metadata.authorization_servers;
+  if (!Array.isArray(servers)) {
+    return undefined;
+  }
+  for (const entry of servers) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (trimmed && isParseableUrl(trimmed)) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
 export type GrantSupportStatus = "pass" | "warn" | "fail";
 
 export interface IssuerMismatch {

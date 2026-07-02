@@ -166,8 +166,10 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  const hasBrowserArtifacts =
-    renderObservations.length > 0 || interactionSteps.length > 0;
+  // The Browser tab renders only the per-widget render observations now; the
+  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
+  // ride the trace blob below rather than gating this tab.
+  const hasBrowserArtifacts = renderObservations.length > 0;
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -367,10 +369,7 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView
-              observations={renderObservations}
-              steps={interactionSteps}
-            />
+            <BrowserArtifactsView observations={renderObservations} />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">

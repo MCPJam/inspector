@@ -20,6 +20,7 @@ import type {
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
+import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
@@ -38,11 +39,17 @@ import {
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
+import { StepReplayView } from "./step-replay-view";
+import { buildFrozenScreenshotOverrides } from "./frozen-screenshot-overrides";
+import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-app-invocations";
+import type { TestStep } from "@/shared/steps";
+import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { ToolCallsDiffView } from "./tool-calls-diff-view";
 import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
@@ -55,7 +62,7 @@ import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
-  import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
+  import("./trace-timeline").then((m) => ({ default: m.TraceTimeline }))
 );
 
 const NOOP = (..._args: unknown[]) => {};
@@ -90,9 +97,29 @@ interface TraceViewerProps {
   expectedToolCalls?: TraceViewerEvalToolCall[];
   /** Tool calls observed for this iteration; enables the Tools tab. */
   actualToolCalls?: TraceViewerEvalToolCall[];
+  /** Authored step list (the run's testCaseSnapshot). When present, enables the
+   *  step-aligned "Steps" tab — one row per step, mirroring the left pane. */
+  steps?: TestStep[];
+  /** Live/persisted per-step verdict keyed by `TestStep.id` (for the Steps tab). */
+  stepStatusById?: Map<string, EvalStepStatus>;
+  /** Authoritative iteration result; renders the Steps-tab verdict header. */
+  iterationResult?:
+    | "passed"
+    | "failed"
+    | "pending"
+    | "cancelled"
+    | "timed_out"
+    | null;
+  /** Step hovered/selected elsewhere (e.g. the left step list) — highlights the
+   *  matching Steps row for left↔right sync. */
+  syncedStepId?: string | null;
+  /** Fired on Steps-row hover/select, to drive the synced highlight. */
+  onSyncStep?: (stepId: string | null) => void;
   /** Force a single mode (used when TraceViewer is embedded into a larger shell).
-   *  The eval-only "browser" mode is trace-viewer-local, never forced by shells. */
-  forcedViewMode?: "timeline" | "chat" | "raw" | "tools";
+   *  Chat host shells force only timeline/chat/raw/tools. The eval RunColumn
+   *  (quick-run result panel) additionally forces "browser" so it can surface
+   *  the same replay/screenshots the standalone Browser tab shows. */
+  forcedViewMode?: "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
   /** Hide the internal toolbar when the parent shell provides its own tabs. */
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
@@ -112,12 +139,14 @@ interface TraceViewerProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   interactive?: boolean;
+  /** Tier 3 recorder bundle, forwarded to Thread (default off). */
+  recorder?: RecorderProps;
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
@@ -130,6 +159,13 @@ interface TraceViewerProps {
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
    */
   rawRequestPayloadHistory?: TraceRawRequestPayloadHistory | null;
+  /**
+   * Harness native built-in tools — forwarded to Raw so a harness host's
+   * request is annotated (its `tools` are empty because the harness builds its
+   * own request in-sandbox). Only the playground passes this; undefined
+   * elsewhere. See {@link TraceRawView}.
+   */
+  harnessBuiltinTools?: HarnessBuiltinToolInfo[];
   /**
    * When true, Raw JSON uses `height: auto` and minimal wrappers so a parent
    * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
@@ -160,7 +196,7 @@ interface TraceViewerProps {
 }
 
 function getTraceMessages(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
 ) {
   if (!trace) return [];
 
@@ -190,7 +226,7 @@ function getTraceMessages(
 }
 
 function getRecordedSpans(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
 ): EvalTraceSpan[] | undefined {
   if (!trace || Array.isArray(trace)) return undefined;
   if (typeof trace !== "object") return undefined;
@@ -200,9 +236,44 @@ function getRecordedSpans(
   return raw as EvalTraceSpan[];
 }
 
+type TraceTurnRuntime = {
+  engine?: "emulated" | "harness";
+  harness?: string;
+};
+
+function getTraceTurnRuntimeByPromptIndex(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): Map<number, TraceTurnRuntime> | undefined {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") {
+    return undefined;
+  }
+  const rawEvents = (trace as TraceEnvelope).events;
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return undefined;
+
+  const byPromptIndex = new Map<number, TraceTurnRuntime>();
+  for (const rawEvent of rawEvents) {
+    if (!rawEvent || typeof rawEvent !== "object") continue;
+    const event = rawEvent as Record<string, unknown>;
+    if (event.type !== "turn_start") continue;
+    if (typeof event.promptIndex !== "number") continue;
+    const engine =
+      event.engine === "emulated" || event.engine === "harness"
+        ? event.engine
+        : undefined;
+    const harness =
+      typeof event.harness === "string" && event.harness.trim()
+        ? event.harness
+        : undefined;
+    if (!engine && !harness) continue;
+    byPromptIndex.set(event.promptIndex, { engine, harness });
+  }
+
+  return byPromptIndex.size > 0 ? byPromptIndex : undefined;
+}
+
 // PR 7: pull the browser-rendered MCP App artifacts off the trace envelope.
 function getBrowserObservations(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
 ): EvalTraceWidgetRenderObservationView[] {
   if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
   const raw = (trace as TraceEnvelope).widgetRenderObservations;
@@ -210,11 +281,20 @@ function getBrowserObservations(
 }
 
 function getBrowserSteps(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
 ): EvalTraceBrowserInteractionStepView[] {
   if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
   const raw = (trace as TraceEnvelope).browserInteractionSteps;
   return Array.isArray(raw) ? raw : [];
+}
+
+// Iteration-level replay video URL (backend-resolved from `videoBlobId`).
+function getBrowserVideoUrl(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): string | null {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return null;
+  const raw = (trace as TraceEnvelope).videoUrl;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
 export function TraceViewer({
@@ -231,6 +311,11 @@ export function TraceViewer({
   chromeDensity = "default",
   expectedToolCalls = [],
   actualToolCalls = [],
+  steps,
+  stepStatusById,
+  iterationResult = null,
+  syncedStepId,
+  onSyncStep,
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
@@ -244,6 +329,7 @@ export function TraceViewer({
   onDisplayModeChange,
   onToolApprovalResponse,
   interactive = false,
+  recorder,
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
@@ -251,6 +337,7 @@ export function TraceViewer({
   onFullscreenChatStop,
   onFullscreenChange,
   rawRequestPayloadHistory = null,
+  harnessBuiltinTools,
   rawGrowWithContent = false,
   activeHost,
   hostStyle,
@@ -274,21 +361,20 @@ export function TraceViewer({
   // line up with the explicit `activeHost`.
   const shouldInstallTraceScope =
     activeHost !== undefined || hostStyle !== undefined;
-  const traceScopeHostStyle =
-    hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
+  const traceScopeHostStyle = hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
 
   const [viewMode, setViewMode] = useState<
-    "timeline" | "chat" | "raw" | "tools" | "browser"
-  >("timeline");
+    "timeline" | "chat" | "raw" | "tools" | "browser" | "steps"
+  >("chat");
   const [toolsCompareLayout, setToolsCompareLayout] = useState<"diff" | "json">(
-    "diff",
+    "diff"
   );
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set()
   );
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set()
   );
   const [transcriptNavigation, setTranscriptNavigation] = useState<{
     focusMessageId: string | null;
@@ -310,37 +396,48 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  const turnRuntimeByPromptIndex = useMemo(
+    () => getTraceTurnRuntimeByPromptIndex(trace),
+    [trace]
+  );
   // PR 7: browser-rendered MCP App eval artifacts (render observations +
   // Computer Use steps). Only iterations driven through the headless-Chromium
   // harness carry these, so the Browser tab is gated on their presence.
   const browserObservations = useMemo(
     () => getBrowserObservations(trace),
-    [trace],
+    [trace]
   );
   const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
+  const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
+  // Step-aligned replay tab: gated on the run carrying its authored step list.
+  const hasSteps = (steps?.length ?? 0) > 0;
+  // The Browser tab now shows only the replay video + per-widget render
+  // observations; the per-step interaction timeline moved to the Trace tab
+  // (`Interact · …` spans, same `browserSteps` source), so steps alone no
+  // longer gate this tab.
   const hasBrowserArtifacts =
-    browserObservations.length > 0 || browserSteps.length > 0;
+    browserObservations.length > 0 || browserVideoUrl != null;
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
-    [recordedSpans],
+    [recordedSpans]
   );
   const traceIdentityForToolbar = useMemo(
     () =>
       recordedSpans
         ?.map((span) => `${span.id}:${span.startMs}:${span.endMs}`)
         .join("|") ?? "no-spans",
-    [recordedSpans],
+    [recordedSpans]
   );
   const maxEndMsForToolbar = useMemo(
     () =>
       recordedSpans?.length
         ? recordedSpans.reduce((max, span) => Math.max(max, span.endMs), 1)
         : 1,
-    [recordedSpans],
+    [recordedSpans]
   );
   const fullyExpandedStepIds = useMemo(
     () => collectStepSpanIdsWithChildren(promptGroups),
-    [promptGroups],
+    [promptGroups]
   );
   const isTimelineFullyExpanded = useMemo(() => {
     if (promptGroups.length === 0) return false;
@@ -376,7 +473,43 @@ export function TraceViewer({
         toolServerMap,
         connectedServerIds,
       }),
-    [trace, toolsMetadata, toolServerMap, connectedServerIds],
+    [trace, toolsMetadata, toolServerMap, connectedServerIds]
+  );
+
+  // Frozen replay: when simply VIEWING a completed run, show each widget's
+  // RECORDED screenshot instead of a live re-render — which drifts to the
+  // widget's default state once its MCP server is gone. While a widget is armed
+  // for recording, keep widgets live: the record flow needs the real widget and
+  // a reachable server (which then shows real data, so no drift). Non-eval
+  // surfaces carry no `browserObservations`, so this is a no-op there.
+  const toolRenderOverrides = useMemo(() => {
+    const base = adaptedTrace.toolRenderOverrides;
+    // While a widget is armed for recording, keep widgets live (the record flow
+    // needs the real widget + a reachable server).
+    if (recorder?.recordingTarget) return base;
+    return buildFrozenScreenshotOverrides(
+      base,
+      browserObservations,
+      browserSteps
+    );
+  }, [
+    adaptedTrace.toolRenderOverrides,
+    browserObservations,
+    browserSteps,
+    recorder?.recordingTarget,
+  ]);
+
+  // Reconstruct the widget→host tool-call cards from the recorded interaction
+  // steps so the Chat tab shows app-initiated calls (e.g. "Add to cart") as
+  // MCP-branded `AppToolInvocationPart`s under the parent widget — the frozen
+  // analogue of Playground's live host-bridge invocations. While recording, the
+  // live bridge owns these, so skip the override and let the widget re-fire.
+  const appToolInvocationsOverride = useMemo(
+    () =>
+      recorder?.recordingTarget
+        ? undefined
+        : buildAppToolInvocationsFromBrowserSteps(browserSteps),
+    [browserSteps, recorder?.recordingTarget]
   );
 
   useEffect(() => {
@@ -398,6 +531,12 @@ export function TraceViewer({
       setViewMode((mode) => (mode === "browser" ? "timeline" : mode));
     }
   }, [hasBrowserArtifacts]);
+
+  useEffect(() => {
+    if (!hasSteps) {
+      setViewMode((mode) => (mode === "steps" ? "timeline" : mode));
+    }
+  }, [hasSteps]);
 
   useEffect(() => {
     if (effectiveViewMode !== "raw" && effectiveViewMode !== "chat") return;
@@ -471,6 +610,7 @@ export function TraceViewer({
     effectiveViewMode === "raw" ||
     effectiveViewMode === "browser" ||
     (effectiveViewMode === "tools" && hasEvalToolCalls);
+  const flatToolbar = compactChrome && flexFillChrome;
 
   const toolsCompareLayoutToggle = (
     <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
@@ -481,7 +621,7 @@ export function TraceViewer({
           "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
           toolsCompareLayout === "diff"
             ? "bg-primary/10 font-medium text-foreground"
-            : "text-muted-foreground hover:text-foreground",
+            : "text-muted-foreground hover:text-foreground"
         )}
         title="Structured diff view"
         data-testid="trace-viewer-tools-layout-diff"
@@ -496,7 +636,7 @@ export function TraceViewer({
           "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
           toolsCompareLayout === "json"
             ? "bg-primary/10 font-medium text-foreground"
-            : "text-muted-foreground hover:text-foreground",
+            : "text-muted-foreground hover:text-foreground"
         )}
         title="Raw JSON view"
         data-testid="trace-viewer-tools-layout-json"
@@ -515,21 +655,23 @@ export function TraceViewer({
       <div
         className={cn(
           compactChrome ? "space-y-2" : "space-y-3",
-          flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col",
+          flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col"
         )}
       >
         {!hideToolbar ? (
           <div
             className={cn(
-              "sticky top-0 z-20 rounded-lg border border-border/50 bg-muted/95 shadow-sm backdrop-blur-sm",
-              flexFillChrome && "shrink-0",
-              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
+              "z-10 shrink-0 backdrop-blur-sm",
+              flatToolbar
+                ? "relative border-b border-border/60 bg-background/95"
+                : "sticky top-0 rounded-lg border border-border/50 bg-muted/95 shadow-sm",
+              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3"
             )}
           >
             <div
               className={cn(
                 "flex min-w-0 flex-row items-center justify-between gap-2",
-                compactChrome ? "min-h-8" : "min-h-9",
+                compactChrome ? "min-h-8" : "min-h-9"
               )}
             >
               <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
@@ -552,7 +694,7 @@ export function TraceViewer({
                           disabled={timelineViewportMaxMs <= timelineZoomMinMs}
                           onClick={() =>
                             setTimelineViewportMaxMs((v) =>
-                              Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
+                              Math.max(timelineZoomMinMs, Math.round(v * 0.8))
                             )
                           }
                         >
@@ -572,8 +714,8 @@ export function TraceViewer({
                             setTimelineViewportMaxMs((v) =>
                               Math.min(
                                 maxEndMsForToolbar * 4,
-                                Math.round(v * 1.25),
-                              ),
+                                Math.round(v * 1.25)
+                              )
                             )
                           }
                         >
@@ -587,7 +729,7 @@ export function TraceViewer({
                         setExpandedStepIds(new Set());
                       } else {
                         setExpandedPromptIds(
-                          new Set(promptGroups.map((group) => group.key)),
+                          new Set(promptGroups.map((group) => group.key))
                         );
                         setExpandedStepIds(new Set(fullyExpandedStepIds));
                       }
@@ -598,25 +740,32 @@ export function TraceViewer({
                     {effectiveViewMode === "raw"
                       ? "Trace JSON"
                       : effectiveViewMode === "tools"
-                        ? "Expected vs actual tools"
-                        : traceMessages.length > 0
-                          ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
-                          : "Trace"}
+                      ? "Expected vs actual tools"
+                      : traceMessages.length > 0
+                      ? `${traceMessages.length} message${
+                          traceMessages.length !== 1 ? "s" : ""
+                        }`
+                      : "Trace"}
                   </div>
                 )}
               </div>
               {!forcedViewMode ? (
                 <TraceViewModeTabs
                   mode={
-                    effectiveViewMode === "browser"
+                    effectiveViewMode === "browser" ||
+                    effectiveViewMode === "steps"
                       ? "timeline"
                       : effectiveViewMode
                   }
                   onModeChange={setViewMode}
                   showToolsTab={hasEvalToolCalls}
+                  showStepsTab={hasSteps}
+                  stepsActive={effectiveViewMode === "steps"}
+                  onSelectSteps={() => setViewMode("steps")}
                   showBrowserTab={hasBrowserArtifacts}
                   browserActive={effectiveViewMode === "browser"}
                   onSelectBrowser={() => setViewMode("browser")}
+                  appearance={compactChrome ? "segment" : "default"}
                 />
               ) : null}
             </div>
@@ -628,7 +777,7 @@ export function TraceViewer({
             className={cn(
               "rounded-lg border border-border/50 bg-muted/15",
               flexFillChrome && "shrink-0",
-              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
+              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3"
             )}
             data-testid="trace-viewer-insight-slot"
           >
@@ -646,14 +795,15 @@ export function TraceViewer({
                     "overflow-hidden",
                     flexFillChrome
                       ? "min-h-0 flex-1"
-                      : "min-h-0 max-h-[min(70vh,36rem)]",
-                  ),
+                      : "min-h-0 max-h-[min(70vh,36rem)]"
+                  )
             )}
             data-testid="trace-viewer-raw-json"
           >
             <TraceRawView
               trace={trace}
               requestPayloadHistory={rawRequestPayloadHistory}
+              harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
             />
           </div>
@@ -665,14 +815,41 @@ export function TraceViewer({
               "min-w-0 flex flex-col",
               flexFillChrome
                 ? "min-h-0 flex-1"
-                : "min-h-0 max-h-[min(70vh,36rem)]",
+                : "min-h-0 max-h-[min(70vh,36rem)]"
             )}
             data-testid="trace-viewer-browser"
           >
             <BrowserArtifactsView
               observations={browserObservations}
-              steps={browserSteps}
+              videoUrl={browserVideoUrl}
               className={flexFillChrome ? "flex-1" : undefined}
+            />
+          </div>
+        )}
+
+        {effectiveViewMode === "steps" && (
+          <div
+            className={cn(
+              "min-w-0 flex flex-col overflow-y-auto",
+              flexFillChrome
+                ? "min-h-0 flex-1"
+                : "min-h-0 max-h-[min(70vh,36rem)]"
+            )}
+            data-testid="trace-viewer-steps"
+          >
+            <StepReplayView
+              steps={steps ?? []}
+              renderObservations={browserObservations}
+              interactionSteps={browserSteps}
+              stepStatusById={stepStatusById}
+              verdict={
+                iterationResult === "timed_out"
+                  ? "failed"
+                  : (iterationResult ?? null)
+              }
+              hoveredStepId={syncedStepId}
+              onHoverStep={onSyncStep}
+              onSelectStep={onSyncStep}
             />
           </div>
         )}
@@ -688,11 +865,12 @@ export function TraceViewer({
             <div
               className={cn(
                 flexFillChrome &&
-                  "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+                  "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               )}
             >
               <TraceTimelineLazy
                 recordedSpans={recordedSpans}
+                interactionSteps={browserSteps}
                 estimatedDurationMs={
                   recordedSpans?.length ? undefined : estimatedDurationMs
                 }
@@ -725,6 +903,7 @@ export function TraceViewer({
                 viewportMaxMs={
                   hasRecordedSpans ? timelineViewportMaxMs : undefined
                 }
+                turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
               />
             </div>
@@ -740,9 +919,7 @@ export function TraceViewer({
             <div
               className={cn(
                 "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
-                fillContent
-                  ? "min-h-0 flex-1 overflow-hidden"
-                  : "min-h-0",
+                fillContent ? "min-h-0 flex-1 overflow-hidden" : "min-h-0"
               )}
               data-testid="trace-viewer-chat"
             >
@@ -776,10 +953,12 @@ export function TraceViewer({
                     onFullscreenChatStop={onFullscreenChatStop}
                     onFullscreenChange={onFullscreenChange}
                     onToolApprovalResponse={onToolApprovalResponse}
-                    toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                    showSaveViewButton={false}
+                    toolRenderOverrides={toolRenderOverrides}
+                    appToolInvocationsOverride={appToolInvocationsOverride}
+                    showInlineEdit={false}
                     minimalMode={true}
                     interactive={threadInteractive}
+                    recorder={recorder}
                     reasoningDisplayMode="collapsed"
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
@@ -850,62 +1029,62 @@ export function TraceViewer({
                   {toolsCompareLayoutToggle}
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row">
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-                  <div className="shrink-0 text-xs font-medium uppercase text-muted-foreground">
-                    Expected
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+                    <div className="shrink-0 text-xs font-medium uppercase text-muted-foreground">
+                      Expected
+                    </div>
+                    {expectedToolCalls.length === 0 ? (
+                      <div className="text-xs italic text-muted-foreground">
+                        No expected tool calls
+                      </div>
+                    ) : (
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                        <JsonEditor
+                          value={expectedToolCalls}
+                          viewOnly
+                          collapsible
+                          defaultExpandDepth={2}
+                          collapseStringsAfterLength={160}
+                          height="100%"
+                          className="min-h-0"
+                        />
+                      </div>
+                    )}
                   </div>
-                  {expectedToolCalls.length === 0 ? (
-                    <div className="text-xs italic text-muted-foreground">
-                      No expected tool calls
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+                    <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
+                      Actual
+                      {isLoading ? (
+                        <Loader2
+                          className="h-3 w-3 shrink-0 animate-spin"
+                          aria-hidden
+                          data-testid="trace-viewer-actual-loading"
+                        />
+                      ) : null}
                     </div>
-                  ) : (
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                      <JsonEditor
-                        value={expectedToolCalls}
-                        viewOnly
-                        collapsible
-                        defaultExpandDepth={2}
-                        collapseStringsAfterLength={160}
-                        height="100%"
-                        className="min-h-0"
-                      />
-                    </div>
-                  )}
-                </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-                  <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
-                    Actual
-                    {isLoading ? (
-                      <Loader2
-                        className="h-3 w-3 shrink-0 animate-spin"
-                        aria-hidden
-                        data-testid="trace-viewer-actual-loading"
-                      />
-                    ) : null}
+                    {actualToolCalls.length === 0 ? (
+                      <div className="text-xs italic text-muted-foreground">
+                        No tool calls made
+                      </div>
+                    ) : (
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                        <JsonEditor
+                          value={actualToolCalls.map(
+                            ({ toolName, arguments: args }) => ({
+                              toolName,
+                              arguments: args,
+                            })
+                          )}
+                          viewOnly
+                          collapsible
+                          defaultExpandDepth={2}
+                          collapseStringsAfterLength={160}
+                          height="100%"
+                          className="min-h-0"
+                        />
+                      </div>
+                    )}
                   </div>
-                  {actualToolCalls.length === 0 ? (
-                    <div className="text-xs italic text-muted-foreground">
-                      No tool calls made
-                    </div>
-                  ) : (
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                      <JsonEditor
-                        value={actualToolCalls.map(
-                          ({ toolName, arguments: args }) => ({
-                            toolName,
-                            arguments: args,
-                          }),
-                        )}
-                        viewOnly
-                        collapsible
-                        defaultExpandDepth={2}
-                        collapseStringsAfterLength={160}
-                        height="100%"
-                        className="min-h-0"
-                      />
-                    </div>
-                  )}
-                </div>
                 </div>
               </>
             )}

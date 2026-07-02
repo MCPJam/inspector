@@ -4,7 +4,11 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import { matchToolCalls } from "@/shared/eval-matching";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import {
+  isWidgetAssertion,
+  stepsToPromptTurns,
+  type TestStep,
+} from "@/shared/steps";
 import { computeIterationResult } from "./pass-criteria";
 import type {
   CompareModelOverride,
@@ -68,11 +72,13 @@ export function resolveModelOptionLabel(
 }
 
 export function buildComparePreviewTrace(
-  promptTurns: PromptTurn[],
+  steps: TestStep[],
 ): TraceEnvelope | null {
-  const firstPrompt = promptTurns.find((turn) => turn.prompt.trim().length > 0);
+  const firstPrompt = steps.find(
+    (step) => step.kind === "prompt" && step.prompt.trim().length > 0,
+  );
 
-  if (!firstPrompt) {
+  if (!firstPrompt || firstPrompt.kind !== "prompt") {
     return null;
   }
 
@@ -84,6 +90,73 @@ export function buildComparePreviewTrace(
       },
     ],
   };
+}
+
+/**
+ * Synthesize a trace for the editor's pre-run Preview so it renders through the
+ * SAME chat surface (`TraceViewer` → `Thread`) as a real run, instead of a
+ * bespoke spec component. Each turn becomes a user message (the prompt) plus an
+ * assistant message carrying its expected tool calls as `tool-call` parts — and
+ * its pinned (render-check) call if any.
+ *
+ * Deliberately carries NO `tool-result`: a spec has the expected INPUT but no
+ * OUTPUT, so the chat shows the user bubble + tool-call chips (state
+ * `input-available`) and the widget only renders once a real run produces output
+ * (or an on-demand render injects it). Returns null when there's nothing to show.
+ */
+export function buildSpecPreviewTrace(
+  steps: TestStep[],
+): TraceEnvelope | null {
+  const messages: NonNullable<TraceEnvelope["messages"]> = [];
+  let callSeq = 0;
+  // Calls accumulate for the current implicit turn and flush as one assistant
+  // message when the next `prompt`/`toolCall` step opens a new turn (mirrors the
+  // old per-turn grouping: a turn's user bubble followed by its expected calls).
+  let pendingCalls: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }> = [];
+  const flushCalls = () => {
+    if (pendingCalls.length > 0) {
+      messages.push({
+        role: "assistant",
+        content: pendingCalls.map((c) => ({
+          type: "tool-call",
+          toolCallId: `spec-call-${callSeq++}`,
+          toolName: c.toolName,
+          input: c.arguments,
+        })),
+      });
+      pendingCalls = [];
+    }
+  };
+
+  for (const step of steps) {
+    if (step.kind === "prompt") {
+      flushCalls();
+      if (step.prompt.trim()) {
+        messages.push({ role: "user", content: step.prompt });
+      }
+    } else if (step.kind === "toolCall") {
+      // A model-free (pinned) call opens its own turn.
+      flushCalls();
+      pendingCalls.push({
+        toolName: step.toolName,
+        arguments: (step.arguments as Record<string, unknown>) ?? {},
+      });
+    } else if (step.kind === "assert" && !isWidgetAssertion(step.assertion)) {
+      const predicate = step.assertion;
+      if (predicate.type === "toolCalledWith") {
+        pendingCalls.push({
+          toolName: predicate.toolName,
+          arguments: predicate.args.args ?? {},
+        });
+      }
+    }
+  }
+  flushCalls();
+
+  return messages.length > 0 ? { messages } : null;
 }
 
 const MISMATCH_METADATA_KEYS = [
@@ -250,7 +323,12 @@ function parsePersistedMismatchCounts(metadata: EvalIteration["metadata"]): {
 function isMultiTurnTestCaseSnapshot(
   snapshot: EvalIteration["testCaseSnapshot"] | undefined,
 ): boolean {
-  const turns = snapshot?.promptTurns;
+  // The snapshot carries `steps`; a turn opens at each `prompt`/`toolCall`
+  // step, so derive the turn count via the steps→turns adapter. Fall back to
+  // legacy `promptTurns` for pre-migration iterations.
+  const turns = Array.isArray(snapshot?.steps)
+    ? stepsToPromptTurns(snapshot.steps)
+    : snapshot?.promptTurns;
   return Array.isArray(turns) && turns.length > 1;
 }
 

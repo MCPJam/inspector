@@ -10,7 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
-import { formatEnsureServersReadyError, useEvalHandlers } from "../use-eval-handlers";
+import {
+  formatEnsureServersReadyError,
+  useEvalHandlers,
+} from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
@@ -302,7 +305,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.iterationOverride).toBeUndefined();
     });
 
-    it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
+    it("includes steps and expectedOutput when rerunning saved cases", async () => {
       mockConvexQuery.mockResolvedValueOnce([
         {
           _id: "test-case-1",
@@ -343,13 +346,25 @@ describe("useEvalHandlers", () => {
       const callArgs = mockAuthFetch.mock.calls[0];
       const requestBody = JSON.parse(callArgs[1].body);
 
+      // The rerun payload now speaks the unified `steps` model: each legacy
+      // turn's prompt becomes a `prompt` step (in order), and a turn's expected
+      // tool calls become `assert` steps. The Convex mutation rejects
+      // `promptTurns`, so it must not appear on the payload.
       expect(requestBody.tests[0]).toMatchObject({
         expectedOutput: "Summarize the tool result",
-        promptTurns: [
-          expect.objectContaining({ prompt: "First prompt" }),
-          expect.objectContaining({ prompt: "Follow up" }),
+        steps: [
+          expect.objectContaining({ kind: "prompt", prompt: "First prompt" }),
+          expect.objectContaining({ kind: "prompt", prompt: "Follow up" }),
+          expect.objectContaining({
+            kind: "assert",
+            assertion: expect.objectContaining({
+              type: "toolCalledWith",
+              toolName: "search",
+            }),
+          }),
         ],
       });
+      expect(requestBody.tests[0].promptTurns).toBeUndefined();
     });
 
     it("does not use regular fetch for /api/mcp/evals/run", async () => {
@@ -819,14 +834,19 @@ describe("useEvalHandlers", () => {
           {
             _id: "case-probe-1",
             title: "Render check",
-            caseType: "widget_probe",
             models: [],
-            probeConfig: {
-              serverId: "srv-1",
-              serverName: "server-1",
-              toolName: "show_map",
-              arguments: {},
-            },
+            // Model-free render check: a single `toolCall` step (no `prompt`
+            // step) makes `isModelFree(steps)` true.
+            steps: [
+              {
+                id: "call-1",
+                kind: "toolCall",
+                serverId: "srv-1",
+                serverName: "server-1",
+                toolName: "show_map",
+                arguments: {},
+              },
+            ],
             expectedToolCalls: [],
           } as any,
         );
@@ -834,7 +854,7 @@ describe("useEvalHandlers", () => {
 
       expect(runResult).toBeNull();
       expect(toast.info).toHaveBeenCalledWith(
-        "Widget probes run with the full suite or on its schedule.",
+        "Render checks run with the full suite or on its schedule.",
       );
       expect(toast.error).not.toHaveBeenCalled();
       expect(mockAuthFetch).not.toHaveBeenCalled();
@@ -876,6 +896,56 @@ describe("useEvalHandlers", () => {
 
       expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
       expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("scopes a single test-case run to the selected host attachment", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(["server-b"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Host-scoped suite",
+            description: "A suite with multiple hosts",
+            environment: { servers: ["server-a", "server-b"] },
+            hostAttachments: [
+              {
+                namedHostId: "host-mcpjam",
+                hostName: "MCPJam",
+                enabledOptionalServerIds: [],
+                resolvedServerNames: ["server-a"],
+              },
+              {
+                namedHostId: "host-claude",
+                hostName: "Claude",
+                enabledOptionalServerIds: [],
+                resolvedServerNames: ["server-b"],
+              },
+            ],
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+          { namedHostId: "host-claude" },
+        );
+      });
+
+      const runCall = mockAuthFetch.mock.calls.find(
+        (call) => call[0] === "/api/mcp/evals/run-test-case",
+      );
+      expect(runCall).toBeDefined();
+      const body = JSON.parse(runCall![1].body as string);
+      expect(body.serverIds).toEqual(["server-b"]);
+      expect(body.namedHostId).toBe("host-claude");
     });
 
     it("normalizes hosted suite server ids before running a test case", async () => {
@@ -1544,7 +1614,9 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockAuthFetch).toHaveBeenCalledTimes(2);
-      const runBody = JSON.parse(mockAuthFetch.mock.calls[1]![1]!.body as string);
+      const runBody = JSON.parse(
+        mockAuthFetch.mock.calls[1]![1]!.body as string,
+      );
       expect(runBody.testCaseId).toBe("new-case-1");
     });
   });
