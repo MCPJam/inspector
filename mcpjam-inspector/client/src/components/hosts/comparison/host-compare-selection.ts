@@ -1,4 +1,19 @@
+import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
+
 const STORAGE_PREFIX = "host-compare-selected:";
+
+/**
+ * Default compare columns when nothing else (URL param, stored preference,
+ * prior in-memory selection) picks a selection. Codex and Claude Code are the
+ * two most commonly compared coding-agent harnesses, and this default is what
+ * makes the caniuse.dev landing (and any other fresh visit to Host Compare)
+ * show a meaningful comparison immediately instead of an empty "select a
+ * client" state.
+ */
+export const DEFAULT_COMPARE_HOST_IDS: readonly string[] = [
+  `${PRESET_HOST_ID_PREFIX}codex`,
+  `${PRESET_HOST_ID_PREFIX}claude-code`,
+];
 
 export function readHostCompareSelection(projectId: string): string[] | null {
   if (typeof window === "undefined") return null;
@@ -90,6 +105,15 @@ export function resolveInitialHostCompareSelection(args: {
     known,
   );
   if (fromPrevious.length > 0) return fromPrevious;
+
+  // Fresh visit, nothing stored: default to Codex + Claude Code rather than
+  // "all live hosts" — falls through to live hosts only if the catalog ever
+  // stops offering those two preset ids.
+  const fromDefaultPresets = reconcileHostCompareSelection(
+    DEFAULT_COMPARE_HOST_IDS,
+    known,
+  );
+  if (fromDefaultPresets.length > 0) return fromDefaultPresets;
 
   return [...args.liveHostIds];
 }
