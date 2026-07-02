@@ -51,6 +51,23 @@ import { HOSTED_MODE } from "../config";
 
 export { isChromiumInstalled };
 
+const BROWSER_CLOSE_TIMEOUT_MS = 5_000;
+
+async function waitForClose(task: Promise<unknown> | undefined): Promise<void> {
+  if (!task) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      task.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Contract types
  * ------------------------------------------------------------------ */
@@ -1549,11 +1566,7 @@ export class McpAppBrowserHarness {
       videoPath = null;
     }
     // Closing the context is what flushes the .webm. Safe if already closed.
-    try {
-      await this.context?.close();
-    } catch {
-      /* ignore */
-    }
+    await waitForClose(this.context?.close());
     this.context = null;
     if (!videoPath) {
       this.videoBytes = null;
@@ -1568,16 +1581,8 @@ export class McpAppBrowserHarness {
   }
 
   async dispose(): Promise<void> {
-    try {
-      await this.context?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await this.browser?.close();
-    } catch {
-      /* ignore */
-    }
+    await waitForClose(this.context?.close());
+    await waitForClose(this.browser?.close());
     // Always-runs cleanup of the recording temp dir (collectVideo already read
     // the bytes into memory; the file on disk is no longer needed).
     if (this.videoDir) {

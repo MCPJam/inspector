@@ -23,6 +23,7 @@ import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import { MistralStaticAvatar } from "@/lib/client-styles/mistral-avatar";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -64,6 +65,7 @@ interface MessageViewProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   claudeFooterMode?: ClaudeFooterMode;
   /** MCPJam host: pulsing dots beneath the streaming assistant bubble. */
   mcpjamFooterActive?: boolean;
@@ -178,6 +180,7 @@ function areMessageViewPropsEqual(
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
+    prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
@@ -216,6 +219,7 @@ function MessageViewImpl({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering,
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,
@@ -286,6 +290,7 @@ function MessageViewImpl({
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
+                mcpToolResultImageRendering={mcpToolResultImageRendering}
               />
             ))}
           </div>
@@ -320,6 +325,7 @@ function MessageViewImpl({
                 minimalMode={minimalMode}
                 interactive={interactive}
                 reasoningDisplayMode={reasoningDisplayMode}
+                mcpToolResultImageRendering={mcpToolResultImageRendering}
               />
             ))}
           </UserMessageBubble>
@@ -406,6 +412,7 @@ function MessageViewImpl({
                   minimalMode={minimalMode}
                   interactive={interactive}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  mcpToolResultImageRendering={mcpToolResultImageRendering}
                   {...recorder}
                 />
               ))}
@@ -413,10 +420,7 @@ function MessageViewImpl({
           ))}
         </div>
         {mcpjamFooterActive ? (
-          <div
-            data-testid="mcpjam-message-footer"
-            className="pt-4"
-          >
+          <div data-testid="mcpjam-message-footer" className="pt-4">
             <MCPJamMarkIndicator />
           </div>
         ) : null}

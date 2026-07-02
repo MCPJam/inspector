@@ -17,6 +17,23 @@ let lastStreamExecution: Promise<void> | null = null;
 let capturedCreateUiStreamOnError: ((error: unknown) => string) | undefined;
 type ErrorResponse = { error: string };
 
+const imagePolicy = (image: boolean) => ({
+  directContent: { image },
+  embeddedResources: { blob: { image } },
+  linkedResources: { blob: { image } },
+});
+
+const resolvedImagePolicyMatcher = (image: boolean) =>
+  expect.objectContaining({
+    directContent: expect.objectContaining({ image }),
+    embeddedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+    linkedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+  });
+
 const buildSsePayload = (events: any[]) =>
   `${events
     .map((event) => `data: ${JSON.stringify(event)}\n\n`)
@@ -120,7 +137,7 @@ vi.mock("ai", async () => {
         toUIMessageStreamResponse: vi.fn().mockReturnValue(
           new Response(JSON.stringify({ type: "text", content: "Hello" }), {
             headers: { "Content-Type": "text/event-stream" },
-          }),
+          })
         ),
       };
     }),
@@ -141,7 +158,7 @@ vi.mock("ai", async () => {
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
       new Response(JSON.stringify({ type: "stream" }), {
         headers: { "Content-Type": "text/event-stream" },
-      }),
+      })
     ),
   };
 });
@@ -161,8 +178,9 @@ vi.mock("../../../utils/chat-helpers", async () => {
 
 // Mock shared types
 vi.mock("@/shared/types", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  const actual = await vi.importActual<typeof import("@/shared/types")>(
+    "@/shared/types"
+  );
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),
@@ -281,7 +299,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(data.error).toContain("'server.read_file'");
       expect(data.error).toContain("'namespace/list'");
       expect(data.error).toContain(
-        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
+        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters)."
       );
     });
 
@@ -361,7 +379,27 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(res.status).toBe(200);
       expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
         ["server-1", "server-2"],
-        undefined,
+        expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(true),
+        })
+      );
+    });
+
+    it("passes direct request image visibility opt-out to MCP tool conversion", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        selectedServers: ["server-1"],
+        modelVisibleMcpToolResults: imagePolicy(false),
+      });
+
+      expect(res.status).toBe(200);
+      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+        ["server-1"],
+        expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+        })
       );
     });
 
@@ -393,7 +431,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const requestPayloadEvents = capturedStreamEvents.filter(
         (event) =>
           event?.type === "data-trace-event" &&
-          event.data?.type === "request_payload",
+          event.data?.type === "request_payload"
       );
 
       expect(traceEvents).toEqual(
@@ -403,16 +441,16 @@ describe("POST /api/mcp/chat-v2", () => {
           "text_delta",
           "trace_snapshot",
           "turn_finish",
-        ]),
+        ])
       );
       expect(traceEvents.indexOf("turn_start")).toBeLessThan(
-        traceEvents.indexOf("request_payload"),
+        traceEvents.indexOf("request_payload")
       );
       expect(traceEvents.indexOf("request_payload")).toBeLessThan(
-        traceEvents.indexOf("trace_snapshot"),
+        traceEvents.indexOf("trace_snapshot")
       );
       expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
-        traceEvents.indexOf("turn_finish"),
+        traceEvents.indexOf("turn_finish")
       );
       expect(requestPayloadEvents).toHaveLength(1);
       expect(requestPayloadEvents[0]?.data).toMatchObject({
@@ -459,7 +497,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.5,
-        }),
+        })
       );
     });
 
@@ -475,7 +513,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.7,
-        }),
+        })
       );
     });
 
@@ -491,7 +529,220 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           abortSignal: expect.any(AbortSignal),
-        }),
+        })
+      );
+    });
+
+    it("maps direct MCP image tool history to media content before streaming", async () => {
+      const { streamText } = await import("ai");
+      manager.getToolsForAiSdk.mockResolvedValue({
+        qa_return_image_tool_result: {
+          description: "Returns a PNG image for example.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          execute: vi.fn(),
+        },
+      });
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [
+          { role: "user", content: "Execute `qa_return_image_tool_result`" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-1",
+                toolName: "qa_return_image_tool_result",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "qa_return_image_tool_result",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "image",
+                        data: "aGVsbG8=",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          { role: "user", content: "describe that image" },
+        ],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostStyle: "claude",
+      });
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              content: [
+                expect.objectContaining({
+                  type: "tool-result",
+                  output: {
+                    type: "content",
+                    value: [
+                      {
+                        type: "media",
+                        data: "aGVsbG8=",
+                        mediaType: "image/png",
+                      },
+                    ],
+                  },
+                }),
+              ],
+            }),
+          ]),
+        })
+      );
+    });
+
+    it("does not resolve linked MCP image resources from browser-replayed history", async () => {
+      const { streamText } = await import("ai");
+      manager.listTools.mockResolvedValue({
+        tools: [{ name: "qa_return_linked_image_resource" }],
+      });
+      manager.getToolsForAiSdk.mockResolvedValue({
+        qa_return_linked_image_resource: {
+          description: "Returns a linked PNG image resource for example.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          execute: vi.fn(),
+        },
+      });
+      manager.readResource.mockResolvedValue({
+        contents: [
+          {
+            uri: "example://linked-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        ],
+      });
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Execute `qa_return_linked_image_resource`",
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "Invoked `qa_return_linked_image_resource`",
+              },
+              {
+                type: "tool-call",
+                toolCallId: "playground-L6XNQZ9X4Swm2LUv",
+                toolName: "qa_return_linked_image_resource",
+                input: {},
+                providerOptions: { mcpjam: { serverId: "qa-server" } },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "playground-L6XNQZ9X4Swm2LUv",
+                toolName: "qa_return_linked_image_resource",
+                providerOptions: { mcpjam: { serverId: "qa-server" } },
+                output: {
+                  type: "json",
+                  value: {
+                    type: "json",
+                    value: {
+                      content: [
+                        {
+                          mimeType: "image/png",
+                          name: "Linked PNG resource",
+                          type: "resource_link",
+                          uri: "example://linked-image.png",
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "what can you tell me about the image",
+              },
+            ],
+          },
+        ],
+        selectedServers: ["qa-server"],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostStyle: "claude",
+      });
+
+      expect(manager.listTools).not.toHaveBeenCalled();
+      expect(manager.readResource).not.toHaveBeenCalled();
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              content: [
+                expect.objectContaining({
+                  type: "tool-result",
+                  output: {
+                    type: "json",
+                    value: {
+                      type: "json",
+                      value: {
+                        content: [
+                          {
+                            mimeType: "image/png",
+                            name: "Linked PNG resource",
+                            type: "resource_link",
+                            uri: "example://linked-image.png",
+                          },
+                        ],
+                      },
+                    },
+                  },
+                }),
+              ],
+            }),
+          ]),
+        })
       );
     });
 
@@ -508,12 +759,12 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("You are a helpful assistant"),
-        }),
+        })
       );
       expect(streamText).not.toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("## Connected MCP Tools"),
-        }),
+        })
       );
     });
   });
@@ -521,7 +772,7 @@ describe("POST /api/mcp/chat-v2", () => {
   describe("error handling", () => {
     it("returns 500 when getToolsForAiSdk fails", async () => {
       manager.getToolsForAiSdk.mockRejectedValue(
-        new Error("Tools fetch failed"),
+        new Error("Tools fetch failed")
       );
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
@@ -543,17 +794,15 @@ describe("POST /api/mcp/chat-v2", () => {
         | ((error: unknown) => string)
         | undefined;
 
-      vi.mocked(streamText).mockImplementationOnce(
-        (() => ({
-          toUIMessageStream: vi.fn((options?: { onError?: unknown }) => {
-            capturedToUiMessageStreamOnError = options?.onError as
-              | ((error: unknown) => string)
-              | undefined;
-            return createThrowingAsyncIterable(abortError);
-          }),
-          toUIMessageStreamResponse: vi.fn(),
-        })) as any,
-      );
+      vi.mocked(streamText).mockImplementationOnce((() => ({
+        toUIMessageStream: vi.fn((options?: { onError?: unknown }) => {
+          capturedToUiMessageStreamOnError = options?.onError as
+            | ((error: unknown) => string)
+            | undefined;
+          return createThrowingAsyncIterable(abortError);
+        }),
+        toUIMessageStreamResponse: vi.fn(),
+      })) as any);
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -568,8 +817,8 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(
         capturedStreamEvents.some(
           (event) =>
-            event?.type === "data-trace-event" && event.data?.type === "error",
-        ),
+            event?.type === "data-trace-event" && event.data?.type === "error"
+        )
       ).toBe(false);
     });
   });
@@ -626,7 +875,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     async function getOnError(
-      provider: string,
+      provider: string
     ): Promise<(error: unknown) => string> {
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -652,7 +901,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Check your organization's model providers configuration.",
+        "Invalid API key for openai. Check your organization's model providers configuration."
       );
       expect(result.statusCode).toBe(401);
     });
@@ -669,7 +918,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for anthropic. Check your organization's model providers configuration.",
+        "Invalid API key for anthropic. Check your organization's model providers configuration."
       );
     });
 
@@ -687,7 +936,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for deepseek. Check your organization's model providers configuration.",
+        "Invalid API key for deepseek. Check your organization's model providers configuration."
       );
       expect(result.statusCode).toBe(401);
     });
@@ -706,7 +955,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for xai. Check your organization's model providers configuration.",
+        "Invalid API key for xai. Check your organization's model providers configuration."
       );
     });
 
@@ -724,7 +973,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for google. Check your organization's model providers configuration.",
+        "Invalid API key for google. Check your organization's model providers configuration."
       );
     });
 
@@ -773,7 +1022,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.code).toBeUndefined();
       expect(result.message).toBe("Rate limit exceeded");
       expect(result.details).toBe(
-        '{"error":{"message":"Rate limit exceeded"}}',
+        '{"error":{"message":"Rate limit exceeded"}}'
       );
     });
 
@@ -794,7 +1043,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
     it("normalizes retry-exhausted provider overload errors", async () => {
       const onError = await getOnError("anthropic");
-      const error = new Error("Failed after 3 attempts. Last error: Overloaded");
+      const error = new Error(
+        "Failed after 3 attempts. Last error: Overloaded"
+      );
 
       const result = JSON.parse(onError(error));
       expect(result).toEqual({
@@ -844,7 +1095,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Check your organization's model providers configuration.",
+        "Invalid API key for openai. Check your organization's model providers configuration."
       );
     });
   });
@@ -860,10 +1111,7 @@ describe("POST /api/mcp/chat-v2", () => {
       delete process.env.CONVEX_HTTP_URL;
     });
 
-    const postWithAuth = (
-      body: Record<string, unknown>,
-      authHeader?: string,
-    ) =>
+    const postWithAuth = (body: Record<string, unknown>, authHeader?: string) =>
       app.request("/api/mcp/chat-v2", {
         method: "POST",
         headers: {
@@ -908,7 +1156,7 @@ describe("POST /api/mcp/chat-v2", () => {
           apiKey: "local",
           ollamaBaseUrl: "http://localhost:11434",
         },
-        "Bearer any-token",
+        "Bearer any-token"
       );
 
       expect(res.status).toBe(200);
@@ -1027,6 +1275,7 @@ describe("POST /api/mcp/chat-v2", () => {
           systemPrompt: "you are a helpful assistant",
           temperature: 0.4,
           requireToolApproval: true,
+          modelVisibleMcpToolResults: imagePolicy(false),
         });
 
         expect(res.status).toBe(200);
@@ -1067,14 +1316,22 @@ describe("POST /api/mcp/chat-v2", () => {
         ]);
         // Phase 3: hostStyle defaults to 'claude' when the client
         // doesn't supply one (no more legacy 'direct' on the wire).
-        expect(body.hostConfig).toEqual({
-          hostStyle: "claude",
-          systemPrompt: "you are a helpful assistant",
-          modelId: "google/gemini-2.5-flash",
-          temperature: 0.4,
-          requireToolApproval: true,
-          selectedServerIds: ["abc123serverid", "def456serverid"],
-        });
+        expect(body.hostConfig).toEqual(
+          expect.objectContaining({
+            hostStyle: "claude",
+            systemPrompt: "you are a helpful assistant",
+            modelId: "google/gemini-2.5-flash",
+            temperature: 0.4,
+            requireToolApproval: true,
+            modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+            selectedServerIds: ["abc123serverid", "def456serverid"],
+          })
+        );
+        expect(body.resumeConfig).toEqual(
+          expect.objectContaining({
+            modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+          })
+        );
       } finally {
         global.fetch = originalFetch;
       }
@@ -1241,6 +1498,7 @@ describe("POST /api/mcp/chat-v2", () => {
         // HostConfigPayload guard accepts the field.
         expect(typeof body.hostConfig.temperature).toBe("number");
         expect(body.hostConfig.temperature).toBe(0.3);
+        expect("modelVisibleMcpToolResults" in body.hostConfig).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }
@@ -1349,12 +1607,12 @@ describe("POST /api/mcp/chat-v2", () => {
         });
 
         const streamBody = JSON.parse(
-          String((init as RequestInit).body ?? "{}"),
+          String((init as RequestInit).body ?? "{}")
         );
         expect(streamBody.tools).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ name: "web_search" }),
-          ]),
+          ])
         );
       } finally {
         global.fetch = originalFetch;
@@ -1362,8 +1620,9 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("uses a guest token for non-gated MCPJam guest requests", async () => {
-      const { getProductionGuestAuthHeader } =
-        await import("../../../utils/guest-auth.js");
+      const { getProductionGuestAuthHeader } = await import(
+        "../../../utils/guest-auth.js"
+      );
 
       const originalFetch = global.fetch;
       global.fetch = vi
@@ -1482,8 +1741,9 @@ describe("POST /api/mcp/chat-v2", () => {
     ])(
       "rejects gated MCPJam guest model $id before fetching guest auth",
       async ({ id, provider }) => {
-        const { getProductionGuestAuthHeader } =
-          await import("../../../utils/guest-auth.js");
+        const { getProductionGuestAuthHeader } = await import(
+          "../../../utils/guest-auth.js"
+        );
 
         const originalFetch = global.fetch;
         global.fetch = vi.fn();
@@ -1497,16 +1757,16 @@ describe("POST /api/mcp/chat-v2", () => {
 
           expect(status).toBe(403);
           expect(data.error).toBe(
-            "This MCPJam model is not available for guest access. Sign in to continue.",
+            "This MCPJam model is not available for guest access. Sign in to continue."
           );
           expect(
-            vi.mocked(getProductionGuestAuthHeader),
+            vi.mocked(getProductionGuestAuthHeader)
           ).not.toHaveBeenCalled();
           expect(global.fetch).not.toHaveBeenCalled();
         } finally {
           global.fetch = originalFetch;
         }
-      },
+      }
     );
   });
 
@@ -1527,11 +1787,11 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers,
+            (init as RequestInit | undefined)?.headers
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token",
+            "Bearer signed-in-test-token"
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
@@ -1576,11 +1836,11 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org/resolve") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers,
+            (init as RequestInit | undefined)?.headers
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token",
+            "Bearer signed-in-test-token"
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
@@ -1602,11 +1862,11 @@ describe("POST /api/mcp/chat-v2", () => {
         }
         if (url === "https://test-convex.example.com/stream/org/local-usage") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers,
+            (init as RequestInit | undefined)?.headers
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token",
+            "Bearer signed-in-test-token"
           );
           return Response.json({ ok: true });
         }
@@ -1629,17 +1889,17 @@ describe("POST /api/mcp/chat-v2", () => {
         await lastStreamExecution;
         expect(fetchMock).toHaveBeenCalledWith(
           "https://test-convex.example.com/stream/org/resolve",
-          expect.anything(),
+          expect.anything()
         );
         expect(fetchMock).toHaveBeenCalledWith(
           "https://test-convex.example.com/stream/org/local-usage",
-          expect.anything(),
+          expect.anything()
         );
         expect(
           fetchMock.mock.calls.some(
             ([input]) =>
-              String(input) === "https://test-convex.example.com/stream/org",
-          ),
+              String(input) === "https://test-convex.example.com/stream/org"
+          )
         ).toBe(false);
       } finally {
         global.fetch = originalFetch;
@@ -1673,7 +1933,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool result to messages
         const toolResultMsg = {
@@ -1729,34 +1989,34 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Find tool-input-available and tool-output-available events
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
 
         // Verify tool-input-available was emitted for the orphaned tool call
         expect(toolInputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
+          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123")
         ).toBe(true);
 
         // Verify tool-output-available was also emitted
         expect(toolOutputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
+          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123")
         ).toBe(true);
 
         // Verify order: tool-input-available must come before tool-output-available
         const inputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "orphaned-call-123",
+            e.toolCallId === "orphaned-call-123"
         );
         const outputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-output-available" &&
-            e.toolCallId === "orphaned-call-123",
+            e.toolCallId === "orphaned-call-123"
         );
 
         expect(inputIndex).toBeLessThan(outputIndex);
@@ -1772,7 +2032,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async () => []) as any,
+        (async () => []) as any
       );
 
       // Mock fetch for CONVEX_HTTP_URL
@@ -1788,7 +2048,7 @@ describe("POST /api/mcp/chat-v2", () => {
               totalTokens: 2,
             },
           },
-        ]),
+        ])
       );
 
       try {
@@ -1825,7 +2085,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEvents = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "resolved-call-456",
+            e.toolCallId === "resolved-call-456"
         );
 
         expect(toolInputEvents.length).toBe(0);
@@ -1845,7 +2105,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool results for both calls
         const firstToolResult = {
@@ -1917,22 +2177,22 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Verify both tool calls get tool-input-available emitted
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
 
         expect(toolInputEvents.some((e) => e.toolCallId === "call-1")).toBe(
-          true,
+          true
         );
         expect(toolInputEvents.some((e) => e.toolCallId === "call-2")).toBe(
-          true,
+          true
         );
 
         // Verify tool names and inputs are preserved
         const call1Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-1",
+          (e) => e.toolCallId === "call-1"
         );
         const call2Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-2",
+          (e) => e.toolCallId === "call-2"
         );
 
         expect(call1Event?.toolName).toBe("tool_a");
@@ -1955,7 +2215,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         const msg1 = {
           role: "tool",
@@ -2043,24 +2303,24 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Both tool calls should be collected from a single fetch
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-1"),
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-1")
         ).toBe(true);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-2"),
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-2")
         ).toBe(true);
 
         // Both tool results should be emitted
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1"),
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1")
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2"),
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2")
         ).toBe(true);
 
         // Only 2 fetch calls total (one for tool calls batch, one for final response)
@@ -2083,7 +2343,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool result for the new tool call
         const toolResultMsg = {
@@ -2144,7 +2404,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEventsForNewCall = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "new-call-from-step",
+            e.toolCallId === "new-call-from-step"
         );
 
         // Should be emitted exactly ONCE (when processing json.messages),
@@ -2167,7 +2427,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         const latestAssistantWithToolCall = [...messages]
           .reverse()
@@ -2175,11 +2435,11 @@ describe("POST /api/mcp/chat-v2", () => {
             (msg) =>
               msg?.role === "assistant" &&
               Array.isArray(msg.content) &&
-              msg.content.some((part: any) => part?.type === "tool-call"),
+              msg.content.some((part: any) => part?.type === "tool-call")
           );
 
         const latestToolCall = latestAssistantWithToolCall?.content?.find(
-          (part: any) => part?.type === "tool-call",
+          (part: any) => part?.type === "tool-call"
         );
 
         if (!latestToolCall?.toolCallId) return [];
@@ -2247,10 +2507,10 @@ describe("POST /api/mcp/chat-v2", () => {
         await lastStreamExecution;
 
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
 
         expect(fetchCallCount).toBe(3);
@@ -2265,10 +2525,10 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(secondToolCallId).toMatch(/dup-call__s2_/);
 
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId),
+          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId)
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId),
+          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId)
         ).toBe(true);
       } finally {
         global.fetch = originalFetch;

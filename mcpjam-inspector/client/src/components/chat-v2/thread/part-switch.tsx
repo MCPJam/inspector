@@ -15,6 +15,7 @@ import { JsonPart } from "./parts/json-part";
 import { TextPart } from "./parts/text-part";
 import { toast } from "@/lib/toast";
 import { type DisplayMode } from "@/stores/ui-playground-store";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import {
   callTool,
   executeToolApi,
@@ -51,6 +52,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -123,6 +125,7 @@ export function PartSwitch({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering,
   recordCapable,
   recordingTarget,
   resolvePromptIndex,
@@ -162,6 +165,7 @@ export function PartSwitch({
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Tier 3 recorder (default off — see recorder-types.ts).
   recordCapable?: boolean;
   recordingTarget?: RecordingTarget | null;
@@ -279,19 +283,25 @@ export function PartSwitch({
     const renderOverride = toolInfo.toolCallId
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
+    const rawToolOutput = (toolPart as any).result ?? toolInfo.rawOutput;
     const partToolMeta = toolsMetadata[toolInfo.toolName];
-    const streamedToolMeta = readToolResultMeta(toolInfo.rawOutput);
+    const streamedToolMeta = readToolResultMeta(rawToolOutput);
     const effectiveToolMeta =
       renderOverride?.toolMetadata ?? partToolMeta ?? streamedToolMeta;
-    const uiType = detectUIType(effectiveToolMeta, toolInfo.rawOutput);
+    const uiType = detectUIType(effectiveToolMeta, rawToolOutput);
     // MCP-UI legacy (inline ui:// resources via @mcp-ui/client) was
     // removed during the renderer consolidation. Inline resources are no
     // longer rendered; tools that want a widget must declare it via
     // `_meta.ui.resourceUri` or `openai/outputTemplate`.
+    const providerMetadataServerId =
+      readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
+      readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
+      readMcpToolOriginServerId((toolPart as any).providerOptions);
     const serverId =
       renderOverride?.serverId ??
+      providerMetadataServerId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
-      readToolResultServerId(toolInfo.rawOutput);
+      readToolResultServerId(rawToolOutput);
     const hasRenderOverrideToolOutput =
       renderOverride !== undefined &&
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
@@ -483,6 +493,9 @@ export function PartSwitch({
             runDisabledReason={runDisabledReason}
             editVersion={editVersion}
             minimalMode={minimalMode}
+            serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering}
+            rawOutput={rawToolOutput}
             {...approvalProps}
           />
           {renderOverride?.frozenScreenshotUrl ? (
@@ -569,7 +582,7 @@ export function PartSwitch({
               toolState={toolInfo.toolState}
               toolInput={effectiveInput}
               toolOutput={effectiveOutput}
-              rawOutput={toolInfo.rawOutput}
+              rawOutput={rawToolOutput}
               toolResponseMetadataOverride={toolResponseMetadataOverride}
               toolErrorText={toolInfo.errorText}
               toolMetadata={effectiveToolMeta}
@@ -625,6 +638,9 @@ export function PartSwitch({
         chatSessionId={chatSessionId}
         uiType={uiType}
         minimalMode={minimalMode}
+        serverId={serverId}
+        mcpToolResultImageRendering={mcpToolResultImageRendering}
+        rawOutput={rawToolOutput}
         {...approvalProps}
       />
     );
@@ -636,6 +652,8 @@ export function PartSwitch({
         label={getDataLabel(part.type)}
         value={(part as any).data}
         autoHeight={Boolean((part as any).autoHeight)}
+        serverId={(part as any).serverId}
+        mcpToolResultImageRendering={mcpToolResultImageRendering}
       />
     );
   }
@@ -660,6 +678,12 @@ export function PartSwitch({
     case "step-start":
       return null;
     default:
-      return <JsonPart label="Unknown part" value={part} />;
+      return (
+        <JsonPart
+          label="Unknown part"
+          value={part}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
+        />
+      );
   }
 }

@@ -74,6 +74,27 @@ export function isHarness(value: unknown): value is Harness {
   );
 }
 
+export type McpToolResultImageRenderPlacement = "none" | "collapsed" | "inline";
+
+export type McpToolResultImageRenderingPolicy = {
+  placement?: McpToolResultImageRenderPlacement;
+  directContent?: {
+    image?: boolean;
+  };
+  embeddedResources?: {
+    blob?: {
+      image?: boolean;
+    };
+  };
+  linkedResources?: {
+    blob?: {
+      image?: boolean;
+    };
+  };
+};
+
+export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
+
 /**
  * Permissions Policy feature tokens corresponding to the four
  * SEP-1865 spec permissions. These are the KEBAB-CASE browser tokens
@@ -260,6 +281,31 @@ export type HostConfigComputerInput = {
   workdir?: string;
 };
 
+export type McpToolResultBlobVisibility = {
+  enabled?: boolean;
+  image?: boolean;
+  audio?: boolean;
+  document?: boolean;
+  video?: boolean;
+  otherBinary?: boolean;
+};
+
+export type ModelVisibleMcpToolResults = {
+  directContent?: {
+    text?: boolean;
+    image?: boolean;
+    audio?: boolean;
+  };
+  embeddedResources?: {
+    text?: boolean;
+    blob?: McpToolResultBlobVisibility;
+  };
+  linkedResources?: {
+    text?: boolean;
+    blob?: McpToolResultBlobVisibility;
+  };
+};
+
 export type HostConfigInputV2 = {
   hostStyle: HostConfigStyle;
   modelId: string;
@@ -305,6 +351,15 @@ export type HostConfigInputV2 = {
   // table. undefined OR [] → omitted from the canonical hash so pre-feature
   // rows stay byte-identical; a populated set dedupes + sorts before hashing.
   builtInToolIds?: ReadonlyArray<string>;
+  // Host/client policy for how MCP tool-result content/resources become
+  // model-visible. Optional so absent rows keep their historical hash and
+  // runtime defaults can treat the currently implemented image leaves as
+  // enabled.
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  // Host/client policy for human-facing rendering of MCP tool-result images.
+  // Optional so absent rows keep their historical hash and runtime defaults
+  // can treat "unset" as inline rendering.
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -354,6 +409,10 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
   // empty so pre-feature rows hash byte-identically; deduped + sorted when set.
   builtInToolIds?: Array<string>;
+  // Mirrors HostConfigInputV2.modelVisibleMcpToolResults. Optional so absent
+  // rows hash byte-identically; explicit true/false leaves are real snapshots.
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;

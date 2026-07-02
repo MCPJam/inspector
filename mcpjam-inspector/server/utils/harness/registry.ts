@@ -122,8 +122,14 @@ export type HarnessRuntimeAdapter = {
    *  today is "allow-all"; modeled per-adapter so it isn't a hardcoded constant. */
   defaultPermissionMode: HarnessV1PermissionMode;
   /** Can the runtime PAUSE for interactive approval of its NATIVE built-in tools
-   *  (Bash/Read/…)? Both current adapters: false (the CLI runs them itself). */
+   *  (Bash/Edit/Write/…)? Claude Code: yes (WS3) — the turn pauses on a
+   *  `tool-approval-request` and resumes with the decision. Codex v1: false. */
   supportsNativeToolApproval: boolean;
+  /** Permission mode used when the host requires tool approval (WS3). Gates
+   *  side-effecting built-ins behind approval while reads stay free — the
+   *  closest faithful mapping to the emulated engine, which gates tool CALLS,
+   *  never reads. Only honored when `supportsNativeToolApproval` is true. */
+  approvalPermissionMode: HarnessV1PermissionMode;
   /** Can the runtime pause for approval of MCP-server tools it calls in-sandbox?
    *  Both current adapters: false. */
   supportsMcpToolApproval: boolean;
@@ -541,9 +547,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   displayName: "Claude Code",
   requiresComputer: true,
   defaultPermissionMode: "allow-all",
-  supportsNativeToolApproval: false,
+  // WS3: the CLI pauses on a tool-approval-request for side-effecting
+  // built-ins under "allow-edits"; the turn suspends and resumes with the
+  // user's decision (see run-harness-turn's approval-continuation path).
+  supportsNativeToolApproval: true,
+  approvalPermissionMode: "allow-edits",
   supportsMcpToolApproval: false,
-  supportsHostExecutedToolApproval: false,
+  // WS3 wires host-executed tools through `toolApproval` (the agent pauses on
+  // tool-approval-request and resumes with the decision), same path as native.
+  supportsHostExecutedToolApproval: true,
   supportsSelectedMcpServers: true,
   supportsSkills: true,
   // Claude Code does not emit file-change stream parts.
@@ -589,6 +601,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // Codex doesn't support built-in tool approval requests — use allow-all.
   defaultPermissionMode: "allow-all",
   supportsNativeToolApproval: false,
+  // Never honored while supportsNativeToolApproval is false; keep it the
+  // same as the default mode so a future flip is an explicit decision.
+  approvalPermissionMode: "allow-all",
   supportsMcpToolApproval: false,
   // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
   // tested in MCPJam yet — keep false for v1; flip without code churn later.

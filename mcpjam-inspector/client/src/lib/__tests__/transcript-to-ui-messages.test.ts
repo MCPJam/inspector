@@ -226,6 +226,72 @@ describe("transcriptToUIMessages", () => {
     expect(toolPart.output).toEqual(rawOutput);
   });
 
+  it("prefers raw MCP result over model-visible image output during hydration", () => {
+    const rawMcpResult = {
+      content: [
+        {
+          type: "image",
+          data: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    };
+    const modelVisibleOutputs = [
+      {
+        type: "json",
+        value: {
+          type: "content",
+          value: [
+            {
+              type: "media",
+              data: "aGVsbG8=",
+              mediaType: "image/png",
+            },
+          ],
+        },
+      },
+      {
+        type: "content",
+        value: [{ type: "text", text: "[image omitted: too large]" }],
+      },
+    ];
+
+    for (const modelVisibleOutput of modelVisibleOutputs) {
+      const transcript = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-image-1",
+              toolName: "return_image",
+              args: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-image-1",
+              output: modelVisibleOutput,
+              result: rawMcpResult,
+            },
+          ],
+        },
+      ];
+
+      const messages = transcriptToUIMessages(transcript);
+      const toolPart = messages[0].parts[0] as {
+        type: string;
+        output: unknown;
+      };
+      expect(toolPart.type).toBe("dynamic-tool");
+      expect(toolPart.output).toEqual(rawMcpResult);
+    }
+  });
+
   it("merged tool history converts with convertToModelMessages", async () => {
     const transcript = [
       { role: "user", content: "search for cats" },
@@ -258,6 +324,61 @@ describe("transcriptToUIMessages", () => {
     const modelMessages = await convertToModelMessages(messages);
     expect(Array.isArray(modelMessages)).toBe(true);
     expect(modelMessages.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("preserves MCP tool origin metadata through transcript hydration", async () => {
+    const transcript = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-image-1",
+            toolName: "qa_return_linked_image_resource",
+            args: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-image-1",
+            output: {
+              content: [
+                {
+                  type: "resource_link",
+                  uri: "mcp://images/one",
+                  name: "one.png",
+                  mimeType: "image/png",
+                },
+              ],
+            },
+            providerOptions: { mcpjam: { serverId: "srv-1" } },
+          },
+        ],
+      },
+    ];
+
+    const messages = transcriptToUIMessages(transcript);
+    const toolPart = messages[0].parts[0] as any;
+    expect(toolPart.callProviderMetadata).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
+
+    const modelMessages = await convertToModelMessages(messages);
+    const assistantToolCall = (modelMessages[0].content as any[])[0];
+    expect(assistantToolCall.providerOptions).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
+
+    const toolMessage = modelMessages.find(
+      (message) => message.role === "tool"
+    ) as any;
+    expect(toolMessage.content[0].providerOptions).toEqual({
+      mcpjam: { serverId: "srv-1" },
+    });
   });
 
   it("generates IDs when not present", () => {

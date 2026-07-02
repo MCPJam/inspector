@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
+  getHarnessResumeEligibility,
   heartbeatHarnessSessionState,
   type HarnessOwnerRef,
+  type HarnessResumePayload,
 } from "../harness-session-state";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -132,6 +134,64 @@ describe("heartbeatHarnessSessionState — tri-state liveness", () => {
       throw new Error("ECONNRESET");
     }) as unknown as typeof fetch;
     expect(await heartbeatHarnessSessionState(args)).toBe("retryable");
+  });
+});
+
+describe("getHarnessResumeEligibility", () => {
+  const warmState = (sandboxId: string): HarnessResumePayload => ({
+    harnessSessionId: "h1",
+    computerId: "comp",
+    resumeState: {
+      type: "resume-session",
+      data: { bridge: { port: 9, token: "t", sandboxId } },
+    },
+  });
+
+  it("no prior state → fresh, no reason (normal first turn)", () => {
+    expect(
+      getHarnessResumeEligibility({ state: null, computerId: "comp", sandboxId: "sb" }),
+    ).toEqual({ resume: false });
+  });
+
+  it("computerId moved → sandbox-replaced (no resume)", () => {
+    expect(
+      getHarnessResumeEligibility({
+        state: warmState("sb"),
+        computerId: "OTHER",
+        sandboxId: "sb",
+      }),
+    ).toEqual({ resume: false, reason: "sandbox-replaced" });
+  });
+
+  it("bridge sandboxId differs → sandbox-replaced (box swapped under same computer)", () => {
+    expect(
+      getHarnessResumeEligibility({
+        state: warmState("OLD-SANDBOX"),
+        computerId: "comp",
+        sandboxId: "NEW-SANDBOX",
+      }),
+    ).toEqual({ resume: false, reason: "sandbox-replaced" });
+  });
+
+  it("matching computer + sandbox → resume, no reason", () => {
+    expect(
+      getHarnessResumeEligibility({
+        state: warmState("sb"),
+        computerId: "comp",
+        sandboxId: "sb",
+      }),
+    ).toEqual({ resume: true });
+  });
+
+  it("legacy stop()-created sidecar (no bridge coords) → cold resume, flagged", () => {
+    const legacy: HarnessResumePayload = {
+      harnessSessionId: "h1",
+      computerId: "comp",
+      resumeState: { type: "resume-session", data: {} },
+    };
+    expect(
+      getHarnessResumeEligibility({ state: legacy, computerId: "comp", sandboxId: "sb" }),
+    ).toEqual({ resume: true, reason: "legacy-cold-resume" });
   });
 });
 

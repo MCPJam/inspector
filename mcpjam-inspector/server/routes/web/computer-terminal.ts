@@ -35,6 +35,10 @@ import type { MiddlewareHandler } from "hono";
 import { Sandbox, type CommandHandle } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
 import {
+  createPtyWithCwd,
+  sanitizeTerminalCwd,
+} from "../../utils/computers/create-pty.js";
+import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   recordTerminalSession,
@@ -81,6 +85,9 @@ export function createComputerTerminalWsHandler(
     const token = c.req.query("token") ?? "";
     const cols = clampDimension(c.req.query("cols"), DEFAULT_COLS, 500);
     const rows = clampDimension(c.req.query("rows"), DEFAULT_ROWS, 300);
+    // Optional starting directory (e.g. the harness session workdir). Best
+    // effort: a stale/invalid path falls back to home (createPtyWithCwd).
+    const cwd = sanitizeTerminalCwd(c.req.query("cwd"));
     // Captured at upgrade time; the WS callbacks below outlive the request
     // but keep its log context (requestId, route) for typed events.
     const requestLogger = getRequestLogger(c, "routes.web.computer-terminal");
@@ -142,23 +149,27 @@ export function createComputerTerminalWsHandler(
         void (async () => {
           try {
             sandbox = await Sandbox.connect(sandboxId);
-            pty = await sandbox.pty.create({
-              cols,
-              rows,
-              timeoutMs: PTY_TIMEOUT_MS,
-              onData: (data) => {
-                if (closed) return;
-                // Copy into a standalone ArrayBuffer: WSContext.send is typed
-                // for Uint8Array<ArrayBuffer>, while the SDK hands us a view
-                // over ArrayBufferLike.
-                ws.send(
-                  data.buffer.slice(
-                    data.byteOffset,
-                    data.byteOffset + data.byteLength
-                  ) as ArrayBuffer
-                );
+            pty = await createPtyWithCwd(
+              sandbox,
+              {
+                cols,
+                rows,
+                timeoutMs: PTY_TIMEOUT_MS,
+                onData: (data) => {
+                  if (closed) return;
+                  // Copy into a standalone ArrayBuffer: WSContext.send is typed
+                  // for Uint8Array<ArrayBuffer>, while the SDK hands us a view
+                  // over ArrayBufferLike.
+                  ws.send(
+                    data.buffer.slice(
+                      data.byteOffset,
+                      data.byteOffset + data.byteLength
+                    ) as ArrayBuffer
+                  );
+                },
               },
-            });
+              cwd
+            );
             await recordTerminalSession({
               sessionId,
               action: "open",

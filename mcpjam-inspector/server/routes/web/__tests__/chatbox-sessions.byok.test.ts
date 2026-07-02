@@ -158,4 +158,50 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
       })
     );
   });
+
+  it("threads host image policies into swarm simulation", async () => {
+    const modelVisibleMcpToolResults = {
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    };
+    const mcpToolResultImageRendering = {
+      placement: "collapsed",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    };
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-images",
+        accessVersion: 0,
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        hostStyle: "default",
+        modelVisibleMcpToolResults,
+        mcpToolResultImageRendering,
+      },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chatboxes/cbx-images/simulate-sessions/start",
+      validBody,
+      token,
+    );
+    const { status, data } = await expectJson<{ runId?: string }>(response);
+
+    expect(status).toBe(200);
+    expect(data.runId).toBe("run-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(startSimulationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpToolResults,
+        mcpToolResultImageRendering,
+      })
+    );
+  });
 });

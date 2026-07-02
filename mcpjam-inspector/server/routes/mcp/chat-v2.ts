@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
-  convertToModelMessages,
   type ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
@@ -65,11 +64,13 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   runDirectChatTurn,
+  withMcpToolOriginChunkMetadata,
   type RunDirectChatTurnHandle,
 } from "../../utils/direct-chat-turn";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
@@ -249,7 +250,9 @@ function streamDirectChatWithLiveTrace(options: {
             return formatStreamError(error, provider);
           },
         })) {
-          writer.write(chunk);
+          writer.write(
+            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools)
+          );
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -390,6 +393,9 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
+        mcpToolResultImageRendering: body.mcpToolResultImageRendering,
+        hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
       // Chatbox: published host wins. Host preview: owner's body tweaks win,
@@ -421,6 +427,18 @@ chatV2.post("/", async (c) => {
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
           "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
+          {
+            chatboxId: bodyChatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          }
+        );
+      } else if (
+        entry.field === "modelVisibleMcpToolResults" ||
+        entry.field === "mcpToolResultImageRendering"
+      ) {
+        logger.warn(
+          `[mcp/chat-v2] client ${entry.field} differs from host; using host value`,
           {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
@@ -469,6 +487,15 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
+    const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
+      resolvedExecution.hostPolicy;
+    const inboundMcpToolResultModelOutputOptions = {
+      modelVisibleMcpToolResults,
+      // Browser-sent history can replay already-resolved media, but must not
+      // trigger new linked resource reads. Fresh server-side tool execution
+      // resolves resource_link results through trusted tool-origin metadata.
+      abortSignal: c.req.raw.signal as AbortSignal | undefined,
+    };
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -541,7 +568,10 @@ chatV2.post("/", async (c) => {
     // prior `load_mcp_tools` calls into discovery state. The downstream
     // paths call convertToModelMessages again; that's intentional and
     // independent — this conversion is solely for hydration.
-    const priorModelMessages = await convertToModelMessages(messages);
+    const priorModelMessages = await convertToMcpjamModelMessages(
+      messages,
+      inboundMcpToolResultModelOutputOptions
+    );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
     // boundary. The chat request body is not trusted; oversize / malformed
@@ -656,6 +686,7 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         respectToolVisibility,
+        modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
         ...(resolvedExecution.harness
@@ -719,6 +750,10 @@ chatV2.post("/", async (c) => {
           resolvedTemperature,
           requireToolApproval,
           respectToolVisibility,
+          modelVisibleMcpToolResults:
+            resolvedExecution.modelVisibleMcpToolResults,
+          mcpToolResultImageRendering:
+            resolvedExecution.mcpToolResultImageRendering,
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
@@ -746,7 +781,10 @@ chatV2.post("/", async (c) => {
         );
       }
 
-      const modelMessages = await convertToModelMessages(messages);
+      const modelMessages = await convertToMcpjamModelMessages(
+        messages,
+        inboundMcpToolResultModelOutputOptions
+      );
       const sessionStartedAt = Date.now();
 
       const chatSessionId = body.chatSessionId;
@@ -768,8 +806,25 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
-          ? { harness: resolvedExecution.harness }
+          ? {
+              harness: resolvedExecution.harness,
+              // LOCAL-MCP plane: this is an /api/mcp request (desktop), so the
+              // harness reaches the private inspector via a tunnel landing on
+              // adapter-http (the persistent singleton manager).
+              harnessMcpProxy: { plane: "local-mcp" as const },
+              // Multi-turn continuity: runHarnessTurn claims the harnessSessions
+              // lane from the chat OWNER (chatSessionId + sourceType). The web
+              // route threads these via streamWebChatTurn's persist; this route
+              // calls the handler directly, so without them the continuity gate
+              // is skipped and every harness turn starts a fresh (amnesiac)
+              // Claude Code session. Scoped to the harness branch — the emulated
+              // path persists via onConversationComplete and doesn't read these.
+              ...(chatSessionId ? { chatSessionId } : {}),
+              sourceType: chatSessionSourceType,
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+            }
           : {}),
         // Server-executed built-ins forwarded separately so the harness path
         // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
@@ -777,13 +832,18 @@ chatV2.post("/", async (c) => {
         projectId: body.projectId,
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
-          ? async (fullHistory, turnTrace) => {
+          ? async (fullHistory, turnTrace, harnessSessionCommit) => {
               await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
+                // Harness multi-turn continuity: ride the resume-state commit on
+                // /ingest-chat ATOMICALLY with the transcript (this releases the
+                // claimed lease). Without forwarding this 3rd arg, the lease is
+                // never released and the next turn fails `harness_turn_in_progress`.
+                ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -807,6 +867,8 @@ chatV2.post("/", async (c) => {
                         temperature,
                         requireToolApproval,
                         respectToolVisibility,
+                        modelVisibleMcpToolResults,
+                        mcpToolResultImageRendering,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -838,7 +900,10 @@ chatV2.post("/", async (c) => {
       }
       const providerKey = providerKeyResult.key;
       const modelMessages = scrubMessages(
-        (await convertToModelMessages(messages)) as ModelMessage[]
+        await convertToMcpjamModelMessages(
+          messages,
+          inboundMcpToolResultModelOutputOptions
+        )
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -893,6 +958,8 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
+                      modelVisibleMcpToolResults,
+                      mcpToolResultImageRendering,
                       selectedServers,
                     },
                     ...(directHostConfig
@@ -946,6 +1013,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
+        modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
@@ -988,7 +1056,10 @@ chatV2.post("/", async (c) => {
       body.customProviders
     );
 
-    const modelMessages = await convertToModelMessages(messages);
+    const modelMessages = await convertToMcpjamModelMessages(
+      messages,
+      inboundMcpToolResultModelOutputOptions
+    );
 
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
@@ -1060,6 +1131,8 @@ chatV2.post("/", async (c) => {
                       temperature,
                       requireToolApproval,
                       respectToolVisibility,
+                      modelVisibleMcpToolResults,
+                      mcpToolResultImageRendering,
                       selectedServers,
                     },
                     ...(directHostConfig

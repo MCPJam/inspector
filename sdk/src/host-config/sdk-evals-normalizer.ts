@@ -37,10 +37,7 @@
  * that the inspector client and the Convex backend can both consume.
  */
 
-import type {
-  HostConfigInputV2,
-  HostConfigMcpProfileV1,
-} from "./types.js";
+import type { HostConfigInputV2, HostConfigMcpProfileV1 } from "./types.js";
 import type { HostJson, HostMcp } from "./public-types.js";
 
 /**
@@ -58,9 +55,7 @@ function isHostConfigInputShape(value: unknown): value is HostConfigInputV2 {
 function isHostJsonShape(value: unknown): value is HostJson {
   if (!value || typeof value !== "object") return false;
   const v = value as { style?: unknown; hostStyle?: unknown };
-  return (
-    typeof v.style === "string" && typeof v.hostStyle !== "string"
-  );
+  return typeof v.style === "string" && typeof v.hostStyle !== "string";
 }
 
 /**
@@ -101,6 +96,12 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
   if (json.respectToolVisibility !== undefined) {
     input.respectToolVisibility = json.respectToolVisibility;
   }
+  if (json.modelVisibleMcpToolResults !== undefined) {
+    input.modelVisibleMcpToolResults = json.modelVisibleMcpToolResults;
+  }
+  if (json.mcpToolResultImageRendering !== undefined) {
+    input.mcpToolResultImageRendering = json.mcpToolResultImageRendering;
+  }
   if (json.hostCapabilitiesOverride !== undefined) {
     input.hostCapabilitiesOverride = json.hostCapabilitiesOverride;
   }
@@ -121,7 +122,7 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
  * input. Returns a fresh object; never mutates `input`.
  */
 function stripRuntimeIdsFromCanonical(
-  input: HostConfigInputV2,
+  input: HostConfigInputV2
 ): HostConfigInputV2 {
   const {
     // Intentionally destructured out so the rest spread drops them.
@@ -155,7 +156,7 @@ function stripRuntimeIdsFromCanonical(
  * @returns a fresh `HostConfigInputV2` with runtime ids stripped
  */
 export function normalizeSdkEvalHostConfigForWire(
-  source: HostConfigInputV2 | HostJson,
+  source: HostConfigInputV2 | HostJson
 ): HostConfigInputV2 {
   if (isHostConfigInputShape(source)) {
     return stripRuntimeIdsFromCanonical(source);

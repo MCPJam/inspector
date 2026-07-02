@@ -4,6 +4,7 @@ exports[`handleMCPJamFreeChatModel SSE byte-equivalence snapshot > emits a stabl
 [
   {
     "data": {
+      "engine": "emulated",
       "promptIndex": 0,
       "startedAtMs": "<timestamp>",
       "turnId": "<id>",
@@ -304,6 +305,7 @@ exports[`handleMCPJamFreeChatModel SSE byte-equivalence snapshot > emits a stabl
 [
   {
     "data": {
+      "engine": "emulated",
       "promptIndex": 0,
       "startedAtMs": "<timestamp>",
       "turnId": "<id>",

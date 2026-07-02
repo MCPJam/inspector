@@ -1,5 +1,9 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config";
 
 export interface ChatV2Request {
   messages: UIMessage[];
@@ -60,6 +64,10 @@ export interface ChatV2Request {
    * the request is chatbox-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
+  /** Host-level MCP tool-result content/resource visibility policy. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Host-level UI rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —
@@ -69,7 +77,7 @@ export interface ChatV2Request {
    * the backend accepts both and normalizes with a
    * `legacy_direct_style` warn.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Project ID for direct-chat history persistence and, when set, the server
    * resolves model-provider config from the org backing this project.

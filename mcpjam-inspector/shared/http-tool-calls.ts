@@ -1,12 +1,18 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import {
+  type McpLinkedResourceReader,
+  type McpModelVisibleToolResultPolicy,
   type MCPClientManager,
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
   isMcpAppTool,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaAndStructuredContentFromToolResult,
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
 import { isAbortError } from "./abort-errors";
 import { isClientFulfilledToolName } from "./client-fulfilled-tools";
+import { mergeMcpToolOriginMetadata } from "./mcp-tool-origin-metadata";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -46,10 +52,53 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   return index;
 }
 
+function makeAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("Aborted"), { name: "AbortError" });
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw makeAbortError(signal);
+  }
+}
+
+function shouldPreserveRawResultForUi(tool: unknown): boolean {
+  return (
+    !!tool &&
+    typeof tool === "object" &&
+    (tool as Record<string, unknown>)[MCP_PRESERVE_RAW_RESULT_FOR_UI] === true
+  );
+}
+
+async function maybeMcpModelOutput(
+  result: unknown,
+  options: McpModelVisibleToolResultPolicy & {
+    readResource?: McpLinkedResourceReader;
+    abortSignal?: AbortSignal;
+  }
+): Promise<ToolResultPart | undefined> {
+  if (!result || typeof result !== "object") return undefined;
+  if (options.readResource) {
+    return (await mcpCallToolResultToModelOutputWithLinkedResources(
+      result as any,
+      {
+        modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+        readResource: options.readResource,
+        abortSignal: options.abortSignal,
+      }
+    )) as any;
+  }
+  return mcpCallToolResultToModelOutput(result as any, {
+    modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+  }) as any;
+}
+
 function isSkippableClientFulfilledToolCall(
   toolName: string,
   tool: unknown,
-  skipNonExecutableTools: boolean | undefined,
+  skipNonExecutableTools: boolean | undefined
 ): boolean {
   return (
     skipNonExecutableTools === true &&
@@ -110,6 +159,18 @@ type ExecuteToolCallOptionsBase = {
    * `tool.execute is not a function`, corrupting the conversation history.
    */
   skipNonExecutableTools?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
+  /**
+   * Optional bridge for resolving MCP image `resource_link` results through
+   * the originating server's `resources/read` method. Callers must not fetch
+   * linked resource URIs directly.
+   */
+  readLinkedResource?: (params: {
+    serverId: string;
+    uri: string;
+    options?: { abortSignal?: AbortSignal };
+  }) => Promise<unknown>;
 };
 
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
@@ -121,7 +182,7 @@ type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
 
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
-  options: ExecuteToolCallOptions,
+  options: ExecuteToolCallOptions
 ): Promise<ModelMessage[]> {
   const signal = options.abortSignal;
   if (signal?.aborted) {
@@ -135,6 +196,9 @@ export async function executeToolCallsFromMessages(
   if ("clientManager" in options) {
     const flattened = await options.clientManager.getToolsForAiSdk(
       options.serverIds,
+      {
+        modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+      }
     );
     tools = flattened as ToolsMap;
   } else if ("toolsets" in options) {
@@ -149,6 +213,33 @@ export async function executeToolCallsFromMessages(
   const extractServerId = (toolName: string): string | undefined => {
     const tool = index[toolName];
     return tool?._serverId;
+  };
+
+  const buildLinkedResourceReader = (
+    serverId: string | undefined
+  ): McpLinkedResourceReader | undefined => {
+    if (!serverId) return undefined;
+    if ("clientManager" in options) {
+      return ({ uri, options: readOptions }) => {
+        const requestOptions = readOptions?.abortSignal
+          ? { signal: readOptions.abortSignal }
+          : undefined;
+        return options.clientManager.readResource(
+          serverId,
+          { uri },
+          requestOptions
+        );
+      };
+    }
+    if (options.readLinkedResource) {
+      return ({ uri, options: readOptions }) =>
+        options.readLinkedResource!({
+          serverId,
+          uri,
+          options: readOptions,
+        });
+    }
+    return undefined;
   };
 
   // Collect existing tool-result IDs
@@ -179,21 +270,19 @@ export async function executeToolCallsFromMessages(
         (!options.filterToolName ||
           options.filterToolName(content.toolName as string))
       ) {
-        if (signal?.aborted) {
-          throw signal.reason instanceof Error
-            ? signal.reason
-            : Object.assign(new Error("Aborted"), { name: "AbortError" });
-        }
+        throwIfAborted(signal);
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
           const directTool = tools[toolName];
+          const serverId = extractServerId(toolName);
+          const readResource = buildLinkedResourceReader(serverId);
           if (!tool) {
             if (
               isSkippableClientFulfilledToolCall(
                 toolName,
                 directTool,
-                options.skipNonExecutableTools,
+                options.skipNonExecutableTools
               )
             ) {
               continue;
@@ -205,7 +294,7 @@ export async function executeToolCallsFromMessages(
               isSkippableClientFulfilledToolCall(
                 toolName,
                 tool,
-                options.skipNonExecutableTools,
+                options.skipNonExecutableTools
               )
             ) {
               continue;
@@ -227,30 +316,35 @@ export async function executeToolCallsFromMessages(
           // signal fired) the result must NOT be serialized into a
           // tool-result — that would persist into conversation history
           // and look like a completed tool call to the next turn.
-          if (signal?.aborted) {
-            throw signal.reason instanceof Error
-              ? signal.reason
-              : Object.assign(new Error("Aborted"), { name: "AbortError" });
-          }
+          throwIfAborted(signal);
 
           // AI SDK tool contract: when a tool defines `toModelOutput`, the
           // model-visible output is its mapping of the implementation result
           // — e.g. the eval `computer` tool turns `{screenshotBase64}` into
-          // `{type:"content", value:[{type:"image-data",…}]}` so the model
-          // sees the screenshot as an image instead of a base64 JSON blob.
-          // The raw implementation result is NOT duplicated onto the part
-          // (`result:` below) in this branch: content outputs already carry
-          // the full model-facing payload, and double-shipping screenshots
-          // would bloat every subsequent per-step request body.
+          // `{type:"content", value:[{type:"media",…}]}` so the AI SDK
+          // can convert it to provider-level image data and make it model-visible.
+          // Generic toModelOutput tools (like the eval `computer` tool) do not
+          // duplicate raw implementation output, because content outputs can
+          // already carry large model-facing payloads. SDK-converted MCP tools
+          // opt in to preserving the raw result for UI/debug hydration.
           const toModelOutput = (
             tool as {
               toModelOutput?: (ctx: {
                 output: unknown;
+                abortSignal?: AbortSignal;
               }) => ToolResultPart | Promise<ToolResultPart>;
             }
           ).toModelOutput;
           if (typeof toModelOutput === "function") {
-            const mappedOutput = await toModelOutput({ output: result });
+            const mappedOutput = await toModelOutput({
+              output: result,
+              ...(signal ? { abortSignal: signal } : {}),
+            });
+            throwIfAborted(signal);
+            const providerOptions = mergeMcpToolOriginMetadata(
+              undefined,
+              serverId
+            );
             // MCP App tools scrub structuredContent from the model-facing copy
             // (`mappedOutput`), but their widgets read structuredContent from
             // the raw result. Preserve the raw result for UI hydration whenever
@@ -262,6 +356,7 @@ export async function executeToolCallsFromMessages(
               !!result &&
               typeof result === "object" &&
               "structuredContent" in (result as Record<string, unknown>);
+            const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
             const toolResultMessage: ModelMessage = {
               role: "tool" as const,
               content: [
@@ -272,8 +367,11 @@ export async function executeToolCallsFromMessages(
                   output: mappedOutput,
                   // UI-only raw result for app-tool widgets (stripped from the
                   // model copy via `output`/toModelOutput above).
-                  ...(rawHasStructuredContent ? { result } : {}),
-                  serverId: extractServerId(toolName),
+                  ...(rawHasStructuredContent || preserveRawResultForUi
+                    ? { result }
+                    : {}),
+                  serverId,
+                  ...(providerOptions ? { providerOptions } : {}),
                 },
               ],
             } as any;
@@ -286,14 +384,24 @@ export async function executeToolCallsFromMessages(
           let output: ToolResultPart;
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {
-              const serialized = serializeToolResult(result);
-              if (serialized.success) {
-                output = { type: "json", value: serialized.value } as any;
+              const mcpOutput = await maybeMcpModelOutput(result, {
+                modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+                readResource,
+                abortSignal: signal,
+              });
+              throwIfAborted(signal);
+              if (mcpOutput) {
+                output = mcpOutput;
               } else {
-                output = {
-                  type: "text",
-                  value: serialized.fallbackText,
-                } as any;
+                const serialized = serializeToolResult(result);
+                if (serialized.success) {
+                  output = { type: "json", value: serialized.value } as any;
+                } else {
+                  output = {
+                    type: "text",
+                    value: serialized.fallbackText,
+                  } as any;
+                }
               }
             } else {
               output = { type: "text", value: String(result) } as any;
@@ -301,9 +409,6 @@ export async function executeToolCallsFromMessages(
           } else {
             output = { type: "json", value: null } as any;
           }
-
-          // Extract serverId from tool name
-          const serverId = extractServerId(toolName);
 
           // For MCP app tools, scrub _meta and structuredContent from the
           // output that goes to the LLM, while preserving the full result
@@ -320,17 +425,29 @@ export async function executeToolCallsFromMessages(
             const toolMeta = toolsMetadata[toolName];
             if (isMcpAppTool(toolMeta)) {
               const scrubbed = scrubMetaAndStructuredContentFromToolResult(
-                result as any,
+                result as any
               );
-              const scrubbedSerialized = serializeToolResult(scrubbed);
-              if (scrubbedSerialized.success) {
-                llmOutput = {
-                  type: "json",
-                  value: scrubbedSerialized.value,
-                } as any;
+              const scrubbedMcpOutput = await maybeMcpModelOutput(scrubbed, {
+                modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+                readResource,
+                abortSignal: signal,
+              });
+              throwIfAborted(signal);
+              if (scrubbedMcpOutput) {
+                llmOutput = scrubbedMcpOutput;
+              } else {
+                const scrubbedSerialized = serializeToolResult(scrubbed);
+                if (scrubbedSerialized.success) {
+                  llmOutput = {
+                    type: "json",
+                    value: scrubbedSerialized.value,
+                  } as any;
+                }
               }
             }
           }
+
+          throwIfAborted(signal);
 
           const toolResultMessage: ModelMessage = {
             role: "tool" as const,
@@ -344,6 +461,14 @@ export async function executeToolCallsFromMessages(
                 result: result,
                 // Add serverId for OpenAI component resolution
                 serverId,
+                ...(serverId
+                  ? {
+                      providerOptions: mergeMcpToolOriginMetadata(
+                        undefined,
+                        serverId
+                      ),
+                    }
+                  : {}),
               },
             ],
           } as any;
@@ -391,7 +516,7 @@ export async function executeToolCallsFromMessages(
 }
 
 function serializeToolResult(
-  result: Record<string, unknown> | Array<unknown> | object,
+  result: Record<string, unknown> | Array<unknown> | object
 ):
   | { success: true; value: unknown }
   | { success: false; fallbackText: string } {
@@ -416,7 +541,7 @@ function serializeToolResult(
         }
 
         return value;
-      }),
+      })
     );
 
     return { success: true, value: sanitized ?? null };

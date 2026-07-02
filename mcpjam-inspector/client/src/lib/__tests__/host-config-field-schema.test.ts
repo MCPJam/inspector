@@ -70,7 +70,7 @@ describe("hostConfigField()", () => {
 
   it("throws on an unknown id so renames fail loudly at the call site", () => {
     expect(() => hostConfigField("does-not-exist")).toThrow(
-      /unknown field id/i,
+      /unknown field id/i
     );
   });
 });
@@ -80,15 +80,17 @@ describe("groupHostConfigFields", () => {
     const groups = groupHostConfigFields();
     const totalFields = groups.reduce(
       (acc, g) => acc + g.subsections.reduce((a, s) => a + s.fields.length, 0),
-      0,
+      0
     );
     expect(totalFields).toBe(HOST_CONFIG_FIELDS.length);
   });
 
   it("preserves the order fields appear in the registry within each subsection", () => {
-    const agent = groupHostConfigFields().find((g) => g.section.id === "agent")!;
+    const agent = groupHostConfigFields().find(
+      (g) => g.section.id === "agent"
+    )!;
     const modelSampling = agent.subsections.find(
-      (s) => s.label === "Model & sampling",
+      (s) => s.label === "Model & sampling"
     );
     expect(modelSampling).toBeTruthy();
     expect(modelSampling!.fields.map((f) => f.id)).toEqual([
@@ -96,8 +98,125 @@ describe("groupHostConfigFields", () => {
       "temperature",
       "requireToolApproval",
       "respectToolVisibility",
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
+      "mcpToolResultImageRendering.directContent.image",
+      "mcpToolResultImageRendering.embeddedResources.blob.image",
+      "mcpToolResultImageRendering.linkedResources.blob.image",
       "progressiveToolDiscovery",
     ]);
+  });
+});
+
+describe("MCP image policy fields", () => {
+  it("default to enabled and read explicit image opt-outs", () => {
+    const direct = fieldById("modelVisibleMcpToolResults.directContent.image");
+    const embedded = fieldById(
+      "modelVisibleMcpToolResults.embeddedResources.blob.image"
+    );
+    const linked = fieldById(
+      "modelVisibleMcpToolResults.linkedResources.blob.image"
+    );
+
+    expect(direct.label).toBe("Make tool image content visible to model");
+    expect(embedded.label).toBe(
+      "Make embedded resource images visible to model"
+    );
+    expect(linked.label).toBe("Make resource link images visible to model");
+    expect(direct.read(makeConfig())).toBe(true);
+    expect(embedded.read(makeConfig())).toBe(true);
+    expect(linked.read(makeConfig())).toBe(true);
+    expect(
+      direct.read(
+        makeConfig({
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      embedded.read(
+        makeConfig({
+          modelVisibleMcpToolResults: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      linked.read(
+        makeConfig({
+          modelVisibleMcpToolResults: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("defaults MCP tool-result image rendering to inline and reads explicit modes", () => {
+    const rendering = fieldById("mcpToolResultImageRendering");
+    expect(rendering.label).toBe("Render tool images");
+    expect(rendering.read(makeConfig())).toBe("inline");
+    expect(
+      rendering.read(
+        makeConfig({
+          mcpToolResultImageRendering: { placement: "collapsed" },
+        })
+      )
+    ).toBe("collapsed");
+    expect(
+      rendering.read(
+        makeConfig({ mcpToolResultImageRendering: { placement: "none" } })
+      )
+    ).toBe("none");
+  });
+
+  it("defaults MCP tool-result render sources to enabled and reads explicit opt-outs", () => {
+    const direct = fieldById("mcpToolResultImageRendering.directContent.image");
+    const embedded = fieldById(
+      "mcpToolResultImageRendering.embeddedResources.blob.image"
+    );
+    const linked = fieldById(
+      "mcpToolResultImageRendering.linkedResources.blob.image"
+    );
+
+    expect(direct.label).toBe("Render tool image content");
+    expect(embedded.label).toBe("Render embedded resource images");
+    expect(linked.label).toBe("Render resource link images");
+    expect(direct.read(makeConfig())).toBe(true);
+    expect(embedded.read(makeConfig())).toBe(true);
+    expect(linked.read(makeConfig())).toBe(true);
+    expect(
+      direct.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            directContent: { image: false },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      embedded.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      linked.read(
+        makeConfig({
+          mcpToolResultImageRendering: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    ).toBe(false);
   });
 });
 
@@ -123,7 +242,7 @@ describe("fieldDiverges", () => {
     const a = makeConfig();
     const b = makeConfig();
     expect(fieldDiverges(fieldById("progressiveToolDiscovery"), [a, b])).toBe(
-      false,
+      false
     );
   });
 
@@ -133,8 +252,9 @@ describe("fieldDiverges", () => {
     // coerces undefined → false.
     const auto = makeConfig({ progressiveToolDiscovery: undefined });
     const off = makeConfig({ progressiveToolDiscovery: false });
-    expect(fieldDiverges(fieldById("progressiveToolDiscovery"), [auto, off]))
-      .toBe(true);
+    expect(
+      fieldDiverges(fieldById("progressiveToolDiscovery"), [auto, off])
+    ).toBe(true);
   });
 
   it("compares nested object values by stable canonical form", () => {
@@ -151,8 +271,9 @@ describe("fieldDiverges", () => {
         requestTimeout: 60_000,
       },
     });
-    expect(fieldDiverges(fieldById("connectionDefaults.headers"), [a, b]))
-      .toBe(false);
+    expect(fieldDiverges(fieldById("connectionDefaults.headers"), [a, b])).toBe(
+      false
+    );
   });
 
   it("flags divergence on a nested mcpProfile field across hosts", () => {
@@ -174,7 +295,11 @@ describe("fieldDiverges", () => {
   it("coerces respectToolVisibility undefined → true so pre-feature rows don't show as diverging from a row that explicitly set true", () => {
     const preFeature = makeConfig({ respectToolVisibility: undefined });
     const explicitTrue = makeConfig({ respectToolVisibility: true });
-    expect(fieldDiverges(fieldById("respectToolVisibility"), [preFeature, explicitTrue]))
-      .toBe(false);
+    expect(
+      fieldDiverges(fieldById("respectToolVisibility"), [
+        preFeature,
+        explicitTrue,
+      ])
+    ).toBe(false);
   });
 });

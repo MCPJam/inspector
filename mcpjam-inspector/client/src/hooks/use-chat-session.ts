@@ -22,6 +22,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
+import { toast } from "sonner";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -113,14 +114,35 @@ import {
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import {
+  isHarnessSessionDataPart,
+  isHarnessResetDataPart,
+  type HarnessResetReason,
+} from "@/shared/harness-session";
+import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import {
   buildResolvedServerBatchRequest,
   getApiContextRevision,
   subscribeApiContext,
 } from "@/lib/apis/web/context";
+
+// User-facing copy for a harness session reset, keyed by reason. Only hard
+// resets are shown; `legacy-cold-resume` is a server-side log (resume is still
+// attempted) and intentionally maps to no toast.
+const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
+  "sandbox-replaced":
+    "Started a new session — the project computer was reset, so earlier context isn't available.",
+  "resume-failed":
+    "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
+  "legacy-cold-resume": null,
+};
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
 // `useAppToolsRegistry`. Mirrors the regex in `app-tools-registry.ts`,
@@ -199,11 +221,11 @@ export interface UseChatSessionOptions {
   /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
-   * the user's actual host style (`claude` / `chatgpt`) rather than
-   * defaulting to `'claude'`. Omitted for chatbox flows — the
+   * the user's actual host style rather than defaulting to `'claude'`.
+   * Omitted for chatbox flows — the
    * backend resolves chatbox host style from the chatbox row.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
@@ -223,6 +245,10 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  /** Host-level MCP tool-result content/resource visibility policy. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Host-level UI rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
    * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
    * model should see this turn. Sourced from the caller's resolved host
@@ -332,6 +358,8 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+        mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
       };
       version: number;
@@ -1094,6 +1122,7 @@ export function useChatSession(
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
+  const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedHostId = hostedContext?.hostId;
@@ -1211,6 +1240,26 @@ export function useChatSession(
     options.respectToolVisibility ??
     options.executionConfig?.respectToolVisibility ??
     respectToolVisibility;
+  const resumedModelVisibleMcpToolResultsRef = useRef<
+    ModelVisibleMcpToolResults | undefined
+  >(undefined);
+  const resumedMcpToolResultImageRenderingRef = useRef<
+    McpToolResultImageRenderingPolicy | undefined
+  >(undefined);
+  const modelVisibleMcpToolResultsRef = useRef<
+    ModelVisibleMcpToolResults | undefined
+  >(undefined);
+  modelVisibleMcpToolResultsRef.current =
+    resumedModelVisibleMcpToolResultsRef.current ??
+    options.modelVisibleMcpToolResults ??
+    options.executionConfig?.modelVisibleMcpToolResults;
+  const mcpToolResultImageRenderingRef = useRef<
+    McpToolResultImageRenderingPolicy | undefined
+  >(undefined);
+  mcpToolResultImageRenderingRef.current =
+    resumedMcpToolResultImageRenderingRef.current ??
+    options.mcpToolResultImageRendering ??
+    options.executionConfig?.mcpToolResultImageRendering;
   // Host-managed built-in tools. Top-level option wins (mirrors the
   // progressiveToolDiscovery / respectToolVisibility pattern), then
   // executionConfig as a fallback for surfaces that thread everything
@@ -1266,16 +1315,35 @@ export function useChatSession(
     liveTraceState.activeTurnHasSnapshot,
     liveTraceState.events,
   ]);
-  const handleStreamDataPart = useCallback((part: unknown) => {
-    if (!isTraceEventDataPart(part)) {
-      if (isHostedRpcLogDataPart(part)) {
-        ingestHostedRpcLogs([part.data]);
+  const handleStreamDataPart = useCallback(
+    (part: unknown) => {
+      if (!isTraceEventDataPart(part)) {
+        if (isHostedRpcLogDataPart(part)) {
+          ingestHostedRpcLogs([part.data]);
+        } else if (isHarnessSessionDataPart(part)) {
+          // Cache the harness workdir so the Playground Shell can open a
+          // terminal there. Keyed by project + host (both known here).
+          useHarnessWorkdirStore
+            .getState()
+            .setWorkdir(
+              hostedProjectId ?? null,
+              hostedHostId ?? null,
+              part.data.workdir,
+            );
+        } else if (isHarnessResetDataPart(part)) {
+          // The harness couldn't warm-resume the prior in-box session and
+          // started a fresh one. Surface it so a lost conversation reads as an
+          // explained reset, not the model silently "forgetting".
+          const message = HARNESS_RESET_MESSAGES[part.data.reason];
+          if (message) toast.info(message);
+        }
+        return;
       }
-      return;
-    }
 
-    setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
-  }, []);
+      setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
+    },
+    [hostedProjectId, hostedHostId],
+  );
 
   const syncResumedVersion = useCallback((version: number | null) => {
     resumedVersionRef.current = version;
@@ -1456,6 +1524,10 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
+  // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
+  // in `sendMessage`, consumed once by the (synchronous) transport body so the
+  // hosted send carries real ids for ad-hoc/App servers, not display names.
+  const resolvedHostedServerIdsRef = useRef<string[] | null>(null);
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
@@ -1498,9 +1570,14 @@ export function useChatSession(
         throw new Error("Hosted chat context is not ready: missing projectId.");
       }
       const isHostedDirectChat = !hostedChatboxId;
+      // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
+      // persisted to real Convex ids); consume once. Fall back to the
+      // pre-resolved selection for surfaces without a preflight (e.g. chatbox).
+      const preflightServerIds = resolvedHostedServerIdsRef.current;
+      resolvedHostedServerIdsRef.current = null;
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        serverIds: hostedSelectedServerIds,
+        serverIds: preflightServerIds ?? hostedSelectedServerIds,
         serverNames: selectedServers,
         accessScope: "chat_v2",
         ...(isHostedDirectChat &&
@@ -1601,6 +1678,18 @@ export function useChatSession(
               }),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          ...(modelVisibleMcpToolResultsRef.current !== undefined
+            ? {
+                modelVisibleMcpToolResults:
+                  modelVisibleMcpToolResultsRef.current,
+              }
+            : {}),
+          ...(mcpToolResultImageRenderingRef.current !== undefined
+            ? {
+                mcpToolResultImageRendering:
+                  mcpToolResultImageRenderingRef.current,
+              }
+            : {}),
           // Only send when the user explicitly set the host-level toggle.
           // Omitting the field tells the backend orchestrator to use its
           // auto policy (currently: off for hosted unless the env override
@@ -1837,7 +1926,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog,
+          useTrafficLogStore.getState().addLog
         );
         addToolOutput({
           tool: tc.toolName,
@@ -2177,25 +2266,63 @@ export function useChatSession(
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
           : undefined;
-      try {
-        if (files && files.length > 0) {
-          // AI SDK accepts FileUIPart[] with data URLs
-          baseSendMessage({ text, files, ...extra });
-        } else {
-          baseSendMessage({ text, ...extra });
+      return (async () => {
+        // Hosted preflight: resolve selected runtime server NAMES → persisted
+        // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
+        // transport body builds, so the hosted send never carries a display
+        // name. Only on the web-engine path, and only when the surface provided
+        // a resolver (Playground). On failure, fail the send CLOSED with a
+        // visible toast (callers fire-and-forget, so don't reject).
+        const usesWebEngine =
+          HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
+        if (
+          usesWebEngine &&
+          hostedEnsureServerIds &&
+          selectedServers.length > 0
+        ) {
+          try {
+            const resolved = await hostedEnsureServerIds(selectedServers);
+            resolvedHostedServerIdsRef.current = resolved.map((r) => r.serverId);
+          } catch (error) {
+            pendingWidgetModelContextRef.current = undefined;
+            resolvedHostedServerIdsRef.current = null;
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Couldn't prepare the selected servers for this run."
+            );
+            return; // fail closed — do not send with unresolved servers
+          }
         }
-      } catch (error) {
-        pendingWidgetModelContextRef.current = undefined;
-        throw error;
-      }
+        try {
+          if (files && files.length > 0) {
+            // AI SDK accepts FileUIPart[] with data URLs
+            baseSendMessage({ text, files, ...extra });
+          } else {
+            baseSendMessage({ text, ...extra });
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServerIdsRef.current = null;
+          throw error;
+        }
+      })();
     },
-    [baseSendMessage]
+    [
+      baseSendMessage,
+      hostedEnsureServerIds,
+      selectedServers,
+      selectedModelUsesOrgRuntime,
+      hostedRequiresWebChatApi,
+    ]
   );
 
   // Reset chat
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedModelVisibleMcpToolResultsRef.current = undefined;
+    resumedMcpToolResultImageRenderingRef.current = undefined;
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -2218,6 +2345,8 @@ export function useChatSession(
       }
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedModelVisibleMcpToolResultsRef.current = undefined;
+      resumedMcpToolResultImageRenderingRef.current = undefined;
       // Return the hydration promise so callers can chain work that must run
       // AFTER the seeded messages are applied (e.g. the eval handoff sending a
       // widget's `ui/message` follow-up so the model replies to the seeded
@@ -2245,6 +2374,8 @@ export function useChatSession(
           temperature?: number;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+          mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
         };
         version: number;
@@ -2317,6 +2448,10 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedModelVisibleMcpToolResultsRef.current =
+          session.resumeConfig?.modelVisibleMcpToolResults;
+        resumedMcpToolResultImageRenderingRef.current =
+          session.resumeConfig?.mcpToolResultImageRendering;
       }
 
       if (options?.shouldApply && !options.shouldApply()) {

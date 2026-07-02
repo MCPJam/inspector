@@ -7,6 +7,8 @@ const {
   fetchHostRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
+  managerListToolsMock,
+  managerReadResourceMock,
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
@@ -21,6 +23,8 @@ const {
   fetchHostRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
+  managerListToolsMock: vi.fn(),
+  managerReadResourceMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
   validateAppToolEntriesMock: vi.fn(() => []),
   AppToolValidationErrorMock: class AppToolValidationError extends Error {
@@ -46,6 +50,23 @@ const {
   },
 }));
 
+const imagePolicy = (image: boolean) => ({
+  directContent: { image },
+  embeddedResources: { blob: { image } },
+  linkedResources: { blob: { image } },
+});
+
+const resolvedImagePolicyMatcher = (image: boolean) =>
+  expect.objectContaining({
+    directContent: expect.objectContaining({ image }),
+    embeddedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+    linkedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+  });
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -65,6 +86,8 @@ vi.mock("@mcpjam/sdk", async () => {
       emitConstructorRpcLogMock(options?.rpcLogger);
       return {
         disconnectAllServers: disconnectAllServersMock,
+        listTools: managerListToolsMock,
+        readResource: managerReadResourceMock,
       };
     }),
   };
@@ -134,6 +157,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       enhancedSystemPrompt: "system",
       resolvedTemperature: 0.7,
     });
+    managerListToolsMock.mockResolvedValue({ tools: [] });
+    managerReadResourceMock.mockResolvedValue({ contents: [] });
     emitConstructorRpcLogMock.mockReset();
     // Default: host runtime-config resolves to a non-harness config so the
     // host-bound (Playground) path routes straight through to the handler.
@@ -515,6 +540,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(true),
+      })
+    );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",
@@ -533,6 +563,153 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
+      })
+    );
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(
+      "modelVisibleMcpToolResults" in persistArgs.hostConfig
+    ).toBe(false);
+  });
+
+  it("honors direct chat image visibility opt-out from the request body", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        chatSessionId: "chat-session-direct-images-off",
+        directVisibility: "project",
+        modelVisibleMcpToolResults: imagePolicy(false),
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+      })
+    );
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostConfig: expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+        }),
+        resumeConfig: expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+        }),
+      })
+    );
+  });
+
+  it("does not resolve linked image resources from browser-replayed history", async () => {
+    const { app, token } = createWebTestApp();
+    managerListToolsMock.mockResolvedValue({
+      tools: [{ name: "qa_return_linked_image_resource" }],
+    });
+    managerReadResourceMock.mockResolvedValue({
+      contents: [
+        {
+          uri: "example://linked-image.png",
+          blob: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        modelVisibleMcpToolResults: imagePolicy(true),
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          { role: "user", content: "what can you tell me about the image" },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(managerListToolsMock).not.toHaveBeenCalled();
+    expect(managerReadResourceMock).not.toHaveBeenCalled();
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priorMessages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            content: [
+              expect.objectContaining({
+                type: "tool-result",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              }),
+            ],
+          }),
+        ]),
       })
     );
   });
