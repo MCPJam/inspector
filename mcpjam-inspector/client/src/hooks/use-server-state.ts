@@ -42,6 +42,7 @@ import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
@@ -596,6 +597,14 @@ interface UseServerStateParams {
   isAuthLoading: boolean;
   isLoadingProjects: boolean;
   useLocalFallback: boolean;
+  activeOrganizationId?: string;
+  /**
+   * Re-applies an organization as the user's explicit selection. Called when
+   * an OAuth callback settles, with the organization the flow was pinned to,
+   * so the post-callback UI returns to the org the user connected from
+   * (routes like /servers carry no org of their own).
+   */
+  restoreActiveOrganizationId?: (organizationId: string) => void;
   effectiveProjects: Record<string, Project>;
   effectiveActiveProjectId: string;
   activeProjectServersFlat: RemoteServer[] | undefined;
@@ -632,6 +641,17 @@ const PROJECT_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
 /** Must stay below Vitest's default 30s test timeout so callers can finish after a full wait + margin. */
 const PROJECT_SERVER_ECHO_WAIT_MS = 25_000;
 const PROJECT_SERVERS_POLL_MS = 100;
+const SERVER_PROJECT_ORG_MISMATCH_ERROR_MESSAGE =
+  "Cannot save server: the selected project is not in the active organization. Refresh and try again.";
+
+function remoteServerBelongsToProject(
+  server: RemoteServer,
+  projectId: string | null | undefined
+): boolean {
+  if (!projectId) return false;
+  const rowProjectId = (server as { projectId?: string }).projectId;
+  return !rowProjectId || rowProjectId === projectId;
+}
 
 export interface ServerUpdateResult {
   ok: boolean;
@@ -672,6 +692,8 @@ export function useServerState({
   isAuthLoading,
   isLoadingProjects,
   useLocalFallback,
+  activeOrganizationId,
+  restoreActiveOrganizationId,
   effectiveProjects,
   effectiveActiveProjectId,
   activeProjectServersFlat,
@@ -704,6 +726,10 @@ export function useServerState({
   useLocalFallbackRef.current = useLocalFallback;
   const effectiveActiveProjectIdRef = useRef(effectiveActiveProjectId);
   effectiveActiveProjectIdRef.current = effectiveActiveProjectId;
+  const activeOrganizationIdRef = useRef(activeOrganizationId);
+  activeOrganizationIdRef.current = activeOrganizationId;
+  const effectiveProjectsRef = useRef(effectiveProjects);
+  effectiveProjectsRef.current = effectiveProjects;
   const appStateServersRef = useRef(appState.servers);
   appStateServersRef.current = appState.servers;
   const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
@@ -756,6 +782,13 @@ export function useServerState({
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
+  // Pins the org/project/server the OAuth flow starts from so the callback
+  // can write back to the same rows. Written in BOTH hosted and local modes:
+  // local-mode completion runs client-side, but the post-callback Convex sync
+  // is identical, and without the pin it targets whatever project is active
+  // after the redirect remount (the fallback org's default project).
+  // Hosted-only behavior (the backend session) stays gated inside
+  // createHostedOAuthSessionIfNeeded, which checks HOSTED_MODE itself.
   const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
@@ -763,7 +796,6 @@ export function useServerState({
       serverUrl?: string | null;
     }): boolean => {
       if (
-        !HOSTED_MODE ||
         !isAuthenticated ||
         !effectiveActiveProjectId ||
         !params.serverId ||
@@ -867,16 +899,16 @@ export function useServerState({
   );
 
   // What chat-input's "Servers" popover (and any other "show me everything
-  // we can talk to" surface) should iterate: the project catalog PLUS any
-  // runtime-connected/connecting servers that aren't in it yet. The catalog
-  // (effectiveServers) is the Convex `project_servers` query in hosted mode
-  // and can lag mcpjam-backend's `MCPClientManager` — a server is genuinely
-  // connected (Tools pane and tool calls work against it) but its catalog
-  // row hasn't synced, so the popover used to hide it. We only merge
-  // runtime entries that are currently connected/connecting; disconnected
-  // runtime leftovers from a previous session/project never surface here.
+  // we can talk to" surface) should iterate. In Convex-backed projects this
+  // must be the project catalog only: runtime-only entries are global app
+  // state and can otherwise bleed across organization/project switches.
+  // Local/fallback mode still merges connected/connecting runtime entries
+  // because there is no scoped Convex project-server catalog to wait for.
   const displayServerConfigs = useMemo(() => {
     const result: Record<string, ServerWithName> = { ...effectiveServers };
+    if (isAuthenticated && !useLocalFallback) {
+      return result;
+    }
     for (const [name, runtime] of Object.entries(appState.servers)) {
       if (result[name]) continue;
       if (
@@ -888,7 +920,7 @@ export function useServerState({
       result[name] = runtime;
     }
     return result;
-  }, [effectiveServers, appState.servers]);
+  }, [effectiveServers, appState.servers, isAuthenticated, useLocalFallback]);
 
   const latestEffectiveServersRef = useRef(effectiveServers);
 
@@ -1226,11 +1258,19 @@ export function useServerState({
         clearClientSecret?: boolean;
         env?: Record<string, string>;
         headers?: Record<string, string>;
-      }
+      },
+      // Explicit write target for flows that pinned their project/server
+      // before a redirect (hosted OAuth). The ambient active project can
+      // legitimately change while such a flow is in flight — post-callback
+      // remounts resolve the fallback organization until hydration settles —
+      // so a pinned target must win over the refs or the write lands in
+      // whatever project happens to be active.
+      target?: { projectId: string; serverId?: string | null }
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
-      const latestProjectId = effectiveActiveProjectIdRef.current;
+      const latestProjectId =
+        target?.projectId ?? effectiveActiveProjectIdRef.current;
       if (
         latestUseLocalFallback ||
         !latestIsAuthenticated ||
@@ -1238,6 +1278,27 @@ export function useServerState({
         latestProjectId === "none"
       ) {
         return undefined;
+      }
+
+      // The ambient org/project coherence guard only applies to ambient
+      // writes: a pinned target is allowed to differ from the active
+      // organization (that is the point of pinning).
+      const latestActiveOrganizationId = activeOrganizationIdRef.current;
+      if (!target && latestActiveOrganizationId) {
+        const latestProject = effectiveProjectsRef.current[latestProjectId];
+        const latestProjectOrganizationId = latestProject?.organizationId;
+        if (latestProjectOrganizationId !== latestActiveOrganizationId) {
+          logger.warn(
+            "Refusing to sync server because active project does not belong to active organization",
+            {
+              serverName,
+              projectId: latestProjectId,
+              projectOrganizationId: latestProjectOrganizationId ?? null,
+              activeOrganizationId: latestActiveOrganizationId,
+            }
+          );
+          throw new Error(SERVER_PROJECT_ORG_MISMATCH_ERROR_MESSAGE);
+        }
       }
 
       const flatSnapshot =
@@ -1278,9 +1339,22 @@ export function useServerState({
         snapshot: RemoteServer[] | undefined,
         options?: { queryWhenLoaded?: boolean }
       ): Promise<RemoteServer | undefined> => {
-        const local = snapshot?.find((s) => s.name === serverName);
+        // A pinned serverId is authoritative: the row was created before the
+        // OAuth redirect and the hosted session validated it. Match by id
+        // first; fall back to name-within-pinned-project in case the row was
+        // deleted and recreated mid-flow.
+        const matches = (s: RemoteServer) =>
+          target?.serverId
+            ? s._id === target.serverId
+            : s.name === serverName &&
+              remoteServerBelongsToProject(s, latestProjectId);
+        const local = snapshot?.find(matches);
         if (local) return local;
-        if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+        // The snapshot tracks the ambient active project. For a pinned
+        // target it can describe a different project entirely, so a miss
+        // there proves nothing — always fall through to the one-shot query
+        // against the pinned project.
+        if (!target && snapshot !== undefined && options?.queryWhenLoaded !== true) {
           return undefined;
         }
         if (!isUserReadyRef.current) {
@@ -1291,7 +1365,12 @@ export function useServerState({
             "servers:getProjectServers" as any,
             { projectId: latestProjectId } as any
           )) as RemoteServer[] | undefined;
-          return fresh?.find((s) => s.name === serverName);
+          return (
+            fresh?.find(matches) ??
+            (target?.serverId
+              ? fresh?.find((s) => s.name === serverName)
+              : undefined)
+          );
         } catch {
           return undefined;
         }
@@ -1592,7 +1671,12 @@ export function useServerState({
         }
         runtime = liveRuntime;
 
-        if (flatAfterWait.some((s) => s.name === serverName)) {
+        if (
+          flatAfterWait.some(
+            (s) =>
+              s.name === serverName && remoteServerBelongsToProject(s, projectId)
+          )
+        ) {
           logger.warn(
             "persistRuntimeServerToProjectIfNeeded: runtime server not persisted because a saved server with the same name already exists",
             { serverName, projectId }
@@ -1638,7 +1722,13 @@ export function useServerState({
         let echoed = false;
         while (Date.now() - echoStarted < PROJECT_SERVER_ECHO_WAIT_MS) {
           const flatEcho = activeProjectServersFlatRef.current;
-          if (flatEcho?.some((s) => s.name === serverName)) {
+          if (
+            flatEcho?.some(
+              (s) =>
+                s.name === serverName &&
+                remoteServerBelongsToProject(s, projectId)
+            )
+          ) {
             echoed = true;
             break;
           }
@@ -2099,7 +2189,10 @@ export function useServerState({
             });
 
         localStorage.removeItem("mcp-oauth-return-hash");
-        if (isHostedProjectCallback) {
+        if (hostedCallbackContext) {
+          // The pending marker is written for local-mode project flows too —
+          // clear it whenever a marker-backed callback settles, not only on
+          // the hosted completion path.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
@@ -2158,7 +2251,26 @@ export function useServerState({
           if (!isAuthenticated || useLocalFallback) {
             persistServerToLocalProject(serverName, oauthServerEntry);
           } else {
-            syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
+            // Sync against the project/server the OAuth flow was pinned to
+            // when the redirect started, not the ambient active project. The
+            // active organization can resolve to the fallback org (first
+            // owned org) during the post-callback remount, and syncing by
+            // name against that org's project used to create an
+            // unauthenticated duplicate of the server there. The pin applies
+            // to hosted AND legacy (local-mode) completions — both funnel
+            // into this same Convex sync.
+            const pinnedTarget = hostedCallbackContext?.projectId
+              ? {
+                  projectId: hostedCallbackContext.projectId,
+                  serverId: hostedCallbackContext.serverId ?? null,
+                }
+              : undefined;
+            syncServerToConvex(
+              serverName,
+              oauthServerEntry,
+              undefined,
+              pinnedTarget
+            ).catch((error) =>
               logger.warn("Failed to sync OAuth profile to Convex", {
                 serverName,
                 error,
@@ -2307,9 +2419,11 @@ export function useServerState({
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
     const electronCallbackUrl = buildElectronMcpCallbackUrl();
-    const hostedOAuthCallbackContext = HOSTED_MODE
-      ? getHostedOAuthCallbackContext()
-      : null;
+    // Read in local mode too: the pending marker pins the org/project/server
+    // the flow started from, and the post-callback sync needs that pin
+    // regardless of whether completion runs hosted (backend session) or
+    // legacy (client-side token exchange).
+    const hostedOAuthCallbackContext = getHostedOAuthCallbackContext();
     if (electronCallbackUrl) {
       return;
     }
@@ -2344,18 +2458,39 @@ export function useServerState({
         }
       }
 
+      // Captured before completion: handleOAuthCallbackComplete clears the
+      // return-hash key as part of its cleanup.
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
-      window.history.replaceState(
-        {},
-        document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
-      );
+      const restoreCallbackUrl = () => {
+        // The pending marker pinned the organization the flow started in.
+        // Re-apply it as the explicit selection before navigating: most
+        // routes (e.g. /servers) carry no org, so restoring the path alone
+        // would render it under whatever org the fallback resolution picks
+        // once the marker is cleared.
+        const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+        if (markerOrganizationId) {
+          restoreActiveOrganizationId?.(markerOrganizationId);
+        }
+        // Navigate through the app router, not raw history.replaceState —
+        // the router never observes replaceState, so route-derived state
+        // (org-scoped routes, active tab) would go stale. The marker's
+        // returnPath is the exact location the user connected from.
+        const returnTarget = hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+        navigateApp(returnTarget, { replace: true });
+      };
 
-      handleOAuthCallbackComplete(
+      // Strip the ?code from the URL only after completion settles. The
+      // pending-marker org pin (use-app-state) is scoped to "callback params
+      // present in the URL"; stripping eagerly killed the pin mid-completion,
+      // so the active org/project flipped to the fallback organization while
+      // the token exchange was still in flight.
+      void handleOAuthCallbackComplete(
         code,
         state,
         isHostedProjectCallback ? hostedOAuthCallbackContext : null
-      );
+      ).finally(restoreCallbackUrl);
     } else if (error) {
       if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
@@ -2373,11 +2508,16 @@ export function useServerState({
         errorDescription,
       });
       oauthCallbackHandledRef.current = true;
-      window.history.replaceState(
-        {},
-        document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
-      );
+      // Denied/failed authorizations return the user to where they started
+      // too: same org restore + router-aware navigation as the success path.
+      const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+      if (markerOrganizationId) {
+        restoreActiveOrganizationId?.(markerOrganizationId);
+      }
+      const returnTarget = hostedOAuthCallbackContext?.returnPath
+        ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+        : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+      navigateApp(returnTarget, { replace: true });
     }
   }, [
     isLoading,
@@ -2388,6 +2528,7 @@ export function useServerState({
     effectiveActiveProjectId,
     failPendingOAuthConnection,
     handleOAuthCallbackComplete,
+    restoreActiveOrganizationId,
     logger,
   ]);
 
@@ -2499,15 +2640,20 @@ export function useServerState({
           err,
         });
       }
-      if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
-        // OAuth in hosted mode requires a Convex serverId to bind credentials
-        // to; without it the OAuth dance would complete without a durable
-        // credential. Local-mode OAuth is guarded later when tokens are
-        // imported into backend storage instead of being saved locally.
+      if (
+        HOSTED_MODE &&
+        isAuthenticated &&
+        !useLocalFallback &&
+        (syncErr || !hostedServerId)
+      ) {
+        // Hosted project connects require a Convex server row before any
+        // runtime connection starts. Continuing after a cloud save failure
+        // creates an unscoped runtime-only server that can appear under another
+        // organization while remaining unauthenticated.
         const errorMessage =
           syncErr instanceof Error
-            ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
-            : "Could not save the hosted server before starting OAuth. Please try again.";
+            ? syncErr.message
+            : "Could not save the hosted server before connecting. Please try again.";
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -2890,14 +3036,6 @@ export function useServerState({
         clearOAuthData(serverName);
       }
 
-      dispatch({
-        type: "UPSERT_SERVER",
-        name: serverName,
-        server: serverEntry,
-      });
-
-      saveOAuthConfigToLocalStorage(formData);
-
       if (
         isAuthenticated &&
         !useLocalFallback &&
@@ -2905,26 +3043,51 @@ export function useServerState({
         effectiveActiveProjectId !== "none"
       ) {
         try {
-          await syncServerToConvex(serverName, serverEntry, {
-            ...(formData.clientSecret
-              ? { clientSecret: formData.clientSecret }
-              : {}),
-            ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
-            ...(formData.secretPatch?.env !== undefined
-              ? { env: formData.secretPatch.env }
-              : {}),
-            ...(formData.secretPatch?.headers !== undefined
-              ? { headers: formData.secretPatch.headers }
-              : {}),
-          });
+          const syncedServerId = await syncServerToConvex(
+            serverName,
+            serverEntry,
+            {
+              ...(formData.clientSecret
+                ? { clientSecret: formData.clientSecret }
+                : {}),
+              ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(formData.secretPatch?.env !== undefined
+                ? { env: formData.secretPatch.env }
+                : {}),
+              ...(formData.secretPatch?.headers !== undefined
+                ? { headers: formData.secretPatch.headers }
+                : {}),
+            }
+          );
+          if (!syncedServerId) {
+            logger.error("Failed to sync server to Convex", {
+              error: "Server sync returned no server id",
+            });
+            toast.error("Could not save the server. Please try again.");
+            return;
+          }
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
             error: error instanceof Error ? error.message : "Unknown error",
           });
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not save the server. Please try again."
+          );
+          return;
         }
       } else {
         persistServerToLocalProject(serverName, serverEntry);
       }
+
+      dispatch({
+        type: "UPSERT_SERVER",
+        name: serverName,
+        server: serverEntry,
+      });
+
+      saveOAuthConfigToLocalStorage(formData);
 
       logger.info("Saved server configuration without connecting", {
         serverName,

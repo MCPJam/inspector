@@ -76,6 +76,7 @@ const {
     isLoadingRemoteProjects: false,
     areServersHydrated: true,
     projectServers: {},
+    displayServerConfigs: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
@@ -128,6 +129,7 @@ const {
     mockOAuthFlowTabState: {
       shouldThrow: false,
       error: new Error("OAuth debugger failed"),
+      lastProps: undefined as unknown,
     },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
@@ -359,7 +361,8 @@ vi.mock("../components/AuthTab", () => ({
   AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
-  OAuthFlowTab: () => {
+  OAuthFlowTab: (props: unknown) => {
+    mockOAuthFlowTabState.lastProps = props;
     if (mockOAuthFlowTabState.shouldThrow) {
       throw mockOAuthFlowTabState.error;
     }
@@ -518,6 +521,7 @@ describe("App hosted OAuth callback handling", () => {
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockOAuthFlowTabState.shouldThrow = false;
     mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
+    mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
@@ -2885,6 +2889,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     };
     appStateMock.projectServers = currentProjectServers;
+    appStateMock.displayServerConfigs = currentProjectServers;
     appStateMock.appState.servers = {
       ...currentProjectServers,
       "other-project-oauth": {
@@ -2918,6 +2923,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
       currentProjectServers
     );
+    expect(
+      (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
+        .serverConfigs
+    ).toBe(currentProjectServers);
   });
 
   it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {
