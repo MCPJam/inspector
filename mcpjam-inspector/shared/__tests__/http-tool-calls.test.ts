@@ -1049,6 +1049,57 @@ describe("executeToolCallsFromMessages", () => {
         /not found/i
       );
     });
+
+    it("leaves an approved-but-resultless client-fulfilled call unresolved (handlePendingApprovals contract)", async () => {
+      // The approval-resume path (`handlePendingApprovals` in the MCPJam
+      // loop) executes with this flag. The new client resolves an APPROVED
+      // ui_* call by shipping the tool-result itself; if a stale client
+      // sends a bare approval response instead, the resume must skip the
+      // no-execute entry — leaving the call unresolved so the loop
+      // re-pauses for client fulfillment — never synthesize a result or
+      // throw.
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-ui",
+              toolName: "ui_navigate",
+              input: { target: "servers" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "appr-ui",
+              toolCallId: "call-ui",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "appr-ui",
+              approved: true,
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools: { ui_navigate: { description: "no execute" } },
+        skipNonExecutableTools: true,
+      });
+
+      expect(newMessages).toHaveLength(0);
+      const results = messages.flatMap((m) =>
+        m.role === "tool" ? (m as any).content : []
+      );
+      expect(
+        results.find((part: any) => part.type === "tool-result")
+      ).toBeUndefined();
+    });
   });
 });
 
