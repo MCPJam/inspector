@@ -1672,6 +1672,7 @@ export default function App() {
     handleReconnect,
     reconnectServerForClientSwitch,
     ensureServersReady,
+    ensureHostedServerIdsForNames,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
@@ -3323,6 +3324,7 @@ export default function App() {
         <ServerActionsProvider
           actions={{
             ensureServersReady,
+            ensureHostedServerIdsForNames,
             runtimeDisconnectServer: handleRuntimeDisconnect,
             reconnectServer: reconnectServerForClientSwitch,
             setSelectedServerNames: setSelectedMCPConfigs,

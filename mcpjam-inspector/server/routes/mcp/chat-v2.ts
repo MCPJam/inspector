@@ -755,7 +755,23 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         ...(resolvedExecution.harness
-          ? { harness: resolvedExecution.harness }
+          ? {
+              harness: resolvedExecution.harness,
+              // LOCAL-MCP plane: this is an /api/mcp request (desktop), so the
+              // harness reaches the private inspector via a tunnel landing on
+              // adapter-http (the persistent singleton manager).
+              harnessMcpProxy: { plane: "local-mcp" as const },
+              // Multi-turn continuity: runHarnessTurn claims the harnessSessions
+              // lane from the chat OWNER (chatSessionId + sourceType). The web
+              // route threads these via streamWebChatTurn's persist; this route
+              // calls the handler directly, so without them the continuity gate
+              // is skipped and every harness turn starts a fresh (amnesiac)
+              // Claude Code session. Scoped to the harness branch — the emulated
+              // path persists via onConversationComplete and doesn't read these.
+              ...(chatSessionId ? { chatSessionId } : {}),
+              sourceType: chatSessionSourceType,
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+            }
           : {}),
         // Server-executed built-ins forwarded separately so the harness path
         // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
@@ -763,13 +779,18 @@ chatV2.post("/", async (c) => {
         projectId: body.projectId,
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
-          ? async (fullHistory, turnTrace) => {
+          ? async (fullHistory, turnTrace, harnessSessionCommit) => {
               await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
+                // Harness multi-turn continuity: ride the resume-state commit on
+                // /ingest-chat ATOMICALLY with the transcript (this releases the
+                // claimed lease). Without forwarding this 3rd arg, the lease is
+                // never released and the next turn fails `harness_turn_in_progress`.
+                ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)

@@ -10,6 +10,7 @@ import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import chatboxes from "./chatboxes.js";
 import chatboxSessions from "./chatbox-sessions.js";
+import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
@@ -68,6 +69,10 @@ web.route("/chatboxes", chatboxSessions);
 web.route("/evals", evals);
 web.route("/export", exporter);
 web.route("/chat-v2", chatV2);
+// Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
+// /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
+// Code harness (in a cloud sandbox) connects its MCP through here.
+web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
