@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createWebTestApp, expectJson } from "./helpers/test-app.js";
+import type { Hono } from "hono";
 
 // The session bearer is verified in-route (resolveSessionContext); stub it to
 // a fixed WorkOS user so tests exercise the WorkOS REST flow, not JWT crypto.
@@ -44,6 +44,25 @@ function keyRecord(id: string) {
   };
 }
 
+async function createApiKeysTestApp(hostedMode: boolean): Promise<Hono> {
+  vi.resetModules();
+  vi.doMock("../../../config.js", async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return { ...actual, HOSTED_MODE: hostedMode };
+  });
+  const { createWebTestApp } = await import("./helpers/test-app.js");
+  return createWebTestApp().app;
+}
+
+async function expectJson<T = unknown>(
+  response: Response,
+): Promise<{ status: number; data: T }> {
+  return {
+    status: response.status,
+    data: (await response.json()) as T,
+  };
+}
+
 /**
  * Stub WorkOS: serve the user-scoped key list from `pages` (each entry is one
  * page; `list_metadata.after` chains them) and accept the admin DELETE.
@@ -76,7 +95,7 @@ function stubWorkOS(pages: Array<{ data: unknown[]; after?: string | null }>) {
   return { fetchMock, deleted };
 }
 
-async function deleteKey(app: ReturnType<typeof createWebTestApp>["app"], id: string) {
+async function deleteKey(app: Hono, id: string) {
   return app.request(`/api/web/api-keys/${id}`, {
     method: "DELETE",
     headers: { Authorization: "Bearer session-jwt" },
@@ -84,15 +103,17 @@ async function deleteKey(app: ReturnType<typeof createWebTestApp>["app"], id: st
 }
 
 describe("web routes — API key revoke ownership", () => {
-  const { app } = createWebTestApp();
+  let app: Hono;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    app = await createApiKeysTestApp(true);
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.doUnmock("../../../config.js");
   });
 
   it("revokes a key that appears in the session user's list", async () => {
@@ -156,5 +177,128 @@ describe("web routes — API key revoke ownership", () => {
       message: "Could not verify API key ownership",
     });
     expect(deleted).toEqual([]);
+  });
+});
+
+// Local mode forwards the whole sub-router to the hosted app — see the proxy
+// middleware in api-keys.ts. WORKOS_API_KEY is deliberately SET here: an MCP
+// developer's own WorkOS key in the shell env must not flip the inspector into
+// local minting against their WorkOS account.
+describe("web routes — API key local-mode proxy to hosted", () => {
+  let app: Hono;
+  const REMOTE_BASE = "https://hosted.example/api/web/api-keys";
+
+  beforeEach(async () => {
+    app = await createApiKeysTestApp(false);
+    vi.stubEnv("WORKOS_API_KEY", "sk_users_own_key");
+    vi.stubEnv("MCPJAM_REMOTE_API_KEYS_URL", REMOTE_BASE);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.doUnmock("../../../config.js");
+  });
+
+  function stubHosted(response: Response) {
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("forwards create requests verbatim and passes the response through", async () => {
+    const created = { id: "api_key_new", name: "ci", value: "sk_secret" };
+    const fetchMock = stubHosted(workosJson(created));
+
+    const response = await app.request("/api/web/api-keys", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer session-jwt",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "ci", organizationId: "org_1" }),
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual(created);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [target, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(target).toBe(REMOTE_BASE);
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer session-jwt",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: "ci",
+      organizationId: "org_1",
+    });
+  });
+
+  it("forwards the key id path segment on revoke", async () => {
+    const fetchMock = stubHosted(workosJson({ ok: true }));
+
+    const { status, data } = await expectJson(
+      await deleteKey(app, "api_key_remote_1"),
+    );
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true });
+    const [target, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(target).toBe(`${REMOTE_BASE}/api_key_remote_1`);
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("passes hosted error responses through untouched", async () => {
+    stubHosted(
+      workosJson({ code: "UNAUTHORIZED", message: "Invalid session" }, 401),
+    );
+
+    const response = await app.request("/api/web/api-keys", {
+      method: "GET",
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(401);
+    expect(data).toEqual({ code: "UNAUTHORIZED", message: "Invalid session" });
+  });
+
+  it("maps an unreachable hosted app to 502 SERVER_UNREACHABLE", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("connect ECONNREFUSED");
+      }),
+    );
+
+    const response = await app.request("/api/web/api-keys", {
+      method: "GET",
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(502);
+    expect(data).toMatchObject({ code: "SERVER_UNREACHABLE" });
+  });
+
+  it("still rejects sk_ bearers locally without calling hosted", async () => {
+    const fetchMock = stubHosted(workosJson({}));
+
+    const response = await app.request("/api/web/api-keys", {
+      method: "GET",
+      headers: { Authorization: "Bearer sk_live_123" },
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({ code: "FORBIDDEN" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

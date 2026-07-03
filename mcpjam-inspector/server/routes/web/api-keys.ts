@@ -21,6 +21,7 @@ import {
   verifyAuthKitToken,
   AuthKitConfigError,
 } from "../../services/authkit-jwt.js";
+import { HOSTED_MODE } from "../../config.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -30,6 +31,10 @@ import {
  * we need for v1 are documented REST routes). MCPJam never stores the raw
  * key value — `value` is in WorkOS's create response only, returned to the
  * browser once, and never persisted or logged.
+ *
+ * Local mode (npx) has neither `WORKOS_API_KEY` nor the backend service
+ * token, so these routes can never be served locally — requests are proxied
+ * verbatim to the hosted app instead (see the proxy middleware below).
  *
  * Security notes for future contributors:
  * - A user can only mint a key as powerful as their own session: the
@@ -65,6 +70,72 @@ apiKeys.use("*", async (c, next) => {
     );
   }
   return next();
+});
+
+// ---------------------------------------------------------------------------
+// Local-mode proxy: npx installs can never serve key management themselves,
+// so forward the request verbatim to the hosted app — it re-verifies the
+// session bearer and applies all validation, and the response shapes are
+// identical, so the client is none the wiser. Same local→hosted pattern as
+// the remote guest-session source (guest-session-source.ts).
+//
+// Hosted mode never proxies: a missing WORKOS_API_KEY there is a deployment
+// fault that must surface as the existing 500, not loop back into itself.
+const DEFAULT_REMOTE_API_KEYS_URL = "https://app.mcpjam.com/api/web/api-keys";
+const REMOTE_PROXY_TIMEOUT_MS = 30_000;
+
+function getRemoteApiKeysUrl(): string {
+  return process.env.MCPJAM_REMOTE_API_KEYS_URL || DEFAULT_REMOTE_API_KEYS_URL;
+}
+
+apiKeys.use("*", async (c, next) => {
+  if (HOSTED_MODE) {
+    return next();
+  }
+
+  const url = new URL(c.req.url);
+  const mountIndex = url.pathname.indexOf("/api-keys");
+  const suffix =
+    mountIndex >= 0 ? url.pathname.slice(mountIndex + "/api-keys".length) : "";
+  const target = `${getRemoteApiKeysUrl()}${suffix}${url.search}`;
+
+  const headers: Record<string, string> = {};
+  const authorization = c.req.header("authorization");
+  if (authorization) headers["Authorization"] = authorization;
+  const contentType = c.req.header("content-type");
+  if (contentType) headers["Content-Type"] = contentType;
+
+  const method = c.req.method;
+  const body =
+    method === "GET" || method === "HEAD" ? undefined : await c.req.text();
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(REMOTE_PROXY_TIMEOUT_MS),
+    });
+  } catch (error) {
+    logger.error("API key proxy to hosted app failed", {
+      target,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Could not reach the hosted MCPJam service to manage API keys",
+    );
+  }
+
+  return new Response(await upstream.text(), {
+    status: upstream.status,
+    headers: {
+      "Content-Type":
+        upstream.headers.get("content-type") ?? "application/json",
+    },
+  });
 });
 
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),
