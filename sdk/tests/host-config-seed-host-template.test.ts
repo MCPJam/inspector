@@ -5,6 +5,7 @@ import {
   emptyHostConfigInputV2,
   type HostTemplateId,
 } from "../src/host-config/templates/index.js";
+import { extractHostExecutionPolicy } from "../src/host-config/host-policy.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -66,6 +67,100 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // Codex (like Claude Code) can't pause for interactive approval.
     expect(config.requireToolApproval).toBe(false);
+  });
+
+  it("seeds MCP tool-result image policies from the observed client matrix", () => {
+    const expected: Partial<
+      Record<
+        HostTemplateId,
+        {
+          visible: [boolean, boolean, boolean];
+          render: ["none" | "collapsed" | "inline", boolean, boolean, boolean];
+        }
+      >
+    > = {
+      claude: {
+        visible: [true, true, false],
+        render: ["inline", true, true, false],
+      },
+      chatgpt: {
+        visible: [true, true, true],
+        render: ["inline", true, true, true],
+      },
+      notion: {
+        visible: [false, false, false],
+        render: ["collapsed", true, false, false],
+      },
+      goose: {
+        visible: [true, false, false],
+        render: ["collapsed", true, false, false],
+      },
+      codex: {
+        visible: [true, true, true],
+        render: ["collapsed", true, false, false],
+      },
+      cursor: {
+        visible: [true, true, true],
+        render: ["none", false, false, false],
+      },
+      vscode: {
+        visible: [true, true, true],
+        render: ["inline", true, true, true],
+      },
+      copilot: {
+        visible: [true, true, true],
+        render: ["none", false, false, false],
+      },
+      mistral: {
+        visible: [false, false, false],
+        render: ["none", false, false, false],
+      },
+      n8n: {
+        visible: [false, false, false],
+        render: ["none", false, false, false],
+      },
+      perplexity: {
+        visible: [false, false, false],
+        render: ["none", false, false, false],
+      },
+      cline: {
+        visible: [true, false, false],
+        render: ["none", false, false, false],
+      },
+    };
+
+    for (const [id, expectation] of Object.entries(expected) as Array<
+      [HostTemplateId, NonNullable<(typeof expected)[HostTemplateId]>]
+    >) {
+      const policy = extractHostExecutionPolicy(seedHostTemplate(id));
+      expect(
+        [
+          policy.modelVisibleMcpToolResults.directContent.image,
+          policy.modelVisibleMcpToolResults.embeddedResources.blob.image,
+          policy.modelVisibleMcpToolResults.linkedResources.blob.image,
+        ],
+        `${id} model-visible images`
+      ).toEqual(expectation.visible);
+      expect(
+        [
+          policy.mcpToolResultImageRendering.placement,
+          policy.mcpToolResultImageRendering.directContent.image,
+          policy.mcpToolResultImageRendering.embeddedResources.blob.image,
+          policy.mcpToolResultImageRendering.linkedResources.blob.image,
+        ],
+        `${id} rendered images`
+      ).toEqual(expectation.render);
+    }
+  });
+
+  it("renders VS Code tool images inline for every image shape", () => {
+    const policy = extractHostExecutionPolicy(seedHostTemplate("vscode"));
+    expect(policy.mcpToolResultImageRendering).toEqual({
+      placement: "inline",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {

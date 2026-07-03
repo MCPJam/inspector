@@ -33,11 +33,41 @@ import {
   GOOSE_PLATFORM,
 } from "./goose-style.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "../types.js";
 
 type HostThemeMode = "light" | "dark";
 
 /** Fallback when no appVersion is provided (only the mcpjam template reads it). */
 const DEFAULT_SEED_APP_VERSION = "0.0.0";
+
+function toolImageVisibilityPolicy(args: {
+  direct: boolean;
+  embedded: boolean;
+  linked: boolean;
+}): ModelVisibleMcpToolResults {
+  return {
+    directContent: { image: args.direct },
+    embeddedResources: { blob: { image: args.embedded } },
+    linkedResources: { blob: { image: args.linked } },
+  };
+}
+
+function toolImageRenderingPolicy(args: {
+  placement: "none" | "collapsed" | "inline";
+  direct: boolean;
+  embedded: boolean;
+  linked: boolean;
+}): McpToolResultImageRenderingPolicy {
+  return {
+    placement: args.placement,
+    directContent: { image: args.direct },
+    embeddedResources: { blob: { image: args.embedded } },
+    linkedResources: { blob: { image: args.linked } },
+  };
+}
 
 // Verbatim from a real claude.ai ui/initialize response. Kept out of the
 // template entry for readability. Updating these keeps the Claude template
@@ -516,6 +546,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 1.0,
         requireToolApproval: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "inline",
+        direct: true,
+        embedded: true,
+        linked: false,
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -776,6 +817,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "inline",
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Real ChatGPT advertises an `experimental.openai/visibility` flag on top
       // of the SDK-default MCP UI extension. Keep the default extension block
@@ -930,6 +982,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
       // Le Chat's captured base MCP `initialize` reported:
@@ -1030,6 +1093,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5-nano",
         temperature: 0.7,
         requireToolApproval: false,
+      });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "collapsed",
+        direct: true,
+        embedded: false,
+        linked: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
@@ -1263,6 +1337,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // the spec-default `true` via emptyHostConfigInputV2.
         respectToolVisibility: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: matches what real Cursor publishes during MCP
       // `initialize` — declares MCP UI support plus its own elicitation
@@ -1360,6 +1445,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "codex",
         computer: { kind: "personal" },
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "collapsed",
+        direct: true,
+        embedded: false,
+        linked: false,
+      });
       // Codex CLI probe advertises only elicitation. It does NOT advertise
       // the MCP UI extension (no widget rendering), so we replace the SDK
       // default clientCapabilities entirely rather than spreading on top —
@@ -1410,6 +1506,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5.3-chat",
         temperature: 0.7,
         requireToolApproval: false,
+      });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Copilot's MCP client identity is not publicly documented; declare
@@ -1562,6 +1669,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Code probe yet, so capability values are inherited from Cursor's.
         respectToolVisibility: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "inline",
+        direct: true,
+        embedded: true,
+        linked: true,
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // VS Code is the editor Cursor forks (Cursor's own clientInfo.name is
       // "cursor-vscode"). Its MCP client declares the UI extension plus
@@ -1704,6 +1822,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
       // Captured from a real @n8n/n8n-nodes-langchain.mcpClientTool probe:
       // it sends an empty capabilities object and no MCP UI extension. Replace
       // the SDK default entirely so the template remains tools-only.
@@ -1738,6 +1867,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
       // Captured from the Perplexity host probe: protocol 2025-06-18,
       // clientInfo mcp@0.1.0, and an empty clientCapabilities object.
       base.clientCapabilities = {};
@@ -1766,6 +1906,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: false,
+      });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: true,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "none",
+        direct: false,
+        embedded: false,
+        linked: false,
       });
       // Captured from the Cline 3.89.2 host probe: protocol 2025-11-25,
       // clientInfo Cline@3.89.2, and an empty clientCapabilities object.
@@ -1797,6 +1948,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: false,
+      });
+      base.modelVisibleMcpToolResults = toolImageVisibilityPolicy({
+        direct: false,
+        embedded: false,
+        linked: false,
+      });
+      base.mcpToolResultImageRendering = toolImageRenderingPolicy({
+        placement: "collapsed",
+        direct: true,
+        embedded: false,
+        linked: false,
       });
       // Bare client: advertises an empty capabilities object and negotiates no
       // MCP Apps/UI extension (no `mimeTypes`). Replace the SDK default
