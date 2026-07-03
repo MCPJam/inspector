@@ -6,7 +6,6 @@ import { ProjectSlackIntegrationSection } from "./setting/ProjectSlackIntegratio
 import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
-import { ProjectDefaultClientConfigSection } from "./client-config/ProjectDefaultClientConfigSection";
 
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -167,17 +166,6 @@ export function ProjectSettingsTab({
             canManageIntegration={canManageMembers}
           />
         </div>
-
-        {/* Default Host Config — seed for new chatboxes, eval suites,
-            and direct chat tabs. Editing it does not change existing
-            chatboxes or suites. */}
-        {isAuthenticated && convexProjectId ? (
-          <ProjectDefaultClientConfigSection
-            convexProjectId={convexProjectId}
-            projectServers={projectServers}
-            canManage={canManageProjectSettings}
-          />
-        ) : null}
 
         {/* Project Servers auto-connect lives on the Servers tab header
             (single toggle next to "Add Server"), not here. */}
