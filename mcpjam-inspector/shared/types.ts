@@ -123,6 +123,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "anthropic/claude-sonnet-4.5",
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
   "anthropic/claude-fable-5",
@@ -181,6 +182,7 @@ const MCPJAM_GUEST_GATED_MODEL_IDS = [
   "deepseek/deepseek-v4-flash",
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
   "anthropic/claude-fable-5",
@@ -281,6 +283,7 @@ export interface ModelDefinition {
 
 export enum Model {
   CLAUDE_FABLE_5 = "claude-fable-5",
+  CLAUDE_SONNET_5 = "claude-sonnet-5",
   CLAUDE_OPUS_4_1 = "claude-opus-4-1",
   CLAUDE_OPUS_4_0 = "claude-opus-4-0",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
@@ -567,6 +570,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     "anthropic"
   ),
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
+  freeModel(
+    "anthropic/claude-sonnet-5",
+    "Claude Sonnet 5",
+    "anthropic",
+    1000000
+  ),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
   freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic", 1000000),
