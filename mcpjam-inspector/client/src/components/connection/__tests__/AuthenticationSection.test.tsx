@@ -1,11 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AuthenticationSection } from "../shared/AuthenticationSection";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
   fetchOAuthClientSecret: vi.fn(),
+}));
+
+let xaaFlagValue: boolean | undefined = undefined;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "xaa" ? xaaFlagValue : undefined,
 }));
 
 const fetchOAuthClientSecretMock = vi.mocked(fetchOAuthClientSecret);
@@ -37,6 +44,104 @@ const hostedSecretProps = {
 };
 
 describe("AuthenticationSection", () => {
+  beforeEach(() => {
+    xaaFlagValue = undefined;
+  });
+
+  it("hides the Cross-App Access (XAA) option when the xaa flag is off", async () => {
+    xaaFlagValue = false;
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="none"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={false}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(
+      screen.queryByText("Cross-App Access (XAA)"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Cross-App Access (XAA) option when the xaa flag is enabled", async () => {
+    xaaFlagValue = true;
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="none"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={false}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
+  });
+
+  it("keeps the Cross-App Access (XAA) option visible for a server already using it, even when the flag is off", async () => {
+    xaaFlagValue = false;
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="xaa"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={true}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
+  });
+
   it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
     render(
       <AuthenticationSection
