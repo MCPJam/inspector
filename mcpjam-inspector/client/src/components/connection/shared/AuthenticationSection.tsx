@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -147,6 +148,11 @@ export function AuthenticationSection({
   // itself if they clear it back to empty).
   const [isReplacingSecret, setIsReplacingSecret] = useState(false);
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
+
+  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
+  // Keep the option visible if a server is already configured with XAA, even
+  // when the flag is off, so the trigger doesn't render blank for it.
+  const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -312,7 +318,9 @@ export function AuthenticationSection({
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
-              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+              {showXaaOption && (
+                <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
