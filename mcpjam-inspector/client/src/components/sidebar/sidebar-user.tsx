@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
@@ -51,6 +51,10 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isMobile } = useSidebar();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // Set when the Notifications item is selected so the dropdown's
+  // close-auto-focus handler knows to open the popover instead of returning
+  // focus to the shared trigger (which would immediately dismiss the popover).
+  const openNotificationsOnCloseRef = useRef(false);
   const { unreadCount } = useNotifications({ isAuthenticated });
   const appNavigate = useAppNavigate();
 
@@ -189,6 +193,18 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
               side={isMobile ? "bottom" : "right"}
               align="end"
               sideOffset={4}
+              onCloseAutoFocus={(event) => {
+                // When Notifications was selected, don't return focus to the
+                // trigger — that focus move lands outside the notifications
+                // popover and Radix would dismiss it as a focus-outside event.
+                // Instead, swallow the focus-return and open the popover here,
+                // once the menu has actually closed.
+                if (openNotificationsOnCloseRef.current) {
+                  openNotificationsOnCloseRef.current = false;
+                  event.preventDefault();
+                  setNotificationsOpen(true);
+                }
+              }}
             >
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
@@ -228,7 +244,12 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
                 Settings
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => setNotificationsOpen(true)}
+                onSelect={() => {
+                  // Flag the intent, then let the menu close normally; the
+                  // popover is opened from the dropdown's onCloseAutoFocus so
+                  // the focus-return doesn't dismiss it. See the handler above.
+                  openNotificationsOnCloseRef.current = true;
+                }}
                 className="cursor-pointer"
               >
                 <Bell className="size-4" />
