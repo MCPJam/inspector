@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { ChatboxPublishClientBar } from "../ChatboxPublishClientBar";
 
 const { setChatboxServersMock, toastMock } = vi.hoisted(() => ({
@@ -113,7 +114,7 @@ describe("ChatboxPublishClientBar", () => {
     await user.click(await screen.findByText("Excalidraw"));
 
     expect(toastMock.error).toHaveBeenCalledWith(
-      "Failed to save servers: nope",
+      errorToastMessage("Failed to save servers: nope"),
       { duration: Infinity },
     );
   });
