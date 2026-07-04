@@ -400,6 +400,33 @@ describe("SidebarContextSwitcher", () => {
     expect(onSwitchOrganization).toHaveBeenCalledWith("org_a", "overview");
   });
 
+  it("clicking the gear on a NON-active org navigates without also committing the active-org switch", () => {
+    const onSwitchOrganization = vi.fn();
+    const onSwitchActiveOrganization = vi.fn();
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+        onSwitchOrganization={onSwitchOrganization}
+        onSwitchActiveOrganization={onSwitchActiveOrganization}
+      />
+    );
+    openMainDropdown();
+    openOrgSwitchList();
+    const list = screen.getByTestId("org-switch-list");
+    fireEvent.click(
+      within(list).getByRole("button", { name: "Open Nimbus settings" })
+    );
+    expect(onSwitchOrganization).toHaveBeenCalledWith("org_b", "overview");
+    // The row's own click handler (which navigates away to servers) must NOT
+    // also fire — otherwise it races the gear's navigation and wins.
+    expect(onSwitchActiveOrganization).not.toHaveBeenCalled();
+  });
+
   it("clicking the footer org row gear opens the active org's settings", () => {
     const onSwitchOrganization = vi.fn();
     render(

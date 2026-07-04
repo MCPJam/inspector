@@ -2461,9 +2461,19 @@ export default function App() {
     ) {
       return;
     }
+    // Organization routes are org-scoped, not project-scoped. Opening another
+    // org's settings (e.g. via the switcher's per-row gear) flips the active
+    // org, which auto-resolves a new active project as a side effect — but the
+    // user deliberately navigated to the org page. Snapping to Servers here
+    // would bounce them right back off the settings they just opened. The ref
+    // is still advanced above so the change is consumed and won't snap later.
+    if (activeTab === "organizations") {
+      return;
+    }
     navigateToServers();
   }, [
     activeProjectId,
+    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,
