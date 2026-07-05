@@ -4,7 +4,7 @@ export type LocalOnlyMcpServerConfig = {
 };
 
 export function isUnsafeHostedOutboundHost(rawHost: string): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!host) return true;
 
   if (
@@ -16,7 +16,11 @@ export function isUnsafeHostedOutboundHost(rawHost: string): boolean {
     return true;
   }
 
-  if (host === "metadata" || host === "metadata.google.internal") {
+  if (
+    host === "metadata" ||
+    host === "metadata.google.internal" ||
+    host === "metadata.goog"
+  ) {
     return true;
   }
 

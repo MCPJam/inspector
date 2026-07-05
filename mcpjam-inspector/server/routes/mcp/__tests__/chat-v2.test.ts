@@ -1944,6 +1944,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "gpt-4-turbo", provider: "openai" },
           projectId: "project-1",
+          selectedServers: ["server-1"],
           selectedServerIds: ["server-1"],
           localMcpRuntimeRequired: true,
         });

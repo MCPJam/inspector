@@ -11,7 +11,9 @@ describe("isLocalOnlyMcpServerConfig", () => {
 
   it.each([
     "http://localhost:6277/mcp",
+    "http://localhost./mcp",
     "http://foo.localhost/mcp",
+    "http://foo.localhost./mcp",
     "http://127.0.0.1:6277/mcp",
     "http://0.0.0.0:6277/mcp",
     "http://10.0.0.5/mcp",
@@ -19,6 +21,7 @@ describe("isLocalOnlyMcpServerConfig", () => {
     "http://172.31.255.255/mcp",
     "http://192.168.1.5/mcp",
     "http://169.254.169.254/mcp",
+    "http://metadata.goog/mcp",
     "http://[::1]/mcp",
     "http://[fe80::1]/mcp",
     "http://[fc00::1]/mcp",
