@@ -5,6 +5,7 @@ import {
   hashApiKey,
   validatePlatformApiKey,
 } from "../services/platform-api-key-validation.js";
+import { getClientIp } from "../utils/client-ip.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
 import { logger } from "../utils/logger.js";
 
@@ -151,13 +152,7 @@ function consumeApiKeyClientAttempt(bucketKey: string): number | null {
 }
 
 function apiKeyValidationClientKey(c: Context): string {
-  const cfIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfIp) return `ip:${cfIp}`;
-  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (forwardedFor) return `ip:${forwardedFor}`;
-  const realIp = c.req.header("x-real-ip")?.trim();
-  if (realIp) return `ip:${realIp}`;
-  return "ip:_unknown";
+  return `ip:${getClientIp(c) ?? "_unknown"}`;
 }
 
 /** Test-only: clear all token buckets. */

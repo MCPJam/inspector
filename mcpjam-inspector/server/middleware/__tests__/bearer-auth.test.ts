@@ -217,6 +217,26 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
     expect(statuses).toContain(429);
     expect(validatePlatformApiKeyMock.mock.calls.length).toBeLessThan(45);
   });
+
+  it("keys the client attempt bucket by the trusted proxy IP before caller-controlled forwarded-for", async () => {
+    validatePlatformApiKeyMock.mockResolvedValue(null);
+
+    const app = createApp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 45; i++) {
+      const res = await app.request("/test", {
+        headers: {
+          authorization: `Bearer ${keyFromNumber(i)}`,
+          "x-real-ip": "203.0.113.9",
+          "x-forwarded-for": `198.51.100.${i}`,
+        },
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses).toContain(429);
+    expect(validatePlatformApiKeyMock.mock.calls.length).toBeLessThan(45);
+  });
 });
 
 describe("bearerAuthMiddleware — request-local memoization", () => {
