@@ -58,13 +58,14 @@ describe("validatePlatformApiKey", () => {
     expect(url).toBe(`${CONVEX_HTTP_URL}/internal/v1/api-keys/validate`);
     expect(init.method).toBe("POST");
     expect(init.headers["x-inspector-service-token"]).toBe(SERVICE_TOKEN);
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(init.body)).toEqual({ tokenHash: TOKEN_HASH });
   });
 
   it("returns null on the route's own 'Key not found' 404", async () => {
     mockFetchResponse(
       404,
-      JSON.stringify({ ok: false, error: "Key not found" }),
+      JSON.stringify({ ok: false, error: "Key not found" })
     );
 
     await expect(validatePlatformApiKey(TOKEN_HASH)).resolves.toBeNull();
@@ -75,7 +76,7 @@ describe("validatePlatformApiKey", () => {
     mockFetchResponse(404, "No matching routes found");
 
     await expect(validatePlatformApiKey(TOKEN_HASH)).rejects.toThrow(
-      /routing 404/,
+      /routing 404/
     );
   });
 
@@ -83,7 +84,7 @@ describe("validatePlatformApiKey", () => {
     mockFetchResponse(500, JSON.stringify({ ok: false, error: "boom" }));
 
     await expect(validatePlatformApiKey(TOKEN_HASH)).rejects.toThrow(
-      /status 500/,
+      /status 500/
     );
   });
 
@@ -91,7 +92,7 @@ describe("validatePlatformApiKey", () => {
     mockFetchResponse(200, JSON.stringify({ ok: true, keyId: 42 }));
 
     await expect(validatePlatformApiKey(TOKEN_HASH)).rejects.toThrow(
-      /malformed body/,
+      /malformed body/
     );
   });
 
@@ -106,10 +107,8 @@ describe("hashApiKey", () => {
     // Known vector: sha256("abc") — proves algorithm + hex casing match the
     // backend's Web Crypto sha256Hex implementation.
     expect(hashApiKey("abc")).toBe(
-      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
-    expect(hashApiKey("sk_mcpjam_" + "0".repeat(48))).toMatch(
-      /^[0-9a-f]{64}$/,
-    );
+    expect(hashApiKey("sk_mcpjam_" + "0".repeat(48))).toMatch(/^[0-9a-f]{64}$/);
   });
 });

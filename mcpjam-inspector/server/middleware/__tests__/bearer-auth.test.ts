@@ -31,7 +31,7 @@ vi.mock(
       ...actual, // keep the real hashApiKey
       validatePlatformApiKey: validatePlatformApiKeyMock,
     };
-  },
+  }
 );
 
 // Guest validation must always reject for these tests — only the sk_ branch is
@@ -53,6 +53,10 @@ function key(hexChar: string): string {
   return "sk_mcpjam_" + hexChar.repeat(48);
 }
 
+function keyFromNumber(value: number): string {
+  return "sk_mcpjam_" + value.toString(16).padStart(48, "0");
+}
+
 const VALID = {
   keyId: "key_42",
   userId: "mcpjam_user_42",
@@ -71,7 +75,7 @@ function createApp(): Hono {
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
       mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
-    }),
+    })
   );
   return app;
 }
@@ -193,6 +197,25 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
       headers: { authorization: `Bearer ${key("b")}` },
     });
     expect(res.status).toBe(200);
+  });
+
+  it("rate limits high-cardinality validation attempts before they flood the backend", async () => {
+    validatePlatformApiKeyMock.mockResolvedValue(null);
+
+    const app = createApp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 45; i++) {
+      const res = await app.request("/test", {
+        headers: {
+          authorization: `Bearer ${keyFromNumber(i)}`,
+          "x-forwarded-for": "203.0.113.9",
+        },
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses).toContain(429);
+    expect(validatePlatformApiKeyMock.mock.calls.length).toBeLessThan(45);
   });
 });
 

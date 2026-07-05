@@ -31,6 +31,7 @@ export interface ValidatedPlatformApiKey {
 }
 
 const VALIDATE_PATH = "/internal/v1/api-keys/validate";
+const VALIDATE_TIMEOUT_MS = 15_000;
 
 /**
  * Returns the key's identity, or `null` when the key is unknown / revoked /
@@ -40,7 +41,7 @@ const VALIDATE_PATH = "/internal/v1/api-keys/validate";
  * mistaken for an invalid key.
  */
 export async function validatePlatformApiKey(
-  tokenHash: string,
+  tokenHash: string
 ): Promise<ValidatedPlatformApiKey | null> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const response = await fetch(`${convexUrl}${VALIDATE_PATH}`, {
@@ -50,6 +51,7 @@ export async function validatePlatformApiKey(
       "x-inspector-service-token": serviceToken,
     },
     body: JSON.stringify({ tokenHash }),
+    signal: AbortSignal.timeout(VALIDATE_TIMEOUT_MS),
   });
 
   if (response.status === 404) {
@@ -57,12 +59,12 @@ export async function validatePlatformApiKey(
       return null;
     }
     throw new Error(
-      `Platform API key validate route returned a routing 404 — is it deployed at ${convexUrl}${VALIDATE_PATH}?`,
+      `Platform API key validate route returned a routing 404 — is it deployed at ${convexUrl}${VALIDATE_PATH}?`
     );
   }
   if (!response.ok) {
     throw new Error(
-      `Platform API key validate failed with status ${response.status}`,
+      `Platform API key validate failed with status ${response.status}`
     );
   }
 

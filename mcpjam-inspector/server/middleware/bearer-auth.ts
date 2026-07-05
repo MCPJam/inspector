@@ -44,6 +44,10 @@ const PLATFORM_API_KEY_RE = /^sk_mcpjam_[0-9a-f]{48}$/;
 const API_KEY_RATE_LIMIT_PER_MIN = 60;
 const API_KEY_RATE_BURST = 10;
 const API_KEY_RATE_REFILL_PER_MS = API_KEY_RATE_LIMIT_PER_MIN / 60_000;
+const API_KEY_CLIENT_ATTEMPT_LIMIT_PER_MIN = 240;
+const API_KEY_CLIENT_ATTEMPT_BURST = 40;
+const API_KEY_CLIENT_ATTEMPT_REFILL_PER_MS =
+  API_KEY_CLIENT_ATTEMPT_LIMIT_PER_MIN / 60_000;
 
 interface TokenBucket {
   /** Available tokens (fractional). */
@@ -53,6 +57,7 @@ interface TokenBucket {
 }
 
 const apiKeyBuckets = new Map<string, TokenBucket>();
+const apiKeyClientAttemptBuckets = new Map<string, TokenBucket>();
 
 // Hard cap on tracked buckets. Distinct well-formed-but-invalid keys each get
 // an entry BEFORE backend validation, so a spray of random sk_mcpjam_… strings
@@ -61,15 +66,21 @@ const apiKeyBuckets = new Map<string, TokenBucket>();
 // are overwhelmingly the attacker's one-shot keys, and a legit key that gets
 // evicted merely restarts with a fresh burst.
 const API_KEY_BUCKETS_MAX = 50_000;
+const API_KEY_CLIENT_ATTEMPT_BUCKETS_MAX = 10_000;
+
+function cleanupStaleBuckets(buckets: Map<string, TokenBucket>, now: number) {
+  for (const [id, bucket] of buckets) {
+    if (now - bucket.lastRefill > 5 * 60_000) {
+      buckets.delete(id);
+    }
+  }
+}
 
 // Cleanup stale buckets every 5 minutes so revoked keys don't leak memory.
 setInterval(() => {
   const now = Date.now();
-  for (const [id, bucket] of apiKeyBuckets) {
-    if (now - bucket.lastRefill > 5 * 60_000) {
-      apiKeyBuckets.delete(id);
-    }
-  }
+  cleanupStaleBuckets(apiKeyBuckets, now);
+  cleanupStaleBuckets(apiKeyClientAttemptBuckets, now);
 }, 5 * 60_000).unref();
 
 /**
@@ -79,18 +90,24 @@ setInterval(() => {
  * matches token-bucket semantics — a depleted bucket stays depleted until
  * time passes.
  */
-function consumeApiKeyToken(bucketKey: string): number | null {
+function consumeTokenBucket(args: {
+  buckets: Map<string, TokenBucket>;
+  bucketKey: string;
+  burst: number;
+  refillPerMs: number;
+  maxBuckets: number;
+}): number | null {
   const now = Date.now();
-  const existing = apiKeyBuckets.get(bucketKey);
+  const existing = args.buckets.get(args.bucketKey);
   if (!existing) {
-    if (apiKeyBuckets.size >= API_KEY_BUCKETS_MAX) {
-      const oldest = apiKeyBuckets.keys().next().value;
+    if (args.buckets.size >= args.maxBuckets) {
+      const oldest = args.buckets.keys().next().value;
       if (oldest !== undefined) {
-        apiKeyBuckets.delete(oldest);
+        args.buckets.delete(oldest);
       }
     }
-    apiKeyBuckets.set(bucketKey, {
-      tokens: API_KEY_RATE_BURST - 1,
+    args.buckets.set(args.bucketKey, {
+      tokens: args.burst - 1,
       lastRefill: now,
     });
     return null;
@@ -98,14 +115,14 @@ function consumeApiKeyToken(bucketKey: string): number | null {
 
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
-    API_KEY_RATE_BURST,
-    existing.tokens + elapsed * API_KEY_RATE_REFILL_PER_MS,
+    args.burst,
+    existing.tokens + elapsed * args.refillPerMs
   );
   if (refilled < 1) {
     existing.tokens = refilled;
     existing.lastRefill = now;
     const deficit = 1 - refilled;
-    const waitMs = Math.ceil(deficit / API_KEY_RATE_REFILL_PER_MS);
+    const waitMs = Math.ceil(deficit / args.refillPerMs);
     return Math.max(waitMs, 1);
   }
   existing.tokens = refilled - 1;
@@ -113,20 +130,51 @@ function consumeApiKeyToken(bucketKey: string): number | null {
   return null;
 }
 
+function consumeApiKeyToken(bucketKey: string): number | null {
+  return consumeTokenBucket({
+    buckets: apiKeyBuckets,
+    bucketKey,
+    burst: API_KEY_RATE_BURST,
+    refillPerMs: API_KEY_RATE_REFILL_PER_MS,
+    maxBuckets: API_KEY_BUCKETS_MAX,
+  });
+}
+
+function consumeApiKeyClientAttempt(bucketKey: string): number | null {
+  return consumeTokenBucket({
+    buckets: apiKeyClientAttemptBuckets,
+    bucketKey,
+    burst: API_KEY_CLIENT_ATTEMPT_BURST,
+    refillPerMs: API_KEY_CLIENT_ATTEMPT_REFILL_PER_MS,
+    maxBuckets: API_KEY_CLIENT_ATTEMPT_BUCKETS_MAX,
+  });
+}
+
+function apiKeyValidationClientKey(c: Context): string {
+  const cfIp = c.req.header("cf-connecting-ip")?.trim();
+  if (cfIp) return `ip:${cfIp}`;
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  if (forwardedFor) return `ip:${forwardedFor}`;
+  const realIp = c.req.header("x-real-ip")?.trim();
+  if (realIp) return `ip:${realIp}`;
+  return "ip:_unknown";
+}
+
 /** Test-only: clear all token buckets. */
 export function resetApiKeyRateLimitForTests(): void {
   apiKeyBuckets.clear();
+  apiKeyClientAttemptBuckets.clear();
 }
 
 export async function bearerAuthMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401,
+      401
     );
   }
 
@@ -140,17 +188,32 @@ export async function bearerAuthMiddleware(
     if (!PLATFORM_API_KEY_RE.test(token)) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401,
+        401
       );
     }
 
     const tokenHash = hashApiKey(token);
 
     // Per-key rate limit, keyed by the hash (the key's stable identity). Reject
-    // BEFORE the backend call so a flood can't tie it up. Debit once per
-    // request (memoized) so the limit isn't double counted if the middleware
-    // runs on both a parent and a child router.
+    // BEFORE the backend call so a flood can't tie it up. A second per-client
+    // attempt bucket catches high-cardinality sprays where every fake key has a
+    // distinct hash. Debit once per request (memoized) so the limit isn't
+    // double counted if the middleware runs on both a parent and a child router.
     if (!getRequestLocal(c, "apiKeyRateLimitConsumed")) {
+      const clientWaitMs = consumeApiKeyClientAttempt(
+        apiKeyValidationClientKey(c)
+      );
+      if (clientWaitMs !== null) {
+        return c.json(
+          {
+            code: ErrorCode.RATE_LIMITED,
+            message:
+              "Too many API key validation attempts. Slow down and retry.",
+          },
+          429,
+          { "Retry-After": String(Math.ceil(clientWaitMs / 1000)) }
+        );
+      }
       const waitMs = consumeApiKeyToken(tokenHash);
       if (waitMs !== null) {
         return c.json(
@@ -159,7 +222,7 @@ export async function bearerAuthMiddleware(
             message: "API key rate limit exceeded. Slow down and retry.",
           },
           429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
         );
       }
       setRequestLocal(c, "apiKeyRateLimitConsumed", true);
@@ -180,7 +243,7 @@ export async function bearerAuthMiddleware(
         });
         return c.json(
           { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-          500,
+          500
         );
       }
       setRequestLocal(c, "platformApiKeyValidation", validation);
@@ -191,7 +254,7 @@ export async function bearerAuthMiddleware(
       // all 401 "Invalid API key" so the endpoint can't probe key state.
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401,
+        401
       );
     }
 
@@ -229,7 +292,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.FORBIDDEN,
             message: "Guest access is disabled in this environment.",
           },
-          403,
+          403
         );
       }
       c.set("guestId", result.guestId);
