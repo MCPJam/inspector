@@ -12,9 +12,7 @@ const {
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
-  validateApiKeyMock,
-  resolveUserByExternalIdMock,
-  lookupWorkosKeyBindingMock,
+  validatePlatformApiKeyMock,
 } = vi.hoisted(() => {
   // The evals route resolves its concurrency limit at import time; pin the
   // env BEFORE the hoisted imports run so a V1_MAX_CONCURRENT_EVAL_RUNS in
@@ -27,9 +25,7 @@ const {
     createAuthorizedManagerMock: vi.fn(),
     convexQueryMock: vi.fn(),
     convexActionMock: vi.fn(),
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
+    validatePlatformApiKeyMock: vi.fn(),
   };
 });
 
@@ -37,22 +33,15 @@ vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
 
-// WorkOS API-key middleware seams — same pattern as bearer-auth.test.ts.
-// Only exercised by tests that send an `sk_` bearer; JWT-bearer tests never
-// reach these.
-vi.mock("../../../services/workos-client.js", () => ({
-  getWorkOSClient: () => ({
-    apiKeys: { createValidation: validateApiKeyMock },
-  }),
-}));
-
-vi.mock("../../../services/identity.js", () => ({
-  resolveUserByExternalId: resolveUserByExternalIdMock,
-}));
-
-vi.mock("../../../services/workos-key-bindings.js", () => ({
-  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
-}));
+// Platform API-key validation seam — only exercised by tests that send an
+// `sk_` bearer; JWT-bearer tests never reach it. `hashApiKey` stays real.
+vi.mock(
+  "../../../services/platform-api-key-validation.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return { ...actual, validatePlatformApiKey: validatePlatformApiKeyMock };
+  },
+);
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
@@ -606,12 +595,11 @@ describe("v1 write routes", () => {
 
     it("passes the delegated Convex JWT — not the sk_ key — to the manager for API-key callers", async () => {
       process.env.INSPECTOR_SERVICE_TOKEN = "svc_token";
-      validateApiKeyMock.mockResolvedValue({
-        apiKey: { id: "key_1", owner: { id: "workos_user_1" } },
-      });
-      resolveUserByExternalIdMock.mockResolvedValue({ _id: "convex_user_1" });
-      lookupWorkosKeyBindingMock.mockResolvedValue({
-        mcpjamOrganizationId: "org_1",
+      validatePlatformApiKeyMock.mockResolvedValue({
+        keyId: "key_1",
+        userId: "convex_user_1",
+        externalId: "workos_user_1",
+        organizationId: "org_1",
       });
       // The only fetch on this path is the delegated-token mint.
       global.fetch = vi.fn(async (input: any, init: any) => {
@@ -649,7 +637,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-runs",
         { suiteId: "suite_1", serverIds: ["s1"] },
-        "sk_live_secret"
+        "sk_mcpjam_" + "a".repeat(48)
       );
       expect(res.status).toBe(202);
 

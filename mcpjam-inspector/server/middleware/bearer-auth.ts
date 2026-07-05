@@ -1,17 +1,18 @@
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
 import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
-import { getWorkOSClient } from "../services/workos-client.js";
-import { resolveUserByExternalId } from "../services/identity.js";
-import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
+import {
+  hashApiKey,
+  validatePlatformApiKey,
+} from "../services/platform-api-key-validation.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
 import { logger } from "../utils/logger.js";
 
 /**
  * Reusable Hono middleware that:
  * 1. Requires a Bearer token in the Authorization header (401 if missing).
- * 2. If the token starts with `sk_`, validates it as a WorkOS API key
- *    (memoized per request) and resolves the owning MCPJam user.
+ * 2. If the token is a platform API key (`sk_mcpjam_…`), validates it against
+ *    the backend (memoized per request) and sets the resolved identity.
  * 3. Otherwise attempts to validate it as a guest JWT.
  * 4. If valid guest token, sets `c.set("guestId", guestId)`.
  * 5. If not a guest token, assumes WorkOS JWT and passes through.
@@ -21,17 +22,23 @@ import { logger } from "../utils/logger.js";
  * never falls through to JWT validation.
  */
 
+// Exact shape of a platform API key: `sk_mcpjam_` + 48 lowercase hex chars
+// (24 random bytes). Rejecting a malformed key here — before hashing or any
+// network call — is what actually stops a random-garbage flood (and cheaply
+// bounces legacy WorkOS-format `sk_…` keys); the per-key bucket alone would
+// grant each novel invalid key one backend round-trip.
+const PLATFORM_API_KEY_RE = /^sk_mcpjam_[0-9a-f]{48}$/;
+
 /**
- * Per-key token bucket for `sk_` validations. WorkOS validate is ~200ms
- * and counts against our org-wide WorkOS rate budget; a misbehaving
- * client should not be able to drain it. In-process Map — resets on
- * deploy, which is fine for v1.
+ * Per-key token bucket for `sk_` validations, keyed by the key's hash. A
+ * misbehaving client should not be able to flood the backend validate route.
+ * In-process Map — resets on deploy, which is fine for v1.
  *
  * Limits: 60 req/min sustained, burst 10. Buckets refill linearly.
  */
-const WORKOS_RATE_LIMIT_PER_MIN = 60;
-const WORKOS_RATE_BURST = 10;
-const WORKOS_RATE_REFILL_PER_MS = WORKOS_RATE_LIMIT_PER_MIN / 60_000;
+const API_KEY_RATE_LIMIT_PER_MIN = 60;
+const API_KEY_RATE_BURST = 10;
+const API_KEY_RATE_REFILL_PER_MS = API_KEY_RATE_LIMIT_PER_MIN / 60_000;
 
 interface TokenBucket {
   /** Available tokens (fractional). */
@@ -40,31 +47,31 @@ interface TokenBucket {
   lastRefill: number;
 }
 
-const workosKeyBuckets = new Map<string, TokenBucket>();
+const apiKeyBuckets = new Map<string, TokenBucket>();
 
 // Cleanup stale buckets every 5 minutes so revoked keys don't leak memory.
 setInterval(() => {
   const now = Date.now();
-  for (const [id, bucket] of workosKeyBuckets) {
+  for (const [id, bucket] of apiKeyBuckets) {
     if (now - bucket.lastRefill > 5 * 60_000) {
-      workosKeyBuckets.delete(id);
+      apiKeyBuckets.delete(id);
     }
   }
 }, 5 * 60_000).unref();
 
 /**
- * Try to consume one token from the bucket for `keyId`. Returns the
- * number of milliseconds the caller should wait before retrying, or
- * `null` if the request was admitted. Rejecting BEFORE incrementing
- * matches token-bucket semantics — a depleted bucket stays depleted
- * until time passes.
+ * Try to consume one token from the bucket for `bucketKey` (the key's hash).
+ * Returns the number of milliseconds the caller should wait before retrying,
+ * or `null` if the request was admitted. Rejecting BEFORE incrementing
+ * matches token-bucket semantics — a depleted bucket stays depleted until
+ * time passes.
  */
-function consumeWorkOSToken(keyId: string): number | null {
+function consumeApiKeyToken(bucketKey: string): number | null {
   const now = Date.now();
-  const existing = workosKeyBuckets.get(keyId);
+  const existing = apiKeyBuckets.get(bucketKey);
   if (!existing) {
-    workosKeyBuckets.set(keyId, {
-      tokens: WORKOS_RATE_BURST - 1,
+    apiKeyBuckets.set(bucketKey, {
+      tokens: API_KEY_RATE_BURST - 1,
       lastRefill: now,
     });
     return null;
@@ -72,14 +79,14 @@ function consumeWorkOSToken(keyId: string): number | null {
 
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
-    WORKOS_RATE_BURST,
-    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS,
+    API_KEY_RATE_BURST,
+    existing.tokens + elapsed * API_KEY_RATE_REFILL_PER_MS,
   );
   if (refilled < 1) {
     existing.tokens = refilled;
     existing.lastRefill = now;
     const deficit = 1 - refilled;
-    const waitMs = Math.ceil(deficit / WORKOS_RATE_REFILL_PER_MS);
+    const waitMs = Math.ceil(deficit / API_KEY_RATE_REFILL_PER_MS);
     return Math.max(waitMs, 1);
   }
   existing.tokens = refilled - 1;
@@ -88,16 +95,9 @@ function consumeWorkOSToken(keyId: string): number | null {
 }
 
 /** Test-only: clear all token buckets. */
-export function resetWorkOSRateLimitForTests(): void {
-  workosKeyBuckets.clear();
+export function resetApiKeyRateLimitForTests(): void {
+  apiKeyBuckets.clear();
 }
-
-type ValidateApiKeyResult = {
-  apiKey: {
-    id: string;
-    owner: { id: string };
-  } | null;
-};
 
 export async function bearerAuthMiddleware(
   c: Context,
@@ -113,51 +113,26 @@ export async function bearerAuthMiddleware(
 
   const token = authHeader.slice("Bearer ".length);
 
-  // WorkOS API key branch. Real WorkOS JWTs begin with `eyJ`, so an
-  // `sk_` prefix is unambiguous; this branch never falls through.
+  // Platform API key branch. Real WorkOS JWTs begin with `eyJ`, so an `sk_`
+  // prefix is unambiguous; this branch never falls through.
   if (token.startsWith("sk_")) {
-    // Request-local memoization: a single `/api/v1/...` call hits this
-    // middleware AND `authorizeBatch`, both of which would otherwise
-    // pay the ~200ms WorkOS validate cost. Cached per request only —
-    // no cross-request cache, so revocation stays immediate.
-    let validation = getRequestLocal(c, "workosApiKeyValidation") as
-      | ValidateApiKeyResult
-      | undefined;
-    if (!validation) {
-      try {
-        // ~200ms validate latency (single global WorkOS endpoint, no
-        // local JWKS path). Counts against our WorkOS rate budget.
-        validation = (await getWorkOSClient().apiKeys.createValidation({
-          value: token,
-        })) as unknown as ValidateApiKeyResult;
-      } catch (error) {
-        logger.warn("WorkOS API key validation threw", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return c.json(
-          { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-          401,
-        );
-      }
-      setRequestLocal(c, "workosApiKeyValidation", validation);
-    }
-
-    if (!validation.apiKey) {
+    // Cheap format gate first: a malformed key is rejected before hashing or
+    // any backend call, so garbage floods never reach the validate route.
+    if (!PLATFORM_API_KEY_RE.test(token)) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
         401,
       );
     }
 
-    const workosKeyId = validation.apiKey.id;
-    const workosUserId = validation.apiKey.owner.id;
+    const tokenHash = hashApiKey(token);
 
-    // Per-key rate limit. Reject BEFORE doing the Convex user lookup so a
-    // flood can't tie up the database either. Debit once per request (memoized
-    // like the validation/binding lookups above) so the limit isn't double
-    // counted if the middleware ever runs on both a parent and child router.
-    if (!getRequestLocal(c, "workosRateLimitConsumed")) {
-      const waitMs = consumeWorkOSToken(workosKeyId);
+    // Per-key rate limit, keyed by the hash (the key's stable identity). Reject
+    // BEFORE the backend call so a flood can't tie it up. Debit once per
+    // request (memoized) so the limit isn't double counted if the middleware
+    // runs on both a parent and a child router.
+    if (!getRequestLocal(c, "apiKeyRateLimitConsumed")) {
+      const waitMs = consumeApiKeyToken(tokenHash);
       if (waitMs !== null) {
         return c.json(
           {
@@ -168,86 +143,55 @@ export async function bearerAuthMiddleware(
           { "Retry-After": String(Math.ceil(waitMs / 1000)) },
         );
       }
-      setRequestLocal(c, "workosRateLimitConsumed", true);
+      setRequestLocal(c, "apiKeyRateLimitConsumed", true);
     }
 
-    let mcpjamUser;
-    try {
-      mcpjamUser = await resolveUserByExternalId(workosUserId);
-    } catch (error) {
-      logger.error("Failed to resolve MCPJam user from WorkOS externalId", {
-        workosUserId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return c.json(
-        { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-        500,
-      );
-    }
-    if (!mcpjamUser) {
-      return c.json(
-        { code: ErrorCode.UNAUTHORIZED, message: "Unknown user" },
-        401,
-      );
-    }
-
-    // Resolve which MCPJam org this key acts inside. WorkOS keys are not
-    // org-scoped natively, so the backend persists the binding at mint time
-    // and we look it up here (memoized per request, like the validation
-    // above). A missing binding means the key predates binding support or
-    // its scope was removed — it cannot be safely delegated, so reject it as
-    // orphaned rather than guessing an org.
-    let binding = getRequestLocal(c, "workosApiKeyBinding");
-    if (binding === undefined) {
+    // Request-local memoization: a single `/api/v1/...` call hits this
+    // middleware AND `authorizeBatch`, both of which would otherwise pay the
+    // backend validate cost. Cached per request only — no cross-request cache,
+    // so revocation stays immediate. `null` is a real cached value (looked up,
+    // invalid); `undefined` means not looked up yet.
+    let validation = getRequestLocal(c, "platformApiKeyValidation");
+    if (validation === undefined) {
       try {
-        binding = await lookupWorkosKeyBinding(workosKeyId);
+        validation = await validatePlatformApiKey(tokenHash);
       } catch (error) {
-        logger.error("Failed to look up WorkOS API key org binding", {
-          workos_key_id: workosKeyId,
+        logger.error("Platform API key validation failed", {
           error: error instanceof Error ? error.message : String(error),
         });
         return c.json(
-          {
-            code: ErrorCode.INTERNAL_ERROR,
-            message: "Org binding lookup failed",
-          },
+          { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
           500,
         );
       }
-      setRequestLocal(c, "workosApiKeyBinding", binding);
+      setRequestLocal(c, "platformApiKeyValidation", validation);
     }
-    if (!binding) {
-      logger.warn("Orphaned WorkOS API key (no org binding)", {
-        workos_key_id: workosKeyId,
-      });
-      // Stay within the v1 public error-code contract: the wire `code` is the
-      // canonical UNAUTHORIZED, with the specific reason carried in the opaque
-      // `details` bag (see routes/v1/contract.ts — `ORPHANED_KEY` is NOT a
-      // first-class v1 code). Clients that care can branch on
-      // `details.reason === "ORPHANED_KEY"`; everyone else sees a 401.
+
+    if (!validation) {
+      // Unknown / revoked / owner lost org membership are indistinguishable —
+      // all 401 "Invalid API key" so the endpoint can't probe key state.
       return c.json(
-        {
-          code: ErrorCode.UNAUTHORIZED,
-          message:
-            "This API key is not bound to an organization. Re-create it from Settings → API keys.",
-          details: { reason: "ORPHANED_KEY" },
-        },
+        { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
         401,
       );
     }
 
+    // Context fields kept identical to the WorkOS era so every downstream
+    // consumer (buildConvexAuthHeaders, the delegated-token exchange, the
+    // `/api/v1/*` routes) is untouched. `workosUserId` carries the WorkOS
+    // `externalId`; `workosApiKeyId` now carries the platform key id.
     c.set("authMethod", "workos_api_key");
-    c.set("workosApiKeyId", workosKeyId);
-    c.set("workosUserId", workosUserId);
-    c.set("mcpjamUserId", mcpjamUser._id);
-    c.set("mcpjamOrganizationId", binding.mcpjamOrganizationId);
+    c.set("workosApiKeyId", validation.keyId);
+    c.set("workosUserId", validation.externalId);
+    c.set("mcpjamUserId", validation.userId);
+    c.set("mcpjamOrganizationId", validation.organizationId);
 
-    logger.info("WorkOS API key request", {
-      event: "auth.workos_api_key",
+    logger.info("Platform API key request", {
+      event: "auth.platform_api_key",
       auth_method: "workos_api_key",
-      workos_key_id: workosKeyId,
-      mcpjam_user_id: mcpjamUser._id,
-      mcpjam_organization_id: binding.mcpjamOrganizationId,
+      key_id: validation.keyId,
+      mcpjam_user_id: validation.userId,
+      mcpjam_organization_id: validation.organizationId,
     });
 
     return next();

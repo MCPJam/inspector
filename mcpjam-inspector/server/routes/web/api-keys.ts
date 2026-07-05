@@ -11,48 +11,35 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
-import { resolveUserByExternalId } from "../../services/identity.js";
-import {
-  createWorkosKeyBinding,
-  removeWorkosKeyBinding,
-  WorkosKeyBindingError,
-} from "../../services/workos-key-bindings.js";
-import {
-  verifyAuthKitToken,
-  AuthKitConfigError,
-} from "../../services/authkit-jwt.js";
 
 /**
- * `/api/web/api-keys/*` — WorkOS API Key management.
+ * `/api/web/api-keys/*` — platform API key management (`sk_mcpjam_…`).
  *
- * Calls the WorkOS REST API directly with the server-side `WORKOS_API_KEY`
- * (the Node SDK only exposes org-scoped helpers; the user-scoped endpoints
- * we need for v1 are documented REST routes). MCPJam never stores the raw
- * key value — `value` is in WorkOS's create response only, returned to the
- * browser once, and never persisted or logged.
+ * Thin forwarding layer over the backend's `/web/api-keys` routes. The caller's
+ * session bearer is passed through verbatim; Convex verifies the AuthKit JWT,
+ * checks org membership, mints/lists/revokes, and stores only the key's hash.
+ * Because auth is the forwarded user bearer (not a server-side secret), this
+ * works identically hosted, local, and via npx — no WorkOS, no proxy.
  *
- * Security notes for future contributors:
- * - A user can only mint a key as powerful as their own session: the
- *   create call routes through `/user_management/users/{userId}` and
- *   `userId` is taken from the session JWT.
- * - DELETE verifies the key id appears in the session user's own key list
- *   before issuing the WorkOS delete, so passing another user's key id
- *   fails before WorkOS sees the request. (WorkOS exposes no single-key
- *   GET for user keys — both `/api_keys/{id}` and the user-scoped variant
- *   404 even for existing ids — so list membership is the ownership check.)
- * - `sk_…` keys cannot manage other `sk_…` keys (privilege isolation).
+ * MCPJam never sees the raw key again after mint: the backend returns the
+ * plaintext `value` once in the create response, surfaced to the browser and
+ * never persisted or logged.
+ *
+ * Security notes:
+ * - `sk_…` keys cannot manage other keys (privilege isolation) — rejected
+ *   here before the bearer is even forwarded, and again on the backend.
+ * - Ownership is enforced on the backend: list returns only the caller's keys;
+ *   revoke of a foreign/unknown id reads as 404.
  */
 
 const apiKeys = new Hono();
 
-// Privilege isolation: a WorkOS API key authenticates as the owning user but
-// it must NOT mint or revoke other API keys (would create a privilege loop).
-// Reject `sk_…` BEFORE bearerAuthMiddleware validates it — `sk_` is the same
-// unambiguous discriminator the middleware uses (bearer-auth.ts), so this is
-// equivalent to a post-validation `authMethod` check while skipping a ~200ms
-// WorkOS validate plus Convex identity/binding lookups on a request that always
-// ends in 403. (Bonus: invalid/revoked keys get the same 403, not a 401, so the
-// endpoint can't be used to probe key validity.)
+// Privilege isolation: a platform API key authenticates as the owning user but
+// must NOT mint or revoke other keys (privilege loop). Reject `sk_…` BEFORE
+// bearerAuthMiddleware validates it — `sk_` is the same unambiguous
+// discriminator the middleware uses, so this short-circuits a request that
+// always ends in 403. (Bonus: invalid/revoked keys get the same 403, not a
+// 401, so the endpoint can't be used to probe key validity.)
 apiKeys.use("*", async (c, next) => {
   const auth = c.req.header("authorization") ?? "";
   if (auth.startsWith("Bearer sk_")) {
@@ -71,203 +58,101 @@ apiKeys.use("*", async (c, next) => {
 // so this sub-router must explicitly require a bearer.
 apiKeys.use("*", bearerAuthMiddleware);
 
-const WORKOS_BASE_URL = "https://api.workos.com";
+const REMOTE_PROXY_TIMEOUT_MS = 30_000;
 
-function getWorkOSRestKey(): string {
-  const key = process.env.WORKOS_API_KEY;
-  if (!key) {
+interface BackendKey {
+  id: string;
+  name: string;
+  obfuscatedValue: string;
+  createdAt: number;
+  lastUsedAt?: number | null;
+  value?: string;
+}
+
+/**
+ * Forward a management request to the backend's `/web/api-keys` route with the
+ * caller's bearer. Returns the parsed JSON and status; maps a backend error
+ * status onto the matching `WebRouteError` so the client sees the same shapes
+ * as before. Transport failure → 502 SERVER_UNREACHABLE.
+ */
+async function callBackendApiKeys(
+  method: string,
+  pathAndQuery: string,
+  bearer: string,
+  body?: unknown,
+): Promise<any> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing WORKOS_API_KEY configuration",
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
-  return key;
-}
+  const target = `${convexUrl}/web/api-keys${pathAndQuery}`;
 
-interface SessionContext {
-  userId: string;
-  organizationId?: string;
-}
-
-/**
- * Authenticate a key-management request by VERIFYING the WorkOS AuthKit access
- * token (signature, issuer, audience, exp/nbf) and returning only the trusted
- * `sub` / `org_id`.
- *
- * These routes act on the caller's behalf using the server's admin
- * `WORKOS_API_KEY` and write Convex org bindings, so the token MUST be verified
- * here — unlike other `/api/web/*` routes, nothing downstream re-checks it.
- * Verification (and the resulting 401) happens before any WorkOS or
- * binding-endpoint side effect.
- */
-async function resolveSessionContext(c: any): Promise<SessionContext> {
-  const bearer = assertBearerToken(c);
-  let session;
+  let response: Response;
   try {
-    session = await verifyAuthKitToken(bearer);
+    response = await fetch(target, {
+      method,
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(REMOTE_PROXY_TIMEOUT_MS),
+    });
   } catch (error) {
-    if (error instanceof AuthKitConfigError) {
-      logger.error("AuthKit verification is misconfigured", {
-        error: error.message,
-      });
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Server auth verification is not configured",
-      );
-    }
+    logger.error("API key backend request failed", {
+      method,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Invalid or expired session token",
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Could not reach the MCPJam backend to manage API keys",
     );
   }
-  return { userId: session.sub, organizationId: session.orgId };
+
+  const parsed = (await response.json().catch(() => null)) as any;
+  if (response.status < 200 || response.status >= 300) {
+    const message =
+      typeof parsed?.error === "string"
+        ? parsed.error
+        : typeof parsed?.message === "string"
+          ? parsed.message
+          : "API key request failed";
+    throw new WebRouteError(response.status, mapStatusToCode(response.status), message);
+  }
+  return parsed;
 }
 
-async function callWorkOS(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<{ status: number; body: any }> {
-  const key = getWorkOSRestKey();
-  const response = await fetch(`${WORKOS_BASE_URL}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // Empty body (204) — leave null.
+function mapStatusToCode(status: number): ErrorCode {
+  switch (status) {
+    case 400:
+      return ErrorCode.VALIDATION_ERROR;
+    case 401:
+      return ErrorCode.UNAUTHORIZED;
+    case 403:
+      return ErrorCode.FORBIDDEN;
+    case 404:
+      return ErrorCode.NOT_FOUND;
+    case 429:
+      return ErrorCode.RATE_LIMITED;
+    default:
+      return ErrorCode.INTERNAL_ERROR;
   }
-  return { status: response.status, body: parsed };
 }
 
-function mapWorkOSError(status: number, body: any, fallback: string): never {
-  const safeMessage =
-    typeof body?.message === "string"
-      ? body.message
-      : typeof body?.error_description === "string"
-        ? body.error_description
-        : fallback;
-  // WorkOS 422s carry the actual cause in `errors` (e.g.
-  // `[{field: "organization_id", code: "organization_id should not be empty"}]`)
-  // while `message` is just "Validation failed" — keep the field errors or the
-  // failure is undiagnosable from our logs.
-  const fieldErrors = Array.isArray(body?.errors) ? body.errors : undefined;
-  logger.error("WorkOS API call failed", {
-    workos_status: status,
-    message: safeMessage,
-    ...(fieldErrors ? { workos_errors: fieldErrors } : {}),
-  });
-  if (status === 401) {
-    throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, safeMessage);
-  }
-  if (status === 404) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, safeMessage);
-  }
-  if (status === 429) {
-    throw new WebRouteError(429, ErrorCode.RATE_LIMITED, safeMessage);
-  }
-  throw new WebRouteError(
-    500,
-    ErrorCode.INTERNAL_ERROR,
-    safeMessage,
-    fieldErrors ? { workosErrors: fieldErrors } : undefined,
-  );
-}
-
-/**
- * WorkOS REQUIRES `organization_id` when minting a user API key (422
- * "Validation failed" without it). Org-scoped sessions carry the org in the
- * JWT's `org_id` claim; sessions signed in outside an organization context
- * don't, so fall back to the user's active WorkOS memberships. Which WorkOS
- * org hosts the key doesn't affect authorization — that's enforced by the
- * MCPJam org binding — so the first active membership is fine.
- */
-async function resolveWorkosOrgId(session: SessionContext): Promise<string> {
-  if (session.organizationId) {
-    return session.organizationId;
-  }
-  const { status, body } = await callWorkOS(
-    "GET",
-    `/user_management/organization_memberships?user_id=${encodeURIComponent(
-      session.userId,
-    )}&statuses=active`,
-  );
-  if (status < 200 || status >= 300) {
-    mapWorkOSError(status, body, "Failed to resolve your organization");
-  }
-  const first = Array.isArray(body?.data) ? body.data[0] : undefined;
-  const orgId =
-    typeof first?.organization_id === "string" ? first.organization_id : null;
-  if (!orgId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Your account does not belong to a WorkOS organization, which is required to create API keys",
-    );
-  }
-  return orgId;
-}
-
-/**
- * Whether `keyId` belongs to `userId`, checked by walking the user-scoped
- * key list (see DELETE: WorkOS has no single-key GET for user keys).
- */
-async function userOwnsApiKey(userId: string, keyId: string): Promise<boolean> {
-  let after: string | null = null;
-  // Page cap is a runaway guard only — real users have a handful of keys.
-  // Exhausting it with pages still remaining means ownership is UNKNOWN,
-  // which must surface as an error: returning false here would read as a
-  // 404 and make keys beyond the cap silently unrevokeable.
-  for (let page = 0; page < 10; page++) {
-    const params = new URLSearchParams({ limit: "100" });
-    if (after) {
-      params.set("after", after);
-    }
-    const { status, body } = await callWorkOS(
-      "GET",
-      `/user_management/users/${encodeURIComponent(userId)}/api_keys?${params.toString()}`,
-    );
-    if (status < 200 || status >= 300) {
-      mapWorkOSError(status, body, "Failed to load API keys");
-    }
-    const items: any[] = Array.isArray(body?.data) ? body.data : [];
-    if (items.some((key) => key?.id === keyId)) {
-      return true;
-    }
-    after =
-      typeof body?.list_metadata?.after === "string"
-        ? body.list_metadata.after
-        : null;
-    if (!after) {
-      return false;
-    }
-  }
-  logger.error("API key ownership check exhausted page cap", {
-    workos_user_id: userId,
-    workos_key_id: keyId,
-  });
-  throw new WebRouteError(
-    500,
-    ErrorCode.INTERNAL_ERROR,
-    "Could not verify API key ownership",
-  );
+function iso(ms: number | null | undefined): string | null {
+  return typeof ms === "number" ? new Date(ms).toISOString() : null;
 }
 
 const createSchema = z.object({
   name: z.string().min(1).max(120),
   // MCPJam organization id (Convex `Id<'organizations'>`) the key acts inside.
-  // The dialog requires an explicit selection (auto-selected when the user
-  // has exactly one org). This is NOT the WorkOS org id.
+  // The dialog requires an explicit selection (auto-selected when the user has
+  // exactly one org).
   organizationId: z.string().min(1),
 });
 
@@ -275,148 +160,54 @@ apiKeys.post("/", async (c) =>
   handleRoute(c, async () => {
     const raw = await readJsonBody<unknown>(c);
     const { name, organizationId } = parseWithSchema(createSchema, raw);
-    const session = await resolveSessionContext(c);
+    const bearer = assertBearerToken(c);
 
-    // Resolve the MCPJam (Convex) user id for the binding. The session bearer
-    // carries the WorkOS user id (`sub`); the binding records the Convex user
-    // id so the backend can verify org membership at mint time.
-    const mcpjamUser = await resolveUserByExternalId(session.userId);
-    if (!mcpjamUser) {
-      throw new WebRouteError(
-        401,
-        ErrorCode.UNAUTHORIZED,
-        "Could not resolve your MCPJam account",
-      );
-    }
-
-    const payload: Record<string, unknown> = {
+    const result = await callBackendApiKeys("POST", "", bearer, {
       name,
-      organization_id: await resolveWorkosOrgId(session),
-    };
-
-    const { status, body } = await callWorkOS(
-      "POST",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys`,
-      payload,
-    );
-
-    if (status < 200 || status >= 300) {
-      mapWorkOSError(status, body, "Failed to create API key");
-    }
-
-    const workosKeyId = typeof body?.id === "string" ? body.id : null;
-    if (!workosKeyId) {
-      // WorkOS always returns an id on 2xx; without one we can neither bind
-      // nor later revoke the key, so fail loud rather than ship a dead key.
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "WorkOS did not return an API key id",
-      );
-    }
-
-    // Bind the key to the selected MCPJam org. A key with no binding is
-    // orphaned (rejected on /api/v1/* with 401 UNAUTHORIZED, details.reason
-    // "ORPHANED_KEY"), so if the bind fails we revoke the WorkOS key
-    // immediately and report the failure — never leave an unusable key behind.
-    try {
-      await createWorkosKeyBinding({
-        workosApiKeyId: workosKeyId,
-        mcpjamOrganizationId: organizationId,
-        mintedByUserId: mcpjamUser._id,
-      });
-    } catch (bindingError) {
-      logger.error("API key org binding failed; revoking WorkOS key", {
-        workos_key_id: workosKeyId,
-        error:
-          bindingError instanceof Error
-            ? bindingError.message
-            : String(bindingError),
-      });
-      try {
-        await callWorkOS(
-          "DELETE",
-          `/api_keys/${encodeURIComponent(workosKeyId)}`,
-        );
-      } catch (revokeError) {
-        // Best-effort cleanup. If this also fails the WorkOS key lingers with
-        // no binding — not a security hole (the bearer middleware rejects
-        // orphaned keys) but litter worth flagging.
-        logger.error("Failed to revoke WorkOS key after binding failure", {
-          workos_key_id: workosKeyId,
-          error:
-            revokeError instanceof Error
-              ? revokeError.message
-              : String(revokeError),
-        });
-      }
-
-      const message =
-        bindingError instanceof Error
-          ? bindingError.message
-          : "Failed to bind API key";
-      if (bindingError instanceof WorkosKeyBindingError) {
-        // Surface a client-fault rejection as itself; the key was not created.
-        if (bindingError.status === 400) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            `${message} (API key not created)`,
-          );
-        }
-        if (bindingError.status === 403) {
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            `${message} (API key not created)`,
-          );
-        }
-      }
+      organizationId,
+    });
+    const key = result?.key as BackendKey | undefined;
+    if (!key || typeof key.value !== "string") {
       throw new WebRouteError(
         502,
         ErrorCode.SERVER_UNREACHABLE,
-        "Could not bind the API key to your organization. The key was not created.",
+        "Backend did not return the new API key",
       );
     }
 
     logger.info("API key minted", {
       event: "api_key_created",
       auth_method: "session",
-      workos_key_id: workosKeyId,
-      actor_user_id: session.userId,
+      key_id: key.id,
       mcpjam_organization_id: organizationId,
     });
 
-    return body;
+    // Exact `CreatedApiKey` shape the client expects.
+    return {
+      id: key.id,
+      name: key.name,
+      obfuscated_value: key.obfuscatedValue,
+      created_at: iso(key.createdAt),
+      last_used_at: null,
+      value: key.value,
+    };
   }),
 );
 
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
-    const session = await resolveSessionContext(c);
-    const params = new URLSearchParams();
-    if (session.organizationId) {
-      params.set("organization_id", session.organizationId);
-    }
-    const qs = params.toString();
-    const { status, body } = await callWorkOS(
-      "GET",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys${
-        qs ? `?${qs}` : ""
-      }`,
-    );
-
-    if (status < 200 || status >= 300) {
-      mapWorkOSError(status, body, "Failed to list API keys");
-    }
-
-    // WorkOS returns `{ data: [...] }` or `{ data: [...], list_metadata: ... }`.
-    const items = Array.isArray(body?.data)
-      ? body.data
-      : Array.isArray(body)
-        ? body
-        : [];
-    return { items };
+    const bearer = assertBearerToken(c);
+    const result = await callBackendApiKeys("GET", "", bearer);
+    const keys: BackendKey[] = Array.isArray(result?.keys) ? result.keys : [];
+    return {
+      items: keys.map((k) => ({
+        id: k.id,
+        name: k.name,
+        obfuscated_value: k.obfuscatedValue,
+        created_at: iso(k.createdAt),
+        last_used_at: iso(k.lastUsedAt),
+      })),
+    };
   }),
 );
 
@@ -430,42 +221,26 @@ apiKeys.delete("/:id", async (c) =>
         "Missing API key id",
       );
     }
-    const session = await resolveSessionContext(c);
+    const bearer = assertBearerToken(c);
 
-    // Cross-user defense in depth: WorkOS does not enforce per-user
-    // ownership for the org-level admin key, and it exposes no single-key
-    // GET for user keys (404s even for existing ids). The key must appear
-    // in the session user's OWN key list — enumeration under the user is
-    // the ownership proof. An unknown or foreign id reads as not-found.
-    if (!(await userOwnsApiKey(session.userId, id))) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
-    }
-
-    const { status, body } = await callWorkOS(
-      "DELETE",
-      `/api_keys/${encodeURIComponent(id)}`,
-    );
-    if (status !== 204 && (status < 200 || status >= 300)) {
-      mapWorkOSError(status, body, "Failed to revoke API key");
-    }
-
-    // Remove the org binding. Best-effort: the backend delete is idempotent
-    // and the WorkOS key is already gone, so a cleanup failure (including a
-    // binding that was never written) must not fail the user-facing revoke.
     try {
-      await removeWorkosKeyBinding(id);
+      await callBackendApiKeys(
+        "DELETE",
+        `?keyId=${encodeURIComponent(id)}`,
+        bearer,
+      );
     } catch (error) {
-      logger.warn("Failed to remove API key org binding during revoke", {
-        workos_key_id: id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // Normalize the backend's "Key not found" message to the client's.
+      if (error instanceof WebRouteError && error.status === 404) {
+        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+      }
+      throw error;
     }
 
     logger.info("API key revoked", {
       event: "api_key_revoked",
       auth_method: "session",
-      workos_key_id: id,
-      actor_user_id: session.userId,
+      key_id: id,
     });
 
     return { ok: true };

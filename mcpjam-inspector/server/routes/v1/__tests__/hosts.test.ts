@@ -14,16 +14,10 @@ import { Hono } from "hono";
 
 const {
   validateGuestTokenMock,
-  validateApiKeyMock,
-  resolveUserByExternalIdMock,
-  lookupWorkosKeyBindingMock,
   convexQueryMock,
   convexMutationMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
-  validateApiKeyMock: vi.fn(),
-  resolveUserByExternalIdMock: vi.fn(),
-  lookupWorkosKeyBindingMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexMutationMock: vi.fn(),
 }));
@@ -32,19 +26,15 @@ vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
 
-// WorkOS API-key seams — only reached by `sk_` bearers (none here), but the
-// auth middleware imports them at module load, so stub them out.
-vi.mock("../../../services/workos-client.js", () => ({
-  getWorkOSClient: () => ({
-    apiKeys: { createValidation: validateApiKeyMock },
-  }),
-}));
-vi.mock("../../../services/identity.js", () => ({
-  resolveUserByExternalId: resolveUserByExternalIdMock,
-}));
-vi.mock("../../../services/workos-key-bindings.js", () => ({
-  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
-}));
+// Platform API-key seam — only reached by `sk_` bearers (none here), but the
+// auth middleware imports it at module load, so stub it out.
+vi.mock(
+  "../../../services/platform-api-key-validation.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return { ...actual, validatePlatformApiKey: vi.fn(async () => null) };
+  },
+);
 
 // The host routes build their Convex clients via `new ConvexHttpClient(...)`
 // (directly and through `createConvexClients`), so a single mock here backs

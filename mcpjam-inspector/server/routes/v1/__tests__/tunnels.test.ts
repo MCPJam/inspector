@@ -6,37 +6,24 @@ import { Hono } from "hono";
 // passthrough), existed/previous* derivation, and the close proxy that must
 // never touch the server record.
 
-const {
-  validateGuestTokenMock,
-  convexMutationMock,
-  validateApiKeyMock,
-  resolveUserByExternalIdMock,
-  lookupWorkosKeyBindingMock,
-} = vi.hoisted(() => ({
+const { validateGuestTokenMock, convexMutationMock } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   convexMutationMock: vi.fn(),
-  validateApiKeyMock: vi.fn(),
-  resolveUserByExternalIdMock: vi.fn(),
-  lookupWorkosKeyBindingMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
 
-vi.mock("../../../services/workos-client.js", () => ({
-  getWorkOSClient: () => ({
-    apiKeys: { createValidation: validateApiKeyMock },
-  }),
-}));
-
-vi.mock("../../../services/identity.js", () => ({
-  resolveUserByExternalId: resolveUserByExternalIdMock,
-}));
-
-vi.mock("../../../services/workos-key-bindings.js", () => ({
-  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
-}));
+// Platform API-key seam — only reached by `sk_` bearers (none here), but the
+// auth middleware imports it at module load, so stub it out.
+vi.mock(
+  "../../../services/platform-api-key-validation.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return { ...actual, validatePlatformApiKey: vi.fn(async () => null) };
+  },
+);
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi.fn().mockImplementation(() => ({

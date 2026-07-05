@@ -1,160 +1,227 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, expectJson } from "./helpers/test-app.js";
 
-// The session bearer is verified in-route (resolveSessionContext); stub it to
-// a fixed WorkOS user so tests exercise the WorkOS REST flow, not JWT crypto.
-vi.mock("../../../services/authkit-jwt.js", async (importOriginal) => {
-  const actual = await importOriginal<object>();
-  return {
-    ...actual,
-    verifyAuthKitToken: vi.fn().mockResolvedValue({
-      sub: "user_session_1",
-      orgId: undefined,
-    }),
-  };
-});
+// The api-keys routes forward the caller's bearer to the backend's
+// `/web/api-keys` route, which does all auth/validation. These tests stub the
+// backend `fetch` and assert the forwarding + response-shape mapping; they no
+// longer touch WorkOS.
 
-// Convex binding writes are out of scope here — keep the real
-// WorkosKeyBindingError class but neuter the network calls.
-vi.mock("../../../services/workos-key-bindings.js", async (importOriginal) => {
-  const actual = await importOriginal<object>();
-  return {
-    ...actual,
-    createWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
-    removeWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
-  };
-});
+const BACKEND = "https://backend.test";
+const KEYS_URL = `${BACKEND}/web/api-keys`;
 
-const OWNED_KEY_ID = "api_key_owned_1";
-const USER_KEYS_PATH = "/user_management/users/user_session_1/api_keys";
-
-function workosJson(body: unknown, status = 200): Response {
+function backendJson(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
 
-function keyRecord(id: string) {
-  return {
-    object: "api_key",
-    id,
-    owner: { type: "user", id: "user_session_1" },
-    name: id,
-  };
-}
-
-/**
- * Stub WorkOS: serve the user-scoped key list from `pages` (each entry is one
- * page; `list_metadata.after` chains them) and accept the admin DELETE.
- */
-function stubWorkOS(pages: Array<{ data: unknown[]; after?: string | null }>) {
-  const deleted: string[] = [];
+/** Stub global fetch to answer the backend `/web/api-keys` route. */
+function stubBackend(responder: (url: URL, init: RequestInit) => Response) {
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = new URL(String(input));
-    const method = init?.method ?? "GET";
-    if (method === "GET" && url.pathname === USER_KEYS_PATH) {
-      const after = url.searchParams.get("after");
-      const index = after ? Number(after.replace("cursor_", "")) : 0;
-      const page = pages[index];
-      if (!page) {
-        return workosJson({ message: "bad cursor" }, 400);
-      }
-      return workosJson({
-        object: "list",
-        data: page.data,
-        list_metadata: { before: null, after: page.after ?? null },
-      });
+    if (url.pathname === "/web/api-keys") {
+      return responder(url, init ?? {});
     }
-    if (method === "DELETE" && url.pathname.startsWith("/api_keys/")) {
-      deleted.push(decodeURIComponent(url.pathname.slice("/api_keys/".length)));
-      return new Response(null, { status: 204 });
-    }
-    return workosJson({ message: "unexpected WorkOS call" }, 500);
+    return backendJson({ ok: false, error: "unexpected call" }, 500);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, deleted };
+  return fetchMock;
 }
 
-async function deleteKey(app: ReturnType<typeof createWebTestApp>["app"], id: string) {
-  return app.request(`/api/web/api-keys/${id}`, {
-    method: "DELETE",
-    headers: { Authorization: "Bearer session-jwt" },
+const { app } = createWebTestApp();
+
+function authed(path: string, init: RequestInit = {}) {
+  return app.request(path, {
+    ...init,
+    headers: {
+      Authorization: "Bearer session-jwt",
+      ...(init.headers ?? {}),
+    },
   });
 }
 
-describe("web routes — API key revoke ownership", () => {
-  const { app } = createWebTestApp();
+beforeEach(() => {
+  vi.stubEnv("CONVEX_HTTP_URL", BACKEND);
+});
 
-  beforeEach(() => {
-    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe("web routes — API keys (backend forwarding)", () => {
+  it("forwards the caller's bearer verbatim and maps the create response", async () => {
+    const created = {
+      ok: true,
+      key: {
+        id: "key_1",
+        name: "ci",
+        obfuscatedValue: "sk_...abcd",
+        createdAt: 1_730_000_000_000,
+        value: "sk_mcpjam_" + "a".repeat(48),
+      },
+    };
+    const fetchMock = stubBackend(() => backendJson(created));
+
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "ci", organizationId: "org_1" }),
+      }),
+    );
+
+    expect(status).toBe(200);
+    // Exact CreatedApiKey snake_case shape.
+    expect(data).toEqual({
+      id: "key_1",
+      name: "ci",
+      obfuscated_value: "sk_...abcd",
+      created_at: new Date(1_730_000_000_000).toISOString(),
+      last_used_at: null,
+      value: "sk_mcpjam_" + "a".repeat(48),
+    });
+
+    const [target, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(target).toBe(KEYS_URL);
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer session-jwt",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: "ci",
+      organizationId: "org_1",
+    });
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
+  it("maps the list response to { items: [...] } snake_case", async () => {
+    stubBackend(() =>
+      backendJson({
+        ok: true,
+        keys: [
+          {
+            id: "key_1",
+            name: "ci",
+            obfuscatedValue: "sk_...abcd",
+            createdAt: 1_730_000_000_000,
+            lastUsedAt: 1_730_000_500_000,
+          },
+          {
+            id: "key_2",
+            name: "local",
+            obfuscatedValue: "sk_...efgh",
+            createdAt: 1_730_000_100_000,
+            lastUsedAt: null,
+          },
+        ],
+      }),
+    );
+
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys", { method: "GET" }),
+    );
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      items: [
+        {
+          id: "key_1",
+          name: "ci",
+          obfuscated_value: "sk_...abcd",
+          created_at: new Date(1_730_000_000_000).toISOString(),
+          last_used_at: new Date(1_730_000_500_000).toISOString(),
+        },
+        {
+          id: "key_2",
+          name: "local",
+          obfuscated_value: "sk_...efgh",
+          created_at: new Date(1_730_000_100_000).toISOString(),
+          last_used_at: null,
+        },
+      ],
+    });
   });
 
-  it("revokes a key that appears in the session user's list", async () => {
-    const { deleted } = stubWorkOS([
-      { data: [keyRecord("api_key_other"), keyRecord(OWNED_KEY_ID)] },
-    ]);
+  it("forwards the key id on revoke and returns { ok: true }", async () => {
+    const fetchMock = stubBackend(() => backendJson({ ok: true }));
 
-    const { status, data } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys/key_del_1", { method: "DELETE" }),
+    );
 
     expect(status).toBe(200);
     expect(data).toEqual({ ok: true });
-    expect(deleted).toEqual([OWNED_KEY_ID]);
+    const [target, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(target).toBe(`${KEYS_URL}?keyId=key_del_1`);
+    expect(init.method).toBe("DELETE");
   });
 
-  it("404s for a foreign or unknown key id without calling DELETE", async () => {
-    const { deleted, fetchMock } = stubWorkOS([
-      { data: [keyRecord("api_key_other")] },
-    ]);
+  it("maps a backend 404 on revoke to 404 NOT_FOUND", async () => {
+    stubBackend(() => backendJson({ ok: false, error: "Key not found" }, 404));
 
-    const { status, data } = await expectJson(
-      await deleteKey(app, "api_key_someone_elses"),
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys/key_missing", { method: "DELETE" }),
     );
 
     expect(status).toBe(404);
-    expect(data).toMatchObject({ code: "NOT_FOUND" });
-    expect(deleted).toEqual([]);
-    // Only the ownership list walk ran.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(data).toMatchObject({ code: "NOT_FOUND", message: "API key not found" });
   });
 
-  it("finds a key on a later page of the list", async () => {
-    const { deleted, fetchMock } = stubWorkOS([
-      { data: [keyRecord("api_key_other")], after: "cursor_1" },
-      { data: [keyRecord(OWNED_KEY_ID)] },
-    ]);
-
-    const { status, data } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
-
-    expect(status).toBe(200);
-    expect(data).toEqual({ ok: true });
-    expect(deleted).toEqual([OWNED_KEY_ID]);
-    // Two list pages + one DELETE.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const secondListUrl = new URL(String(fetchMock.mock.calls[1][0]));
-    expect(secondListUrl.searchParams.get("after")).toBe("cursor_1");
-  });
-
-  it("errors (not 404) when the page cap is exhausted with pages remaining", async () => {
-    // Every page points at itself, so the walk never terminates naturally.
-    const { deleted } = stubWorkOS([
-      { data: [keyRecord("api_key_other")], after: "cursor_0" },
-    ]);
-
-    const { status, data } = await expectJson(
-      await deleteKey(app, "api_key_beyond_cap"),
+  it("passes a backend 403 through as 403 FORBIDDEN", async () => {
+    stubBackend(() =>
+      backendJson(
+        { ok: false, error: "Minting user is not a member of the target organization" },
+        403,
+      ),
     );
 
-    expect(status).toBe(500);
-    expect(data).toMatchObject({
-      code: "INTERNAL_ERROR",
-      message: "Could not verify API key ownership",
-    });
-    expect(deleted).toEqual([]);
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "ci", organizationId: "org_x" }),
+      }),
+    );
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("maps an unreachable backend to 502 SERVER_UNREACHABLE", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("connect ECONNREFUSED");
+      }),
+    );
+
+    const { status, data } = await expectJson<any>(
+      await authed("/api/web/api-keys", { method: "GET" }),
+    );
+
+    expect(status).toBe(502);
+    expect(data).toMatchObject({ code: "SERVER_UNREACHABLE" });
+  });
+
+  it("rejects an sk_ bearer with 403 before any backend call", async () => {
+    const fetchMock = stubBackend(() => backendJson({ ok: true }));
+
+    const { status, data } = await expectJson<any>(
+      await app.request("/api/web/api-keys", {
+        method: "GET",
+        headers: { Authorization: "Bearer sk_mcpjam_" + "a".repeat(48) },
+      }),
+    );
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({ code: "FORBIDDEN" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

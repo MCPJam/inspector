@@ -7,31 +7,29 @@ import type { Context } from "hono";
  * map, but reaching for `c.set(key, value)` with an arbitrary string is
  * untyped — typos slip through and every reader has to widen `unknown`.
  *
- * The WorkOS API key validation is the motivating use case: a single
+ * The platform API key validation is the motivating use case: a single
  * `/api/v1/...` request hits the bearer middleware AND `authorizeBatch`
- * — without per-request memoization we would pay two ~200ms WorkOS
- * validate round-trips for one user-visible request. The cache is
- * intentionally request-local (no cross-request LRU) so revocation
- * stays immediate.
+ * — without per-request memoization we would pay two Convex validate
+ * round-trips for one user-visible request. The cache is intentionally
+ * request-local (no cross-request LRU) so revocation stays immediate.
  */
 export interface RequestLocalMap {
-  workosApiKeyValidation: unknown;
   /**
-   * Memoized result of the org-binding lookup for an `sk_…` key. Like the
-   * validation cache, this keeps a single user-visible request to one backend
-   * round-trip even when `bearerAuthMiddleware` runs on both a parent router
-   * and a sub-router. `null` is a real cached value (the lookup ran and the
-   * key is orphaned); `undefined` means "not looked up yet".
+   * Memoized result of validating an `sk_…` key against the backend for this
+   * request. `null` is a real cached value (the lookup ran and the key is
+   * invalid/revoked); `undefined` means "not looked up yet".
    */
-  workosApiKeyBinding: { mcpjamOrganizationId: string } | null;
+  platformApiKeyValidation:
+    | { keyId: string; userId: string; externalId: string; organizationId: string }
+    | null;
   /**
-   * Set once the per-key WorkOS rate-limit token has been debited for this
-   * request. The limit is per user-visible request, not per middleware
-   * invocation — this guards against double counting if `bearerAuthMiddleware`
-   * ever runs on both a parent and a child router (the same scenario the
-   * caches above defend against).
+   * Set once the per-key rate-limit token has been debited for this request.
+   * The limit is per user-visible request, not per middleware invocation —
+   * this guards against double counting if `bearerAuthMiddleware` ever runs on
+   * both a parent and a child router (the same scenario the cache above
+   * defends against).
    */
-  workosRateLimitConsumed: boolean;
+  apiKeyRateLimitConsumed: boolean;
 }
 
 export function getRequestLocal<K extends keyof RequestLocalMap>(

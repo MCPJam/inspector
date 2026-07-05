@@ -6,28 +6,22 @@ import { Hono } from "hono";
 // static published-package metadata read from the harness registry — so the
 // auth seams are stubbed only to satisfy the shared bearer middleware.
 
-const { validateGuestTokenMock, validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
-  vi.hoisted(() => ({
-    validateGuestTokenMock: vi.fn(),
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
-  }));
+const { validateGuestTokenMock } = vi.hoisted(() => ({
+  validateGuestTokenMock: vi.fn(),
+}));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
-vi.mock("../../../services/workos-client.js", () => ({
-  getWorkOSClient: () => ({
-    apiKeys: { createValidation: validateApiKeyMock },
-  }),
-}));
-vi.mock("../../../services/identity.js", () => ({
-  resolveUserByExternalId: resolveUserByExternalIdMock,
-}));
-vi.mock("../../../services/workos-key-bindings.js", () => ({
-  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
-}));
+// Only reached by `sk_` bearers (none in these tests); stubbed because the
+// auth middleware imports it at module load.
+vi.mock(
+  "../../../services/platform-api-key-validation.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return { ...actual, validatePlatformApiKey: vi.fn(async () => null) };
+  },
+);
 
 import v1Routes from "../index.js";
 

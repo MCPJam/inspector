@@ -1,47 +1,38 @@
 /**
  * Bearer Auth Middleware Tests
  *
- * Focus: the `sk_` (WorkOS API key) branch — the security-critical new code.
+ * Focus: the `sk_` (platform API key) branch — the security-critical code.
  * Covers:
  *   - missing / wrong-format bearer → 401
- *   - `sk_` invalid → 401
- *   - `sk_` valid + bound → next() runs with identity AND org context set
- *   - `sk_` valid but NO org binding → 401 UNAUTHORIZED (details.reason ORPHANED_KEY)
- *   - binding lookup throws → 500
+ *   - malformed `sk_` (fails the format gate) → 401 without a backend call
+ *   - `sk_` that validates → next() runs with identity AND org context set
+ *   - `sk_` that the backend rejects (unknown/revoked/left-org) → 401
+ *   - validation throws → 500
  *   - request-local memoization (validate called once per request)
  *   - per-key rate limit triggers 429 after burst
  *   - cross-key rate limit isolation
  *
- * WorkOS SDK, identity, and binding helpers are mocked at module level.
+ * Only the backend validation call is mocked; `hashApiKey` stays real so the
+ * rate-limit buckets key off real hashes (distinct keys → distinct buckets).
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Hono } from "hono";
 
-// Mocks must be available to the `vi.mock` factories, which vitest hoists
-// above the imports. `vi.hoisted` is the supported way to initialize the mock
-// fns before those factories run (a plain `const fooMock = vi.fn()` lands in
-// the temporal dead zone when the factory executes at import time).
-const { validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
-  vi.hoisted(() => ({
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
-  }));
-
-vi.mock("../../services/workos-client.js", () => ({
-  getWorkOSClient: () => ({
-    apiKeys: { createValidation: validateApiKeyMock },
-  }),
+const { validatePlatformApiKeyMock } = vi.hoisted(() => ({
+  validatePlatformApiKeyMock: vi.fn(),
 }));
 
-vi.mock("../../services/identity.js", () => ({
-  resolveUserByExternalId: resolveUserByExternalIdMock,
-}));
-
-vi.mock("../../services/workos-key-bindings.js", () => ({
-  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
-}));
+vi.mock(
+  "../../services/platform-api-key-validation.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<object>();
+    return {
+      ...actual, // keep the real hashApiKey
+      validatePlatformApiKey: validatePlatformApiKeyMock,
+    };
+  },
+);
 
 // Guest validation must always reject for these tests — only the sk_ branch is
 // exercised. The real guest validator does network calls we don't want here.
@@ -54,8 +45,20 @@ vi.mock("../../services/guest-token.js", () => ({
 
 import {
   bearerAuthMiddleware,
-  resetWorkOSRateLimitForTests,
+  resetApiKeyRateLimitForTests,
 } from "../bearer-auth.js";
+
+// A well-formed platform key: `sk_mcpjam_` + 48 hex chars.
+function key(hexChar: string): string {
+  return "sk_mcpjam_" + hexChar.repeat(48);
+}
+
+const VALID = {
+  keyId: "key_42",
+  userId: "mcpjam_user_42",
+  externalId: "user_42",
+  organizationId: "org_42",
+};
 
 function createApp(): Hono {
   const app = new Hono();
@@ -74,14 +77,8 @@ function createApp(): Hono {
 }
 
 beforeEach(() => {
-  validateApiKeyMock.mockReset();
-  resolveUserByExternalIdMock.mockReset();
-  lookupWorkosKeyBindingMock.mockReset();
-  // Default: every valid key is bound to an org. Orphaned-key tests override.
-  lookupWorkosKeyBindingMock.mockResolvedValue({
-    mcpjamOrganizationId: "org_default",
-  });
-  resetWorkOSRateLimitForTests();
+  validatePlatformApiKeyMock.mockReset();
+  resetApiKeyRateLimitForTests();
 });
 
 describe("bearerAuthMiddleware — header gate", () => {
@@ -98,99 +95,57 @@ describe("bearerAuthMiddleware — header gate", () => {
   });
 });
 
-describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
-  it("returns 401 when WorkOS marks the key as invalid", async () => {
-    validateApiKeyMock.mockResolvedValueOnce({ apiKey: null });
-
+describe("bearerAuthMiddleware — sk_ platform API key branch", () => {
+  it("rejects a malformed sk_ key with 401 and never calls the backend", async () => {
     const res = await createApp().request("/test", {
-      headers: { authorization: "Bearer sk_invalid_value" },
+      headers: { authorization: "Bearer sk_not_a_valid_key" },
     });
 
     expect(res.status).toBe(401);
     const body = (await res.json()) as { code?: string; message?: string };
     expect(body.code).toBe("UNAUTHORIZED");
     expect(body.message).toMatch(/Invalid API key/i);
-    expect(validateApiKeyMock).toHaveBeenCalledTimes(1);
-    expect(resolveUserByExternalIdMock).not.toHaveBeenCalled();
+    expect(validatePlatformApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("returns 401 when WorkOS validates but the MCPJam user is unknown", async () => {
-    validateApiKeyMock.mockResolvedValueOnce({
-      apiKey: { id: "api_key_x", owner: { id: "user_x" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValueOnce(null);
+  it("returns 401 when the backend rejects the key (unknown/revoked/left-org)", async () => {
+    validatePlatformApiKeyMock.mockResolvedValueOnce(null);
 
     const res = await createApp().request("/test", {
-      headers: { authorization: "Bearer sk_valid_but_unknown" },
+      headers: { authorization: `Bearer ${key("a")}` },
     });
 
     expect(res.status).toBe(401);
-    const body = (await res.json()) as { message?: string };
-    expect(body.message).toMatch(/Unknown user/i);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("UNAUTHORIZED");
+    expect(body.message).toMatch(/Invalid API key/i);
+    expect(validatePlatformApiKeyMock).toHaveBeenCalledTimes(1);
   });
 
-  it("sets identity AND org context and calls next() on a valid, bound sk_ key", async () => {
-    validateApiKeyMock.mockResolvedValueOnce({
-      apiKey: { id: "api_key_42", owner: { id: "user_42" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValueOnce({
-      _id: "mcpjam_user_42",
-    });
-    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
-      mcpjamOrganizationId: "org_42",
-    });
+  it("sets identity + org context and calls next() on a valid key", async () => {
+    validatePlatformApiKeyMock.mockResolvedValueOnce(VALID);
 
     const res = await createApp().request("/test", {
-      headers: { authorization: "Bearer sk_live_abc" },
+      headers: { authorization: `Bearer ${key("a")}` },
     });
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
+    // Context field names are unchanged from the WorkOS era so downstream
+    // consumers keep working; `workosUserId` carries the externalId.
     expect(body.authMethod).toBe("workos_api_key");
-    expect(body.workosApiKeyId).toBe("api_key_42");
+    expect(body.workosApiKeyId).toBe("key_42");
     expect(body.workosUserId).toBe("user_42");
     expect(body.mcpjamUserId).toBe("mcpjam_user_42");
-    // The org the key is bound to — what gets forwarded as
-    // `x-mcpjam-acting-in-org`.
     expect(body.mcpjamOrganizationId).toBe("org_42");
-    expect(lookupWorkosKeyBindingMock).toHaveBeenCalledWith("api_key_42");
   });
 
-  it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {
-    validateApiKeyMock.mockResolvedValueOnce({
-      apiKey: { id: "api_key_orphan", owner: { id: "user_orphan" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
-    // 404 from the backend → null → orphaned.
-    lookupWorkosKeyBindingMock.mockResolvedValueOnce(null);
+  it("returns 500 when validation throws", async () => {
+    validatePlatformApiKeyMock.mockRejectedValueOnce(new Error("backend down"));
 
     const res = await createApp().request("/test", {
-      headers: { authorization: "Bearer sk_orphan" },
-    });
-
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as {
-      code?: string;
-      message?: string;
-      details?: { reason?: string };
-    };
-    // Stays within the v1 contract's error-code union; the orphaned-key
-    // specifics live in the opaque `details` bag, not a new wire code.
-    expect(body.code).toBe("UNAUTHORIZED");
-    expect(body.details?.reason).toBe("ORPHANED_KEY");
-    expect(body.message).toMatch(/not bound to an organization/i);
-  });
-
-  it("returns 500 when the org binding lookup throws", async () => {
-    validateApiKeyMock.mockResolvedValueOnce({
-      apiKey: { id: "api_key_err", owner: { id: "user_err" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
-    lookupWorkosKeyBindingMock.mockRejectedValueOnce(new Error("backend down"));
-
-    const res = await createApp().request("/test", {
-      headers: { authorization: "Bearer sk_err" },
+      headers: { authorization: `Bearer ${key("a")}` },
     });
 
     expect(res.status).toBe(500);
@@ -201,10 +156,7 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
 
 describe("bearerAuthMiddleware — per-key rate limit", () => {
   it("admits at least 10 burst requests for the same key, then rejects with 429", async () => {
-    validateApiKeyMock.mockResolvedValue({
-      apiKey: { id: "api_key_burst", owner: { id: "user_burst" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValue({ _id: "mcpjam_user_burst" });
+    validatePlatformApiKeyMock.mockResolvedValue(VALID);
 
     const app = createApp();
     const ok: number[] = [];
@@ -212,7 +164,7 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
     let lastThrottledStatus = 0;
     for (let i = 0; i < 12; i++) {
       const res = await app.request("/test", {
-        headers: { authorization: "Bearer sk_burst" },
+        headers: { authorization: `Bearer ${key("a")}` },
       });
       if (res.status === 200) {
         ok.push(i);
@@ -226,39 +178,27 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
     expect(lastThrottledStatus).toBe(429);
   });
 
-  it("isolates rate-limit buckets per WorkOS key id", async () => {
-    // Bucket A — drain it
-    validateApiKeyMock.mockImplementation(async ({ value }) => ({
-      apiKey: {
-        id: value === "sk_a" ? "api_key_a" : "api_key_b",
-        owner: { id: value === "sk_a" ? "user_a" : "user_b" },
-      },
-    }));
-    resolveUserByExternalIdMock.mockResolvedValue({ _id: "mcpjam_user" });
+  it("isolates rate-limit buckets per key (distinct hashes)", async () => {
+    validatePlatformApiKeyMock.mockResolvedValue(VALID);
 
     const app = createApp();
+    // Drain bucket for key A.
     for (let i = 0; i < 11; i++) {
       await app.request("/test", {
-        headers: { authorization: "Bearer sk_a" },
+        headers: { authorization: `Bearer ${key("a")}` },
       });
     }
-    // Now sk_b should still succeed (separate bucket)
+    // Key B hashes differently → separate bucket → still admitted.
     const res = await app.request("/test", {
-      headers: { authorization: "Bearer sk_b" },
+      headers: { authorization: `Bearer ${key("b")}` },
     });
     expect(res.status).toBe(200);
   });
 });
 
 describe("bearerAuthMiddleware — request-local memoization", () => {
-  it("only invokes WorkOS validate + binding lookup once per request even when bearer-auth runs multiple times", async () => {
-    validateApiKeyMock.mockResolvedValue({
-      apiKey: { id: "api_key_memo", owner: { id: "user_memo" } },
-    });
-    resolveUserByExternalIdMock.mockResolvedValue({ _id: "mcpjam_user_memo" });
-    lookupWorkosKeyBindingMock.mockResolvedValue({
-      mcpjamOrganizationId: "org_memo",
-    });
+  it("validates once per request even when bearer-auth runs multiple times", async () => {
+    validatePlatformApiKeyMock.mockResolvedValue(VALID);
 
     // Simulate the real wiring: bearer-auth on a parent router AND on a
     // sub-router (as `/api/web/api-keys/*` does explicitly).
@@ -268,11 +208,10 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
     app.get("/double", (c) => c.json({ ok: true }));
 
     const res = await app.request("/double", {
-      headers: { authorization: "Bearer sk_memo" },
+      headers: { authorization: `Bearer ${key("a")}` },
     });
 
     expect(res.status).toBe(200);
-    expect(validateApiKeyMock).toHaveBeenCalledTimes(1);
-    expect(lookupWorkosKeyBindingMock).toHaveBeenCalledTimes(1);
+    expect(validatePlatformApiKeyMock).toHaveBeenCalledTimes(1);
   });
 });
