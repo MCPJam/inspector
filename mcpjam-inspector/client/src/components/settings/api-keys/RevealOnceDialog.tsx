@@ -50,17 +50,17 @@ export function RevealOnceDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="gap-4 sm:max-w-lg">
+      <DialogContent className="w-[calc(100vw-2rem)] gap-4 overflow-hidden sm:max-w-lg">
         <DialogHeader className="gap-2 text-left">
           <DialogTitle>Copy your API key</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 text-sm text-muted-foreground">
-              <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-foreground">
+              <div className="flex w-full min-w-0 items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-foreground">
                 <AlertTriangle
                   className="mt-0.5 size-4 shrink-0 text-warning"
                   aria-hidden
                 />
-                <p className="text-sm">
+                <p className="min-w-0 text-sm">
                   This key won't be shown again. Copy it now and store it
                   somewhere safe. If you lose it, revoke it and create a new
                   one.
@@ -70,8 +70,8 @@ export function RevealOnceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
-          <code className="flex-1 select-all overflow-x-auto whitespace-nowrap font-mono text-xs text-foreground">
+        <div className="flex w-full min-w-0 items-center gap-2 rounded-md border bg-muted/40 p-2">
+          <code className="scrollbar-hidden min-w-0 flex-1 select-all overflow-x-auto whitespace-nowrap font-mono text-xs text-foreground">
             {value ?? ""}
           </code>
           <Button
@@ -81,6 +81,7 @@ export function RevealOnceDialog({
             onClick={() => void handleCopy()}
             disabled={!value}
             aria-label="Copy API key"
+            className="shrink-0"
           >
             {copied ? (
               <>
