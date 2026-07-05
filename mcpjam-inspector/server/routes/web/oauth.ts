@@ -7,7 +7,12 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
-import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+  statusToErrorCode,
+} from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
@@ -29,17 +34,6 @@ oauthWeb.use("*", bearerAuthMiddleware);
 
 // Rate limit guest users on OAuth proxy routes
 oauthWeb.use("*", guestRateLimitMiddleware);
-
-function statusToErrorCode(status: number): ErrorCode {
-  if (status === 400) return ErrorCode.VALIDATION_ERROR;
-  if (status === 401) return ErrorCode.UNAUTHORIZED;
-  if (status === 403) return ErrorCode.FORBIDDEN;
-  if (status === 404) return ErrorCode.NOT_FOUND;
-  if (status === 429) return ErrorCode.RATE_LIMITED;
-  if (status === 502) return ErrorCode.SERVER_UNREACHABLE;
-  if (status === 504) return ErrorCode.TIMEOUT;
-  return ErrorCode.INTERNAL_ERROR;
-}
 
 function webErrorCompat(c: Context, routeError: WebRouteError) {
   // TODO(hosted-v1.1): Remove `error` once clients migrate to `{ code, message }`.

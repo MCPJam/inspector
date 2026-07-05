@@ -27,6 +27,11 @@ import { logger } from "../utils/logger.js";
 // network call — is what actually stops a random-garbage flood (and cheaply
 // bounces legacy WorkOS-format `sk_…` keys); the per-key bucket alone would
 // grant each novel invalid key one backend round-trip.
+//
+// FORMAT CONTRACT: must match what the backend mints in
+// `generatePlatformApiKeyParts` (mcpjam-backend repo, convex/lib/keys.ts —
+// format test in convex/__tests__/platformApiKeys.test.ts). Loosening or
+// tightening either side alone strands newly minted keys at this gate.
 const PLATFORM_API_KEY_RE = /^sk_mcpjam_[0-9a-f]{48}$/;
 
 /**
@@ -49,6 +54,14 @@ interface TokenBucket {
 
 const apiKeyBuckets = new Map<string, TokenBucket>();
 
+// Hard cap on tracked buckets. Distinct well-formed-but-invalid keys each get
+// an entry BEFORE backend validation, so a spray of random sk_mcpjam_… strings
+// would otherwise grow the Map unbounded between sweeps. At the cap, evict the
+// oldest-inserted entry (Map preserves insertion order) — under a flood those
+// are overwhelmingly the attacker's one-shot keys, and a legit key that gets
+// evicted merely restarts with a fresh burst.
+const API_KEY_BUCKETS_MAX = 50_000;
+
 // Cleanup stale buckets every 5 minutes so revoked keys don't leak memory.
 setInterval(() => {
   const now = Date.now();
@@ -70,6 +83,12 @@ function consumeApiKeyToken(bucketKey: string): number | null {
   const now = Date.now();
   const existing = apiKeyBuckets.get(bucketKey);
   if (!existing) {
+    if (apiKeyBuckets.size >= API_KEY_BUCKETS_MAX) {
+      const oldest = apiKeyBuckets.keys().next().value;
+      if (oldest !== undefined) {
+        apiKeyBuckets.delete(oldest);
+      }
+    }
     apiKeyBuckets.set(bucketKey, {
       tokens: API_KEY_RATE_BURST - 1,
       lastRefill: now,
@@ -186,9 +205,12 @@ export async function bearerAuthMiddleware(
     c.set("mcpjamUserId", validation.userId);
     c.set("mcpjamOrganizationId", validation.organizationId);
 
+    // Log labels say platform_api_key even though the Hono context literal
+    // stays "workos_api_key" (compat contract, see comment above) — log
+    // queries should not report platform keys as WorkOS traffic.
     logger.info("Platform API key request", {
       event: "auth.platform_api_key",
-      auth_method: "workos_api_key",
+      auth_method: "platform_api_key",
       key_id: validation.keyId,
       mcpjam_user_id: validation.userId,
       mcpjam_organization_id: validation.organizationId,

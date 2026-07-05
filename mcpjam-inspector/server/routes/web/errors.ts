@@ -149,6 +149,21 @@ export function assertBearerToken(c: any): string {
   return authHeader.slice("Bearer ".length);
 }
 
+/**
+ * Map an upstream HTTP status onto the matching web ErrorCode when relaying a
+ * backend/provider error. Shared by the OAuth proxy and API key routes.
+ */
+export function statusToErrorCode(status: number): ErrorCode {
+  if (status === 400) return ErrorCode.VALIDATION_ERROR;
+  if (status === 401) return ErrorCode.UNAUTHORIZED;
+  if (status === 403) return ErrorCode.FORBIDDEN;
+  if (status === 404) return ErrorCode.NOT_FOUND;
+  if (status === 429) return ErrorCode.RATE_LIMITED;
+  if (status === 502) return ErrorCode.SERVER_UNREACHABLE;
+  if (status === 504) return ErrorCode.TIMEOUT;
+  return ErrorCode.INTERNAL_ERROR;
+}
+
 export async function readJsonBody<T>(c: any): Promise<T> {
   try {
     return (await c.req.json()) as T;

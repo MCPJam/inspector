@@ -6,11 +6,11 @@ icon: "key"
 
 "API key" gets used for a few different things in MCPJam. The short version:
 
-- To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_…`) — the first one below.
+- To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_mcpjam_…`) — the first one below.
 - Two others here are **third-party secrets you supply**, not keys MCPJam issues — they're listed only because the name collides.
 - One older key (`mcpjam_…`) is **retired** and no longer works.
 
-## MCPJam API key (`sk_…`)
+## MCPJam API key (`sk_mcpjam_…`)
 
 The key for the **[MCPJam API](/reference/public-api)** — programmatic access to live MCP server diagnostics at `https://app.mcpjam.com/api/v1/...`. This is the one to reach for whenever you mean "the MCPJam API key."
 
@@ -19,9 +19,8 @@ The key for the **[MCPJam API](/reference/public-api)** — programmatic access 
 **When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots, and **saving `@mcpjam/sdk` eval results** (set `MCPJAM_API_KEY` to this key; see [Saving Results](/sdk/concepts/saving-results)).
 
 **Errors you might see**
-- `401 UNAUTHORIZED` → invalid or revoked key.
-- `401` with `details.reason: "ORPHANED_KEY"` → the key lost its organization binding; create a new one from Settings.
-- `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an `sk_…` key at the key-management endpoints; key management is UI-only.
+- `401 UNAUTHORIZED` ("Invalid API key") → the key is invalid, revoked, malformed, or its owner left the organization it was created in. Create a new one from Settings. Keys issued before the `sk_mcpjam_…` format also land here — re-create them.
+- `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an API key at the key-management endpoints; key management is UI-only.
 - `429 RATE_LIMITED` → per-key rate limit (60/min, burst 10); honor `Retry-After`.
 
 Full surface in the [MCPJam API reference](/reference/public-api).
@@ -60,7 +59,7 @@ This was a project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted ba
 
 | Key | Format | Issued by | Use it for |
 | --- | --- | --- | --- |
-| **MCPJam API key** | `sk_…` | [Settings → API keys](https://app.mcpjam.com/settings/api-keys) | The [MCPJam API](/reference/public-api) (`/api/v1/*`) |
+| **MCPJam API key** | `sk_mcpjam_…` | [Settings → API keys](https://app.mcpjam.com/settings/api-keys) | The [MCPJam API](/reference/public-api) (`/api/v1/*`) |
 | LLM provider key | provider-specific | the LLM provider | Playground chat — *third-party* |
 | Playground BYOK | server-specific | your MCP server | Authenticating to one MCP server — *third-party* |
 | Project API Key | `mcpjam_…` | — (no longer issued) | **Retired** — no longer works |

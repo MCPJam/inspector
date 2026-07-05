@@ -9,6 +9,7 @@ import {
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
+  statusToErrorCode,
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
 
@@ -122,26 +123,13 @@ async function callBackendApiKeys(
         : typeof parsed?.message === "string"
           ? parsed.message
           : "API key request failed";
-    throw new WebRouteError(response.status, mapStatusToCode(response.status), message);
+    throw new WebRouteError(
+      response.status,
+      statusToErrorCode(response.status),
+      message,
+    );
   }
   return parsed;
-}
-
-function mapStatusToCode(status: number): ErrorCode {
-  switch (status) {
-    case 400:
-      return ErrorCode.VALIDATION_ERROR;
-    case 401:
-      return ErrorCode.UNAUTHORIZED;
-    case 403:
-      return ErrorCode.FORBIDDEN;
-    case 404:
-      return ErrorCode.NOT_FOUND;
-    case 429:
-      return ErrorCode.RATE_LIMITED;
-    default:
-      return ErrorCode.INTERNAL_ERROR;
-  }
 }
 
 function iso(ms: number | null | undefined): string | null {

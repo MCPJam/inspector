@@ -38,8 +38,10 @@ export function getRequestLocal<K extends keyof RequestLocalMap>(
 ): RequestLocalMap[K] | undefined {
   // `c.get` is typed via Hono's ContextVariableMap; we deliberately bypass
   // it here so callers don't have to extend that global map just to cache
-  // an opaque blob for one request.
-  return (c.get(key as string) as RequestLocalMap[K] | undefined) ?? undefined;
+  // an opaque blob for one request. No `??` normalization: `null` is a real
+  // cached value ("looked up, invalid") that must NOT collapse to `undefined`
+  // ("not looked up yet"), or the memoization re-runs for invalid keys.
+  return c.get(key as string) as RequestLocalMap[K] | undefined;
 }
 
 export function setRequestLocal<K extends keyof RequestLocalMap>(

@@ -87,8 +87,8 @@ curl -X POST \
    in the hosted app (the card at the top of this page takes you there
    directly).
 2. Click **Create API key**, name it, and pick the **organization** it will act in.
-3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
-   stored by MCPJam in retrievable form.
+3. Copy the key (`sk_mcpjam_…`) immediately — **it is shown exactly once** and
+   never stored by MCPJam in retrievable form.
 
 Keys can be revoked from the same page at any time. Revocation takes effect
 immediately.
@@ -120,9 +120,10 @@ Treat an API key like a password:
 - If a key leaks, revoke it immediately in
   [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
 
-If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
-is no longer bound to an organization and cannot be used — create a new key
-from [Settings](https://app.mcpjam.com/settings/api-keys).
+If you see `401 UNAUTHORIZED` ("Invalid API key"), the key is invalid,
+revoked, or its owner is no longer a member of the organization it was
+created in — create a new key from
+[Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 
