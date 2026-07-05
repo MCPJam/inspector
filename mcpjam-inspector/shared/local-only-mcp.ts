@@ -4,7 +4,10 @@ export type LocalOnlyMcpServerConfig = {
 };
 
 export function isUnsafeHostedOutboundHost(rawHost: string): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const host = rawHost
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
   if (!host) return true;
 
   if (
