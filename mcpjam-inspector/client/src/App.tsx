@@ -216,6 +216,7 @@ import {
   navigateApp,
   pathnameToActiveTab,
   routePaths,
+  shouldSnapToServersOnActiveProjectChange,
   type OrganizationRouteSection,
   useActiveTab,
   useAppNavigate,
@@ -2451,26 +2452,20 @@ export default function App() {
       return;
     }
 
+    // Advance the ref regardless so this project change is consumed and can't
+    // trigger a stale snap on a later render (e.g. once the user leaves the
+    // org route). The snap decision itself lives in a pure, unit-tested helper.
     const previousActiveProjectId = previousActiveProjectIdRef.current;
     previousActiveProjectIdRef.current = activeProjectId;
     if (
-      previousActiveProjectId == null ||
-      previousActiveProjectId === activeProjectId ||
-      previousActiveProjectId === "none" ||
-      activeProjectId === "none"
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId,
+        nextActiveProjectId: activeProjectId,
+        activeTab,
+      })
     ) {
-      return;
+      navigateToServers();
     }
-    // Organization routes are org-scoped, not project-scoped. Opening another
-    // org's settings (e.g. via the switcher's per-row gear) flips the active
-    // org, which auto-resolves a new active project as a side effect — but the
-    // user deliberately navigated to the org page. Snapping to Servers here
-    // would bounce them right back off the settings they just opened. The ref
-    // is still advanced above so the change is consumed and won't snap later.
-    if (activeTab === "organizations") {
-      return;
-    }
-    navigateToServers();
   }, [
     activeProjectId,
     activeTab,

@@ -7,6 +7,7 @@ import {
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
   pathnameToActiveTab,
+  shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
 } from "../app-navigation";
 
@@ -63,6 +64,69 @@ describe("pathnameToActiveTab", () => {
     const { result } = renderHook(() => useActiveTab());
 
     expect(result.current).toBe("home");
+  });
+});
+
+describe("shouldSnapToServersOnActiveProjectChange", () => {
+  it("snaps to servers when the active project changes on a project-scoped tab", () => {
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p2",
+        activeTab: "playground",
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT snap while on an organizations route", () => {
+    // Regression: opening another org's settings via the switcher gear flips
+    // the active org, which auto-resolves a new active project as a side
+    // effect. Snapping to Servers here bounced the user off the org settings
+    // page they just opened.
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p2",
+        activeTab: "organizations",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not snap on initial hydration (no previous project id)", () => {
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: null,
+        nextActiveProjectId: "p1",
+        activeTab: "playground",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not snap when the project id is unchanged", () => {
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p1",
+        activeTab: "playground",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not snap across the local-default 'none' placeholder in either direction", () => {
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "none",
+        nextActiveProjectId: "p1",
+        activeTab: "playground",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "none",
+        activeTab: "playground",
+      }),
+    ).toBe(false);
   });
 });
 
