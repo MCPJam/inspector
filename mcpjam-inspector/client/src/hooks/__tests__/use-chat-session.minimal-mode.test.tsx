@@ -71,6 +71,14 @@ const mockCustomProvidersState = {
   customProviders: [],
   getCustomProviderByName: mockGetCustomProviderByName,
 };
+const mockSharedAppState: any = {
+  projects: {},
+  activeProjectId: "local-project",
+  servers: {},
+  selectedServer: "",
+  selectedMultipleServers: [],
+  isMultiSelectMode: false,
+};
 
 async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
   return typeof value === "function"
@@ -132,6 +140,11 @@ vi.mock("@/hooks/use-persisted-model", () => ({
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
   }),
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useOptionalSharedAppState: () => mockSharedAppState,
+  useSharedAppState: () => mockSharedAppState,
 }));
 
 vi.mock("@/lib/ollama-utils", () => ({
@@ -279,6 +292,9 @@ describe("useChatSession minimal mode parity", () => {
     mockConvexAuth.isLoading = false;
     mockModelState.availableModels = [baseModel];
     mockModelState.selectedModelId = "gpt-4";
+    mockSharedAppState.projects = {};
+    mockSharedAppState.activeProjectId = "local-project";
+    mockSharedAppState.servers = {};
     mockGetSessionAuthHeaders.mockReturnValue({});
     mockGetAccessToken.mockResolvedValue(null);
     mockGetGuestBearerToken.mockReset();
@@ -959,6 +975,63 @@ describe("useChatSession minimal mode parity", () => {
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(mockWindowFetch).toHaveBeenCalledWith(
       "/api/web/chat-v2",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer guest-token" },
+      })
+    );
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses the local MCP route for org BYOK when a selected server is local-only", async () => {
+    mockModelState.selectedModelId = orgAnthropicModel.id;
+    mockGetAccessToken.mockResolvedValue(null);
+    mockSharedAppState.servers = {
+      "server-1": {
+        config: { command: "npx", args: ["local-mcp-server"] },
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "anthropic",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    expect(result.current.selectedModel.id).toBe(orgAnthropicModel.id);
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hello" });
+    });
+
+    const transport = getUsedTransport();
+    expect(transport.options.api).toBe("/api/mcp/chat-v2");
+    expect(transport.requests[0]).toMatchObject({
+      model: orgAnthropicModel,
+      projectId: "project-1",
+      selectedServers: ["server-1"],
+      localMcpRuntimeRequired: true,
+    });
+    expect(transport.requests[0]).not.toHaveProperty("apiKey");
+    expect(transport.requests[0]).not.toHaveProperty("selectedServerIds");
+    expect(mockWindowFetch).toHaveBeenCalledWith(
+      "/api/mcp/chat-v2",
       expect.objectContaining({
         headers: { Authorization: "Bearer guest-token" },
       })

@@ -19,6 +19,8 @@ import {
 } from "@mcpjam/sdk";
 
 export interface BaseUrls {
+  anthropic?: string;
+  openai?: string;
   ollama?: string;
   azure?: string;
   /**
@@ -50,9 +52,15 @@ export const createLlmModel = (
   }
   switch (modelDefinition.provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(modelDefinition.id);
+      return createAnthropic({
+        apiKey,
+        ...(baseUrls?.anthropic ? { baseURL: baseUrls.anthropic } : {}),
+      })(modelDefinition.id);
     case "openai":
-      return createOpenAI({ apiKey })(modelDefinition.id);
+      return createOpenAI({
+        apiKey,
+        ...(baseUrls?.openai ? { baseURL: baseUrls.openai } : {}),
+      })(modelDefinition.id);
     case "deepseek":
       return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":

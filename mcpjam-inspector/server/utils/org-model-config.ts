@@ -9,6 +9,9 @@ import {
 } from "@/shared/types";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
+import {
+  isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
+} from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
 
@@ -376,84 +379,7 @@ export function buildLlmRuntimeConfigFromOrgConfig(
 // ---------------------------------------------------------------------------
 
 export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    // Fail closed: an unparseable baseUrl can't be used safely.
-    return true;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return true;
-  }
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host) return true;
-
-  if (
-    host === "localhost" ||
-    host === "ip6-localhost" ||
-    host === "ip6-loopback" ||
-    host.endsWith(".localhost")
-  ) {
-    return true;
-  }
-  // Cloud metadata service hostnames.
-  if (host === "metadata" || host === "metadata.google.internal") {
-    return true;
-  }
-
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const octets = v4.slice(1).map((n) => Number(n));
-    if (octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
-    const [a, b] = octets;
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 10) return true; // 10/8
-    if (a === 127) return true; // loopback
-    if (a === 169 && b === 254) return true; // link-local + AWS/Azure metadata
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
-    if (a === 192 && b === 168) return true; // 192.168/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-    if (a >= 224) return true; // multicast + reserved
-    return false;
-  }
-
-  if (host.includes(":")) {
-    const lower = host;
-    if (lower === "::" || lower === "::1") return true;
-    // fe80::/10 = fe80:: – febf:ffff:... (top 10 bits 1111 1110 10)
-    // covers fe8x, fe9x, feax, febx — note fe80: alone misses fe81:–fe8f:
-    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
-      return true; // fe80::/10 link-local
-    }
-    if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // fc00::/7 unique local
-    // IPv4-mapped IPv6: ::ffff:a.b.c.d (rare in practice — most parsers
-    // canonicalize to ::ffff:HHHH:HHHH).
-    const dotted = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (dotted) return isUnsafeHostedOutboundUrl(`http://${dotted[1]}`);
-    const hex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-    if (hex) {
-      const high = parseInt(hex[1], 16);
-      const low = parseInt(hex[2], 16);
-      if (
-        Number.isFinite(high) &&
-        Number.isFinite(low) &&
-        high >= 0 &&
-        high <= 0xffff &&
-        low >= 0 &&
-        low <= 0xffff
-      ) {
-        const a = (high >> 8) & 0xff;
-        const b = high & 0xff;
-        const c = (low >> 8) & 0xff;
-        const d = low & 0xff;
-        return isUnsafeHostedOutboundUrl(`http://${a}.${b}.${c}.${d}`);
-      }
-    }
-    return false;
-  }
-
-  return false;
+  return isUnsafeHostedOutboundUrlLiteral(rawUrl);
 }
 
 /**
@@ -514,6 +440,28 @@ export type OrgProviderRuntimeLocal = {
 };
 
 export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
+
+export type OrgModelLeaseProtocol = "anthropic" | "openai";
+
+export type OrgModelLease = {
+  lease: string;
+  expiresAt: number;
+  runId: string;
+  protocol: OrgModelLeaseProtocol;
+  proxyBaseUrl: string;
+};
+
+export class OrgModelLeaseError extends Error {
+  status?: number;
+  code?: string;
+
+  constructor(message: string, options?: { status?: number; code?: string }) {
+    super(message);
+    this.name = "OrgModelLeaseError";
+    this.status = options?.status;
+    this.code = options?.code;
+  }
+}
 
 const RUNTIME_CACHE_TTL_MS = 60_000;
 const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
@@ -707,6 +655,87 @@ export async function resolveOrgProviderRuntimeForTarget(
     expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
   });
   return result;
+}
+
+export async function mintOrgModelLease(
+  projectId: string,
+  providerKey: string,
+  model: string,
+  auth?: ResolveOrgModelConfigAuth & { runId?: string },
+): Promise<OrgModelLease> {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
+
+  const authHeader = normalizeAuthHeader(auth);
+  const serverIds = normalizeServerIds(auth?.serverIds);
+  const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/model-lease`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify({
+        projectId,
+        providerKey,
+        modelId: model,
+        ...(serverIds.length > 0 ? { serverIds } : {}),
+        ...(auth?.runId ? { runId: auth.runId } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+    const data = (await response.json().catch(() => null)) as
+      | {
+          ok?: boolean;
+          error?: string;
+          code?: string;
+          lease?: unknown;
+          expiresAt?: unknown;
+          runId?: unknown;
+          protocol?: unknown;
+          proxyBaseUrl?: unknown;
+        }
+      | null;
+
+    if (!response.ok || !data?.ok) {
+      throw new OrgModelLeaseError(
+        data?.error ??
+          `Org BYOK model lease mint failed (${response.status})`,
+        {
+          status: response.status,
+          code: typeof data?.code === "string" ? data.code : undefined,
+        },
+      );
+    }
+
+    if (
+      typeof data.lease !== "string" ||
+      typeof data.expiresAt !== "number" ||
+      typeof data.runId !== "string" ||
+      (data.protocol !== "anthropic" && data.protocol !== "openai") ||
+      typeof data.proxyBaseUrl !== "string"
+    ) {
+      throw new OrgModelLeaseError(
+        "Org BYOK model lease response was malformed",
+        { status: response.status, code: "invalid_lease_response" },
+      );
+    }
+
+    return {
+      lease: data.lease,
+      expiresAt: data.expiresAt,
+      runId: data.runId,
+      protocol: data.protocol,
+      proxyBaseUrl: data.proxyBaseUrl,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------

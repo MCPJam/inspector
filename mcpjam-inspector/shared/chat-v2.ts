@@ -39,6 +39,13 @@ export interface ChatV2Request {
    * hosted web route gets real Ids from a separate request schema.
    */
   selectedServerIds?: string[];
+  /**
+   * Local inspector must own the tool loop for this turn because at least one
+   * selected MCP server is reachable only from this machine (stdio, localhost,
+   * or private IP HTTP). Org BYOK providers use a backend-minted model lease
+   * instead of sending raw provider keys to the inspector.
+   */
+  localMcpRuntimeRequired?: boolean;
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants

@@ -29,6 +29,8 @@ import {
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
+  mintOrgModelLease,
+  OrgModelLeaseError,
   resolveHostModelDefinition,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
@@ -142,6 +144,30 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     message: error.message,
     normalized,
   });
+}
+
+function describeLocalMcpProxyError(error: unknown): {
+  status: number;
+  code: string;
+  error: string;
+} {
+  const code =
+    error instanceof OrgModelLeaseError && error.code
+      ? error.code
+      : "org_byok_model_proxy_unavailable";
+  const status =
+    error instanceof OrgModelLeaseError && error.status
+      ? error.status
+      : 502;
+  const detail = error instanceof Error ? error.message : String(error);
+  return {
+    status,
+    code,
+    error:
+      `This org BYOK model needs the local runtime because one selected MCP server is local-only, ` +
+      `but MCPJam could not mint a scoped model proxy lease (${code}). ${detail}. ` +
+      `Use an MCPJam model, a locally stored provider key, or a public HTTPS MCP server URL.`,
+  };
 }
 
 function toPersistedUsage(
@@ -910,6 +936,7 @@ chatV2.post("/", async (c) => {
       const modelId = String(modelDefinition.id);
       const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
+      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
       const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
         ? await resolveOrgProviderRuntime(
             body.projectId,
@@ -923,6 +950,8 @@ chatV2.post("/", async (c) => {
             }
           )
         : { runtimeLocation: "cloud", providerKey };
+      const persistsAsLocalByok =
+        runtime.runtimeLocation === "local" || localMcpRuntimeRequired;
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
@@ -931,8 +960,7 @@ chatV2.post("/", async (c) => {
             await persistChatSessionToConvex({
               chatSessionId,
               modelId,
-              modelSource:
-                runtime.runtimeLocation === "local" ? "local_byok" : "byok",
+              modelSource: persistsAsLocalByok ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
@@ -995,6 +1023,63 @@ chatV2.post("/", async (c) => {
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
         });
+      }
+
+      if (localMcpRuntimeRequired) {
+        try {
+          const lease = await mintOrgModelLease(
+            body.projectId,
+            providerKey,
+            modelId,
+            {
+              authHeader: requestAuthHeader,
+              serverIds: hostConfigServerIds,
+            }
+          );
+          const proxyModelDefinition = {
+            ...modelDefinition,
+            provider: lease.protocol,
+            customProviderName: undefined,
+          };
+          const proxyModel = createLlmModel(
+            proxyModelDefinition,
+            lease.lease,
+            lease.protocol === "anthropic"
+              ? { anthropic: lease.proxyBaseUrl }
+              : { openai: lease.proxyBaseUrl }
+          );
+          return handleLocalOrgChatModel({
+            provider: { providerKey },
+            llmModel: proxyModel as unknown as Parameters<
+              typeof handleLocalOrgChatModel
+            >[0]["llmModel"],
+            skipLocalUsage: true,
+            projectId: body.projectId,
+            modelId,
+            chatSessionId,
+            sourceType: chatSessionSourceType,
+            messages: modelMessages,
+            systemPrompt: effectiveEnhancedSystemPrompt,
+            temperature: resolvedTemperature,
+            tools: allTools as ToolSet,
+            progressivePlan,
+            discoveryState,
+            authHeader: requestAuthHeader,
+            chatboxId: bodyChatboxId,
+            accessVersion: bodyAccessVersion,
+            selectedServers,
+            serverIds: hostConfigServerIds,
+            requireToolApproval,
+            abortSignal: inboundAbortSignalOrg,
+            onConversationComplete,
+          });
+        } catch (error) {
+          const described = describeLocalMcpProxyError(error);
+          return c.json(
+            { error: described.error, code: described.code },
+            described.status as any
+          );
+        }
       }
 
       return handleHostedOrgChatModel({

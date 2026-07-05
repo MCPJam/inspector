@@ -184,6 +184,13 @@ function formatLocalStreamError(error: unknown): string {
 export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
+  /**
+   * Prebuilt model override for key-less local runtimes. Used by org BYOK
+   * model leases, where the inspector holds only a scoped proxy token.
+   */
+  llmModel?: ReturnType<typeof buildOrgModelFromResolvedConfig>;
+  /** The model proxy records usage itself, so skip /stream/org/local-usage. */
+  skipLocalUsage?: boolean;
   projectId: string;
   modelId: string;
   chatSessionId?: string;
@@ -278,8 +285,12 @@ export function handleLocalOrgChatModel(
   // than letting the exception propagate as a 500.
   let llmModel: ReturnType<typeof buildOrgModelFromResolvedConfig>;
   try {
-    assertOrgModelAllowed(provider, modelId);
-    llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+    if (options.llmModel) {
+      llmModel = options.llmModel;
+    } else {
+      assertOrgModelAllowed(provider, modelId);
+      llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+    }
   } catch (configErr) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
@@ -454,27 +465,29 @@ function buildLocalOrgOnPersist(params: {
     // Post usage to Convex (best-effort, non-blocking on failure).
     // Preserves the legacy fire-and-forget behavior so an ingestion
     // failure can't block the usage writeback or vice versa.
-    postLocalUsage({
-      projectId: options.projectId,
-      providerKey: options.provider.providerKey,
-      model: options.modelId,
-      usage: event.usage,
-      finishReason: event.finishReason,
-      chatSessionId: options.chatSessionId,
-      sourceType: options.sourceType,
-      turnId: event.turnTrace.turnId,
-      promptIndex: event.turnTrace.promptIndex,
-      authHeader: options.authHeader,
-      chatboxId: options.chatboxId,
-      accessVersion: options.accessVersion,
-      selectedServers: options.selectedServers,
-      serverIds: options.serverIds,
-      synthesisRunId: options.synthesisRunId,
-    }).catch((err) => {
-      logger.warn("[org/local] Failed to post local usage", {
-        error: err instanceof Error ? err.message : String(err),
+    if (!options.skipLocalUsage) {
+      postLocalUsage({
+        projectId: options.projectId,
+        providerKey: options.provider.providerKey,
+        model: options.modelId,
+        usage: event.usage,
+        finishReason: event.finishReason,
+        chatSessionId: options.chatSessionId,
+        sourceType: options.sourceType,
+        turnId: event.turnTrace.turnId,
+        promptIndex: event.turnTrace.promptIndex,
+        authHeader: options.authHeader,
+        chatboxId: options.chatboxId,
+        accessVersion: options.accessVersion,
+        selectedServers: options.selectedServers,
+        serverIds: options.serverIds,
+        synthesisRunId: options.synthesisRunId,
+      }).catch((err) => {
+        logger.warn("[org/local] Failed to post local usage", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
-    });
+    }
 
     // Cursor PR-review fix (Medium "Failed turns persist sessions"):
     // skip ingestion when the stream errored mid-flight; matches

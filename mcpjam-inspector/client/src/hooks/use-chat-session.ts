@@ -132,6 +132,12 @@ import {
   getApiContextRevision,
   subscribeApiContext,
 } from "@/lib/apis/web/context";
+import * as AppStateContext from "@/state/app-state-context";
+import {
+  findProjectByAnyId,
+  type AppState,
+} from "@/state/app-types";
+import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -203,6 +209,20 @@ function isOrgManagedModel(
   }
 
   return provider.hasSecret;
+}
+
+function useMaybeSharedAppState(): AppState | null {
+  const maybeContext = AppStateContext as typeof AppStateContext & {
+    useOptionalSharedAppState?: () => AppState | null;
+  };
+  if (typeof maybeContext.useOptionalSharedAppState === "function") {
+    return maybeContext.useOptionalSharedAppState();
+  }
+  try {
+    return maybeContext.useSharedAppState();
+  } catch {
+    return null;
+  }
 }
 
 export interface UseChatSessionOptions {
@@ -1134,6 +1154,7 @@ export function useChatSession(
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
+  const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
     executionConfig?.systemPrompt
@@ -1474,6 +1495,23 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel]
   );
+  const hasLocalOnlySelectedServer = useMemo(() => {
+    if (!appState || selectedServers.length === 0) return false;
+    const activeProject = findProjectByAnyId(
+      appState.projects,
+      hostedProjectId ?? appState.activeProjectId
+    );
+    return selectedServers.some((serverName) => {
+      const server =
+        appState.servers?.[serverName] ?? activeProject?.servers?.[serverName];
+      return isLocalOnlyMcpServerConfig(server?.config);
+    });
+  }, [appState, hostedProjectId, selectedServers]);
+  const localMcpRuntimeRequired =
+    !HOSTED_MODE &&
+    !hostedRequiresWebChatApi &&
+    selectedModelUsesOrgRuntime &&
+    hasLocalOnlySelectedServer;
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -1531,7 +1569,11 @@ export function useChatSession(
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
-      HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
+      HOSTED_MODE ||
+      hostedRequiresWebChatApi ||
+      (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+    const shouldSendClientApiKey =
+      !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1620,7 +1662,7 @@ export function useChatSession(
         pendingWidgetModelContextRef.current = undefined;
         return {
           model: selectedModel,
-          ...(shouldUseOrgAwareChatApi ? {} : { apiKey }),
+          ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
           // rejects the field), so what lands here is purely the user's
@@ -1656,6 +1698,9 @@ export function useChatSession(
                 // validator would reject the whole ingest call.
                 ...(hostedSelectedServerIds.length === selectedServers.length
                   ? { selectedServerIds: hostedSelectedServerIds }
+                  : {}),
+                ...(localMcpRuntimeRequired
+                  ? { localMcpRuntimeRequired: true }
                   : {}),
                 // Phase F: owner-preview / local chatbox sessions persist as
                 // `sourceType: "chatbox"`. Without forwarding the resolved
@@ -1703,7 +1748,7 @@ export function useChatSession(
           // hostStyle (no more legacy `'direct'`). Omitted body falls
           // back to the backend default of `'claude'`.
           ...(hostStyle ? { hostStyle } : {}),
-          ...(!shouldUseOrgAwareChatApi && customProviders.length > 0
+          ...(shouldSendClientApiKey && customProviders.length > 0
             ? { customProviders }
             : {}),
           ...(resumedVersionRef.current !== null
@@ -1740,6 +1785,7 @@ export function useChatSession(
     customProviders,
     authHeaders,
     selectedModelUsesOrgRuntime,
+    localMcpRuntimeRequired,
     hostedRequiresWebChatApi,
     temperature,
     systemPrompt,
@@ -2781,10 +2827,17 @@ export function useChatSession(
     !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
+  const orgOrHostedContextRequired =
+    HOSTED_MODE || hostedRequiresWebChatApi || selectedModelUsesOrgRuntime;
+  const selectedServerIdsRequired =
+    HOSTED_MODE ||
+    hostedRequiresWebChatApi ||
+    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
   const hostedContextNotReady =
-    (HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi) &&
+    orgOrHostedContextRequired &&
     (!hostedProjectId ||
-      (selectedServers.length > 0 &&
+      (selectedServerIdsRequired &&
+        selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));
   const isStreaming = status === "streaming" || status === "submitted";
   const submitBlocked =
