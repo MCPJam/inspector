@@ -2884,7 +2884,9 @@ describe("syncServerToConvex name-collision recovery", () => {
       expect.objectContaining({ type: "UPSERT_SERVER" })
     );
     expect(toastError.mock.calls[0]?.[0]).toEqual(
-      expect.stringContaining("selected project is not in the active organization")
+      errorToastMessage(
+        "Cannot save server: the selected project is not in the active organization. Refresh and try again."
+      )
     );
   });
 
