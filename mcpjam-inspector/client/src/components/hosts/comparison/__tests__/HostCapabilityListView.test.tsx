@@ -7,7 +7,7 @@ import { HostCapabilityListView } from "../HostCapabilityListView";
 function makeSubject(
   hostId: string,
   hostName: string,
-  overrides: Partial<HostConfigDtoV2> = {},
+  overrides: Partial<HostConfigDtoV2> = {}
 ): HostComparisonSubject {
   return {
     hostId,
@@ -36,11 +36,11 @@ function makeSubject(
 describe("HostCapabilityListView", () => {
   it("renders a column per host with grouped support walls", () => {
     render(
-      <HostCapabilityListView subjects={[makeSubject("h_a", "Claude Code")]} />,
+      <HostCapabilityListView subjects={[makeSubject("h_a", "Claude Code")]} />
     );
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     // At least one group heading appears, and capability chips render in walls.
-    const groups = screen.queryAllByText(/Supported|Not advertised|Partial/);
+    const groups = screen.queryAllByText(/Supported|Not supported|Partial/);
     expect(groups.length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("openLinks").length).toBeGreaterThanOrEqual(1);
   });
@@ -57,7 +57,7 @@ describe("HostCapabilityListView", () => {
       <HostCapabilityListView
         subjects={[makeSubject("h_a", "Claude Code")]}
         searchQuery="zzz-no-such-capability"
-      />,
+      />
     );
     expect(screen.getByText(/No capabilities match/i)).toBeInTheDocument();
   });

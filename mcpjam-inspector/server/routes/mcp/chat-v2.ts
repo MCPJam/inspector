@@ -46,6 +46,8 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateUiToolEntries,
+  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
@@ -384,6 +386,12 @@ chatV2.post("/", async (c) => {
             },
             runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
           );
+          return c.json(
+            {
+              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
+            },
+            runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+          );
         }
       }
     } else if (!isChatboxSession && bodyHostId) {
@@ -620,6 +628,17 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // WebMCP UI tools: same boundary treatment as appTools.
+    let validatedUiTools;
+    try {
+      validatedUiTools = validateUiToolEntries(body.uiTools);
+    } catch (error) {
+      if (error instanceof UiToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
@@ -726,6 +745,7 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
+        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.

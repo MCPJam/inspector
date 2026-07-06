@@ -267,6 +267,14 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   "computer",
 ]);
 
+export function isKnownAppTabSegment(segment: string): boolean {
+  return KNOWN_APP_TAB_SEGMENTS.has(segment);
+}
+
+export function listKnownAppTabSegments(): string[] {
+  return [...KNOWN_APP_TAB_SEGMENTS];
+}
+
 function isSpecialEntryPathname(pathname: string): boolean {
   return (
     pathname === "/billing" ||

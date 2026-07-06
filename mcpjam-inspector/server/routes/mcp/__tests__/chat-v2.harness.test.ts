@@ -7,9 +7,11 @@ const {
   fetchHostRuntimeConfigMock,
   checkHarnessRuntimeAvailableMock,
   validateAppToolEntriesMock,
+  validateUiToolEntriesMock,
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   AppToolValidationErrorMock,
+  UiToolValidationErrorMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
@@ -17,9 +19,11 @@ const {
   fetchHostRuntimeConfigMock: vi.fn(),
   checkHarnessRuntimeAvailableMock: vi.fn(),
   validateAppToolEntriesMock: vi.fn(() => []),
+  validateUiToolEntriesMock: vi.fn(() => []),
   validateWidgetModelContextEntriesMock: vi.fn(() => []),
   buildWidgetModelContextSystemPromptMock: vi.fn(() => ""),
   AppToolValidationErrorMock: class AppToolValidationError extends Error {},
+  UiToolValidationErrorMock: class UiToolValidationError extends Error {},
   WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {},
 }));
 
@@ -45,6 +49,8 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   prepareChatV2: prepareChatV2Mock,
   validateAppToolEntries: validateAppToolEntriesMock,
   AppToolValidationError: AppToolValidationErrorMock,
+  validateUiToolEntries: validateUiToolEntriesMock,
+  UiToolValidationError: UiToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,

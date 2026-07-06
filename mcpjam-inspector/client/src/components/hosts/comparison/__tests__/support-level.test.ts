@@ -223,6 +223,12 @@ describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
     expect(fieldMatchesQuery(hostConfigField("temperature"), "zzz")).toBe(false);
   });
 
+  it("matches fields by subsection name", () => {
+    expect(
+      fieldMatchesQuery(hostConfigField("capabilities.roots"), "supported"),
+    ).toBe(true);
+  });
+
   it("narrows visible ids by search query", () => {
     const all = computeVisibleFieldIds({
       configs: [makeConfig()],

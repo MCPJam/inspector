@@ -962,6 +962,68 @@ describe("executeToolCallsFromMessages", () => {
       expect(messages).toHaveLength(1); // no synthesized tool-result
     });
 
+    it("silently skips registered ui_ tools without an execute function (WebMCP UI tools)", async () => {
+      // Same client-fulfilled contract as app aliases: the UI tool name is
+      // registered no-execute server-side and the browser supplies the
+      // result, so the loop must leave the call unresolved and pause.
+      const tools = {
+        ui_navigate: {
+          description: "Navigate the MCPJam inspector",
+          // no execute
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-ui",
+              toolName: "ui_navigate",
+              input: { target: "playground" },
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(newMessages).toHaveLength(0);
+      expect(messages).toHaveLength(1); // no synthesized tool-result
+    });
+
+    it("does not skip a ui_-named tool that has a real execute (genuine server tool)", async () => {
+      const tools = {
+        ui_lookalike: {
+          execute: vi.fn().mockResolvedValue({ ok: true }),
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-lookalike",
+              toolName: "ui_lookalike",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(tools.ui_lookalike.execute).toHaveBeenCalledTimes(1);
+      expect(messages).toHaveLength(2); // executed server-side as usual
+    });
+
     it("still throws Tool not found when the flag is OFF (default)", async () => {
       const messages = [
         {

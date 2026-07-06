@@ -96,6 +96,17 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
+   * WebMCP-shaped MCPJam UI tools snapshot — per chat POST.
+   *
+   * Registered by the client catalog into the UI tools registry
+   * (`client/src/lib/webmcp/ui-tools-registry.ts`) and snapshotted fresh at
+   * POST time, exactly like `appTools`. The server defends the boundary in
+   * `validateUiToolEntries` (caps, `ui_` name regex, schema size) and
+   * registers them as no-execute AI SDK tools; `useChat.onToolCall` fulfills
+   * them in-page.
+   */
+  uiTools?: UiToolSnapshotEntry[];
+  /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
    * These are per-request, ephemeral model context: the server appends them
@@ -123,6 +134,23 @@ export interface AppToolSnapshotEntry {
   parentToolCallId: string;
   rawName: string;
   description?: string;
+  inputSchema?: Record<string, unknown>;
+  readOnly: boolean;
+}
+
+/**
+ * WebMCP-shaped MCPJam UI tool snapshot entry. Mirrors `UiToolEntry` in
+ * `server/utils/chat-v2-orchestration.ts` so the client snapshotter and the
+ * server validator share a single shape.
+ *
+ * Unlike app tools, UI tools are first-party and curated: `name` is the
+ * model-facing tool name directly (reserved `ui_` prefix, validated at the
+ * boundary), with no alias indirection. `readOnly` is metadata for policy
+ * and native `annotations.readOnlyHint`, not an inclusion gate.
+ */
+export interface UiToolSnapshotEntry {
+  name: string;
+  description: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
 }

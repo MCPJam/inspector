@@ -48,6 +48,7 @@ interface HostConfigComparisonMatrixProps {
   /** Remove a column; omitted when only one host remains. */
   onRemoveHost?: (hostId: string) => void;
   themeMode?: HostThemeMode;
+  mobileOptimized?: boolean;
 }
 
 /**
@@ -66,6 +67,7 @@ export function HostConfigComparisonMatrix({
   showDescriptions = false,
   onRemoveHost,
   themeMode = "light",
+  mobileOptimized = false,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -89,7 +91,7 @@ export function HostConfigComparisonMatrix({
         supportFilter,
         searchQuery,
       }),
-    [configs, divergingOnly, supportFilter, searchQuery],
+    [configs, divergingOnly, supportFilter, searchQuery]
   );
 
   if (subjects.length === 0) {
@@ -113,65 +115,91 @@ export function HostConfigComparisonMatrix({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]"
+      className={cn(
+        "overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
+        mobileOptimized && "min-w-0 max-w-full"
+      )}
     >
-      {/* Legend sits outside the horizontal scroll so it never slides off-screen on mobile. */}
-      <SupportLegend />
       {/* Only the table scrolls horizontally; field column stays sticky. */}
-      <div className="overflow-auto">
-      <table className="w-full border-collapse text-[13px]">
-        <colgroup>
-          <col className="w-[168px] sm:w-[300px]" />
-          {subjects.map((s) => (
-            <col key={s.hostId} className="w-[148px] sm:w-[220px]" />
-          ))}
-        </colgroup>
-
-        <thead>
-          <tr>
-            <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-3 py-3 sm:px-5 sm:py-4 text-left">
-              <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                Field
-              </span>
-            </th>
+      <div
+        className={
+          mobileOptimized
+            ? "max-w-full overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch]"
+            : "overflow-auto"
+        }
+      >
+        <table
+          className={cn(
+            "border-collapse text-[13px]",
+            mobileOptimized ? "w-max min-w-full" : "w-full"
+          )}
+        >
+          <colgroup>
+            <col
+              className={
+                mobileOptimized
+                  ? "w-[140px] sm:w-[300px]"
+                  : "w-[168px] sm:w-[300px]"
+              }
+            />
             {subjects.map((s) => (
-              <HostColumnHeader
+              <col
                 key={s.hostId}
-                subject={s}
-                onRemove={onRemoveHost}
-                themeMode={themeMode}
+                className={
+                  mobileOptimized
+                    ? "w-[132px] sm:w-[220px]"
+                    : "w-[148px] sm:w-[220px]"
+                }
               />
             ))}
-          </tr>
-        </thead>
+          </colgroup>
 
-        <tbody>
-          {groups.map((group, groupIndex) => {
-            const visibleFieldsInGroup = group.subsections
-              .flatMap((sub) => sub.fields)
-              .filter((f) => visibleFieldIds.has(f.id));
-            if (visibleFieldsInGroup.length === 0) return null;
+          <thead>
+            <tr>
+              <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-3 py-3 sm:px-5 sm:py-4 text-left">
+                <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                  Field
+                </span>
+              </th>
+              {subjects.map((s) => (
+                <HostColumnHeader
+                  key={s.hostId}
+                  subject={s}
+                  onRemove={onRemoveHost}
+                  themeMode={themeMode}
+                />
+              ))}
+            </tr>
+          </thead>
 
-            const groupDivergeCount = group.subsections
-              .flatMap((sub) => sub.fields)
-              .filter((f) => divergingIds.has(f.id)).length;
+          <tbody>
+            {groups.map((group, groupIndex) => {
+              const visibleFieldsInGroup = group.subsections
+                .flatMap((sub) => sub.fields)
+                .filter((f) => visibleFieldIds.has(f.id));
+              if (visibleFieldsInGroup.length === 0) return null;
 
-            return (
-              <SectionRows
-                key={group.section.id}
-                index={groupIndex}
-                sectionLabel={group.section.label}
-                divergeCount={groupDivergeCount}
-                subsections={group.subsections}
-                subjects={subjects}
-                divergingIds={divergingIds}
-                visibleFieldIds={visibleFieldIds}
-                showDescriptions={showDescriptions}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+              const groupDivergeCount = group.subsections
+                .flatMap((sub) => sub.fields)
+                .filter((f) => divergingIds.has(f.id)).length;
+
+              return (
+                <SectionRows
+                  key={group.section.id}
+                  index={groupIndex}
+                  sectionLabel={group.section.label}
+                  divergeCount={groupDivergeCount}
+                  subsections={group.subsections}
+                  subjects={subjects}
+                  divergingIds={divergingIds}
+                  visibleFieldIds={visibleFieldIds}
+                  showDescriptions={showDescriptions}
+                  mobileOptimized={mobileOptimized}
+                />
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </motion.div>
   );
@@ -189,6 +217,7 @@ interface SectionRowsProps {
   divergingIds: ReadonlySet<string>;
   visibleFieldIds: ReadonlySet<string>;
   showDescriptions: boolean;
+  mobileOptimized: boolean;
 }
 
 function SectionRows({
@@ -200,6 +229,7 @@ function SectionRows({
   divergingIds,
   visibleFieldIds,
   showDescriptions,
+  mobileOptimized,
 }: SectionRowsProps) {
   const colSpan = subjects.length + 1;
   return (
@@ -229,7 +259,12 @@ function SectionRows({
                 className="inline-block size-1.5 rounded-full bg-primary/70"
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ delay: 0.2 + index * 0.07, type: "spring", stiffness: 600, damping: 18 }}
+                transition={{
+                  delay: 0.2 + index * 0.07,
+                  type: "spring",
+                  stiffness: 600,
+                  damping: 18,
+                }}
               />
             )}
             <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
@@ -251,6 +286,7 @@ function SectionRows({
             divergingIds={divergingIds}
             colSpan={colSpan}
             showDescriptions={showDescriptions}
+            mobileOptimized={mobileOptimized}
           />
         );
       })}
@@ -265,6 +301,7 @@ function SubsectionRows({
   divergingIds,
   colSpan,
   showDescriptions,
+  mobileOptimized,
 }: {
   label: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
@@ -272,6 +309,7 @@ function SubsectionRows({
   divergingIds: ReadonlySet<string>;
   colSpan: number;
   showDescriptions: boolean;
+  mobileOptimized: boolean;
 }) {
   return (
     <>
@@ -290,6 +328,7 @@ function SubsectionRows({
           subjects={subjects}
           diverges={divergingIds.has(field.id)}
           showDescriptions={showDescriptions}
+          mobileOptimized={mobileOptimized}
         />
       ))}
     </>
@@ -301,23 +340,28 @@ function FieldRow({
   subjects,
   diverges,
   showDescriptions,
+  mobileOptimized,
 }: {
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
   diverges: boolean;
   showDescriptions: boolean;
+  mobileOptimized: boolean;
 }) {
   // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
   const coverage =
     subjects.length >= 2
-      ? rowCoverage(field, subjects.map((s) => s.config))
+      ? rowCoverage(
+          field,
+          subjects.map((s) => s.config)
+        )
       : null;
   return (
     <tr className="border-b border-border last:border-b-0">
       <td
         className={cn(
           "sticky left-0 z-10 bg-card border-r border-border px-3 sm:px-5 py-2.5",
-          "relative",
+          "relative"
         )}
       >
         {diverges && (
@@ -333,8 +377,18 @@ function FieldRow({
             }}
           />
         )}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[13px] font-medium text-foreground leading-tight">
+        <div
+          className={cn(
+            "flex items-center gap-1.5",
+            mobileOptimized && "min-w-0"
+          )}
+        >
+          <span
+            className={cn(
+              "text-[13px] font-medium leading-tight text-foreground",
+              mobileOptimized && "min-w-0 break-words"
+            )}
+          >
             {field.label}
           </span>
           {coverage && (
@@ -378,7 +432,11 @@ function FieldRow({
           key={s.hostId}
           className="border-l border-border px-3 sm:px-4 py-2.5 align-top"
         >
-          <FieldCell field={field} subject={s} />
+          <FieldCell
+            field={field}
+            subject={s}
+            mobileOptimized={mobileOptimized}
+          />
         </td>
       ))}
     </tr>
@@ -388,9 +446,11 @@ function FieldRow({
 function FieldCell({
   field,
   subject,
+  mobileOptimized,
 }: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
+  mobileOptimized: boolean;
 }) {
   const value = field.read(subject.config);
   const kind = field.kind;
@@ -409,7 +469,9 @@ function FieldCell({
   switch (kind.kind) {
     case "boolean": {
       const level: SupportLevel = value === true ? "supported" : "neutral";
-      return <SupportChip level={level} label={value === true ? "Yes" : "No"} />;
+      return (
+        <SupportChip level={level} label={value === true ? "Yes" : "No"} />
+      );
     }
 
     case "tri-state": {
@@ -422,7 +484,7 @@ function FieldCell({
     case "capability": {
       const level = getSupportLevel(field, subject.config) ?? "neutral";
       if (value === undefined || value === null) {
-        return <SupportChip level={level} label="Not advertised" />;
+        return <SupportChip level={level} label="Not supported" />;
       }
       const caveats = getCapabilityCaveats(field, subject.config);
       const keys =
@@ -431,16 +493,11 @@ function FieldCell({
           : [];
       return (
         <span className="inline-flex items-center gap-2">
-          <SupportChip level={level} label="Advertised" caveats={caveats} />
-          {keys.length > 0 && (
-            <ExpandablePreview
-              label={`${keys.length} key${keys.length === 1 ? "" : "s"} ›`}
-            >
-              <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
-                {JSON.stringify(value, null, 2)}
-              </pre>
-            </ExpandablePreview>
-          )}
+          <SupportChip level={level} label="Supported" />
+          <CapabilityInfoTooltip
+            caveats={caveats}
+            value={keys.length > 0 ? value : undefined}
+          />
         </span>
       );
     }
@@ -469,7 +526,16 @@ function FieldCell({
         const level = getSupportLevel(field, subject.config) ?? "neutral";
         return <SupportChip level={level} label={String(value)} />;
       }
-      return <span className="text-[13px] text-foreground">{String(value)}</span>;
+      return (
+        <span
+          className={cn(
+            "text-[13px] text-foreground",
+            mobileOptimized && "break-words"
+          )}
+        >
+          {String(value)}
+        </span>
+      );
     }
 
     case "mode-set": {
@@ -501,10 +567,15 @@ function FieldCell({
       return (
         <div className="flex flex-col gap-0.5">
           <div className="text-[12px] truncate max-w-[200px]">
-            {firstLine || <span className="italic text-muted-foreground">empty</span>}
+            {firstLine || (
+              <span className="italic text-muted-foreground">empty</span>
+            )}
           </div>
           {s.length > 0 && (
-            <ExpandablePreview label={`view ${s.length.toLocaleString()} chars`}>
+            <ExpandablePreview
+              label={`view ${s.length.toLocaleString()} chars`}
+              mobileOptimized={mobileOptimized}
+            >
               <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
                 {s}
               </pre>
@@ -515,12 +586,20 @@ function FieldCell({
     }
 
     case "string-array": {
-      if (!Array.isArray(value)) return <span className="text-[12px] text-muted-foreground/60">—</span>;
+      if (!Array.isArray(value))
+        return <span className="text-[12px] text-muted-foreground/60">—</span>;
       if (value.length === 0) {
-        return <span className="text-[12px] text-muted-foreground/60">[] empty</span>;
+        return (
+          <span className="text-[12px] text-muted-foreground/60">[] empty</span>
+        );
       }
       return (
-        <span className="text-[13px] text-foreground leading-snug">
+        <span
+          className={cn(
+            "text-[13px] leading-snug text-foreground",
+            mobileOptimized && "break-words"
+          )}
+        >
           {value.join(", ")}
         </span>
       );
@@ -545,7 +624,10 @@ function FieldCell({
         const noun = kind.itemNoun ?? "key";
         return (
           <ExpandablePreview
-            label={`${entries.length} ${noun}${entries.length === 1 ? "" : "s"} ›`}
+            label={`${entries.length} ${noun}${
+              entries.length === 1 ? "" : "s"
+            } ›`}
+            mobileOptimized={mobileOptimized}
           >
             <pre className="whitespace-pre-wrap text-[11.5px] leading-snug font-mono max-w-[480px] max-h-[320px] overflow-auto">
               {JSON.stringify(value, null, 2)}
@@ -567,22 +649,49 @@ function FieldCell({
   }
 }
 
-/**
- * Decodes the chip colors. Labels are kind-agnostic because the same colors are
- * shared by booleans (Yes/No), tri-state (On/Off/Auto), and capabilities
- * (Advertised/Not advertised) — `neutral` covers all the "off / absent" states.
- * Red `unsupported` is omitted until a field maps to it.
- */
-function SupportLegend() {
+function CapabilityInfoTooltip({
+  caveats,
+  value,
+}: {
+  caveats: ReadonlyArray<string>;
+  value?: unknown;
+}) {
+  const hasCaveats = caveats.length > 0;
+  const hasValue = value !== undefined;
+  if (!hasCaveats && !hasValue) return null;
+
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2.5 border-b border-border px-4 py-2">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Support
-      </span>
-      <SupportChip level="supported" label="Supported" />
-      <SupportChip level="partial" label="Partial" />
-      <SupportChip level="neutral" label="Off / absent" />
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label="Capability details"
+          className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        >
+          <Info className="size-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        variant="muted"
+        className="max-w-[min(360px,calc(100vw-24px))] text-left [text-wrap:normal]"
+      >
+        <div className="space-y-2">
+          {hasCaveats ? (
+            <ul className="space-y-1">
+              {caveats.map((caveat) => (
+                <li key={caveat}>{caveat}</li>
+              ))}
+            </ul>
+          ) : null}
+          {hasValue ? (
+            <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-snug">
+              {JSON.stringify(value, null, 2)}
+            </pre>
+          ) : null}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -598,7 +707,7 @@ function HostColumnHeader({
   const logoSrc = getChatboxHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
-    themeMode,
+    themeMode
   );
   const reduceMotion = useReducedMotion();
 
@@ -630,7 +739,10 @@ function HostColumnHeader({
           alt=""
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
-        <div className="min-w-0 font-medium text-[14px] truncate leading-tight" title={subject.hostName}>
+        <div
+          className="min-w-0 font-medium text-[14px] truncate leading-tight"
+          title={subject.hostName}
+        >
           {subject.hostName}
         </div>
       </motion.div>
@@ -648,9 +760,11 @@ function formatObjectValue(v: unknown): string {
 function ExpandablePreview({
   label,
   children,
+  mobileOptimized = false,
 }: {
   label: string;
   children: React.ReactNode;
+  mobileOptimized?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -663,7 +777,14 @@ function ExpandablePreview({
           {label}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="max-w-[520px] max-h-[400px] overflow-auto p-3">
+      <PopoverContent
+        className={cn(
+          "max-h-[400px] overflow-auto p-3",
+          mobileOptimized
+            ? "max-w-[calc(100vw-24px)] sm:max-w-[520px]"
+            : "max-w-[520px]"
+        )}
+      >
         {children}
       </PopoverContent>
     </Popover>
