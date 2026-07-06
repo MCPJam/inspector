@@ -18,7 +18,7 @@ afterEach(() => {
 
 function mockFetch(impl: (url: string, init: RequestInit) => Response) {
   globalThis.fetch = vi.fn(async (url: any, init: any) =>
-    impl(String(url), init as RequestInit)
+    impl(String(url), init as RequestInit),
   ) as unknown as typeof fetch;
 }
 
@@ -42,10 +42,10 @@ describe("fetchHarnessModelCredential", () => {
     });
 
     expect(seenUrl).toBe(
-      "https://convex.example.com/web/harness/model-credential"
+      "https://convex.example.com/web/harness/model-credential",
     );
     expect((seenInit.headers as Record<string, string>).authorization).toBe(
-      "Bearer raw-token"
+      "Bearer raw-token",
     );
     expect(JSON.parse(String(seenInit.body))).toEqual({
       projectId: "p1",
@@ -65,8 +65,8 @@ describe("fetchHarnessModelCredential", () => {
             ok: false,
             error: "The Claude Code harness is not enabled on this server.",
           }),
-          { status: 403 }
-        )
+          { status: 403 },
+        ),
     );
     const result = await fetchHarnessModelCredential({
       projectId: "p1",

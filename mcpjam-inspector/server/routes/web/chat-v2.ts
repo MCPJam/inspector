@@ -99,7 +99,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required"
+        "messages are required",
       );
     }
 
@@ -108,7 +108,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported"
+        "model is not supported",
       );
     }
 
@@ -150,7 +150,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             status: runtime.status,
             error: runtime.error,
-          }
+          },
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
@@ -182,12 +182,12 @@ chatV2.post("/", async (c) => {
             hostId,
             status: runtime.status,
             error: runtime.error,
-          }
+          },
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
         );
       }
     }
@@ -218,7 +218,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -227,7 +227,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -236,7 +236,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -278,7 +278,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
-        }
+        },
       );
       modelDefinition = hostModel;
     }
@@ -312,20 +312,20 @@ chatV2.post("/", async (c) => {
           (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
         modelEligible: isMCPJamProvidedModel(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
         // Canonical id so the adapter's supportsModel check sees the prefixed
         // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
         modelId: getCanonicalModelId(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
       });
       if (!availability.ok) {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
         );
       }
     }
@@ -359,7 +359,7 @@ chatV2.post("/", async (c) => {
         isChatboxSession,
         requireToolApproval,
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      }
+      },
     );
 
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
@@ -408,7 +408,7 @@ chatV2.post("/", async (c) => {
         serverNames: selectedServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,
-      }
+      },
     );
     oauthServerUrls = urls;
 
@@ -439,7 +439,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext
+        body.widgetModelContext,
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -499,6 +499,9 @@ chatV2.post("/", async (c) => {
           ...(isChatboxSession && surface ? { surface } : {}),
           chatboxId,
           accessVersion,
+          // Phase 3: forward the runtime-config scope into the harness path
+          // (alongside the bash-tool path threaded above).
+          ...(executionScope ? { executionScope } : {}),
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
@@ -562,7 +565,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
     const routeError = mapRuntimeError(error);
@@ -572,7 +575,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
   }
 });

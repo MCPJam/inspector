@@ -8,6 +8,7 @@
  * `convex/http.ts:/web/harness/session-state/{claim,heartbeat,release,commit}`.
  */
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessResetReason } from "@/shared/harness-session";
 
@@ -28,6 +29,11 @@ export type HarnessOwnerRef = {
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
   chatboxId?: string;
+  /** Phase 3 scope. When present, the backend resolves the owner lane via
+   *  resolveExecutionAccess (guest / swarm grant) instead of the member-only
+   *  project-role gate. Spread into every session-state body (claim / heartbeat
+   *  / release / commit) so all four re-resolve identically. */
+  executionScope?: ExecutionScope;
 };
 
 export type HarnessResumePayload = {
@@ -60,6 +66,9 @@ export type HarnessSessionCommitPayload = {
   runtimeFingerprint: string;
   /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
   skillsHash?: string;
+  /** Phase 3 scope forwarded to /ingest-chat so the commit resolves the guest's
+   *  own lane via resolveExecutionAccess (re-verified live). */
+  executionScope?: ExecutionScope;
   /** WS3: the committed state is a paused-for-approval continuation (see
    *  HarnessResumePayload.awaitingApproval). */
   awaitingApproval?: boolean;
@@ -134,13 +143,13 @@ async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<
   { ok: true; payload: any } | { ok: false; status: number; error: string }
 > {
   const url = new URL(
     `/web/harness/session-state/${pathSuffix}`,
-    getConvexHttpUrl()
+    getConvexHttpUrl(),
   ).toString();
   const authorization = bearer.startsWith("Bearer ")
     ? bearer
@@ -207,7 +216,7 @@ export async function claimHarnessSessionState(args: {
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
     },
-    args.signal
+    args.signal,
   );
   if (!res.ok) return res;
   return {
