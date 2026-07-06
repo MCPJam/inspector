@@ -3,8 +3,9 @@
  * and cloud-skill creates carry only a small inline SKILL.md body well under
  * the cap). Mount once with `app.use("/api/web/*", webBodyLimit())`.
  *
- * Carve-out: the computer file-upload route carries multipart blobs and
- * applies its own (higher) bodyLimit at its mount site, so it is exempt here.
+ * Carve-outs: POST computer uploads carry multipart blobs and apply their own
+ * higher bodyLimit at the mount site; audio transcription carries larger JSON
+ * payloads with base64-encoded audio.
  *
  * (An earlier multipart carve-out for skill *folder* uploads was removed when
  * skills moved to a Convex source of truth — there's no large multipart upload
@@ -23,7 +24,9 @@ export const AUDIO_WEB_BODY_LIMIT = 40 * 1024 * 1024; // 40MB
 
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
-    if (c.req.path === "/api/web/computers/upload") return next();
+    if (c.req.method === "POST" && c.req.path === "/api/web/computers/upload") {
+      return next();
+    }
     if (c.req.path.startsWith("/api/web/audio/")) {
       return bodyLimit({
         maxSize: AUDIO_WEB_BODY_LIMIT,
@@ -32,8 +35,9 @@ export function webBodyLimit() {
             {
               code: "VALIDATION_ERROR",
               message: "Audio transcription body exceeds 40MB limit",
+              error: "Audio transcription body exceeds 40MB limit",
             },
-            413,
+            413
           ),
       })(c, next);
     }
@@ -41,8 +45,12 @@ export function webBodyLimit() {
       maxSize: DEFAULT_WEB_BODY_LIMIT,
       onError: (ctx) =>
         ctx.json(
-          { code: "VALIDATION_ERROR", message: "Request body exceeds 1MB limit" },
-          400,
+          {
+            code: "VALIDATION_ERROR",
+            message: "Request body exceeds 1MB limit",
+            error: "Request body exceeds 1MB limit",
+          },
+          400
         ),
     })(c, next);
   };

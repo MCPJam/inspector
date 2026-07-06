@@ -73,46 +73,24 @@ describe("audio transcriptions route", () => {
     }
   });
 
-  it("forwards raw base64 audio to OpenRouter", async () => {
+  it("rejects voice transcription on the MCP mount", async () => {
     const response = await postTranscription({
-      apiKey: "sk-or-test",
       input_audio: {
         data: "UklGRiQA",
         format: "webm",
       },
     });
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      text: "Hello from audio.",
-      usage: { seconds: 1.5, cost: 0.001 },
-      generationId: "gen_123",
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Voice transcription uses MCPJam credits and is only available on the /api/web audio endpoint.",
     });
-
-    expect(fetch).toHaveBeenCalledWith(
-      "https://openrouter.ai/api/v1/audio/transcriptions",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({
-          Authorization: "Bearer sk-or-test",
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://www.mcpjam.com/",
-          "X-Title": "MCPJam",
-        }),
-        body: JSON.stringify({
-          model: "openai/whisper-1",
-          input_audio: {
-            data: "UklGRiQA",
-            format: "webm",
-          },
-        }),
-      })
-    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("rejects data URIs because OpenRouter expects raw base64", async () => {
+  it("rejects data URIs because the backend expects raw base64", async () => {
     const response = await postTranscription({
-      apiKey: "sk-or-test",
       input_audio: {
         data: "data:audio/webm;base64,UklGRiQA",
         format: "webm",
@@ -263,7 +241,7 @@ describe("audio transcriptions route", () => {
     });
   });
 
-  it("uses the same guest bearer fallback as free models for local project transcriptions", async () => {
+  it("uses the same guest bearer fallback as free models for local voice transcription", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockImplementation(async (url, init) => {
       expect(String(url)).toBe("https://convex.example/audio/transcriptions");
@@ -272,7 +250,6 @@ describe("audio transcriptions route", () => {
       );
       expect(JSON.parse(String(init?.body))).toMatchObject({
         model: "openai/whisper-1",
-        projectId: "project-voice",
         input_audio: {
           data: "UklGRiQA",
           format: "webm",
@@ -292,7 +269,6 @@ describe("audio transcriptions route", () => {
         "X-Real-IP": "203.0.113.10",
       },
       body: JSON.stringify({
-        projectId: "project-voice",
         input_audio: {
           data: "UklGRiQA",
           format: "webm",
@@ -315,10 +291,6 @@ describe("audio transcriptions route", () => {
   });
 
   it("rejects project-backed transcription on the MCP mount", async () => {
-    // /api/mcp/audio is the local-only mount: project-backed transcription
-    // would bill against the user's MCPJam quota and must stay on /api/web
-    // where the auth gate runs. Confirm the local mount refuses any request
-    // that carries a projectId before it can reach the upstream call.
     const response = await app.request("/api/mcp/audio/transcriptions", {
       method: "POST",
       headers: {
@@ -337,37 +309,42 @@ describe("audio transcriptions route", () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
       error:
-        "Project-backed transcription is only available on the hosted /api/web audio endpoint.",
+        "Voice transcription uses MCPJam credits and is only available on the /api/web audio endpoint.",
     });
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("normalizes OpenRouter errors", async () => {
+  it("normalizes MCPJam transcription errors", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          error: { message: "Invalid OpenRouter API key" },
+          error: { message: "Voice provider failed" },
         }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
+        { status: 502, headers: { "Content-Type": "application/json" } }
       )
     );
 
-    const response = await postTranscription({
-      apiKey: "bad-key",
-      input_audio: {
-        data: "UklGRiQA",
-        format: "webm",
-      },
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
     });
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
-      error: "Invalid OpenRouter API key",
-      status: 401,
+      error: "Voice provider failed",
+      status: 502,
     });
   });
 
-  it("times out hung OpenRouter transcription requests", async () => {
+  it("times out hung MCPJam transcription requests", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.useFakeTimers();
     vi.mocked(fetch).mockImplementation(
       (_url, init) =>
@@ -380,12 +357,15 @@ describe("audio transcriptions route", () => {
         })
     );
 
-    const responsePromise = postTranscription({
-      apiKey: "sk-or-test",
-      input_audio: {
-        data: "UklGRiQA",
-        format: "webm",
-      },
+    const responsePromise = app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
     });
 
     await vi.advanceTimersByTimeAsync(55_000);
@@ -393,7 +373,7 @@ describe("audio transcriptions route", () => {
 
     expect(response.status).toBe(504);
     await expect(response.json()).resolves.toEqual({
-      error: "OpenRouter transcription timed out. Try a shorter recording.",
+      error: "Voice transcription timed out. Try a shorter recording.",
     });
   });
 });

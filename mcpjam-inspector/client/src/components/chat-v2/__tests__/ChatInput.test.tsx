@@ -14,17 +14,6 @@ import {
 import type { ModelDefinition } from "@/shared/types";
 import { authFetch } from "@/lib/session-token";
 
-const providerKeyState = vi.hoisted(() => ({
-  openrouterToken: "",
-}));
-
-vi.mock("@/hooks/use-ai-provider-keys", () => ({
-  useAiProviderKeys: () => ({
-    getToken: (provider: string) =>
-      provider === "openrouter" ? providerKeyState.openrouterToken : "",
-  }),
-}));
-
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
     balance: undefined,
@@ -219,7 +208,6 @@ describe("ChatInput", () => {
       value: vi.fn(),
     });
     vi.mocked(authFetch).mockReset();
-    providerKeyState.openrouterToken = "";
   });
 
   afterEach(() => {
@@ -236,7 +224,7 @@ describe("ChatInput", () => {
     options: {
       files?: File[];
       textOnly?: boolean;
-    },
+    }
   ) {
     const files = options.files ?? [];
     const clipboardData = {
@@ -380,7 +368,7 @@ describe("ChatInput", () => {
         <ChatInput
           {...defaultProps}
           onChangeFileAttachments={onChangeFileAttachments}
-        />,
+        />
       );
 
       const textarea = screen.getByPlaceholderText("Type your message...");
@@ -397,7 +385,7 @@ describe("ChatInput", () => {
       expect(attachments[0].file.name).toBe("pasted-image-1.png");
       expect(attachments[0].file.type).toBe("image/png");
       expect(attachments[0].previewUrl).toBe(
-        "blob:http://localhost/chat-input-test",
+        "blob:http://localhost/chat-input-test"
       );
     });
 
@@ -407,7 +395,7 @@ describe("ChatInput", () => {
         <ChatInput
           {...defaultProps}
           onChangeFileAttachments={onChangeFileAttachments}
-        />,
+        />
       );
 
       const textarea = screen.getByPlaceholderText("Type your message...");
@@ -426,7 +414,7 @@ describe("ChatInput", () => {
         <ChatInput
           {...defaultProps}
           onChangeFileAttachments={onChangeFileAttachments}
-        />,
+        />
       );
 
       const composer = screen.getByTestId("chat-input-composer");
@@ -436,19 +424,19 @@ describe("ChatInput", () => {
       fireEvent.dragEnter(composer, { dataTransfer });
 
       expect(
-        screen.getByText("Drop image or file to attach"),
+        screen.getByText("Drop image or file to attach")
       ).toBeInTheDocument();
 
       fireEvent.drop(composer, { dataTransfer });
 
       expect(
-        screen.queryByText("Drop image or file to attach"),
+        screen.queryByText("Drop image or file to attach")
       ).not.toBeInTheDocument();
       expect(onChangeFileAttachments).toHaveBeenCalledTimes(1);
       const attachments = onChangeFileAttachments.mock.calls[0][0];
       expect(attachments[0].file).toBe(file);
       expect(attachments[0].previewUrl).toBe(
-        "blob:http://localhost/chat-input-test",
+        "blob:http://localhost/chat-input-test"
       );
     });
 
@@ -458,7 +446,7 @@ describe("ChatInput", () => {
         <ChatInput
           {...defaultProps}
           onChangeFileAttachments={onChangeFileAttachments}
-        />,
+        />
       );
 
       const composer = screen.getByTestId("chat-input-composer");
@@ -468,7 +456,7 @@ describe("ChatInput", () => {
 
       expect(onChangeFileAttachments).not.toHaveBeenCalled();
       expect(
-        screen.getByText(/clip\.mp4: Unsupported file type/),
+        screen.getByText(/clip\.mp4: Unsupported file type/)
       ).toBeInTheDocument();
     });
   });
@@ -658,7 +646,7 @@ describe("ChatInput", () => {
   });
 
   describe("voice input", () => {
-    it("uses backend provider context without requiring a local OpenRouter key", async () => {
+    it("uses backend credit context when it is available", async () => {
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(
         new Response(JSON.stringify({ text: "backend transcript" }), {
@@ -728,8 +716,7 @@ describe("ChatInput", () => {
       });
     });
 
-    it("falls back to a local OpenRouter key when no backend context is available", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
+    it("uses MCPJam credit transcription when no project context is available", async () => {
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(
         new Response(JSON.stringify({ text: "hello there" }), {
@@ -762,7 +749,7 @@ describe("ChatInput", () => {
       });
 
       expect(authFetch).toHaveBeenCalledWith(
-        "/api/mcp/audio/transcriptions",
+        "/api/web/audio/transcriptions",
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -771,7 +758,6 @@ describe("ChatInput", () => {
       const [, init] = vi.mocked(authFetch).mock.calls[0];
       const body = JSON.parse(String(init?.body));
       expect(body).toEqual({
-        apiKey: "sk-or-test",
         model: "openai/whisper-1",
         input_audio: {
           data: expect.any(String),
@@ -812,7 +798,6 @@ describe("ChatInput", () => {
     });
 
     it("keeps the stop control available if the composer becomes disabled mid-recording", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(
         new Response(JSON.stringify({ text: "still captured" }), {
@@ -857,7 +842,6 @@ describe("ChatInput", () => {
     });
 
     it("finalizes recording if the browser never fires the stop event", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks({ emitStopEvent: false });
       vi.mocked(authFetch).mockResolvedValue(
         new Response(JSON.stringify({ text: "fallback transcript" }), {
@@ -892,7 +876,6 @@ describe("ChatInput", () => {
     });
 
     it("keeps voice input cancellable while transcription is pending", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks();
       let resolveTranscription: ((response: Response) => void) | undefined;
       vi.mocked(authFetch).mockImplementation(
@@ -963,7 +946,6 @@ describe("ChatInput", () => {
             ...args
           )
         );
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockImplementation(
         (_url, init) =>
@@ -1011,10 +993,9 @@ describe("ChatInput", () => {
     });
 
     it("shows transcription errors without changing the draft", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(
-        new Response(JSON.stringify({ error: "Invalid OpenRouter API key" }), {
+        new Response(JSON.stringify({ error: "Voice budget exhausted" }), {
           status: 502,
           headers: { "Content-Type": "application/json" },
         })
@@ -1038,13 +1019,12 @@ describe("ChatInput", () => {
       );
 
       expect(
-        await screen.findByText("Invalid OpenRouter API key")
+        await screen.findByText("Voice budget exhausted")
       ).toBeInTheDocument();
       expect(onChange).not.toHaveBeenCalled();
     });
 
     it("shows wallet voice concurrency errors with friendly copy", async () => {
-      providerKeyState.openrouterToken = "sk-or-test";
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(
         new Response(
@@ -1366,7 +1346,7 @@ describe("ChatInput", () => {
           onDisconnectServer={onDisconnectServer}
           onReconnectServer={vi.fn()}
           onServerToggle={onServerToggle}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
@@ -1391,7 +1371,7 @@ describe("ChatInput", () => {
           onDisconnectServer={vi.fn()}
           onReconnectServer={onReconnectServer}
           onServerToggle={onServerToggle}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));

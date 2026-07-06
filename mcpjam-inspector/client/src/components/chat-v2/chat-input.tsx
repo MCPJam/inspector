@@ -90,11 +90,10 @@ import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { authFetch } from "@/lib/session-token";
 
-const OPENROUTER_STT_MODEL = "openai/whisper-1";
+const VOICE_TRANSCRIPTION_MODEL = "openai/whisper-1";
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 25_000;
 const VOICE_TRANSCRIPTION_GUARD_MS = VOICE_TRANSCRIPTION_TIMEOUT_MS + 2_000;
 const VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE =
@@ -222,7 +221,7 @@ function getExtensionForMediaType(mediaType: string): string {
 function normalizeIncomingFile(
   file: File,
   source: AttachmentInputSource,
-  index: number,
+  index: number
 ): File {
   if (source !== "paste" || file.name.trim().length > 0) {
     return file;
@@ -334,7 +333,7 @@ interface ChatInputProps {
   onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens the add-server modal). */
   onAddServer?: (formData: ServerFormData) => void;
-  /** Server-side provider context used to resolve the OpenRouter STT key. */
+  /** Server-side context used to bill voice transcription to MCPJam credits. */
   voiceInputContext?: VoiceInputBackendContext;
   /** WorkOS/guest bearer used by local inspector routes to resolve provider keys. */
   voiceInputAuthHeaders?: Record<string, string>;
@@ -412,7 +411,7 @@ export function ChatInput({
       HOSTED_MODE && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId],
+    [clientSelector?.cloudProjectId]
   );
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
@@ -450,19 +449,10 @@ export function ChatInput({
     useState<VoiceInputState>("idle");
   const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
   const posthog = usePostHog();
-  const { getToken } = useAiProviderKeys();
-  const localOpenRouterApiKey = getToken("openrouter").trim();
   const { balance: creditBalance } = useCreditBalance({ includeGuests: true });
-  // Track voice budget whenever the hosted backend enforces one — that's
-  // any HOSTED_MODE session (including unauthenticated guests, who have a
-  // daily quota) and any local session wired to a project. Local users with
-  // their own OpenRouter key pay directly and aren't tracked here.
-  const voiceBudgetTracked =
-    HOSTED_MODE || Boolean(voiceInputContext?.projectId);
-  const voiceSecondsRemaining =
-    voiceBudgetTracked && creditBalance
-      ? creditBalance.voiceSecondsRemaining
-      : null;
+  const voiceSecondsRemaining = creditBalance
+    ? creditBalance.voiceSecondsRemaining
+    : null;
   const voiceRecordingCapSeconds =
     voiceSecondsRemaining == null
       ? VOICE_GLOBAL_MAX_SECONDS
@@ -492,8 +482,8 @@ export function ChatInput({
   const selectorHostStyle = hostStyle ?? chatboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
-    onDisconnectServer &&
-    Object.keys(allServerConfigs).length > 0,
+      onDisconnectServer &&
+      Object.keys(allServerConfigs).length > 0
   );
   const hasServerOptions = Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
@@ -585,7 +575,7 @@ export function ChatInput({
       if (!onChangeFileAttachments) return false;
 
       const incomingFiles = Array.from(files).map((file, index) =>
-        normalizeIncomingFile(file, source, index),
+        normalizeIncomingFile(file, source, index)
       );
       if (incomingFiles.length === 0) return false;
 
@@ -615,7 +605,7 @@ export function ChatInput({
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments],
+    [fileAttachments, onChangeFileAttachments]
   );
 
   const handleFileInputChange = useCallback(
@@ -628,7 +618,7 @@ export function ChatInput({
       // Reset input so the same file can be selected again
       event.target.value = "";
     },
-    [addFileAttachments],
+    [addFileAttachments]
   );
 
   const handlePaste = useCallback(
@@ -642,7 +632,7 @@ export function ChatInput({
       addFileAttachments(files, "paste");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canAttachFiles],
+    [addFileAttachments, canAttachFiles]
   );
 
   const handleDragEnter = useCallback(
@@ -656,7 +646,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => depth + 1);
     },
-    [canHandleFileTransfers, disabled],
+    [canHandleFileTransfers, disabled]
   );
 
   const handleDragOver = useCallback(
@@ -668,7 +658,7 @@ export function ChatInput({
       event.stopPropagation();
       event.dataTransfer.dropEffect = disabled ? "none" : "copy";
     },
-    [canHandleFileTransfers, disabled],
+    [canHandleFileTransfers, disabled]
   );
 
   const handleDragLeave = useCallback(
@@ -682,7 +672,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => Math.max(0, depth - 1));
     },
-    [canHandleFileTransfers, disabled],
+    [canHandleFileTransfers, disabled]
   );
 
   const handleDrop = useCallback(
@@ -698,7 +688,7 @@ export function ChatInput({
       addFileAttachments(Array.from(event.dataTransfer.files), "drop");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canHandleFileTransfers, disabled],
+    [addFileAttachments, canHandleFileTransfers, disabled]
   );
 
   const removeFileAttachment = useCallback(
@@ -765,23 +755,14 @@ export function ChatInput({
           );
         }
 
-        const useBackendProviderKey = Boolean(voiceInputContext?.projectId);
-        const transcriptionEndpoint = useBackendProviderKey
-          ? "/api/web/audio/transcriptions"
-          : HOSTED_MODE
-          ? "/api/web/audio/transcriptions"
-          : "/api/mcp/audio/transcriptions";
-        const response = await authFetch(transcriptionEndpoint, {
+        const response = await authFetch("/api/web/audio/transcriptions", {
           method: "POST",
           headers: {
-            ...(HOSTED_MODE ? undefined : voiceInputAuthHeaders),
+            ...voiceInputAuthHeaders,
             "Content-Type": "application/json",
           },
           signal: abortState.controller.signal,
           body: JSON.stringify({
-            ...(!useBackendProviderKey && localOpenRouterApiKey
-              ? { apiKey: localOpenRouterApiKey }
-              : {}),
             ...(voiceInputContext?.projectId
               ? { projectId: voiceInputContext.projectId }
               : {}),
@@ -795,7 +776,7 @@ export function ChatInput({
             ...(voiceInputContext?.accessVersion !== undefined
               ? { accessVersion: voiceInputContext.accessVersion }
               : {}),
-            model: OPENROUTER_STT_MODEL,
+            model: VOICE_TRANSCRIPTION_MODEL,
             input_audio: {
               data: base64Audio,
               format: getAudioFormatFromMimeType(audioBlob.type),
@@ -820,12 +801,12 @@ export function ChatInput({
               ? VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE
               : typeof result?.error === "string"
               ? result.error
-              : "OpenRouter transcription failed";
+              : "Voice transcription failed";
           throw new Error(message);
         }
 
         if (!result || typeof result.text !== "string") {
-          throw new Error("OpenRouter returned an empty transcription.");
+          throw new Error("Voice transcription returned an empty transcript.");
         }
 
         return result.text;
@@ -852,7 +833,6 @@ export function ChatInput({
       }
     },
     [
-      localOpenRouterApiKey,
       voiceInputAuthHeaders,
       voiceInputContext?.accessVersion,
       voiceInputContext?.chatboxId,
@@ -926,7 +906,7 @@ export function ChatInput({
           setVoiceInputError(
             error instanceof Error
               ? error.message
-              : "OpenRouter transcription failed."
+              : "Voice transcription failed."
           );
         })
         .finally(() => {
@@ -1320,7 +1300,7 @@ export function ChatInput({
             "relative flex w-full flex-col px-2 pt-2 pb-2",
             isFileDragActive &&
               "ring-2 ring-primary/45 ring-offset-2 ring-offset-background",
-            composerClasses,
+            composerClasses
           )}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}

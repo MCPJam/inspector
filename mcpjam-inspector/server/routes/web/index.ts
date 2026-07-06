@@ -37,7 +37,6 @@ web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-web.use("/audio/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -70,6 +69,8 @@ web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
 web.route("/evals", evals);
 web.route("/export", exporter);
+// Voice transcription handles user-bearer forwarding and guest fallback inside
+// the proxy route so local/npx users can spend MCPJam credits without BYOK.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like

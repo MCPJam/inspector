@@ -5,7 +5,6 @@ import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 
-const OPENROUTER_STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions";
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
@@ -25,7 +24,6 @@ const SUPPORTED_AUDIO_FORMATS = new Set([
 ]);
 
 interface TranscriptionRequestBody {
-  apiKey?: unknown;
   model?: unknown;
   projectId?: unknown;
   selectedServerIds?: unknown;
@@ -89,7 +87,6 @@ function validateRequest(body: TranscriptionRequestBody):
   | {
       ok: true;
       value: {
-        apiKey?: string;
         model: string;
         projectId?: string;
         selectedServerIds?: string[];
@@ -103,7 +100,6 @@ function validateRequest(body: TranscriptionRequestBody):
       };
     }
   | { ok: false; error: string } {
-  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
   const projectId =
     typeof body.projectId === "string" && body.projectId.trim().length > 0
       ? body.projectId.trim()
@@ -183,7 +179,6 @@ function validateRequest(body: TranscriptionRequestBody):
   return {
     ok: true,
     value: {
-      apiKey,
       model,
       ...(projectId ? { projectId } : {}),
       ...(selectedServerIds && selectedServerIds.length > 0
@@ -200,11 +195,6 @@ function validateRequest(body: TranscriptionRequestBody):
   };
 }
 
-function resolveLocalOpenRouterApiKey(apiKey?: string): string {
-  if (apiKey) return apiKey;
-  throw new Error("OpenRouter API key is required");
-}
-
 function getMcpjamTranscriptionUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
@@ -215,7 +205,7 @@ function getMcpjamTranscriptionUrl(): string {
 
 const audioTranscriptions = new Hono();
 
-function createOpenRouterSignal(inboundSignal?: AbortSignal): {
+function createTranscriptionSignal(inboundSignal?: AbortSignal): {
   signal: AbortSignal;
   timedOut: () => boolean;
   cleanup: () => void;
@@ -257,23 +247,19 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     return c.json({ error: validation.error }, 400);
   }
 
-  // Project-backed transcription is billed against the user's MCPJam quota
-  // and must go through the hosted /api/web auth gate. The MCP-mounted copy
-  // of this route serves only local users with their own OpenRouter key —
-  // accepting a projectId there would proxy a billed call without the auth
-  // checks that /api/web enforces.
-  if (validation.value.projectId && !c.req.path.startsWith("/api/web/")) {
+  // Voice is always MCPJam-credit-backed. Keep the MCP-mounted copy from
+  // accepting transcription calls so local BYOK cannot bypass credit billing.
+  if (!c.req.path.startsWith("/api/web/")) {
     return c.json(
       {
         error:
-          "Project-backed transcription is only available on the hosted /api/web audio endpoint.",
+          "Voice transcription uses MCPJam credits and is only available on the /api/web audio endpoint.",
       },
       403
     );
   }
 
   const {
-    apiKey,
     model,
     projectId,
     selectedServerIds,
@@ -286,9 +272,11 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     audioDurationSeconds,
   } = validation.value;
 
-  let openRouterSignal: ReturnType<typeof createOpenRouterSignal> | undefined;
+  let transcriptionSignal:
+    | ReturnType<typeof createTranscriptionSignal>
+    | undefined;
   try {
-    openRouterSignal = createOpenRouterSignal(c.req.raw.signal);
+    transcriptionSignal = createTranscriptionSignal(c.req.raw.signal);
     const transcriptionPayload = {
       model,
       input_audio: {
@@ -307,7 +295,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };
     let authHeader = c.req.header("authorization");
-    if (projectId && !authHeader) {
+    if (!authHeader) {
       try {
         authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -324,29 +312,19 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       }
     }
     const originHeader = c.req.header("origin");
-    const clientIp = projectId ? getClientIp(c) : null;
+    const clientIp = getClientIp(c);
     const guestIpHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
-    const upstreamResponse = await fetch(
-      projectId ? getMcpjamTranscriptionUrl() : OPENROUTER_STT_URL,
-      {
-        method: "POST",
-        signal: openRouterSignal.signal,
-        headers: projectId
-          ? {
-              "Content-Type": "application/json",
-              ...(authHeader ? { Authorization: authHeader } : {}),
-              ...(originHeader ? { Origin: originHeader } : {}),
-              ...(guestIpHash ? { [GUEST_IP_HASH_HEADER]: guestIpHash } : {}),
-            }
-          : {
-              Authorization: `Bearer ${resolveLocalOpenRouterApiKey(apiKey)}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://www.mcpjam.com/",
-              "X-Title": "MCPJam",
-            },
-        body: JSON.stringify(transcriptionPayload),
-      }
-    );
+    const upstreamResponse = await fetch(getMcpjamTranscriptionUrl(), {
+      method: "POST",
+      signal: transcriptionSignal.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader,
+        ...(originHeader ? { Origin: originHeader } : {}),
+        ...(guestIpHash ? { [GUEST_IP_HASH_HEADER]: guestIpHash } : {}),
+      },
+      body: JSON.stringify(transcriptionPayload),
+    });
 
     const generationId = upstreamResponse.headers.get("X-Generation-Id");
     const responseText = await upstreamResponse.text();
@@ -362,22 +340,22 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     if (!upstreamResponse.ok) {
       const errorBody = readUpstreamError(
         payload,
-        `OpenRouter transcription failed with status ${upstreamResponse.status}`
+        `Voice transcription failed with status ${upstreamResponse.status}`
       );
-      const responseStatus = (
-        projectId ? upstreamResponse.status : 502
-      ) as ContentfulStatusCode;
       return c.json(
         {
           ...errorBody,
           status: upstreamResponse.status,
         },
-        responseStatus
+        upstreamResponse.status as ContentfulStatusCode
       );
     }
 
     if (!payload || typeof payload !== "object") {
-      return c.json({ error: "OpenRouter returned an invalid response" }, 502);
+      return c.json(
+        { error: "MCPJam returned an invalid voice transcription response" },
+        502
+      );
     }
 
     return c.json({
@@ -385,27 +363,25 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(generationId ? { generationId } : {}),
     });
   } catch (error) {
-    if (openRouterSignal?.timedOut()) {
+    if (transcriptionSignal?.timedOut()) {
       return c.json(
         {
-          error: "OpenRouter transcription timed out. Try a shorter recording.",
+          error: "Voice transcription timed out. Try a shorter recording.",
         },
         504
       );
     }
-    logger.error("[audio-transcriptions] OpenRouter STT request failed", error);
+    logger.error(
+      "[audio-transcriptions] Voice transcription request failed",
+      error
+    );
     const message =
       error instanceof Error
         ? error.message
-        : "OpenRouter transcription request failed";
-    const status =
-      message === "OpenRouter API key is required" ||
-      message.startsWith("OpenRouter is not configured")
-        ? 400
-        : 502;
-    return c.json({ error: message }, status);
+        : "Voice transcription request failed";
+    return c.json({ error: message }, 502);
   } finally {
-    openRouterSignal?.cleanup();
+    transcriptionSignal?.cleanup();
   }
 });
 
