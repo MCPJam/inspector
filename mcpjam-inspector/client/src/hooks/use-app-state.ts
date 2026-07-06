@@ -22,8 +22,8 @@ import {
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
 import {
-  clearPendingInviteOrgId,
-  readPendingInviteOrgId,
+  clearPendingInviteOrgMarker,
+  readPendingInviteOrgMarker,
 } from "@/lib/pending-invite-org";
 import {
   clearHostedOAuthPendingState,
@@ -346,7 +346,7 @@ export function useAppState({
     if (!currentUserId || isLoadingOrganizations) {
       return;
     }
-    const pendingInviteOrgId = readPendingInviteOrgId();
+    const pendingInviteOrgId = readPendingInviteOrgMarker()?.organizationId;
     if (!pendingInviteOrgId) {
       return;
     }
@@ -366,7 +366,7 @@ export function useAppState({
       }
       return;
     }
-    clearPendingInviteOrgId();
+    clearPendingInviteOrgMarker();
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(INVITE_PENDING_TOAST_SESSION_KEY);
     }

@@ -23,6 +23,10 @@ import {
   writeBillingSignInReturnPath,
 } from "../lib/billing-deep-link";
 import {
+  readPendingInviteOrgMarker,
+  writePendingInviteOrgMarkerForPath,
+} from "../lib/pending-invite-org";
+import {
   clearChatboxSession,
   readChatboxSignInReturnPath,
   writeChatboxSignInReturnPath,
@@ -159,6 +163,7 @@ const {
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
       signIn: vi.fn(),
+      signUp: vi.fn(),
       user: null as { id: string } | null,
       isLoading: false,
     },
@@ -500,6 +505,7 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.getAccessToken = vi.fn();
     mockWorkOsAuthState.signIn = vi.fn();
+    mockWorkOsAuthState.signUp = vi.fn();
     mockWorkOsAuthState.user = null;
     mockWorkOsAuthState.isLoading = false;
     mockCompleteHostedOAuthCallback.mockReset();
@@ -794,6 +800,103 @@ describe("App hosted OAuth callback handling", () => {
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
     expect(readChatboxSignInReturnPath()).toBe("/chatbox/asana/token-123");
+  });
+
+  it("starts sign-up for a signed-out org invite link", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-serverUrl-asana");
+    window.history.replaceState({}, "", "/?invite_org=org-invite_1");
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+    mockWorkOsAuthState.isLoading = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockWorkOsAuthState.signUp).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
+    expect(readPendingInviteOrgMarker()).toMatchObject({
+      organizationId: "org-invite_1",
+      returnPath: "/organizations/org-invite_1",
+      startedAt: expect.any(Number),
+    });
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
+  });
+
+  it("starts sign-in for a signed-out organization route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-serverUrl-asana");
+    window.history.replaceState({}, "", "/organizations/org-invite_1");
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+    mockWorkOsAuthState.isLoading = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockWorkOsAuthState.signUp).not.toHaveBeenCalled();
+    expect(readPendingInviteOrgMarker()).toMatchObject({
+      organizationId: "org-invite_1",
+      returnPath: "/organizations/org-invite_1",
+      startedAt: expect.any(Number),
+    });
+  });
+
+  it("does not consume an organization return path while Convex still has a guest user", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-serverUrl-asana");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    writePendingInviteOrgMarkerForPath("/organizations/org-invite_1");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockConvexAuthState.isAuthenticated = true;
+    mockConvexAuthState.isLoading = false;
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? {
+            ...existingConvexUser,
+            _id: "guest-seen-1",
+            externalId: "guest-seen-1",
+            isAnonymous: true,
+          }
+        : undefined
+    );
+
+    const { rerender } = render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(readPendingInviteOrgMarker()).toMatchObject({
+      organizationId: "org-invite_1",
+      returnPath: "/organizations/org-invite_1",
+      startedAt: expect.any(Number),
+    });
+
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined
+    );
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/organizations/org-invite_1");
+    });
+    expect(readPendingInviteOrgMarker()).toBeNull();
   });
 
   it("clears stale client auth state before retrying a timed-out callback", async () => {
@@ -1496,6 +1599,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAuth.mockReturnValue({
       getAccessToken: vi.fn(),
       signIn,
+      signUp: vi.fn(),
       user: null,
       isLoading: false,
     });

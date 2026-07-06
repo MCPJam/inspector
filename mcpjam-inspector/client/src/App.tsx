@@ -183,6 +183,12 @@ import {
   readApiKeysSignInReturnPath,
 } from "./lib/api-keys-signin-return-path";
 import {
+  capturePendingInviteOrgFromUrl,
+  clearPendingInviteOrgMarker,
+  readPendingInviteOrgMarker,
+  writePendingInviteOrgMarkerForPath,
+} from "./lib/pending-invite-org";
+import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -1301,6 +1307,7 @@ export default function App() {
   const {
     getAccessToken,
     signIn,
+    signUp,
     signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
@@ -1574,6 +1581,81 @@ export default function App() {
   );
   const isOAuthCallback = window.location.pathname === "/callback";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
+  const hasWorkOsDbUser =
+    !!workOsUser &&
+    currentUser !== undefined &&
+    currentUser !== null &&
+    currentUser.isAnonymous !== true &&
+    currentUser.externalId === workOsUser.id;
+  const inviteSignupPathRef = useRef<string | null>(null);
+  const organizationSignInPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (isOAuthCallback || isDebugCallback || isHostedChatRoute) {
+      return;
+    }
+
+    const pendingInviteMarker =
+      capturePendingInviteOrgFromUrl() ?? readPendingInviteOrgMarker();
+    if (!pendingInviteMarker) {
+      return;
+    }
+
+    if (workOsUser || isWorkOsLoading) {
+      return;
+    }
+
+    if (inviteSignupPathRef.current === pendingInviteMarker.returnPath) {
+      return;
+    }
+
+    inviteSignupPathRef.current = pendingInviteMarker.returnPath;
+    void signUp();
+  }, [
+    isDebugCallback,
+    isHostedChatRoute,
+    isOAuthCallback,
+    isWorkOsLoading,
+    signUp,
+    workOsUser,
+  ]);
+
+  useEffect(() => {
+    if (
+      !routeOrganizationId ||
+      isOAuthCallback ||
+      isDebugCallback ||
+      isHostedChatRoute
+    ) {
+      return;
+    }
+
+    const returnPath = buildOrganizationPath(
+      routeOrganizationId,
+      routeOrganizationSection
+    );
+
+    if (workOsUser || isWorkOsLoading) {
+      return;
+    }
+
+    if (organizationSignInPathRef.current === returnPath) {
+      return;
+    }
+
+    organizationSignInPathRef.current = returnPath;
+    writePendingInviteOrgMarkerForPath(returnPath);
+    void signIn();
+  }, [
+    isDebugCallback,
+    isHostedChatRoute,
+    isOAuthCallback,
+    isWorkOsLoading,
+    routeOrganizationId,
+    routeOrganizationSection,
+    signIn,
+    workOsUser,
+  ]);
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -1599,8 +1681,15 @@ export default function App() {
       return;
     }
 
+    const pendingInviteMarker = readPendingInviteOrgMarker();
+    const inviteReturnPath = pendingInviteMarker?.returnPath ?? null;
+    const canRestoreCallbackReturnPath =
+      !isAuthLoading &&
+      isAuthenticated &&
+      (!inviteReturnPath || hasWorkOsDbUser);
+
     // Let AuthKit + Convex auth settle before leaving /callback.
-    if (!isAuthLoading && isAuthenticated) {
+    if (canRestoreCallbackReturnPath) {
       const chatboxReturnPath = readChatboxSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
@@ -1612,6 +1701,7 @@ export default function App() {
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
       clearApiKeysSignInReturnPath();
+      clearPendingInviteOrgMarker();
       window.history.replaceState(
         {},
         "",
@@ -1619,6 +1709,7 @@ export default function App() {
           billingReturnPath ??
           cliReturnPath ??
           apiKeysReturnPath ??
+          inviteReturnPath ??
           "/"
       );
       setCallbackCompleted(true);
@@ -1636,6 +1727,7 @@ export default function App() {
     isAuthLoading,
     isAuthenticated,
     isWorkOsLoading,
+    hasWorkOsDbUser,
     workOsUser,
   ]);
 

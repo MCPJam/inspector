@@ -1,45 +1,195 @@
-// When a brand-new user signs up from an organization invite email, that email
-// links to `/?invite_org={orgId}`. We capture the id at boot — before the WorkOS
-// auth redirect can drop the URL — stash it, and apply it as the active org once
-// the user is authenticated and actually a member of it (see use-app-state).
+import {
+  buildOrganizationPath,
+  type OrganizationRouteSection,
+} from "./app-navigation";
 
-const INVITE_ORG_PARAM = "invite_org";
-const PENDING_INVITE_ORG_STORAGE_KEY = "mcpjam:pending-invite-org";
+export interface PendingInviteOrgMarker {
+  organizationId: string;
+  returnPath: string;
+  startedAt: number;
+}
 
-// Read `?invite_org=` from the current URL, stash it, and strip it from the URL
-// so it does not linger or get re-applied. Safe to call once at app boot.
-export function capturePendingInviteOrgFromUrl(): void {
-  if (typeof window === "undefined") return;
+const PENDING_INVITE_ORG_STORAGE_KEY = "mcpjam:pending-invite-org-marker";
+
+function normalizeInviteOrgId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function parseOrganizationReturnPath(path: string | null | undefined): {
+  orgId: string;
+  section?: OrganizationRouteSection;
+} | null {
+  const trimmed = path?.trim() ?? "";
+  if (!trimmed) {
+    return null;
+  }
+
+  let url: URL;
   try {
-    const url = new URL(window.location.href);
-    const inviteOrgId = url.searchParams.get(INVITE_ORG_PARAM);
-    if (!inviteOrgId) return;
-    localStorage.setItem(PENDING_INVITE_ORG_STORAGE_KEY, inviteOrgId);
-    url.searchParams.delete(INVITE_ORG_PARAM);
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
+    url = new URL(trimmed, "https://app.mcpjam.local");
+  } catch {
+    return null;
+  }
+
+  const segments = url.pathname.replace(/^\/+/, "").split("/");
+  const orgId = normalizeInviteOrgId(segments[1]);
+  const sectionSegment = segments[2];
+  if (segments[0] !== "organizations" || !orgId || segments.length > 3) {
+    return null;
+  }
+
+  if (sectionSegment === undefined || sectionSegment === "") {
+    return { orgId };
+  }
+
+  if (sectionSegment !== "billing" && sectionSegment !== "models") {
+    return null;
+  }
+
+  return { orgId, section: sectionSegment };
+}
+
+function createPendingInviteOrgMarker(
+  organizationId: string,
+  section?: OrganizationRouteSection
+): PendingInviteOrgMarker | null {
+  const normalizedOrgId = normalizeInviteOrgId(organizationId);
+  if (!normalizedOrgId) {
+    return null;
+  }
+
+  return {
+    organizationId: normalizedOrgId,
+    returnPath: buildOrganizationPath(normalizedOrgId, section),
+    startedAt: Date.now(),
+  };
+}
+
+function normalizePendingInviteOrgMarker(
+  value: unknown
+): PendingInviteOrgMarker | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const raw = value as {
+    organizationId?: unknown;
+    returnPath?: unknown;
+    startedAt?: unknown;
+  };
+  if (
+    typeof raw.organizationId !== "string" ||
+    typeof raw.returnPath !== "string" ||
+    typeof raw.startedAt !== "number" ||
+    !Number.isFinite(raw.startedAt)
+  ) {
+    return null;
+  }
+
+  const parsedReturnPath = parseOrganizationReturnPath(raw.returnPath);
+  if (!parsedReturnPath || parsedReturnPath.orgId !== raw.organizationId) {
+    return null;
+  }
+
+  return {
+    organizationId: parsedReturnPath.orgId,
+    returnPath: buildOrganizationPath(
+      parsedReturnPath.orgId,
+      parsedReturnPath.section
+    ),
+    startedAt: raw.startedAt,
+  };
+}
+
+export function writePendingInviteOrgMarker(
+  marker: PendingInviteOrgMarker
+): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  const normalizedMarker = normalizePendingInviteOrgMarker(marker);
+  if (!normalizedMarker) {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(
+      PENDING_INVITE_ORG_STORAGE_KEY,
+      JSON.stringify(normalizedMarker)
     );
   } catch {
-    // Malformed URL or unavailable storage — nothing to capture.
+    // Ignore storage failures.
   }
 }
 
-export function readPendingInviteOrgId(): string | null {
-  if (typeof window === "undefined") return null;
+export function writePendingInviteOrgMarkerForPath(
+  path: string | null | undefined
+): PendingInviteOrgMarker | null {
+  const parsed = parseOrganizationReturnPath(path);
+  if (!parsed) {
+    return null;
+  }
+
+  const marker = createPendingInviteOrgMarker(parsed.orgId, parsed.section);
+  if (!marker) {
+    return null;
+  }
+
+  writePendingInviteOrgMarker(marker);
+  return marker;
+}
+
+export function readPendingInviteOrgMarker(): PendingInviteOrgMarker | null {
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+
   try {
-    return localStorage.getItem(PENDING_INVITE_ORG_STORAGE_KEY);
+    const raw = sessionStorage.getItem(PENDING_INVITE_ORG_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return normalizePendingInviteOrgMarker(JSON.parse(raw));
   } catch {
     return null;
   }
 }
 
-export function clearPendingInviteOrgId(): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem(PENDING_INVITE_ORG_STORAGE_KEY);
-  } catch {
-    // Storage unavailable — leave it; the apply step is idempotent.
+export function clearPendingInviteOrgMarker(): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
   }
+
+  try {
+    sessionStorage.removeItem(PENDING_INVITE_ORG_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function capturePendingInviteOrgFromUrl(): PendingInviteOrgMarker | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const orgId = normalizeInviteOrgId(url.searchParams.get("invite_org"));
+  if (!orgId) {
+    return null;
+  }
+
+  const marker = createPendingInviteOrgMarker(orgId);
+  if (!marker) {
+    return null;
+  }
+
+  writePendingInviteOrgMarker(marker);
+  url.searchParams.delete("invite_org");
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  return marker;
 }
