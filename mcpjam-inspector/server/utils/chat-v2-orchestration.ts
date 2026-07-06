@@ -578,6 +578,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
+  selectedServerNames?: string[];
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -618,6 +619,37 @@ export interface PrepareChatV2Options {
    * Takes precedence over the local/HOSTED_MODE skill branches.
    */
   cloudSkills?: { authHeader: string; projectId: string };
+}
+
+function annotateToolsWithServerNames(
+  tools: ToolSet,
+  selectedServers: string[] | undefined,
+  selectedServerNames: string[] | undefined,
+): void {
+  if (!selectedServers || selectedServers.length === 0) return;
+  const namesById = new Map<string, string>();
+  selectedServers.forEach((serverId, index) => {
+    const serverName = selectedServerNames?.[index];
+    namesById.set(
+      serverId,
+      serverName && serverName.trim().length > 0 ? serverName : serverId,
+    );
+  });
+
+  for (const raw of Object.values(tools)) {
+    if (!raw || typeof raw !== "object") continue;
+    const toolEntry = raw as { _serverId?: unknown; _serverName?: unknown };
+    if (
+      typeof toolEntry._serverId !== "string" ||
+      toolEntry._serverId.length === 0 ||
+      (typeof toolEntry._serverName === "string" &&
+        toolEntry._serverName.length > 0)
+    ) {
+      continue;
+    }
+    toolEntry._serverName =
+      namesById.get(toolEntry._serverId) ?? toolEntry._serverId;
+  }
 }
 
 /**
@@ -760,6 +792,11 @@ export async function prepareChatV2(
   const mcpTools = await mcpClientManager.getToolsForAiSdk(
     knownSelectedServers,
     toolOptions
+  );
+  annotateToolsWithServerNames(
+    mcpTools,
+    selectedServers,
+    options.selectedServerNames,
   );
 
   // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are

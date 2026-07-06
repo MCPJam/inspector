@@ -48,6 +48,7 @@ type StepSpanMeta = {
 type ToolSpanMeta = {
   toolCallId?: string;
   serverId?: string;
+  serverName?: string;
   messageStartIndex?: number;
   messageEndIndex?: number;
   status?: EvalTraceSpanStatus;
@@ -74,6 +75,7 @@ export type AiSdkEvalTraceContext = {
       stepNumber: number;
       startAt: number;
       serverId?: string;
+      serverName?: string;
       promptIndex: number;
     }
   >;
@@ -243,6 +245,10 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
       typeof (raw as { _serverId?: unknown })._serverId === "string"
         ? ((raw as { _serverId?: string })._serverId ?? undefined)
         : undefined;
+    const serverName =
+      typeof (raw as { _serverName?: unknown })._serverName === "string"
+        ? ((raw as { _serverName?: string })._serverName ?? undefined)
+        : undefined;
     out[name] = {
       ...raw,
       execute: async (
@@ -270,6 +276,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           stepNumber,
           startAt: toolStartedAt,
           serverId,
+          serverName,
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
@@ -297,6 +304,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId,
+            serverName,
             status: success ? "ok" : "error",
             ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(
@@ -316,6 +324,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId,
+              serverName,
               status: "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -515,6 +524,7 @@ export function finalizeAiSdkTraceOnFailure(
       toolCallId,
       toolName: t.toolName,
       serverId: t.serverId,
+      serverName: t.serverName,
       status: "error",
       ...createOffsetInterval(runStartedAt, t.startAt, failAt),
     });
@@ -528,6 +538,7 @@ export function finalizeAiSdkTraceOnFailure(
       toolCallId,
       toolName: t.toolName,
       serverId: t.serverId,
+      serverName: t.serverName,
       status: "error",
       ...createOffsetInterval(runStartedAt, t.startAt, failAt),
     });
@@ -762,6 +773,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         },
       ) => unknown;
       _serverId?: string;
+      _serverName?: string;
     };
     if (!raw || typeof raw.execute !== "function") {
       continue;
@@ -810,6 +822,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId: raw._serverId,
+            serverName: raw._serverName,
             status: success ? "ok" : "error",
             ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
@@ -828,6 +841,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId: raw._serverId,
+              serverName: raw._serverName,
               status: "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(

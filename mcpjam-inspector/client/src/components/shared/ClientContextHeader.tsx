@@ -65,6 +65,7 @@ import {
   CspPickerBody,
   DevicePickerBody,
   LocalePickerBody,
+  ProgressiveToolsPickerBody,
   TimezonePickerBody,
 } from "@/components/shared/client-context-picker-bodies";
 
@@ -140,6 +141,8 @@ export function ClientContextHeader({
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
+  const [progressiveToolsPopoverOpen, setProgressiveToolsPopoverOpen] =
+    useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
   const [hostContextDialogOpen, setHostContextDialogOpen] = useState(false);
   const [hostCapsDialogOpen, setHostCapsDialogOpen] = useState(false);
@@ -169,6 +172,15 @@ export function ClientContextHeader({
   const mcpAppsCspMode = useUIPlaygroundStore((state) => state.mcpAppsCspMode);
   const setMcpAppsCspMode = useUIPlaygroundStore(
     (state) => state.setMcpAppsCspMode
+  );
+  const progressiveToolsMode = useUIPlaygroundStore(
+    (state) => state.progressiveToolsMode
+  );
+  const setProgressiveToolsMode = useUIPlaygroundStore(
+    (state) => state.setProgressiveToolsMode
+  );
+  const progressiveToolsStatus = useUIPlaygroundStore(
+    (state) => state.progressiveToolsStatus
   );
 
   const draftHostContext = useHostContextStore(
@@ -247,6 +259,15 @@ export function ClientContextHeader({
   const timeZone = extractHostTimeZone(draftHostContext, fallbackTimeZone);
   const capabilities = extractHostDeviceCapabilities(draftHostContext);
   const effectiveThemeMode = extractHostTheme(draftHostContext) ?? themeMode;
+  const progressiveToolsLabel =
+    progressiveToolsMode === "auto"
+      ? "Auto"
+      : progressiveToolsMode === "on"
+        ? "On"
+        : "Off";
+  const progressiveToolsStatusText = progressiveToolsStatus
+    ? `${progressiveToolsStatus.enabled ? "active" : "inactive"} · ${progressiveToolsStatus.toolCount} tools across ${progressiveToolsStatus.serverCount} servers`
+    : null;
 
   const handleCapabilityToggle = useCallback(
     (key: "hover" | "touch") => {
@@ -441,6 +462,62 @@ export function ClientContextHeader({
                 patchHostContext(patch);
               }}
               onSelectZone={() => setTimezonePopoverOpen(false)}
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Popover
+          open={progressiveToolsPopoverOpen}
+          onOpenChange={(next) => {
+            if (next)
+              captureToolbar("host_toolbar_opened", {
+                control: "progressive_tools",
+                current: progressiveToolsMode,
+              });
+            setProgressiveToolsPopoverOpen(next);
+          }}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+                  data-testid="progressive-tools-trigger"
+                >
+                  <Cpu className="h-3.5 w-3.5" />
+                  <span className="whitespace-nowrap @max-[760px]/playground-header:sr-only">
+                    {progressiveToolsLabel}
+                  </span>
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <HeaderTooltipBody
+                label="Progressive tools"
+                leadHostHint={leadHostInMultiHost}
+              />
+              {progressiveToolsStatusText ? (
+                <p className="text-xs font-light text-muted-foreground">
+                  {progressiveToolsStatusText}
+                </p>
+              ) : null}
+            </TooltipContent>
+          </Tooltip>
+          <PopoverContent className="w-44 p-2" align="start">
+            <ProgressiveToolsPickerBody
+              mode={progressiveToolsMode}
+              setMode={(next) => {
+                if (next !== progressiveToolsMode) {
+                  captureToolbar("host_toolbar_progressive_tools_changed", {
+                    from: progressiveToolsMode,
+                    to: next,
+                  });
+                }
+                setProgressiveToolsMode(next);
+              }}
+              onSelectMode={() => setProgressiveToolsPopoverOpen(false)}
             />
           </PopoverContent>
         </Popover>

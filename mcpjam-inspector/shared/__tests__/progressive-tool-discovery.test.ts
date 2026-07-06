@@ -26,6 +26,7 @@ import {
 function makeMcpTool(opts: {
   description?: string;
   serverId?: string;
+  serverName?: string;
   fields?: Record<string, { type: string; required?: boolean; desc?: string }>;
 }) {
   const fields = opts.fields ?? {};
@@ -47,6 +48,7 @@ function makeMcpTool(opts: {
     description: opts.description,
     parameters: { jsonSchema },
     _serverId: opts.serverId,
+    _serverName: opts.serverName,
     execute: async () => ({}),
   };
 }
@@ -80,10 +82,24 @@ describe("buildToolCatalog", () => {
     expect(catalog).toHaveLength(1);
     expect(catalog[0].toolId).toBe("asana::get_user");
     expect(catalog[0].serverId).toBe("asana");
+    expect(catalog[0].serverName).toBe("asana");
     expect(catalog[0].modelName).toBe("get_user");
     expect(catalog[0].fields).toEqual([
       { name: "userId", type: "string", required: true },
     ]);
+  });
+
+  it("reads human-readable server names into catalog and search results", () => {
+    const tools: ToolSet = {
+      create_task: makeMcpTool({
+        description: "Create a task",
+        serverId: "srv_asana",
+        serverName: "Asana",
+      }),
+    } as unknown as ToolSet;
+    const catalog = buildToolCatalog(tools);
+    expect(catalog[0].serverName).toBe("Asana");
+    expect(searchToolCatalog(catalog, "task")[0].serverName).toBe("Asana");
   });
 
   it("falls back to local:: prefix when no server id is attached", () => {

@@ -32,6 +32,14 @@ export interface CustomViewport {
 }
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
+export type ProgressiveToolsMode = "auto" | "on" | "off";
+
+export interface ProgressiveToolsStatus {
+  enabled: boolean;
+  reasons: string[];
+  toolCount: number;
+  serverCount: number;
+}
 
 export interface DeviceCapabilities {
   hover: boolean;
@@ -125,6 +133,11 @@ interface UIPlaygroundState {
   // CSP enforcement mode for MCP Apps (SEP-1865)
   mcpAppsCspMode: CspMode;
 
+  // Progressive MCP tool discovery override for this playground session.
+  progressiveToolsMode: ProgressiveToolsMode;
+  progressiveToolsModeTouched: boolean;
+  progressiveToolsStatus: ProgressiveToolsStatus | null;
+
   // Device capabilities (hover/touch support)
   capabilities: DeviceCapabilities;
 
@@ -162,6 +175,8 @@ interface UIPlaygroundState {
   setPlaygroundActive: (active: boolean) => void;
   setCspMode: (mode: CspMode) => void;
   setMcpAppsCspMode: (mode: CspMode) => void;
+  setProgressiveToolsMode: (mode: ProgressiveToolsMode) => void;
+  setProgressiveToolsStatus: (status: ProgressiveToolsStatus | null) => void;
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
@@ -251,6 +266,9 @@ const initialState = {
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "permissive" as CspMode,
+  progressiveToolsMode: "auto" as ProgressiveToolsMode,
+  progressiveToolsModeTouched: false,
+  progressiveToolsStatus: null,
   capabilities: getDefaultCapabilities(initialDeviceType),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
@@ -362,6 +380,11 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setMcpAppsCspMode: (mode) => set({ mcpAppsCspMode: mode }),
 
+  setProgressiveToolsMode: (mode) =>
+    set({ progressiveToolsMode: mode, progressiveToolsModeTouched: true }),
+
+  setProgressiveToolsStatus: (status) => set({ progressiveToolsStatus: status }),
+
   setCapabilities: (newCapabilities) =>
     set((state) => ({
       capabilities: { ...state.capabilities, ...newCapabilities },
@@ -414,6 +437,10 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         // Preserve CSP modes (may be set via CLI config before reset fires)
         cspMode: state.cspMode,
         mcpAppsCspMode: state.mcpAppsCspMode,
+        // Preserve session-level header overrides.
+        progressiveToolsMode: state.progressiveToolsMode,
+        progressiveToolsModeTouched: state.progressiveToolsModeTouched,
+        progressiveToolsStatus: state.progressiveToolsStatus,
       };
     }),
 }));

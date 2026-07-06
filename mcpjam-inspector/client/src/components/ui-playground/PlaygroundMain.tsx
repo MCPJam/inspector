@@ -590,6 +590,12 @@ export function PlaygroundMain({
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
+  const progressiveToolsMode = useUIPlaygroundStore(
+    (s) => s.progressiveToolsMode
+  );
+  const progressiveToolsModeTouched = useUIPlaygroundStore(
+    (s) => s.progressiveToolsModeTouched
+  );
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
 
@@ -612,7 +618,6 @@ export function PlaygroundMain({
     }
     return PRESET_DEVICE_CONFIGS[storeDeviceType];
   }, [storeDeviceType, customViewport]);
-
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -709,6 +714,13 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  const resolvedProgressiveToolDiscovery = progressiveToolsModeTouched
+    ? progressiveToolsMode === "on"
+      ? true
+      : progressiveToolsMode === "off"
+        ? false
+        : undefined
+    : previewedHost?.config?.progressiveToolDiscovery;
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
@@ -794,7 +806,7 @@ export function PlaygroundMain({
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
     // effect on the very next send without remounting the playground.
-    progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
+    progressiveToolDiscovery: resolvedProgressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
     modelVisibleMcpToolResults:
       previewedHost?.config?.modelVisibleMcpToolResults,
@@ -3828,7 +3840,7 @@ export function PlaygroundMain({
                               temperature,
                               requireToolApproval,
                               progressiveToolDiscovery:
-                                previewedHost?.config?.progressiveToolDiscovery,
+                                resolvedProgressiveToolDiscovery,
                               respectToolVisibility:
                                 previewedHost?.config?.respectToolVisibility,
                               modelVisibleMcpToolResults:

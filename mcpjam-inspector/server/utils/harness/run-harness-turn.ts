@@ -440,7 +440,10 @@ export async function runHarnessTurn(
   // shows in the [harness][timing] phase log.
   let traceBaseMs = turnStartedAt;
   let stepStartedAt = turnStartedAt;
-  const toolSetForTrace: Record<string, { _serverId?: string }> = {};
+  const toolSetForTrace: Record<
+    string,
+    { _serverId?: string; _serverName?: string }
+  > = {};
   // The shared per-turn ritual (turn_start / onStepFinish / turn_finish /
   // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
   // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.
@@ -1299,7 +1302,9 @@ export async function runHarnessTurn(
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
-            toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
+            toolSetForTrace[toolName] = serverId
+              ? { _serverId: serverId, _serverName: serverId }
+              : {};
             toolStartMs.set(toolCallId, Date.now());
             // providerExecuted:true — the harness runs ALL tools in-sandbox
             // (Claude Code executes them itself). Without it the client treats

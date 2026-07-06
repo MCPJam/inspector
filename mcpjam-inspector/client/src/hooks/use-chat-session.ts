@@ -78,6 +78,7 @@ import {
 } from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -1120,6 +1121,9 @@ export function useChatSession(
   // becomes undefined during host bootstrap, in which case fields fall back to
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
+  const setProgressiveToolsStatus = useUIPlaygroundStore(
+    (state) => state.setProgressiveToolsStatus
+  );
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
@@ -2735,6 +2739,36 @@ export function useChatSession(
 
     previousSelectedServersRef.current = currentNames;
   }, [selectedServers]);
+
+  useEffect(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.role !== "assistant" || !message.metadata) continue;
+      const metadata = message.metadata as {
+        progressiveToolDiscovery?: unknown;
+      };
+      const status = metadata.progressiveToolDiscovery;
+      if (!status || typeof status !== "object") continue;
+      const record = status as Record<string, unknown>;
+      if (
+        typeof record.enabled !== "boolean" ||
+        !Array.isArray(record.reasons) ||
+        typeof record.toolCount !== "number" ||
+        typeof record.serverCount !== "number"
+      ) {
+        continue;
+      }
+      setProgressiveToolsStatus({
+        enabled: record.enabled,
+        reasons: record.reasons.filter(
+          (reason): reason is string => typeof reason === "string"
+        ),
+        toolCount: record.toolCount,
+        serverCount: record.serverCount,
+      });
+      return;
+    }
+  }, [messages, setProgressiveToolsStatus]);
 
   // Token usage calculation
   const tokenUsage = useMemo<TokenUsage>(() => {

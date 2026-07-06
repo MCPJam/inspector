@@ -23,6 +23,7 @@ export type EvalTraceSpan = {
   toolCallId?: string;
   toolName?: string;
   serverId?: string;
+  serverName?: string;
   modelId?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -505,6 +506,7 @@ export const evalTraceSpanZ = z.object({
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
   serverId: z.string().optional(),
+  serverName: z.string().optional(),
   modelId: z.string().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),

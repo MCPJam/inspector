@@ -63,7 +63,11 @@ import {
   getChatboxChatBackground,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  type DeviceType,
+  type DisplayMode,
+} from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
@@ -301,6 +305,19 @@ export function MultiModelPlaygroundCard({
       resolvedModelVisibleMcpToolResults,
     ]
   );
+  const progressiveToolsMode = useUIPlaygroundStore(
+    (s) => s.progressiveToolsMode
+  );
+  const progressiveToolsModeTouched = useUIPlaygroundStore(
+    (s) => s.progressiveToolsModeTouched
+  );
+  const resolvedProgressiveToolDiscovery = progressiveToolsModeTouched
+    ? progressiveToolsMode === "on"
+      ? true
+      : progressiveToolsMode === "off"
+        ? false
+        : undefined
+    : hostCapsResolver?.progressiveToolDiscovery;
 
   const {
     messages,
@@ -334,7 +351,7 @@ export function MultiModelPlaygroundCard({
     // or null when the column inherits from the tab-root scope; we let
     // `undefined` pass through to fall back to the orchestrator's auto
     // policy in that case.
-    progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
+    progressiveToolDiscovery: resolvedProgressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {

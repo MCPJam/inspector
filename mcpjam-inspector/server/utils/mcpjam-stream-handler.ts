@@ -830,6 +830,7 @@ function createClientFinishChunk(
   finishChunk: UIMessageChunk | null,
   traceTurn: LiveTraceTurnContext | null,
   fallbackReason: "length" | "stop",
+  extraMessageMetadata?: Record<string, unknown>,
 ): UIMessageChunk {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -842,18 +843,41 @@ function createClientFinishChunk(
       ? readUsageFromFinishChunk(finishChunk)
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   const metadata = source?.messageMetadata;
+  const baseMessageMetadata =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? { ...metadata, ...(usage ?? {}) }
+      : (usage ?? metadata);
   const messageMetadata =
-    metadata &&
-    typeof metadata === "object" &&
-    !Array.isArray(metadata) &&
-    usage
-      ? { ...metadata, ...usage }
-      : (metadata ?? usage);
+    extraMessageMetadata &&
+    baseMessageMetadata &&
+    typeof baseMessageMetadata === "object" &&
+    !Array.isArray(baseMessageMetadata)
+      ? { ...baseMessageMetadata, ...extraMessageMetadata }
+      : (extraMessageMetadata ?? baseMessageMetadata);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
     messageMetadata,
   });
+}
+
+function buildProgressiveToolDiscoveryMetadata(
+  plan: ProgressiveToolPlan | undefined,
+): Record<string, unknown> | undefined {
+  if (!plan) return undefined;
+  const serverKeys = new Set(
+    plan.catalog
+      .map((entry) => entry.serverId ?? entry.serverName)
+      .filter((value): value is string => typeof value === "string"),
+  );
+  return {
+    progressiveToolDiscovery: {
+      enabled: plan.enabled,
+      reasons: plan.reasons,
+      toolCount: plan.catalog.length,
+      serverCount: serverKeys.size,
+    },
+  };
 }
 
 function setStepSpanMessageRanges(
@@ -2334,7 +2358,14 @@ async function processOneStep(
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
-        writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+        writer.write(
+          createClientFinishChunk(
+            finishChunk,
+            traceTurn,
+            "stop",
+            buildProgressiveToolDiscoveryMetadata(progressivePlan),
+          ),
+        );
       }
       return { shouldContinue: false, didEmitFinish: !!finishChunk };
     }
@@ -2488,7 +2519,14 @@ async function processOneStep(
       // already been converted to error tool-results above.
       if (hasUnresolvedClientFulfilledToolCalls(messageHistory, tools)) {
         if (finishChunk) {
-          writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+          writer.write(
+            createClientFinishChunk(
+              finishChunk,
+              traceTurn,
+              "stop",
+              buildProgressiveToolDiscoveryMetadata(progressivePlan),
+            ),
+          );
         }
         return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
@@ -2585,7 +2623,14 @@ async function processOneStep(
   // No more tool calls - emit finish and stop
   const didEmitFinish = !!finishChunk;
   if (finishChunk) {
-    writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+    writer.write(
+      createClientFinishChunk(
+        finishChunk,
+        traceTurn,
+        "stop",
+        buildProgressiveToolDiscoveryMetadata(progressivePlan),
+      ),
+    );
   }
 
   // We're done with this conversation turn
@@ -2989,6 +3034,7 @@ export async function runChatEngineLoop(
             null,
             traceTurn,
             hitStepCap() ? "length" : "stop",
+            buildProgressiveToolDiscoveryMetadata(progressivePlan),
           ),
         );
         finishEmitted = true;

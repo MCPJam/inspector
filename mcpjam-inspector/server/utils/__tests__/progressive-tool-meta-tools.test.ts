@@ -12,6 +12,7 @@ import type { ToolSet } from "ai";
 function makeMcpTool(opts: {
   description?: string;
   serverId: string;
+  serverName?: string;
   fields?: Record<string, { type: string; required?: boolean }>;
 }) {
   const fields = opts.fields ?? {};
@@ -31,6 +32,7 @@ function makeMcpTool(opts: {
       },
     },
     _serverId: opts.serverId,
+    _serverName: opts.serverName,
     execute: async () => ({}),
   };
 }
@@ -40,11 +42,13 @@ function makeCatalog() {
     asana_create_task: makeMcpTool({
       description: "Create a task in Asana",
       serverId: "asana",
+      serverName: "Asana",
       fields: { name: { type: "string", required: true } },
     }),
     linear_create_issue: makeMcpTool({
       description: "Create an issue in Linear",
       serverId: "linear",
+      serverName: "Linear",
       fields: { title: { type: "string", required: true } },
     }),
   } as unknown as ToolSet;
@@ -85,9 +89,12 @@ describe("createProgressiveMetaTools", () => {
     });
     const res = (await execTool(tools, META_TOOL_SEARCH, {
       query: "task",
-    })) as { matches: { name: string; toolId: string }[] };
+    })) as {
+      matches: { name: string; toolId: string; serverName: string }[];
+    };
     expect(res.matches.length).toBeGreaterThan(0);
     expect(res.matches[0].name).toBe("asana_create_task");
+    expect(res.matches[0].serverName).toBe("Asana");
     // Verify the match object is intentionally narrow — no `inputSchema`.
     expect(res.matches[0]).not.toHaveProperty("inputSchema");
   });
@@ -215,10 +222,14 @@ describe("createProgressiveMetaTools", () => {
     });
     const res = (await execTool(tools, META_TOOL_LOAD, {
       toolIds: ["asana::asana_create_task", "nope::missing"],
-    })) as { loaded: { toolId: string }[]; notFound: string[] };
+    })) as {
+      loaded: { toolId: string; serverName: string | null }[];
+      notFound: string[];
+    };
     expect(res.loaded.map((l) => l.toolId)).toEqual([
       "asana::asana_create_task",
     ]);
+    expect(res.loaded[0].serverName).toBe("Asana");
     expect(res.notFound).toEqual(["nope::missing"]);
     expect([...state.newlyLoadedToolIds]).toEqual(["asana::asana_create_task"]);
   });
