@@ -241,6 +241,26 @@ describe("POST /api/mcp/chat-v2", () => {
     app = createTestApp(manager, "chat-v2");
   });
 
+  describe("MCPJam model classification", () => {
+    it("classifies the model PROVIDER-AWARE (bare hosted ids must canonicalize)", async () => {
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+
+      await postAuthenticatedJson({
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-5-nano", provider: "openai" },
+      });
+
+      // The harness preflight is provider-aware; a provider-blind dispatch
+      // here would treat a bare hosted id as non-MCPJam and route it into
+      // org/BYOK after it passed preflight (same class of bug as the
+      // streamWebChatTurn dispatch).
+      expect(vi.mocked(isMCPJamProvidedModel)).toHaveBeenCalledWith(
+        "gpt-5-nano",
+        "openai"
+      );
+    });
+  });
+
   describe("chatbox runtime-config gate", () => {
     it("resolves the process guest bearer for a BEARER-LESS chatbox turn (config never skipped)", async () => {
       fetchChatboxRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });

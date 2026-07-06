@@ -556,14 +556,19 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
+    // Provider-aware, matching streamWebChatTurn's dispatch: bare hosted ids
+    // (`gpt-5-nano` + `openai`) only canonicalize to their prefixed MCPJam form
+    // with the provider — a provider-blind check here routes them into
+    // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)
+      modelDefinition.id &&
+        isMCPJamProvidedModel(modelDefinition.id, modelDefinition.provider)
     );
     if (
       isMcpJamProvidedModel &&
       modelDefinition.id &&
       !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id)
+      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
     ) {
       return c.json(
         {
