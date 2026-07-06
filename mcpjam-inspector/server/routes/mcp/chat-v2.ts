@@ -316,8 +316,11 @@ chatV2.post("/", async (c) => {
     // Chatbox-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
     // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
-    // Soft-fall-through on Convex blip — chat keeps running with body
-    // values, matching pre-rollout behavior.
+    // FAIL CLOSED on fetch failure — same rationale as the host-bound branch
+    // below: the fetched config is the only source of `harness`/`computer`
+    // and of every host-wins protection, so falling back to body values
+    // would silently downgrade a harness chatbox to the emulated engine and
+    // reopen the tampered-body window.
     //
     // PR 4c of the engine consolidation (`~/mcpjam-docs/unification.md`):
     // the field-by-field merge between body and `fetchChatboxRuntimeConfig`
@@ -332,8 +335,30 @@ chatV2.post("/", async (c) => {
     let resolvedModelOverride: typeof model | null = null;
     let hostRuntimeConfig: Record<string, unknown> | null = null;
     if (isChatboxSession && bodyChatboxId) {
-      const bearer = c.req.header("authorization") ?? "";
-      if (bearer) {
+      // Chatbox config resolution must NEVER be skipped: the fetched config is
+      // the only source of host-owned harness/computer/executionScope and of
+      // every host-wins protection. A bearer-less request is NOT a hard stop on
+      // this route (the MCPJam-model path lazily mints a guest bearer below),
+      // so resolve the SAME process-cached production guest bearer here first —
+      // and fail closed if no bearer can be obtained at all.
+      let bearer = c.req.header("authorization") ?? "";
+      if (!bearer) {
+        try {
+          bearer = (await getProductionGuestAuthHeader()) ?? "";
+        } catch {
+          bearer = "";
+        }
+      }
+      if (!bearer) {
+        return c.json(
+          {
+            error:
+              "Couldn't authenticate this chatbox turn to load its settings — sign in (or retry) to continue.",
+          },
+          401,
+        );
+      }
+      {
         const runtime = await fetchChatboxRuntimeConfig({
           chatboxId: bodyChatboxId,
           bearer,
@@ -348,12 +373,18 @@ chatV2.post("/", async (c) => {
           >;
         } else {
           logger.warn(
-            "[mcp/chat-v2] runtime-config fetch failed; using body values",
+            "[mcp/chat-v2] runtime-config fetch failed; failing closed",
             {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
             }
+          );
+          return c.json(
+            {
+              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
+            },
+            runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
           );
         }
       }
@@ -525,14 +556,19 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
+    // Provider-aware, matching streamWebChatTurn's dispatch: bare hosted ids
+    // (`gpt-5-nano` + `openai`) only canonicalize to their prefixed MCPJam form
+    // with the provider — a provider-blind check here routes them into
+    // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)
+      modelDefinition.id &&
+        isMCPJamProvidedModel(modelDefinition.id, modelDefinition.provider)
     );
     if (
       isMcpJamProvidedModel &&
       modelDefinition.id &&
       !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id)
+      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
     ) {
       return c.json(
         {
