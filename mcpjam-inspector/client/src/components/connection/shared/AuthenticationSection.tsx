@@ -494,6 +494,11 @@ export function AuthenticationSection({
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
                     placeholder="Optional scopes separated by spaces"
+                    spellCheck={false}
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
                     className="h-10"
                   />
                 </div>
@@ -518,6 +523,11 @@ export function AuthenticationSection({
                             ? true
                             : undefined
                         }
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (
@@ -602,6 +612,11 @@ export function AuthenticationSection({
                               }}
                               placeholder="Enter a new value to replace."
                               data-testid="revealed-client-secret"
+                              spellCheck={false}
+                              autoComplete="off"
+                              data-1p-ignore
+                              data-lpignore="true"
+                              data-form-type="other"
                               className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
                             />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -667,6 +682,11 @@ export function AuthenticationSection({
                               ? "Enter a new value to replace."
                               : "Your OAuth Client Secret"
                           }
+                          spellCheck={false}
+                          autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                           className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                         />
                       )}
