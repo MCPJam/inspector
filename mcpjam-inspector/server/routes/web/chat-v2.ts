@@ -360,15 +360,6 @@ chatV2.post("/", async (c) => {
       },
     );
 
-    // Cloud Skills: only when the (server-resolved) host actually has a
-    // computer — the SAME source the bash/computer built-in tool resolves from
-    // (`resolveHostTools` above), so skills wire wherever computer tools do.
-    // Today that's chatbox sessions (the only path that resolves
-    // hostRuntimeConfig); playground/direct host-config resolution lands later.
-    // Guests are excluded, mirroring the `isGuest` gate already applied to the
-    // computer-backed bash tool — a guest share-link/chatbox session must not
-    // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
-    // is called ("advertise == enforce").
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path wires the listSkills/loadSkill tools for any
     // signed-in member with a project. Gate only on:
