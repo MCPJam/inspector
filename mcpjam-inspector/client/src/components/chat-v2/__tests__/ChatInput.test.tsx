@@ -1024,6 +1024,47 @@ describe("ChatInput", () => {
       expect(onChange).not.toHaveBeenCalled();
     });
 
+    it("shows voice upload rate-limit messages without changing the draft", async () => {
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: "RATE_LIMITED",
+            message:
+              "Guest rate limit exceeded. Try again later or sign in for higher limits.",
+          }),
+          {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+      const onChange = vi.fn();
+
+      render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      expect(
+        await screen.findByText(
+          "Guest rate limit exceeded. Try again later or sign in for higher limits."
+        )
+      ).toBeInTheDocument();
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
     it("shows wallet voice concurrency errors with friendly copy", async () => {
       installAudioRecordingMocks();
       vi.mocked(authFetch).mockResolvedValue(

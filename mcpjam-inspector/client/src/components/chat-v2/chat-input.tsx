@@ -792,18 +792,18 @@ export function ChatInput({
         const result = (await response.json().catch(() => null)) as {
           text?: unknown;
           error?: unknown;
+          message?: unknown;
           code?: unknown;
-          details?: unknown;
         } | null;
 
         if (!response.ok) {
           const message =
             result?.code === VOICE_TRANSCRIPTION_IN_PROGRESS_CODE
               ? VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE
-              : typeof result?.details === "string"
-              ? result.details
               : typeof result?.error === "string"
               ? result.error
+              : typeof result?.message === "string"
+              ? result.message
               : "Voice transcription failed";
           throw new Error(message);
         }

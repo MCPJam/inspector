@@ -1,9 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { ErrorCode } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
-import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
+import {
+  guestRateLimitMiddleware,
+  resetGuestRateLimitForTests,
+} from "../../middleware/guest-rate-limit.js";
+import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
+import { getProductionGuestAuthSession } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 
@@ -15,8 +19,6 @@ const MCPJAM_VOICE_BUDGET_MESSAGE = "You've used today's voice budget.";
 const MCPJAM_VOICE_IN_PROGRESS_CODE = "voice_transcription_in_progress";
 const MCPJAM_VOICE_IN_PROGRESS_MESSAGE =
   "Another voice message is still processing. Try again in a moment.";
-const AUDIO_UPLOAD_RATE_LIMIT = 12;
-const AUDIO_UPLOAD_WINDOW_MS = 60_000;
 const SUPPORTED_AUDIO_FORMATS = new Set([
   "wav",
   "mp3",
@@ -43,60 +45,8 @@ interface TranscriptionRequestBody {
   audioDurationSeconds?: unknown;
 }
 
-const audioUploadWindows = new Map<
-  string,
-  { count: number; windowStart: number }
->();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of audioUploadWindows) {
-    if (now - entry.windowStart > AUDIO_UPLOAD_WINDOW_MS * 2) {
-      audioUploadWindows.delete(key);
-    }
-  }
-}, 5 * 60_000).unref();
-
-function getAudioUploadRateLimitKey(c: Context): string {
-  const clientIp = getClientIp(c);
-  if (clientIp) return `ip:${clientIp}`;
-
-  const sessionAuth = c.req.header("x-mcp-session-auth")?.trim();
-  if (sessionAuth) return `session:${sessionAuth.slice(0, 48)}`;
-
-  const auth = c.req.header("authorization")?.trim();
-  if (auth) return `auth:${auth.slice(0, 48)}`;
-
-  return "unknown";
-}
-
-function checkAudioUploadRateLimit(c: Context): Response | null {
-  const key = getAudioUploadRateLimitKey(c);
-  const now = Date.now();
-  const entry = audioUploadWindows.get(key);
-
-  if (!entry || now - entry.windowStart >= AUDIO_UPLOAD_WINDOW_MS) {
-    audioUploadWindows.set(key, { count: 1, windowStart: now });
-    return null;
-  }
-
-  if (entry.count >= AUDIO_UPLOAD_RATE_LIMIT) {
-    return c.json(
-      {
-        code: ErrorCode.RATE_LIMITED,
-        message:
-          "Voice upload rate limit exceeded. Try again later or sign in for higher limits.",
-      },
-      429
-    );
-  }
-
-  entry.count++;
-  return null;
-}
-
 export function resetAudioUploadRateLimitForTests(): void {
-  audioUploadWindows.clear();
+  resetGuestRateLimitForTests();
 }
 
 function readErrorMessage(payload: unknown, fallback: string): string {
@@ -139,7 +89,9 @@ function readUpstreamError(
     ...(typeof record.retryAfter === "number"
       ? { retryAfter: record.retryAfter }
       : {}),
-    ...(typeof record.details === "string" ? { details: record.details } : {}),
+    ...(isVoiceBudgetError && typeof record.details === "string"
+      ? { details: record.details }
+      : {}),
   };
 }
 
@@ -294,10 +246,24 @@ function createTranscriptionSignal(inboundSignal?: AbortSignal): {
   };
 }
 
-audioTranscriptions.post("/transcriptions", async (c) => {
-  const rateLimitResponse = checkAudioUploadRateLimit(c);
-  if (rateLimitResponse) return rateLimitResponse;
+async function setGuestIdentityFromAuthHeader(
+  c: Context,
+  authHeader: string
+): Promise<void> {
+  if (!authHeader.startsWith("Bearer ")) return;
+  const token = authHeader.slice("Bearer ".length);
+  const result = await validateGuestTokenDetailedAsync(token);
+  if (result.valid && result.guestId) {
+    c.set("guestId", result.guestId);
+  }
+}
 
+async function checkGuestRateLimit(c: Context): Promise<Response | null> {
+  const response = await guestRateLimitMiddleware(c, async () => undefined);
+  return response instanceof Response ? response : null;
+}
+
+audioTranscriptions.post("/transcriptions", async (c) => {
   let body: TranscriptionRequestBody;
   try {
     body = (await c.req.json()) as TranscriptionRequestBody;
@@ -339,6 +305,33 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     | ReturnType<typeof createTranscriptionSignal>
     | undefined;
   try {
+    let authHeader = c.req.header("authorization");
+    if (authHeader) {
+      await setGuestIdentityFromAuthHeader(c, authHeader);
+    } else {
+      try {
+        const guestSession = await getProductionGuestAuthSession();
+        authHeader = guestSession?.authHeader;
+        if (guestSession?.guestId) {
+          c.set("guestId", guestSession.guestId);
+        }
+      } catch {
+        authHeader = undefined;
+      }
+      if (!authHeader) {
+        return c.json(
+          {
+            error:
+              "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+          },
+          503
+        );
+      }
+    }
+
+    const rateLimitResponse = await checkGuestRateLimit(c);
+    if (rateLimitResponse) return rateLimitResponse;
+
     transcriptionSignal = createTranscriptionSignal(c.req.raw.signal);
     const transcriptionPayload = {
       model,
@@ -357,23 +350,6 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(accessVersion !== undefined ? { accessVersion } : {}),
       ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };
-    let authHeader = c.req.header("authorization");
-    if (!authHeader) {
-      try {
-        authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
-      } catch {
-        authHeader = undefined;
-      }
-      if (!authHeader) {
-        return c.json(
-          {
-            error:
-              "Unable to authenticate with MCPJam servers. Please try again or sign in.",
-          },
-          503
-        );
-      }
-    }
     const originHeader = c.req.header("origin");
     const clientIp = getClientIp(c);
     const guestIpHash = clientIp ? await hashGuestSpendIp(clientIp) : null;

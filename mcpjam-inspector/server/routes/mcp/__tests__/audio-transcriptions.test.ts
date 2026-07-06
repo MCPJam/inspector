@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import audioTranscriptions, {
   resetAudioUploadRateLimitForTests,
 } from "../audio-transcriptions.js";
-import { getProductionGuestAuthHeader } from "../../../utils/guest-auth.js";
+import { getProductionGuestAuthSession } from "../../../utils/guest-auth.js";
 import { hashGuestSpendIp } from "../../../utils/guest-spend-ip.js";
 
 vi.mock("../../../utils/guest-auth.js", () => ({
-  getProductionGuestAuthHeader: vi
-    .fn()
-    .mockResolvedValue("Bearer guest-test-token"),
+  getProductionGuestAuthSession: vi.fn().mockResolvedValue({
+    authHeader: "Bearer guest-test-token",
+    guestId: "guest-test-id",
+  }),
 }));
 
 vi.mock("../../../utils/guest-spend-ip.js", () => ({
@@ -285,7 +286,7 @@ describe("audio transcriptions route", () => {
       ok: true,
       text: "Guest audio.",
     });
-    expect(getProductionGuestAuthHeader).toHaveBeenCalledTimes(1);
+    expect(getProductionGuestAuthSession).toHaveBeenCalledTimes(1);
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect(new Headers(init?.headers).get("x-mcpjam-guest-ip-hash")).toBe(
       "guest-ip-hash"
@@ -293,7 +294,7 @@ describe("audio transcriptions route", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("rate limits repeated audio uploads before proxying to MCPJam", async () => {
+  it("rate limits repeated guest audio uploads with the shared guest limiter", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockImplementation(
       async () =>
@@ -303,7 +304,7 @@ describe("audio transcriptions route", () => {
         })
     );
 
-    for (let index = 0; index < 12; index++) {
+    for (let index = 0; index < 60; index++) {
       const response = await app.request("/api/web/audio/transcriptions", {
         method: "POST",
         headers: {
@@ -338,9 +339,9 @@ describe("audio transcriptions route", () => {
     await expect(response.json()).resolves.toEqual({
       code: "RATE_LIMITED",
       message:
-        "Voice upload rate limit exceeded. Try again later or sign in for higher limits.",
+        "Guest rate limit exceeded. Try again later or sign in for higher limits.",
     });
-    expect(fetch).toHaveBeenCalledTimes(12);
+    expect(fetch).toHaveBeenCalledTimes(60);
   });
 
   it("rejects project-backed transcription on the MCP mount", async () => {
@@ -373,6 +374,7 @@ describe("audio transcriptions route", () => {
       new Response(
         JSON.stringify({
           error: { message: "Voice provider failed" },
+          details: "Backend env var AI_GATEWAY_API_KEY is not set.",
         }),
         { status: 502, headers: { "Content-Type": "application/json" } }
       )
