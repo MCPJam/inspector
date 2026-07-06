@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
 
 vi.mock("posthog-js", () => ({
   default: {
@@ -148,6 +149,39 @@ describe("OAuthFlowTab", () => {
     );
     expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
       "https://example.com/mcp",
+    );
+  });
+
+  it("passes hasClientSecret to the state machine for confidential clients", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+    const serverConfigs = {
+      "oauth-server": createServer({
+        name: "oauth-server",
+        useOAuth: true,
+        hasClientSecret: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "",
+          clientId: "client-from-profile",
+          scopes: "read",
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="oauth-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({ hasClientSecret: true }),
     );
   });
 });

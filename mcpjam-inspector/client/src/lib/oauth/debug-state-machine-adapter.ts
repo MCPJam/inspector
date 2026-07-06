@@ -11,6 +11,8 @@ import {
 } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
@@ -27,6 +29,18 @@ export interface InspectorOAuthStateMachineConfig {
   serverName: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * Explicit client secret (fresh form value or legacy inline config). Takes
+   * precedence over the Convex-backed fetch below.
+   */
+  clientSecret?: string;
+  /**
+   * Whether a client secret is stored in Convex for this server. Since #2758
+   * secrets no longer live in browser storage, so the debugger must fetch the
+   * secret at token-exchange time (mirroring the connect flow's
+   * `MCPOAuthProvider.loadStoredClientSecret`).
+   */
+  hasClientSecret?: boolean;
 }
 
 function normalizeResponseHeaders(
@@ -141,17 +155,66 @@ export function loadDebugPreregisteredCredentials({
   }
 }
 
+/**
+ * Resolve the pre-registered client secret for the debugger flow. An explicit
+ * secret (fresh form value / legacy inline config) wins; otherwise, when the
+ * server has a Convex-backed secret, fetch it lazily and memoize the promise so
+ * a single flow (initial exchange + any XAA/fallback retry) fetches once. The
+ * secret is only ever held in machine memory — never written to localStorage —
+ * preserving the #2758 "no secrets in browser storage" guarantee.
+ */
+function createDebugClientSecretResolver(
+  config: InspectorOAuthStateMachineConfig,
+): () => Promise<string | undefined> {
+  let pending: Promise<string | undefined> | undefined;
+
+  return () => {
+    const explicit = config.clientSecret?.trim();
+    if (explicit) {
+      return Promise.resolve(explicit);
+    }
+    if (!config.hasClientSecret) {
+      return Promise.resolve(undefined);
+    }
+    if (!pending) {
+      const resolved = tryResolveProjectServer(config.serverName);
+      if (!resolved) {
+        return Promise.resolve(undefined);
+      }
+      pending = fetchOAuthClientSecret({
+        projectId: resolved.projectId,
+        serverId: resolved.serverId,
+      })
+        .then((result) => result.clientSecret)
+        .catch(() => {
+          // Degrade to an unauthenticated token request rather than aborting
+          // the flow; the resulting 401 stays visible in the HTTP history.
+          // Clear the memo so a later retry can re-attempt the fetch.
+          pending = undefined;
+          return undefined;
+        });
+    }
+    return pending;
+  };
+}
+
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
+  const resolveClientSecret = createDebugClientSecretResolver(config);
+
   return createOAuthStateMachine({
     ...config,
+    hasClientSecret: Boolean(config.clientSecret) || Boolean(config.hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     scheduleAutoAdvance: (fn, delayMs) => {
       window.setTimeout(fn, delayMs);
     },
-    loadPreregisteredCredentials: loadDebugPreregisteredCredentials,
+    loadPreregisteredCredentials: async (input) => ({
+      ...loadDebugPreregisteredCredentials(input),
+      clientSecret: await resolveClientSecret(),
+    }),
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
       config.protocolVersion,
     ),

@@ -281,15 +281,19 @@ export const OAuthFlowTab = ({
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
       registrationStrategy,
+      clientSecret: profile.clientSecret.trim() || undefined,
+      hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
     hasProfile,
     protocolVersion,
     profile.serverUrl,
     profile.scopes,
+    profile.clientSecret,
     serverIdentifier,
     customHeaders,
     registrationStrategy,
+    activeServer?.hasClientSecret,
     updateOAuthFlowState,
   ]);
 
