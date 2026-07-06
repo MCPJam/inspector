@@ -793,12 +793,15 @@ export function ChatInput({
           text?: unknown;
           error?: unknown;
           code?: unknown;
+          details?: unknown;
         } | null;
 
         if (!response.ok) {
           const message =
             result?.code === VOICE_TRANSCRIPTION_IN_PROGRESS_CODE
               ? VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE
+              : typeof result?.details === "string"
+              ? result.details
               : typeof result?.error === "string"
               ? result.error
               : "Voice transcription failed";
