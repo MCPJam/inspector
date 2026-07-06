@@ -27,6 +27,14 @@ export interface InspectorOAuthStateMachineConfig {
   serverName: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * Credentials the user configured on the OAuth test profile ("Configure
+   * Server to Test" → Client credentials). Secrets are never written to
+   * localStorage, so they can only reach the state machine through here —
+   * the stored `mcp-client-*` record is a clientId-only fallback.
+   */
+  preregisteredClientId?: string;
+  preregisteredClientSecret?: string;
 }
 
 function normalizeResponseHeaders(
@@ -144,14 +152,31 @@ export function loadDebugPreregisteredCredentials({
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
+  const { preregisteredClientId, preregisteredClientSecret, ...machineConfig } =
+    config;
   return createOAuthStateMachine({
-    ...config,
+    ...machineConfig,
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     scheduleAutoAdvance: (fn, delayMs) => {
       window.setTimeout(fn, delayMs);
     },
-    loadPreregisteredCredentials: loadDebugPreregisteredCredentials,
+    // Profile credentials are authoritative when configured: the stored
+    // `mcp-client-*` record can hold a stale DCR-registered client id, and it
+    // never holds a secret — without the explicit secret the machine resolves
+    // the token auth method as "none" and the exchange 401s (#3029). Pairing
+    // a profile secret with a stored client id would authenticate as the
+    // wrong client, so the stored record is only consulted when the profile
+    // has no credentials at all.
+    loadPreregisteredCredentials: (input) => {
+      if (preregisteredClientId || preregisteredClientSecret) {
+        return {
+          clientId: preregisteredClientId,
+          clientSecret: preregisteredClientSecret || undefined,
+        };
+      }
+      return loadDebugPreregisteredCredentials(input);
+    },
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
       config.protocolVersion,
     ),
