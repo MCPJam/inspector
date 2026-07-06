@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import audioTranscriptions from "../audio-transcriptions.js";
+import audioTranscriptions, {
+  resetAudioUploadRateLimitForTests,
+} from "../audio-transcriptions.js";
 import { getProductionGuestAuthHeader } from "../../../utils/guest-auth.js";
 import { hashGuestSpendIp } from "../../../utils/guest-spend-ip.js";
 
@@ -36,6 +38,7 @@ async function postTranscription(body: Record<string, unknown>) {
 describe("audio transcriptions route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAudioUploadRateLimitForTests();
     vi.mocked(hashGuestSpendIp).mockResolvedValue("guest-ip-hash");
     vi.stubGlobal(
       "fetch",
@@ -288,6 +291,56 @@ describe("audio transcriptions route", () => {
       "guest-ip-hash"
     );
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rate limits repeated audio uploads before proxying to MCPJam", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.mocked(fetch).mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ ok: true, text: "Guest audio." }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+    );
+
+    for (let index = 0; index < 12; index++) {
+      const response = await app.request("/api/web/audio/transcriptions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Real-IP": "203.0.113.20",
+        },
+        body: JSON.stringify({
+          input_audio: {
+            data: `UklGRiQA${index}`,
+            format: "webm",
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Real-IP": "203.0.113.20",
+      },
+      body: JSON.stringify({
+        input_audio: {
+          data: "UklGRiQArate-limited",
+          format: "webm",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      code: "RATE_LIMITED",
+      message:
+        "Voice upload rate limit exceeded. Try again later or sign in for higher limits.",
+    });
+    expect(fetch).toHaveBeenCalledTimes(12);
   });
 
   it("rejects project-backed transcription on the MCP mount", async () => {

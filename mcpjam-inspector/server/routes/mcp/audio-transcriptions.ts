@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { ErrorCode } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -13,6 +15,8 @@ const MCPJAM_VOICE_BUDGET_MESSAGE = "You've used today's voice budget.";
 const MCPJAM_VOICE_IN_PROGRESS_CODE = "voice_transcription_in_progress";
 const MCPJAM_VOICE_IN_PROGRESS_MESSAGE =
   "Another voice message is still processing. Try again in a moment.";
+const AUDIO_UPLOAD_RATE_LIMIT = 12;
+const AUDIO_UPLOAD_WINDOW_MS = 60_000;
 const SUPPORTED_AUDIO_FORMATS = new Set([
   "wav",
   "mp3",
@@ -37,6 +41,62 @@ interface TranscriptionRequestBody {
   temperature?: unknown;
   provider?: unknown;
   audioDurationSeconds?: unknown;
+}
+
+const audioUploadWindows = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of audioUploadWindows) {
+    if (now - entry.windowStart > AUDIO_UPLOAD_WINDOW_MS * 2) {
+      audioUploadWindows.delete(key);
+    }
+  }
+}, 5 * 60_000).unref();
+
+function getAudioUploadRateLimitKey(c: Context): string {
+  const clientIp = getClientIp(c);
+  if (clientIp) return `ip:${clientIp}`;
+
+  const sessionAuth = c.req.header("x-mcp-session-auth")?.trim();
+  if (sessionAuth) return `session:${sessionAuth.slice(0, 48)}`;
+
+  const auth = c.req.header("authorization")?.trim();
+  if (auth) return `auth:${auth.slice(0, 48)}`;
+
+  return "unknown";
+}
+
+function checkAudioUploadRateLimit(c: Context): Response | null {
+  const key = getAudioUploadRateLimitKey(c);
+  const now = Date.now();
+  const entry = audioUploadWindows.get(key);
+
+  if (!entry || now - entry.windowStart >= AUDIO_UPLOAD_WINDOW_MS) {
+    audioUploadWindows.set(key, { count: 1, windowStart: now });
+    return null;
+  }
+
+  if (entry.count >= AUDIO_UPLOAD_RATE_LIMIT) {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message:
+          "Voice upload rate limit exceeded. Try again later or sign in for higher limits.",
+      },
+      429
+    );
+  }
+
+  entry.count++;
+  return null;
+}
+
+export function resetAudioUploadRateLimitForTests(): void {
+  audioUploadWindows.clear();
 }
 
 function readErrorMessage(payload: unknown, fallback: string): string {
@@ -235,6 +295,9 @@ function createTranscriptionSignal(inboundSignal?: AbortSignal): {
 }
 
 audioTranscriptions.post("/transcriptions", async (c) => {
+  const rateLimitResponse = checkAudioUploadRateLimit(c);
+  if (rateLimitResponse) return rateLimitResponse;
+
   let body: TranscriptionRequestBody;
   try {
     body = (await c.req.json()) as TranscriptionRequestBody;
