@@ -161,16 +161,21 @@ export function createInspectorOAuthStateMachine(
     scheduleAutoAdvance: (fn, delayMs) => {
       window.setTimeout(fn, delayMs);
     },
-    // Profile credentials win over the localStorage record: the stored
-    // `mcp-client-*` entry can hold a stale DCR-registered client id, and it
-    // never holds a secret. Without the explicit secret the machine resolves
-    // the token auth method as "none" and the exchange 401s (#3029).
+    // Profile credentials are authoritative when configured: the stored
+    // `mcp-client-*` record can hold a stale DCR-registered client id, and it
+    // never holds a secret — without the explicit secret the machine resolves
+    // the token auth method as "none" and the exchange 401s (#3029). Pairing
+    // a profile secret with a stored client id would authenticate as the
+    // wrong client, so the stored record is only consulted when the profile
+    // has no credentials at all.
     loadPreregisteredCredentials: (input) => {
-      const stored = loadDebugPreregisteredCredentials(input);
-      return {
-        clientId: preregisteredClientId || stored.clientId,
-        clientSecret: preregisteredClientSecret || undefined,
-      };
+      if (preregisteredClientId || preregisteredClientSecret) {
+        return {
+          clientId: preregisteredClientId,
+          clientSecret: preregisteredClientSecret || undefined,
+        };
+      }
+      return loadDebugPreregisteredCredentials(input);
     },
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
       config.protocolVersion,

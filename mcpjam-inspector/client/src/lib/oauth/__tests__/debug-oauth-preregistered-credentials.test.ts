@@ -116,16 +116,23 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
     expect(getState().clientSecret).toBe(CLIENT_SECRET);
   });
 
-  it("includes the client_secret in the token request body", async () => {
+  it("includes the client_secret in the token request body (client_secret_post)", async () => {
     vi.useFakeTimers();
     const { machine, getState, updateState } = createPreregisteredHarness({
       protocolVersion: "2025-11-25",
       preregisteredClientId: CLIENT_ID,
       preregisteredClientSecret: CLIENT_SECRET,
+      // Pin the AS to client_secret_post so the body-borne secret asserted
+      // below is the spec-correct transport. NOTE: the debug state machines
+      // currently transmit the secret in the body even when the resolved
+      // method is client_secret_basic (no Authorization: Basic header is
+      // built anywhere) — tracked as a follow-up SDK issue.
+      tokenEndpointAuthMethodsSupported: ["client_secret_post"],
     });
 
     await machine.proceedToNextStep();
     expect(getState().currentStep).toBe("received_client_credentials");
+    expect(getState().tokenEndpointAuthMethod).toBe("client_secret_post");
 
     updateState({
       currentStep: "received_authorization_code",
@@ -189,7 +196,7 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
     expect(getState().clientSecret).toBe(CLIENT_SECRET);
   });
 
-  it("falls back to the stored client record when no profile clientId is configured", async () => {
+  it("falls back to the stored client record when the profile has no credentials", async () => {
     localStorage.setItem(
       `mcp-client-${SERVER_NAME}`,
       JSON.stringify({ client_id: "stored_client" }),
@@ -202,5 +209,25 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
     await machine.proceedToNextStep();
 
     expect(getState().clientId).toBe("stored_client");
+  });
+
+  it("does not pair a profile secret with a stored client id", async () => {
+    localStorage.setItem(
+      `mcp-client-${SERVER_NAME}`,
+      JSON.stringify({ client_id: "stale_dcr_client" }),
+    );
+
+    const { machine, getState } = createPreregisteredHarness({
+      protocolVersion: "2025-11-25",
+      preregisteredClientSecret: CLIENT_SECRET,
+    });
+
+    await machine.proceedToNextStep();
+
+    // A secret belongs to a specific client id. Adopting the stored (possibly
+    // stale DCR) id would authenticate as the wrong client, so the machine
+    // fails fast and asks for the missing client id instead.
+    expect(getState().clientId).toBeUndefined();
+    expect(getState().error).toMatch(/client ID is required/i);
   });
 });
