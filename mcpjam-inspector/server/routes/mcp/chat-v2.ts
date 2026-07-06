@@ -386,12 +386,6 @@ chatV2.post("/", async (c) => {
             },
             runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
           );
-          return c.json(
-            {
-              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
-            },
-            runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
-          );
         }
       }
     } else if (!isChatboxSession && bodyHostId) {

@@ -157,11 +157,6 @@ chatV2.post("/", async (c) => {
           ErrorCode.INTERNAL_ERROR,
           `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
         );
-        throw new WebRouteError(
-          runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
-        );
       }
     } else if (!isChatboxSession && hostId) {
       // Host-bound direct session (Playground). The host config — including the
