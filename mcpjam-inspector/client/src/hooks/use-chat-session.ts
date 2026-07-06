@@ -1504,7 +1504,13 @@ export function useChatSession(
     return selectedServers.some((serverName) => {
       const server =
         appState.servers?.[serverName] ?? activeProject?.servers?.[serverName];
-      return isLocalOnlyMcpServerConfig(server?.config);
+      // Fail CLOSED when a selected server's config can't be resolved (state
+      // not yet loaded, name mismatch): treat it as local-only. The local
+      // engine reaches public servers fine, but routing a stdio server to the
+      // cloud reproduces the exact "STDIO not supported" failure this flag
+      // exists to prevent.
+      if (!server?.config) return true;
+      return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
   const localMcpRuntimeRequired =

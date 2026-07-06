@@ -185,7 +185,12 @@ function nativeOrgByokProxyModelId(
       ? trimmed.slice("custom:".length)
       : "";
     const firstSeparator = customRest.search(/[:/]/);
-    if (firstSeparator >= 0) return customRest.slice(firstSeparator + 1);
+    if (firstSeparator >= 0) {
+      // Malformed ids like "custom:foo:" leave nothing after the separator —
+      // fall back to the trimmed id rather than sending an empty model.
+      const rest = customRest.slice(firstSeparator + 1);
+      if (rest) return rest;
+    }
     return trimmed;
   }
 
