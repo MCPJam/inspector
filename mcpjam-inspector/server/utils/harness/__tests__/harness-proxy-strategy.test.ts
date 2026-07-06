@@ -89,4 +89,20 @@ describe("resolveWebAuthorizedHarnessStrategy", () => {
       mode: "relay",
     });
   });
+
+  it("RELAY when the public URL is plain http (proxy token must never ride cleartext)", () => {
+    process.env.MCPJAM_INSPECTOR_PUBLIC_URL = "http://inspector.example.com";
+    expect(resolveWebAuthorizedHarnessStrategy()).toEqual({
+      plane: "web-authorized",
+      mode: "relay",
+    });
+  });
+
+  it("RELAY when the public URL is a plain-http public IP", () => {
+    process.env.BASE_URL = "http://8.8.8.8:6274";
+    expect(resolveWebAuthorizedHarnessStrategy()).toEqual({
+      plane: "web-authorized",
+      mode: "relay",
+    });
+  });
 });

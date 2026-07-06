@@ -28,7 +28,7 @@ function makeSubject(
   hostId: string,
   hostName: string,
   overrides: Partial<HostConfigDtoV2> = {},
-  configHashShort?: string,
+  configHashShort?: string
 ): HostComparisonSubject {
   return {
     hostId,
@@ -42,22 +42,19 @@ function makeSubject(
 describe("HostConfigComparisonMatrix", () => {
   it("renders the empty-state hint when no subjects are passed", () => {
     render(<HostConfigComparisonMatrix subjects={[]} />);
-    expect(
-      screen.getByText(/No hosts to compare/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/No hosts to compare/i)).toBeInTheDocument();
   });
 
   it("renders the three section bands in the canonical order", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[makeSubject("h_a3f9d2_claude", "Claude Code")]}
-      />,
+      />
     );
-    const sections = screen.getAllByRole("columnheader", { hidden: true })
+    const sections = screen
+      .getAllByRole("columnheader", { hidden: true })
       .map((el) => el.textContent ?? "")
-      .filter((text) =>
-        /^Agent|^MCP Protocol|^Apps/.test(text.trim()),
-      );
+      .filter((text) => /^Agent|^MCP Protocol|^Apps/.test(text.trim()));
     // The first three matching headers should be Agent → MCP Protocol → Apps.
     expect(sections.length).toBeGreaterThanOrEqual(3);
     expect(sections[0]).toMatch(/^Agent/);
@@ -70,9 +67,14 @@ describe("HostConfigComparisonMatrix", () => {
       <HostConfigComparisonMatrix
         subjects={[
           makeSubject("h_claude_001", "Claude Code", {}, "a3f9d2"),
-          makeSubject("h_cursor_002", "Cursor", { hostStyle: "cursor" }, "1b8e44"),
+          makeSubject(
+            "h_cursor_002",
+            "Cursor",
+            { hostStyle: "cursor" },
+            "1b8e44"
+          ),
         ]}
-      />,
+      />
     );
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("Cursor")).toBeInTheDocument();
@@ -85,7 +87,7 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_goose_001", "Goose", { hostStyle: "goose" }, "goose1"),
         ]}
         themeMode="dark"
-      />,
+      />
     );
 
     const header = screen.getByText("Goose").closest("th");
@@ -100,22 +102,21 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_a", "A", { temperature: 0.2 }),
           makeSubject("h_b", "B", { temperature: 0.7 }),
         ]}
-      />,
+      />
     );
-    expect(screen.getByTestId("diverge-gutter-temperature")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("diverge-gutter-temperature")
+    ).toBeInTheDocument();
   });
 
   it("omits the diverge gutter on rows that agree", () => {
     render(
       <HostConfigComparisonMatrix
-        subjects={[
-          makeSubject("h_a", "A"),
-          makeSubject("h_b", "B"),
-        ]}
-      />,
+        subjects={[makeSubject("h_a", "A"), makeSubject("h_b", "B")]}
+      />
     );
     expect(
-      screen.queryByTestId("diverge-gutter-temperature"),
+      screen.queryByTestId("diverge-gutter-temperature")
     ).not.toBeInTheDocument();
   });
 
@@ -127,10 +128,12 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_b", "B", { temperature: 0.7 }),
         ]}
         divergingOnly
-      />,
+      />
     );
     // temperature differs → still visible
-    expect(screen.getByTestId("diverge-gutter-temperature")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("diverge-gutter-temperature")
+    ).toBeInTheDocument();
     // modelId is identical across both → row hidden
     expect(screen.queryByText("modelId")).not.toBeInTheDocument();
   });
@@ -142,35 +145,31 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_a", "A", { requireToolApproval: true }),
           makeSubject("h_b", "B", { requireToolApproval: false }),
         ]}
-      />,
+      />
     );
     expect(screen.getAllByText("Yes").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("No").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders progressiveToolDiscovery=undefined as Auto (tri-state)", () => {
-    render(
-      <HostConfigComparisonMatrix
-        subjects={[makeSubject("h_a", "A")]}
-      />,
-    );
+    render(<HostConfigComparisonMatrix subjects={[makeSubject("h_a", "A")]} />);
     expect(screen.getAllByText("Auto").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders client capabilities as Advertised / Not advertised chips", () => {
+  it("renders client capabilities as Supported / Not supported chips", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[
           makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
         ]}
-      />,
+      />
     );
-    // sampling present → Advertised
-    expect(screen.getAllByText("Advertised").length).toBeGreaterThanOrEqual(1);
-    // roots/elicitation/experimental absent → Not advertised
-    expect(
-      screen.getAllByText("Not advertised").length,
-    ).toBeGreaterThanOrEqual(1);
+    // sampling present → Supported
+    expect(screen.getAllByText("Supported").length).toBeGreaterThanOrEqual(1);
+    // roots/elicitation/experimental absent → Not supported
+    expect(screen.getAllByText("Not supported").length).toBeGreaterThanOrEqual(
+      1
+    );
   });
 
   it("shows a per-row coverage stat for capability rows", () => {
@@ -180,12 +179,12 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_a", "A", { clientCapabilities: { sampling: {} } }),
           makeSubject("h_b", "B", { clientCapabilities: {} }),
         ]}
-      />,
+      />
     );
     // sampling supported by 1 of 2 hosts
-    expect(screen.getByTestId("coverage-capabilities.sampling")).toHaveTextContent(
-      "1/2",
-    );
+    expect(
+      screen.getByTestId("coverage-capabilities.sampling")
+    ).toHaveTextContent("1/2");
     // scalar rows get no coverage stat
     expect(screen.queryByTestId("coverage-modelId")).not.toBeInTheDocument();
   });
@@ -194,7 +193,7 @@ describe("HostConfigComparisonMatrix", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[makeSubject("h_a", "A", { hostStyle: "claude" })]}
-      />,
+      />
     );
     // Effective MCP Apps + OpenAI shim dimensions render as their own rows…
     expect(screen.getByText("openLinks")).toBeInTheDocument();
@@ -203,7 +202,9 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.getByText("camera")).toBeInTheDocument();
     // …and the old opaque override rows are gone.
     expect(screen.queryByText("Spec-bridge overrides")).not.toBeInTheDocument();
-    expect(screen.queryByText("Permissions allow-list")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Permissions allow-list")
+    ).not.toBeInTheDocument();
   });
 
   it("filters rows live by search query", () => {
@@ -211,7 +212,7 @@ describe("HostConfigComparisonMatrix", () => {
       <HostConfigComparisonMatrix
         subjects={[makeSubject("h_a", "A")]}
         searchQuery="temperature"
-      />,
+      />
     );
     expect(screen.getByText("Temperature")).toBeInTheDocument();
     expect(screen.queryByText("Model")).not.toBeInTheDocument();
@@ -222,7 +223,7 @@ describe("HostConfigComparisonMatrix", () => {
       <HostConfigComparisonMatrix
         subjects={[makeSubject("h_a", "A")]}
         searchQuery="zzz-no-such-field"
-      />,
+      />
     );
     expect(screen.getByText(/No fields match/i)).toBeInTheDocument();
   });
@@ -235,7 +236,7 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_b", "B", { clientCapabilities: { sampling: {} } }),
         ]}
         supportFilter="missing"
-      />,
+      />
     );
     // sampling supported by all → hidden
     expect(screen.queryByText("Sampling")).not.toBeInTheDocument();
@@ -251,12 +252,9 @@ describe("HostConfigComparisonMatrix", () => {
 
     render(
       <HostConfigComparisonMatrix
-        subjects={[
-          makeSubject("h_a", "A"),
-          makeSubject("h_b", "B"),
-        ]}
+        subjects={[makeSubject("h_a", "A"), makeSubject("h_b", "B")]}
         onRemoveHost={onRemoveHost}
-      />,
+      />
     );
 
     await user.click(screen.getByTestId("host-compare-remove-h_b"));

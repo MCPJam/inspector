@@ -3,9 +3,10 @@
  * and cloud-skill creates carry only a small inline SKILL.md body well under
  * the cap). Mount once with `app.use("/api/web/*", webBodyLimit())`.
  *
- * Carve-outs: POST computer uploads carry multipart blobs and apply their own
- * higher bodyLimit at the mount site; audio transcription carries larger JSON
- * payloads with base64-encoded audio.
+ * Carve-outs: POST to the computer file-upload route carries multipart blobs
+ * and applies its own higher bodyLimit at its mount site; audio transcription
+ * carries larger JSON payloads with base64-encoded audio. The computer upload
+ * carve-out is POST-only because the route's own cap is mounted on POST.
  *
  * (An earlier multipart carve-out for skill *folder* uploads was removed when
  * skills moved to a Convex source of truth — there's no large multipart upload
@@ -25,7 +26,10 @@ export const AUDIO_WEB_BODY_LIMIT = 25 * 1024 * 1024; // 25MB
 
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
-    if (c.req.method === "POST" && c.req.path === "/api/web/computers/upload") {
+    if (
+      c.req.method === "POST" &&
+      c.req.path === "/api/web/computers/upload"
+    ) {
       return next();
     }
     if (c.req.path.startsWith("/api/web/audio/")) {

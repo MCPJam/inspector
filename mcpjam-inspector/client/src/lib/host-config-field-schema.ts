@@ -472,7 +472,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Version",
     label: "Supported protocol versions",
     path: "mcpProfile.initialize.supportedProtocolVersions",
-    description: "Accept-list advertised in the initialize handshake.",
+    description: "Accept-list supported in the initialize handshake.",
     kind: { kind: "string-array" },
     read: (cfg) => mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
@@ -508,12 +508,12 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Client capabilities advertised
+  // Protocol · Client capabilities supported
   // ============================================================
   {
     id: "capabilities.roots",
     section: "protocol",
-    subsection: "Client capabilities advertised",
+    subsection: "Client capabilities supported",
     label: "Roots",
     path: "clientCapabilities.roots",
     description: "Filesystem roots exposed to the server.",
@@ -523,7 +523,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "capabilities.sampling",
     section: "protocol",
-    subsection: "Client capabilities advertised",
+    subsection: "Client capabilities supported",
     label: "Sampling",
     path: "clientCapabilities.sampling",
     description: "Server-initiated LLM calls.",
@@ -533,7 +533,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "capabilities.elicitation",
     section: "protocol",
-    subsection: "Client capabilities advertised",
+    subsection: "Client capabilities supported",
     label: "Elicitation",
     path: "clientCapabilities.elicitation",
     description: "Mid-call structured prompts back to the user.",
@@ -543,7 +543,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "capabilities.experimental",
     section: "protocol",
-    subsection: "Client capabilities advertised",
+    subsection: "Client capabilities supported",
     label: "Experimental",
     path: "clientCapabilities.experimental",
     description: "Vendor-extension capabilities.",
@@ -594,7 +594,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "MCP Apps spec bridge",
     label: "ui/initialize hostInfo",
     path: "mcpProfile.apps.uiInitialize.hostInfo",
-    description: "Override the `hostInfo` advertised in `ui/initialize`.",
+    description: "Override the `hostInfo` sent in `ui/initialize`.",
     kind: { kind: "object", itemNoun: "field" },
     read: (cfg) => mcpProfile(cfg)?.apps?.uiInitialize?.hostInfo,
   },

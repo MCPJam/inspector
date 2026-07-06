@@ -30,4 +30,16 @@ describe("host-compare-presets", () => {
     expect(hosts.every((h) => isPresetHostId(h.hostId))).toBe(true);
     expect(isPresetHostId("k1234567890abcdef")).toBe(false);
   });
+
+  it("omits excluded gated templates", () => {
+    const { hosts, subjects } = buildPresetCompareEntries("light", {
+      excludedTemplateIds: new Set(["claude-code"]),
+    });
+
+    const hostIds = hosts.map((h) => h.hostId);
+    expect(hostIds).not.toContain(`${PRESET_HOST_ID_PREFIX}claude-code`);
+    expect(hostIds).toContain(`${PRESET_HOST_ID_PREFIX}codex`);
+    expect(subjects[`${PRESET_HOST_ID_PREFIX}claude-code`]).toBeUndefined();
+    expect(subjects[`${PRESET_HOST_ID_PREFIX}codex`]).toBeDefined();
+  });
 });

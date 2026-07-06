@@ -27,6 +27,7 @@ import {
   type ManagerCallerContext,
 } from "./auth";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
+import { rpcLogBus } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 
 const harnessMcp = new Hono();
@@ -152,6 +153,34 @@ async function handle(c: any) {
         claims.projectId,
         [serverId],
         HARNESS_MCP_TIMEOUT_MS,
+        undefined,
+        undefined,
+        {
+          // Publish the sandbox's MCP traffic into the in-process rpc-log bus
+          // so a live harness turn ON THIS INSTANCE can forward it into the
+          // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and
+          // the local-mode Logs SSE/buffer sees it too. Observation-only —
+          // never affects the proxy result: the bus isolates subscribers, and
+          // this guard is the belt-and-suspenders so no logging failure can
+          // reach the RPC try/catch below. Cross-instance hosted delivery
+          // needs a shared sink (follow-up issue).
+          rpcLogger: ({ direction, message, serverId: sid }) => {
+            try {
+              rpcLogBus.publish({
+                serverId: sid,
+                direction,
+                timestamp: new Date().toISOString(),
+                message,
+              });
+            } catch (error) {
+              logger.warn(
+                `[harness-mcp] rpc log publish failed serverId=${sid}: ${
+                  error instanceof Error ? error.message : error
+                }`,
+              );
+            }
+          },
+        },
       ),
       (manager) => handleJsonRpc(serverId, body, manager, "adapter"),
     );
