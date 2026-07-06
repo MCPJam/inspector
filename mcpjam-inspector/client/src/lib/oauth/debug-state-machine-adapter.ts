@@ -27,6 +27,14 @@ export interface InspectorOAuthStateMachineConfig {
   serverName: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * Credentials the user configured on the OAuth test profile ("Configure
+   * Server to Test" → Client credentials). Secrets are never written to
+   * localStorage, so they can only reach the state machine through here —
+   * the stored `mcp-client-*` record is a clientId-only fallback.
+   */
+  preregisteredClientId?: string;
+  preregisteredClientSecret?: string;
 }
 
 function normalizeResponseHeaders(
@@ -144,14 +152,26 @@ export function loadDebugPreregisteredCredentials({
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
+  const { preregisteredClientId, preregisteredClientSecret, ...machineConfig } =
+    config;
   return createOAuthStateMachine({
-    ...config,
+    ...machineConfig,
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     scheduleAutoAdvance: (fn, delayMs) => {
       window.setTimeout(fn, delayMs);
     },
-    loadPreregisteredCredentials: loadDebugPreregisteredCredentials,
+    // Profile credentials win over the localStorage record: the stored
+    // `mcp-client-*` entry can hold a stale DCR-registered client id, and it
+    // never holds a secret. Without the explicit secret the machine resolves
+    // the token auth method as "none" and the exchange 401s (#3029).
+    loadPreregisteredCredentials: (input) => {
+      const stored = loadDebugPreregisteredCredentials(input);
+      return {
+        clientId: preregisteredClientId || stored.clientId,
+        clientSecret: preregisteredClientSecret || undefined,
+      };
+    },
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
       config.protocolVersion,
     ),
