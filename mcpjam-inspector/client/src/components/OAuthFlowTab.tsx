@@ -283,6 +283,7 @@ export const OAuthFlowTab = ({
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
       preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
     hasProfile,
@@ -294,6 +295,7 @@ export const OAuthFlowTab = ({
     serverIdentifier,
     customHeaders,
     registrationStrategy,
+    activeServer?.hasClientSecret,
     updateOAuthFlowState,
   ]);
 
