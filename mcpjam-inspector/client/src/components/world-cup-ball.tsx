@@ -18,7 +18,7 @@ export function WorldCupBall({ className }: { className?: string }) {
     <span
       role="img"
       aria-label="Soccer ball"
-      title="Go World Cup! ⚽"
+      title="Go World Cup 2026!"
       onClick={(e) => {
         e.stopPropagation();
         setKicking(true);
