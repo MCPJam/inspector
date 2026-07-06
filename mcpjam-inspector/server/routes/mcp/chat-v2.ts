@@ -335,8 +335,30 @@ chatV2.post("/", async (c) => {
     let resolvedModelOverride: typeof model | null = null;
     let hostRuntimeConfig: Record<string, unknown> | null = null;
     if (isChatboxSession && bodyChatboxId) {
-      const bearer = c.req.header("authorization") ?? "";
-      if (bearer) {
+      // Chatbox config resolution must NEVER be skipped: the fetched config is
+      // the only source of host-owned harness/computer/executionScope and of
+      // every host-wins protection. A bearer-less request is NOT a hard stop on
+      // this route (the MCPJam-model path lazily mints a guest bearer below),
+      // so resolve the SAME process-cached production guest bearer here first —
+      // and fail closed if no bearer can be obtained at all.
+      let bearer = c.req.header("authorization") ?? "";
+      if (!bearer) {
+        try {
+          bearer = (await getProductionGuestAuthHeader()) ?? "";
+        } catch {
+          bearer = "";
+        }
+      }
+      if (!bearer) {
+        return c.json(
+          {
+            error:
+              "Couldn't authenticate this chatbox turn to load its settings — sign in (or retry) to continue.",
+          },
+          401,
+        );
+      }
+      {
         const runtime = await fetchChatboxRuntimeConfig({
           chatboxId: bodyChatboxId,
           bearer,
