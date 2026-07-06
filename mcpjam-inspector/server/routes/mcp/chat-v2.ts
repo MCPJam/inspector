@@ -170,6 +170,31 @@ function describeLocalMcpProxyError(error: unknown): {
   };
 }
 
+function nativeOrgByokProxyModelId(
+  modelId: string,
+  providerKey: string,
+  protocol: "anthropic" | "openai"
+): string {
+  const trimmed = modelId.trim();
+  if (providerKey.startsWith("custom:")) {
+    const slug = providerKey.slice("custom:".length);
+    for (const prefix of [`custom:${slug}:`, `custom:${slug}/`]) {
+      if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
+    }
+    const customRest = trimmed.startsWith("custom:")
+      ? trimmed.slice("custom:".length)
+      : "";
+    const firstSeparator = customRest.search(/[:/]/);
+    if (firstSeparator >= 0) return customRest.slice(firstSeparator + 1);
+    return trimmed;
+  }
+
+  const protocolPrefix = `${protocol}/`;
+  return trimmed.startsWith(protocolPrefix)
+    ? trimmed.slice(protocolPrefix.length)
+    : trimmed;
+}
+
 function toPersistedUsage(
   usage: LiveChatTraceUsage | undefined
 ): { inputTokens: number; outputTokens: number } | undefined {
@@ -1038,6 +1063,7 @@ chatV2.post("/", async (c) => {
           );
           const proxyModelDefinition = {
             ...modelDefinition,
+            id: nativeOrgByokProxyModelId(modelId, providerKey, lease.protocol),
             provider: lease.protocol,
             customProviderName: undefined,
           };

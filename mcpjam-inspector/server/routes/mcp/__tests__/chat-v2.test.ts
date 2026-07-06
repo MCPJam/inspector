@@ -1922,7 +1922,7 @@ describe("POST /api/mcp/chat-v2", () => {
           expect(body).toMatchObject({
             projectId: "project-1",
             providerKey: "openai",
-            modelId: "gpt-4-turbo",
+            modelId: "openai/gpt-5.5",
             serverIds: ["server-1"],
           });
           return Response.json({
@@ -1942,7 +1942,7 @@ describe("POST /api/mcp/chat-v2", () => {
       try {
         const res = await postAuthenticatedJson({
           messages: [{ role: "user", content: "Hello" }],
-          model: { id: "gpt-4-turbo", provider: "openai" },
+          model: { id: "openai/gpt-5.5", provider: "openai" },
           projectId: "project-1",
           selectedServers: ["server-1"],
           selectedServerIds: ["server-1"],
@@ -1954,7 +1954,7 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
           expect.objectContaining({
-            id: "gpt-4-turbo",
+            id: "gpt-5.5",
             provider: "openai",
           }),
           "lease.jwt",
