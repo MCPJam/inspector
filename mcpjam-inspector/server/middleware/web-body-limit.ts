@@ -17,10 +17,11 @@ import type { Context, Next } from "hono";
 export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 
 // Audio transcription carries base64-encoded audio (~4/3 the raw size).
-// Convex accepts up to 25MB of raw audio (≈34MB after base64), so cap a bit
-// higher to leave room for envelope fields. Without this, /api/web/audio/*
-// would be rejected by the generic 1MB JSON cap.
-export const AUDIO_WEB_BODY_LIMIT = 40 * 1024 * 1024; // 40MB
+// The Convex route caps the whole JSON body (base64 audio + envelope) at 25MB,
+// so match that here — anything larger this proxy accepts only gets rejected
+// downstream. Without this, /api/web/audio/* would be rejected by the generic
+// 1MB JSON cap.
+export const AUDIO_WEB_BODY_LIMIT = 25 * 1024 * 1024; // 25MB
 
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
@@ -34,8 +35,8 @@ export function webBodyLimit() {
           ctx.json(
             {
               code: "VALIDATION_ERROR",
-              message: "Audio transcription body exceeds 40MB limit",
-              error: "Audio transcription body exceeds 40MB limit",
+              message: "Audio transcription body exceeds 25MB limit",
+              error: "Audio transcription body exceeds 25MB limit",
             },
             413
           ),

@@ -42,9 +42,12 @@ export interface CreditBalanceState {
   /**
    * Seconds of voice transcription the user can still afford today.
    * Derived on the backend from remaining cents at Whisper-1 pricing so the
-   * client never sees the dollar amount. 0 means the mic should be disabled.
+   * client never sees the dollar amount. A real 0 means the mic should be
+   * disabled; `undefined` means the backend didn't report it (e.g. an older
+   * deploy) and the mic should stay enabled under the global cap rather than
+   * read as "out of budget".
    */
-  voiceSecondsRemaining: number;
+  voiceSecondsRemaining?: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -83,7 +86,9 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
       r.monthlyAllowanceRemaining
     ),
     monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
-    voiceSecondsRemaining: Math.max(0, optionalNumber(r.voiceSecondsRemaining)),
+    // Absent (older backend) → undefined so the mic falls back to the global
+    // cap; a real 0 stays 0 and disables the mic.
+    voiceSecondsRemaining: optionalNumberOrUndefined(r.voiceSecondsRemaining),
   };
 };
 

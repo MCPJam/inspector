@@ -94,7 +94,12 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { authFetch } from "@/lib/session-token";
 
 const VOICE_TRANSCRIPTION_MODEL = "openai/whisper-1";
-const VOICE_TRANSCRIPTION_TIMEOUT_MS = 25_000;
+// Sit just above the proxy/backend 55s ceiling so the client never gives up on
+// a request the server is still running (and will bill): the server's own
+// timeout returns a proper error first instead of the client abandoning a call
+// that still charges for a transcript the user never sees. Users can always
+// hit cancel to stop sooner.
+const VOICE_TRANSCRIPTION_TIMEOUT_MS = 60_000;
 const VOICE_TRANSCRIPTION_GUARD_MS = VOICE_TRANSCRIPTION_TIMEOUT_MS + 2_000;
 const VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE =
   "Voice transcription timed out. Try a shorter recording.";
@@ -461,9 +466,16 @@ export function ChatInput({
     voiceSecondsRemaining != null &&
     voiceSecondsRemaining > 0 &&
     voiceSecondsRemaining < VOICE_WARNING_THRESHOLD_SECONDS
-      ? `You have about ${formatVoiceSeconds(
-          voiceSecondsRemaining
-        )} of voice left today — recording will stop automatically.`
+      ? // Only promise an early auto-stop when the remaining budget is actually
+        // tighter than the global per-recording cap; above it, the cap stops
+        // the recording regardless of budget.
+        voiceSecondsRemaining < VOICE_GLOBAL_MAX_SECONDS
+        ? `You have about ${formatVoiceSeconds(
+            voiceSecondsRemaining
+          )} of voice left today — recording will stop when it runs out.`
+        : `You have about ${formatVoiceSeconds(
+            voiceSecondsRemaining
+          )} of voice left today.`
       : null;
   const voiceBudgetExhausted =
     voiceSecondsRemaining != null && voiceSecondsRemaining <= 0;
@@ -1178,7 +1190,11 @@ export function ChatInput({
         (!trimmed && !hasResults) ||
         disabled ||
         submitDisabled ||
-        isLoading
+        isLoading ||
+        // While recording/transcribing the textarea shows a placeholder but
+        // `value` still holds the draft — don't let Enter submit it behind the
+        // voice UI (and leave the mic open).
+        voiceInputState !== "idle"
       ) {
         return;
       }
@@ -1728,7 +1744,7 @@ export function ChatInput({
                       <ArrowUp size={16} />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Use voice input</TooltipContent>
+                  <TooltipContent>Stop and transcribe</TooltipContent>
                 </Tooltip>
               )}
               {voiceInputState === "idle" && (

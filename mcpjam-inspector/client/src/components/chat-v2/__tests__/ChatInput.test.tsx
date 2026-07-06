@@ -942,7 +942,7 @@ describe("ChatInput", () => {
         .mockImplementation((handler, timeout, ...args) =>
           realSetTimeout(
             handler,
-            typeof timeout === "number" && timeout === 27_000 ? 0 : timeout,
+            typeof timeout === "number" && timeout === 62_000 ? 0 : timeout,
             ...args
           )
         );
