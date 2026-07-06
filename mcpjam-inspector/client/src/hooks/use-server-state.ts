@@ -6,7 +6,10 @@ import type {
   MCPServerConfig,
   NormalizedError,
 } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -80,6 +83,9 @@ import {
 } from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { standardEventProps } from "@/lib/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -676,6 +682,63 @@ interface ReconnectServerInternalOptions {
   suppressErrors?: boolean;
 }
 
+type StatelessProtocolConnectAttempt =
+  | "direct"
+  | "forced_oauth"
+  | "synced_oauth_credentials"
+  | "authorized_reconnect"
+  | "protocol_revalidation";
+
+type StatelessProtocolConnectMetadata = ReturnType<
+  typeof standardEventProps
+> & {
+  mcp_protocol_version: McpProtocolVersion;
+  protocol_pin_source: "server_override" | "host_default" | "unknown";
+  connection_transport: string;
+  auth_mode: "oauth" | "bearer" | "none" | "unknown";
+  hosted_mode: boolean;
+  has_project_context: boolean;
+  has_host_config: boolean;
+  has_mcp_profile: boolean;
+  has_timeout_ms: boolean;
+  connection_defaults_header_count: number;
+  client_capability_count: number;
+  has_client_info: boolean;
+  supported_protocol_version_count: number;
+  reconnect_attempt: StatelessProtocolConnectAttempt;
+  reconnect_attempt_index: number;
+  reconnect_select: boolean;
+  reconnect_suppressed_errors: boolean;
+  allow_interactive_oauth_flow: boolean;
+  had_synced_oauth_retry: boolean;
+};
+
+type StatelessProtocolConnectTelemetry = {
+  attempt?: StatelessProtocolConnectAttempt;
+  attemptIndex?: number;
+  select?: boolean;
+  suppressErrors?: boolean;
+  allowInteractiveOAuthFlow?: boolean;
+  hadSyncedOAuthRetry?: boolean;
+  capture?: (metadata: StatelessProtocolConnectMetadata) => void;
+};
+
+function getConnectionTransport(serverConfig: MCPServerConfig): string {
+  const configuredType = (serverConfig as { type?: unknown }).type;
+  if (typeof configuredType === "string" && configuredType.trim() !== "") {
+    return configuredType;
+  }
+  if ("url" in serverConfig) return "http";
+  if ("command" in serverConfig) return "stdio";
+  return "unknown";
+}
+
+function countRecordKeys(value: unknown): number {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? Object.keys(value).length
+    : 0;
+}
+
 export interface EnsureServersReadyResult {
   readyServerNames: string[];
   missingServerNames: string[];
@@ -704,6 +767,7 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
+  const posthog = usePostHog();
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -1099,17 +1163,7 @@ export function useServerState({
       // bug PR #2257 review flagged).
       serverId?: string
     ) => {
-      const defaults: {
-        headers?: Record<string, string>;
-        timeoutMs?: number;
-        clientCapabilities?: Record<string, unknown>;
-        clientInfo?: { name?: string; version?: string } & Record<
-          string,
-          unknown
-        >;
-        supportedProtocolVersions?: string[];
-        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
-      } = {};
+      const defaults: ConnectionDefaults = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
           extractRequestHeaders(serverConfig.requestInit)
@@ -1175,6 +1229,72 @@ export function useServerState({
     [activeHostConfig]
   );
 
+  const buildStatelessProtocolConnectMetadata = useCallback(
+    (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      serverId: string,
+      connectionDefaults: ConnectionDefaults | undefined,
+      effectiveProtocolVersion: McpProtocolVersion,
+      telemetry?: StatelessProtocolConnectTelemetry
+    ): StatelessProtocolConnectMetadata => {
+      const server =
+        latestEffectiveServersRef.current[serverName] ??
+        appStateServersRef.current[serverName];
+      const usesOAuth = server?.useOAuth === true;
+      const hasBearerToken = getServerBearerTokenState(server) === true;
+      const rawServerOverride =
+        activeHostConfig?.serverConnectionOverrides?.[serverId]
+          ?.mcpProtocolVersionOverride;
+      const serverOverride =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+      const hostPin =
+        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+          ? rawHostPin
+          : undefined;
+      const protocolPinSource =
+        serverOverride === effectiveProtocolVersion
+          ? "server_override"
+          : hostPin === effectiveProtocolVersion
+          ? "host_default"
+          : "unknown";
+
+      return {
+        ...standardEventProps("use_server_state"),
+        mcp_protocol_version: effectiveProtocolVersion,
+        protocol_pin_source: protocolPinSource,
+        connection_transport: getConnectionTransport(serverConfig),
+        auth_mode: usesOAuth ? "oauth" : hasBearerToken ? "bearer" : "none",
+        hosted_mode: HOSTED_MODE,
+        has_project_context: true,
+        has_host_config: Boolean(activeHostConfig),
+        has_mcp_profile: Boolean(activeMcpProfile),
+        has_timeout_ms: typeof connectionDefaults?.timeoutMs === "number",
+        connection_defaults_header_count: countRecordKeys(
+          connectionDefaults?.headers
+        ),
+        client_capability_count: countRecordKeys(
+          connectionDefaults?.clientCapabilities
+        ),
+        has_client_info: Boolean(connectionDefaults?.clientInfo),
+        supported_protocol_version_count:
+          connectionDefaults?.supportedProtocolVersions?.length ?? 0,
+        reconnect_attempt: telemetry?.attempt ?? "direct",
+        reconnect_attempt_index: telemetry?.attemptIndex ?? 1,
+        reconnect_select: telemetry?.select ?? true,
+        reconnect_suppressed_errors: telemetry?.suppressErrors ?? false,
+        allow_interactive_oauth_flow:
+          telemetry?.allowInteractiveOAuthFlow ?? false,
+        had_synced_oauth_retry: telemetry?.hadSyncedOAuthRetry ?? false,
+      };
+    },
+    [activeHostConfig, activeMcpProfile]
+  );
+
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
@@ -1209,7 +1329,11 @@ export function useServerState({
   );
 
   const guardedReconnectServer = useCallback(
-    async (serverName: string, serverConfig: MCPServerConfig) => {
+    async (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      telemetry?: StatelessProtocolConnectTelemetry
+    ) => {
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
@@ -1217,15 +1341,41 @@ export function useServerState({
           serverConfig,
           resolved.serverId
         );
-        return reconnectServer(resolved.serverId, configWithDefaults, {
-          projectId: resolved.projectId,
-          serverName,
-          connectionDefaults: buildResolverConnectionDefaults(
+        const connectionDefaults = buildResolverConnectionDefaults(
+          configWithDefaults,
+          activeMcpProfile,
+          resolved.serverId
+        );
+        const effectiveProtocolVersion = connectionDefaults?.mcpProtocolVersion;
+        const result = await reconnectServer(
+          resolved.serverId,
+          configWithDefaults,
+          {
+            projectId: resolved.projectId,
+            serverName,
+            connectionDefaults,
+          }
+        );
+        if (
+          result?.success &&
+          effectiveProtocolVersion &&
+          isStatelessProtocolVersion(effectiveProtocolVersion)
+        ) {
+          const metadata = buildStatelessProtocolConnectMetadata(
+            serverName,
             configWithDefaults,
-            activeMcpProfile,
-            resolved.serverId
-          ),
-        });
+            resolved.serverId,
+            connectionDefaults,
+            effectiveProtocolVersion,
+            telemetry
+          );
+          if (telemetry?.capture) {
+            telemetry.capture(metadata);
+          } else {
+            posthog?.capture("stateless_protocol_connect", metadata);
+          }
+        }
+        return result;
       }
       throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
@@ -1234,6 +1384,8 @@ export function useServerState({
       buildResolverConnectionDefaults,
       activeMcpProfile,
       withProjectConnectionDefaults,
+      buildStatelessProtocolConnectMetadata,
+      posthog,
     ]
   );
 
@@ -2002,7 +2154,9 @@ export function useServerState({
       const token = nextOpToken(name);
       void (async () => {
         try {
-          const result = await guardedReconnectServer(name, serverConfig);
+          const result = await guardedReconnectServer(name, serverConfig, {
+            attempt: "protocol_revalidation",
+          });
           if (isStaleOp(name, token)) return;
           if (result?.success) {
             dispatch({
@@ -3759,6 +3913,29 @@ export function useServerState({
       const hostedProjectServerId = activeProjectServersFlat?.find(
         (remoteServer) => remoteServer.name === serverName
       )?._id;
+      let statelessProtocolConnectCaptured = false;
+      let reconnectAttemptIndex = 0;
+      let hadSyncedOAuthRetry = false;
+      const captureStatelessProtocolConnect = (
+        metadata: StatelessProtocolConnectMetadata
+      ) => {
+        if (statelessProtocolConnectCaptured) {
+          return;
+        }
+        statelessProtocolConnectCaptured = true;
+        posthog?.capture("stateless_protocol_connect", metadata);
+      };
+      const buildStatelessTelemetry = (
+        attempt: StatelessProtocolConnectAttempt
+      ): StatelessProtocolConnectTelemetry => ({
+        attempt,
+        attemptIndex: (reconnectAttemptIndex += 1),
+        select,
+        suppressErrors,
+        allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? false,
+        hadSyncedOAuthRetry,
+        capture: captureStatelessProtocolConnect,
+      });
 
       if (options?.forceOAuthFlow) {
         const serverUrl = (server.config as any)?.url?.toString?.();
@@ -3909,7 +4086,8 @@ export function useServerState({
         );
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(oauthServerConfig)
+          withProjectConnectionDefaults(oauthServerConfig),
+          buildStatelessTelemetry("forced_oauth")
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -3955,7 +4133,8 @@ export function useServerState({
         try {
           const result = await guardedReconnectServer(
             serverName,
-            syncedReconnectConfig
+            syncedReconnectConfig,
+            buildStatelessTelemetry("synced_oauth_credentials")
           );
           if (isStaleOp(serverName, token)) {
             return {
@@ -4000,6 +4179,7 @@ export function useServerState({
             "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: result.error }
           );
+          hadSyncedOAuthRetry = true;
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
@@ -4032,6 +4212,7 @@ export function useServerState({
             "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: errorMessage }
           );
+          hadSyncedOAuthRetry = true;
         }
       }
 
@@ -4102,7 +4283,8 @@ export function useServerState({
             : authResult.serverConfig;
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(authServerConfig)
+          withProjectConnectionDefaults(authServerConfig),
+          buildStatelessTelemetry("authorized_reconnect")
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -4180,6 +4362,7 @@ export function useServerState({
       mergeWithProjectHeaders,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
+      posthog,
     ]
   );
 
