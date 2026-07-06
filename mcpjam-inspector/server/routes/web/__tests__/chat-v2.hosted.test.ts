@@ -361,7 +361,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     // The fetched config is the only source of harness/computer and of the
     // host-wins protections; falling back to body values would silently
     // downgrade a harness chatbox and reopen the tampered-body window.
-    expect(response.status).not.toBe(200);
+    // Pin the full status/code/message mapping so it can't regress silently:
+    // upstream 5xx maps to 502 with the INTERNAL_ERROR envelope + the
+    // upstream error surfaced in the message.
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+    };
+    expect(body.code).toBe("INTERNAL_ERROR");
+    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.message).toContain("backend unreachable");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 

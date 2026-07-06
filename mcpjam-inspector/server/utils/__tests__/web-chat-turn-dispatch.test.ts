@@ -9,7 +9,7 @@
  *
  * The stream handlers are mocked; these are pure dispatch tests.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => ({
   mcpjamFree: vi.fn(async () => new Response("mcpjam")),
@@ -103,7 +103,13 @@ describe("streamWebChatTurn model dispatch", () => {
     handlers.mcpjamFree.mockClear();
     handlers.hostedOrg.mockClear();
     handlers.localOrg.mockClear();
-    process.env.CONVEX_HTTP_URL = "https://convex.example.com";
+    // stubEnv (not a bare assignment) so the value is restored after each
+    // test and can't leak into suites that assert CONVEX_HTTP_URL is unset.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("routes a BARE MCPJam-hosted id + provider to the MCPJam path (harness runs)", async () => {
