@@ -102,14 +102,39 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     });
   });
 
-  it("uses an explicit client secret without fetching from Convex", async () => {
-    const config = buildMachineConfig({ clientSecret: "  explicit-secret  " });
+  it("uses an explicit profile secret without fetching from Convex", async () => {
+    const config = buildMachineConfig({
+      preregisteredClientId: "client_from_profile",
+      preregisteredClientSecret: "  explicit-secret  ",
+    });
 
     expect(config.hasClientSecret).toBe(true);
     const creds = await config.loadPreregisteredCredentials(loaderInput);
+    expect(creds.clientId).toBe("client_from_profile");
     expect(creds.clientSecret).toBe("explicit-secret");
     expect(fetchOAuthClientSecret).not.toHaveBeenCalled();
     expect(tryResolveProjectServer).not.toHaveBeenCalled();
+  });
+
+  it("pairs a profile clientId with the Convex-backed secret", async () => {
+    tryResolveProjectServer.mockReturnValue({
+      projectId: "proj_1",
+      serverId: "srv_1",
+    });
+    fetchOAuthClientSecret.mockResolvedValue({ clientSecret: "shhh" });
+
+    const config = buildMachineConfig({
+      preregisteredClientId: "client_from_profile",
+      hasClientSecret: true,
+    });
+
+    const creds = await config.loadPreregisteredCredentials(loaderInput);
+    // The profile clientId is authoritative over the stored record, and the
+    // synced secret still applies — it belongs to the server, not the record.
+    expect(creds).toEqual({
+      clientId: "client_from_profile",
+      clientSecret: "shhh",
+    });
   });
 
   it("degrades to no secret when the server has no Convex mapping", async () => {

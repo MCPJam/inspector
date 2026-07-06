@@ -281,7 +281,8 @@ export const OAuthFlowTab = ({
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
       registrationStrategy,
-      clientSecret: profile.clientSecret.trim() || undefined,
+      preregisteredClientId: profile.clientId.trim() || undefined,
+      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
       hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
@@ -289,6 +290,7 @@ export const OAuthFlowTab = ({
     protocolVersion,
     profile.serverUrl,
     profile.scopes,
+    profile.clientId,
     profile.clientSecret,
     serverIdentifier,
     customHeaders,

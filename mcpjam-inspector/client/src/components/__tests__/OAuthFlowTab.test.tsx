@@ -152,6 +152,45 @@ describe("OAuthFlowTab", () => {
     );
   });
 
+  it("passes the profile's pre-registered credentials to the state machine (#3029)", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+
+    const serverConfigs = {
+      "prereg-server": createServer({
+        name: "prereg-server",
+        useOAuth: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "https://example.com/mcp",
+          clientId: "client_prereg",
+          clientSecret: "prereg-secret",
+          scopes: "openid profile email",
+          customHeaders: [],
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="prereg-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationStrategy: "preregistered",
+        preregisteredClientId: "client_prereg",
+        preregisteredClientSecret: "prereg-secret",
+      }),
+    );
+  });
+
   it("passes hasClientSecret to the state machine for confidential clients", () => {
     vi.mocked(createInspectorOAuthStateMachine).mockClear();
     const serverConfigs = {

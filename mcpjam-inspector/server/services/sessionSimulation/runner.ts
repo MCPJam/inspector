@@ -592,6 +592,7 @@ async function runOneSession(args: {
         isGuest: false,
         harness,
         modelId: String(modelDefinition.id),
+        provider: modelDefinition.provider,
         hasProjectId: Boolean(projectId),
       });
 
