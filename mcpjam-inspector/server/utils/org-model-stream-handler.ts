@@ -173,13 +173,6 @@ function stringifyErrorObject(value: unknown): string {
       readErrorString(nested, "error") ||
       readErrorString(nested, "details");
     if (nestedMessage) return nestedMessage;
-
-    try {
-      const json = JSON.stringify(value);
-      if (json && json !== "{}") return json;
-    } catch {
-      // fall through to String(value)
-    }
   }
   return String(value);
 }
@@ -222,7 +215,7 @@ function readLocalStreamErrorFields(error: unknown): {
   return { message, statusCode };
 }
 
-function formatLocalStreamError(error: unknown): string {
+export function formatLocalStreamError(error: unknown): string {
   if (error instanceof OrgProviderConfigError) {
     return JSON.stringify({ code: error.code, message: error.message });
   }

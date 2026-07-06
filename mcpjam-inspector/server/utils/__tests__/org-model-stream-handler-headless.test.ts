@@ -39,7 +39,10 @@ vi.mock("@mcpjam/sdk/model-factory", async () => {
   };
 });
 
-import { runLocalOrgChatTurnHeadless } from "../org-model-stream-handler.js";
+import {
+  formatLocalStreamError,
+  runLocalOrgChatTurnHeadless,
+} from "../org-model-stream-handler.js";
 
 const PROVIDER = { providerKey: "openai" } as never;
 const MESSAGES: ModelMessage[] = [{ role: "user", content: "hi" }];
@@ -230,6 +233,27 @@ describe("runLocalOrgChatTurnHeadless", () => {
     );
     expect(captured.options.traceEvents?.onToolResultChunk).toBe(
       onToolResultChunk,
+    );
+  });
+});
+
+describe("formatLocalStreamError", () => {
+  it("does not JSON-serialize unknown thrown objects into client-visible errors", () => {
+    const result = formatLocalStreamError({
+      url: "https://internal.example.test/proxy",
+      headers: { authorization: "Bearer secret-token" },
+      requestMetadata: { lease: "lease-secret" },
+    });
+
+    expect(result).toBe("[object Object]");
+    expect(result).not.toContain("internal.example.test");
+    expect(result).not.toContain("secret-token");
+    expect(result).not.toContain("lease-secret");
+  });
+
+  it("still surfaces known-safe message fields from object-like errors", () => {
+    expect(formatLocalStreamError({ error: { message: "upstream failed" } })).toBe(
+      "upstream failed"
     );
   });
 });
