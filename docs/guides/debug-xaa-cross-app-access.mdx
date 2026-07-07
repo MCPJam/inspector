@@ -1,0 +1,175 @@
+---
+title: "Debug a Cross-App Access failure"
+description: "Reproduce, inspect, and fix a resource/audience-mismatch 401 with the XAA Debugger — no Okta account needed."
+icon: "bug"
+---
+
+Cross-App Access (XAA) lets an AI agent call your MCP server on a user's behalf
+without a browser popup: a trusted identity provider hands over a short-lived
+signed pass, and your server's authorization desk exchanges it for an access
+token. When a step is misconfigured, the raw error is cryptic. This guide walks
+the whole handshake in MCPJam's **XAA Debugger**, reproduces the most common
+failure — a **resource/audience mismatch** — and fixes it.
+
+**You'll need:** Node 20+, ~10 minutes, and the toy server below. No prior
+MCPJam experience, and no Okta/Auth0 account, required.
+
+<Note>
+New to these terms? Picture entering an office building. The **agent** is a
+visitor. The **identity provider (IdP)** is your company badge office — in
+testing, MCPJam plays this role. The **MCP server** is the office you want to
+enter, and its **authorization server** is the front desk. The **pass (ID-JAG)**
+is a signed visitor pass, and the **access token** is the keycard that opens the
+door. XAA is the whole "front desk trusts your company's seal, so no manager has
+to approve you" arrangement.
+</Note>
+
+<Warning>
+Use the **local** inspector (`npx @mcpjam/inspector`) for this guide. The hosted
+web app is HTTPS-only and can't reach a server running on your `localhost`.
+</Warning>
+
+## 1. Set up
+
+**Start the toy server.** It's a tiny MCP server that also plays its own
+authorization server. Clone the repo, then:
+
+```bash
+cd examples/mcp-servers/xaa-demo
+npm install
+npm start
+```
+
+It prints:
+
+```
+xaa-demo listening on http://localhost:8080 (audience required: https://demo.example.com/mcp)
+```
+
+That `audience required` value is our planted bug — hold that thought.
+
+**Start MCPJam Inspector** in a second terminal, then open the printed
+`localhost` URL in your browser:
+
+```bash
+npx @mcpjam/inspector@latest
+```
+
+<Frame caption="MCPJam Inspector, freshly opened">
+  <img src="/images/xaa-debugger/01-inspector-home.png" alt="MCPJam Inspector home screen" />
+</Frame>
+
+**Connect the toy server.** Click **Add Server** and enter:
+
+- **Type:** HTTP
+- **URL:** `http://localhost:8080/mcp`
+- **Authentication:** Cross-App Access
+- **Client ID:** `demo-client` (any value works — the demo server doesn't check it, but the flow needs one)
+
+<Frame caption="Add-server dialog with the toy server URL and Cross-App Access auth">
+  <img src="/images/xaa-debugger/02-add-server.png" alt="Add server dialog" />
+</Frame>
+
+## 2. Trigger the failure
+
+Open the **XAA Flow** tab and click **Run all**. The handshake advances through
+each step — discover, mock login, exchange the pass, request the token — and
+then stops **red** at the final step, with the card **"MCP server rejected the
+access token."**
+
+<Frame caption="The sequence diagram with the final step failed and the error card">
+  <img src="/images/xaa-debugger/03-run-all-failed.png" alt="XAA flow failed at the authenticated MCP request" />
+</Frame>
+
+The front desk *did* hand over a keycard (the token exchange succeeded) — but
+the office door refused it. So the problem is between the keycard and the door.
+
+## 3. Inspect the trace
+
+Expand the failed **authenticated MCP request** entry in the log, and open the
+decoded **access token**. Find its **audience (`aud`)** field.
+
+<Frame caption="The failed HTTP entry expanded, with the decoded access token">
+  <img src="/images/xaa-debugger/04-inspect-token.png" alt="Decoded access token showing the aud claim" />
+</Frame>
+
+You'll see the keycard's `aud` is `http://localhost:8080/mcp` — the address you
+connected to.
+
+## 4. Find the root cause
+
+Now compare that to what the server's door *requires*. Look back at the toy
+server's startup line: `audience required: https://demo.example.com/mcp`.
+
+<Frame caption="The two addresses side by side: token aud vs. required audience">
+  <img src="/images/xaa-debugger/05-mismatch.png" alt="Token audience versus required audience" />
+</Frame>
+
+- Keycard is stamped for: `http://localhost:8080/mcp`
+- Door requires: `https://demo.example.com/mcp`
+
+Different address → the door stays shut (401). This is the classic mismatch: the
+server's audience check is pinned to a **production** URL (a common default left
+in an environment variable), while the server actually runs somewhere else —
+here, on `localhost`. The token is minted for where you connected, but validated
+against where the server *thinks* it lives.
+
+## 5. Apply the fix
+
+Stop the server (`Ctrl-C`) and restart it with the required audience set to the
+address you actually use:
+
+<CodeGroup>
+```bash macOS / Linux
+CANONICAL_URL=http://localhost:8080/mcp npm start
+```
+
+```powershell Windows (PowerShell)
+$env:CANONICAL_URL="http://localhost:8080/mcp"; npm start
+```
+</CodeGroup>
+
+The startup line now reads `audience required: http://localhost:8080/mcp` — the
+keycard and the door finally agree.
+
+<Frame caption="Server restarted with the corrected required audience">
+  <img src="/images/xaa-debugger/06-fix.png" alt="Server restarted with corrected audience" />
+</Frame>
+
+## 6. Re-run and verify
+
+Back in the XAA Flow tab, click **Run all** again. Every step turns green and the
+final MCP call succeeds.
+
+<Frame caption="All steps green — the flow completes">
+  <img src="/images/xaa-debugger/07-run-all-green.png" alt="XAA flow completed successfully" />
+</Frame>
+
+## Expected result & troubleshooting
+
+You should see all steps green and an `initialize` response from the server.
+
+<Warning>
+- **Port already in use:** something else holds `8080`. Start the server with a
+  different port and connect to that URL instead — `PORT=8081 npm start`, then
+  connect `http://localhost:8081/mcp` (and use that in `CANONICAL_URL`).
+- **Forgot to restart:** environment changes only apply when you restart the
+  server.
+- **Still 401 after the fix:** the addresses must match *exactly* — `http` vs
+  `https`, and a trailing slash, both count as different addresses.
+</Warning>
+
+<Note>
+This toy server trusts the pass's own issuer for simplicity. A production server
+must pin the specific identity issuer it trusts — see
+[Use MCPJam as a Test IdP](/inspector/xaa-test-idp).
+</Note>
+
+## Try it on your own server
+
+Point the XAA Debugger at your real MCP server and walk the same flow — the error
+cards and decoded tokens tell you exactly where the handshake breaks.
+
+**Try this workflow on your own MCP server in MCPJam Inspector.** See the
+[XAA Debugger reference](/inspector/xaa-debugger) for every compatibility check
+and error card.

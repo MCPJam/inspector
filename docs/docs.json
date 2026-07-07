@@ -91,7 +91,11 @@
           {
             "group": "Recipes",
             "icon": "map",
-            "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
+            "pages": [
+              "guides/first-mcp-app",
+              "guides/first-chatgpt-app-react",
+              "guides/debug-xaa-cross-app-access"
+            ]
           }
         ]
       },
