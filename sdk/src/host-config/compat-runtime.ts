@@ -31,7 +31,9 @@ function readHostStyle(value: unknown): unknown {
   return value.hostStyle ?? value.style;
 }
 
-function readMcpProfileOrMcp(value: unknown): Record<string, unknown> | undefined {
+function readMcpProfileOrMcp(
+  value: unknown
+): Record<string, unknown> | undefined {
   if (!isRecord(value)) return undefined;
   if (isRecord(value.mcpProfile)) return value.mcpProfile;
   if (isRecord(value.mcp)) return value.mcp;
@@ -67,21 +69,27 @@ export const OPENAI_COMPAT_PRESET_BY_STYLE: Readonly<Record<string, boolean>> =
   });
 
 export function compatPresetForHostStyle(
-  hostStyle: unknown,
+  hostStyle: unknown
 ): boolean | undefined {
   if (typeof hostStyle !== "string") return undefined;
-  return OPENAI_COMPAT_PRESET_BY_STYLE[hostStyle];
+  // Own-property check: an unknown style colliding with an Object.prototype
+  // key ("toString", "constructor", …) must read as undefined, not the
+  // inherited value — resolveOpenAiCompatForHostConfig treats any non-undefined
+  // preset as authoritative, so an inherited function would leak through.
+  return Object.hasOwn(OPENAI_COMPAT_PRESET_BY_STYLE, hostStyle)
+    ? OPENAI_COMPAT_PRESET_BY_STYLE[hostStyle]
+    : undefined;
 }
 
 export function resolveOpenAiCompatForHostConfig(
   hostConfig: unknown,
-  hostConfigOverride?: Record<string, unknown>,
+  hostConfigOverride?: Record<string, unknown>
 ): boolean {
   const explicitOverride = readOpenAiCompatOverride(hostConfigOverride);
   if (explicitOverride !== undefined) return explicitOverride;
 
   const overridePreset = compatPresetForHostStyle(
-    readHostStyle(hostConfigOverride),
+    readHostStyle(hostConfigOverride)
   );
   if (overridePreset !== undefined) return overridePreset;
 

@@ -109,6 +109,38 @@ describe("buildHostProfilesFromCatalog", () => {
     expect(typeof profile.capabilities).toBe("object");
   });
 
+  it("does not treat a prototype-key openAiCompat lookup as compatible", () => {
+    const catalog: HostCompatCatalog = {
+      marketHosts: [
+        {
+          id: "toString",
+          label: "Prototype",
+          provenance: "probe",
+          rendersMcpApps: false,
+        },
+      ],
+      capabilitiesById: {},
+      // No own "toString" entry — the lookup must not read the inherited fn.
+      openAiCompatByStyle: {},
+    };
+    const [profile] = buildHostProfilesFromCatalog(catalog);
+    expect(profile.rendersOpenAiApps).toBe(false);
+    // Headless + not OpenAI-compat ⇒ no capability matrix.
+    expect(profile.capabilities).toBeUndefined();
+  });
+
+  it("deep-freezes children even under an already-shallow-frozen parent", () => {
+    const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
+    // Shallow-freeze the top object only (children still mutable).
+    Object.freeze(catalog);
+    expect(Object.isFrozen(catalog)).toBe(true);
+    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(false);
+    buildHostProfilesFromCatalog(catalog);
+    // deepFreeze must have recursed past the frozen parent.
+    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
+    expect(Object.isFrozen(catalog.marketHosts[0])).toBe(true);
+  });
+
   it("freezes the input catalog and returns mutable profile copies", () => {
     const catalog = clone(bundledHostCompatCatalog());
     const profiles = buildHostProfilesFromCatalog(catalog);

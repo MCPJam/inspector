@@ -165,8 +165,11 @@ const MATRIX_BY_ID: Partial<Record<HostTemplateId, McpAppsCapabilities>> = {
  * mutating one can't poison verdicts process-wide.
  */
 function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
+  if (value !== null && typeof value === "object") {
+    // Freeze this node only if needed, but ALWAYS recurse: a shallow-frozen
+    // parent (e.g. from an upstream cache/state layer) can still have mutable
+    // children, and the module invariant is a *deep* freeze.
+    if (!Object.isFrozen(value)) Object.freeze(value);
     for (const key of Object.keys(value as Record<string, unknown>)) {
       deepFreeze((value as Record<string, unknown>)[key]);
     }
@@ -248,11 +251,14 @@ export function buildHostProfilesFromCatalog(
   deepFreeze(catalog);
   return catalog.marketHosts
     .map((host) => {
-      const rendersOpenAiApps = catalog.openAiCompatByStyle[host.id] === true;
+      // Own-property checks throughout: host ids are arbitrary strings in a
+      // fetched catalog and can collide with Object.prototype keys
+      // (`toString`, `constructor`, …); an inherited value must never mark a
+      // host as OpenAI-compatible or supply a capability matrix.
+      const rendersOpenAiApps =
+        Object.hasOwn(catalog.openAiCompatByStyle, host.id) &&
+        catalog.openAiCompatByStyle[host.id] === true;
       const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
-      // Own-property check: a host id colliding with an Object.prototype key
-      // (`toString`, `constructor`, …) must fall back to MCP_APPS_NO_CLAIMS,
-      // not read the inherited prototype value.
       const capabilities =
         rendersWidgets && Object.hasOwn(catalog.capabilitiesById, host.id)
           ? catalog.capabilitiesById[host.id]

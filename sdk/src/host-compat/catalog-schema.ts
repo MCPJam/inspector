@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { McpAppsCapabilities } from "../host-config/types.js";
 
 /**
  * Zod schema for the host-compat catalog document + the envelope the backend
@@ -60,6 +61,19 @@ export const mcpAppsCapabilitiesSchema = z.object({
     .optional()
     .catch(undefined),
 });
+
+// Compile-time drift guard: this Zod schema is a hand-maintained mirror of
+// `McpAppsCapabilities`. Because Zod strips unknown keys, a capability added to
+// the type but forgotten here would be silently dropped from live-fetched
+// catalogs while the bundled path keeps it. This fails to compile if the key
+// sets diverge in either direction — add the field here (or to the type) to fix.
+type _SchemaKeys = keyof z.infer<typeof mcpAppsCapabilitiesSchema>;
+type _TypeKeys = keyof McpAppsCapabilities;
+const _capabilityKeyParity: [
+  _TypeKeys extends _SchemaKeys ? true : never,
+  _SchemaKeys extends _TypeKeys ? true : never
+] = [true, true];
+void _capabilityKeyParity;
 
 const marketHostSchema = z.object({
   // Plain string by design — a new host on the backend must not require an
