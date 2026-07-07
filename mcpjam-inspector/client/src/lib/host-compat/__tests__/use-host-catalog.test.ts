@@ -15,7 +15,17 @@ const cloneCatalog = () =>
 describe("getHostProfiles", () => {
   it("without a catalog, matches the cached bundled profiles", () => {
     expect(getHostProfiles()).toEqual(getHostProfiles(null));
-    expect(getHostProfiles().map((p) => p.id)).toHaveLength(10);
+    // Track the bundled catalog's own hosts rather than a hard-coded count so
+    // this doesn't go stale when the catalog gains/loses a host.
+    expect(
+      getHostProfiles()
+        .map((p) => p.id)
+        .sort()
+    ).toEqual(
+      bundledHostCompatCatalog()
+        .marketHosts.map((h) => h.id)
+        .sort()
+    );
   });
 
   it("joins known logos onto catalog-built profiles", () => {
@@ -33,7 +43,7 @@ describe("getHostProfiles", () => {
       rendersMcpApps: true,
     });
     const added = getHostProfiles(catalog).find(
-      (p) => p.id === "brand-new-host",
+      (p) => p.id === "brand-new-host"
     );
     expect(added?.logoSrc).toBe("/mcp.svg");
     expect(added?.logoSrcByTheme).toBeUndefined();
@@ -49,7 +59,7 @@ describe("evaluateAllHosts catalog threading", () => {
   it("live catalog drives both verdict rows and presentation join", () => {
     const catalog = cloneCatalog();
     catalog.marketHosts = catalog.marketHosts.filter(
-      (h: { id: string }) => h.id === "claude",
+      (h: { id: string }) => h.id === "claude"
     );
     const { reports } = evaluateAllHosts(null, undefined, undefined, catalog);
     expect(reports.map((r) => r.hostId)).toEqual(["claude"]);

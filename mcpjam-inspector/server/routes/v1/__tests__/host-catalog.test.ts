@@ -105,23 +105,46 @@ describe("GET /api/v1/host-catalog", () => {
     expect((await res.json()).source).toBe("bundled");
   });
 
-  it("serves the stale cached envelope when a later refresh fails", async () => {
+  it("serves the stale cached envelope with revalidation headers when a later refresh fails", async () => {
     vi.useFakeTimers();
     try {
       fetchMock.mockResolvedValueOnce(jsonResponse(liveEnvelope()));
       const app = makeApp();
       await app.request("/api/v1/host-catalog");
 
-      // Past the 300s TTL the refresh fires and fails; last good wins.
+      // Past the 300s TTL the refresh fires and fails; last good wins, but
+      // must NOT be cacheable for another window (would mask recovery).
       vi.setSystemTime(Date.now() + 301_000);
       fetchMock.mockRejectedValueOnce(new Error("upstream down"));
       const res = await app.request("/api/v1/host-catalog");
       const body = await res.json();
       expect(body.source).toBe("live");
       expect(body.version).toBe(3);
+      expect(res.headers.get("Cache-Control")).toBe("no-cache");
       expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("dedupes concurrent refreshes into a single upstream fetch (single-flight)", async () => {
+    let resolveFetch: (r: Response) => void = () => {};
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    const app = makeApp();
+    // Two requests race before the first fetch resolves.
+    const p1 = app.request("/api/v1/host-catalog");
+    const p2 = app.request("/api/v1/host-catalog");
+    await Promise.resolve();
+    resolveFetch(jsonResponse(liveEnvelope()));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect((await r1.json()).source).toBe("live");
+    expect((await r2.json()).source).toBe("live");
+    // Both requests shared ONE upstream fetch, not two.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

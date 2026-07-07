@@ -21,6 +21,10 @@ export type HostCatalogState = {
 
 let cached: HostCatalogState = null;
 let inflight: Promise<HostCatalogState> | null = null;
+// Bumped on every reset so a fetch started before a reset can't write `cached`
+// after it — otherwise an already-in-flight promise leaks stale state into the
+// next test case (the `.then` below unconditionally wrote `cached`).
+let generation = 0;
 
 async function loadHostCatalog(): Promise<HostCatalogState> {
   const result = await fetchHostCompatCatalog({
@@ -39,6 +43,7 @@ async function loadHostCatalog(): Promise<HostCatalogState> {
 export function resetHostCatalogForTests(): void {
   cached = null;
   inflight = null;
+  generation++;
 }
 
 export function useHostCatalog(): HostCatalogState {
@@ -47,10 +52,14 @@ export function useHostCatalog(): HostCatalogState {
   useEffect(() => {
     if (cached) return;
     let mounted = true;
-    inflight ??= loadHostCatalog().then((resolved) => {
-      cached = resolved;
-      return resolved;
-    });
+    if (!inflight) {
+      const startedGeneration = generation;
+      inflight = loadHostCatalog().then((resolved) => {
+        // Drop a resolution from a pre-reset fetch (stale generation).
+        if (startedGeneration === generation) cached = resolved;
+        return resolved;
+      });
+    }
     void inflight.then((resolved) => {
       if (mounted && resolved) setState(resolved);
     });

@@ -40,10 +40,15 @@ const CACHE_TTL_MS = 300_000;
 type CachedEnvelope = { envelope: CatalogEnvelope; fetchedAt: number };
 
 let cache: CachedEnvelope | null = null;
+// Single-flight guard: at most one upstream refresh runs at a time. Concurrent
+// requests past the TTL share it instead of stampeding the backend, and the
+// one winner updates the cache (so two refreshes can't race to overwrite it).
+let inflightRefresh: Promise<CatalogEnvelope | null> | null = null;
 
 /** Test hook — reset module state between cases. */
 export function resetHostCatalogCacheForTests(): void {
   cache = null;
+  inflightRefresh = null;
 }
 
 function bundledEnvelope(): CatalogEnvelope {
@@ -59,7 +64,7 @@ function bundledEnvelope(): CatalogEnvelope {
 }
 
 async function fetchUpstreamEnvelope(
-  convexUrl: string,
+  convexUrl: string
 ): Promise<CatalogEnvelope | null> {
   // The abort deadline covers the whole exchange — `fetch` resolves on
   // headers, so the timer must stay armed through `response.json()`.
@@ -85,6 +90,30 @@ async function fetchUpstreamEnvelope(
   }
 }
 
+/**
+ * Refresh the cache from upstream, deduped so only one fetch is in flight at a
+ * time. The winner writes the cache only if the fetched version is at least
+ * the cached one, so a slower/older response can't clobber a newer catalog.
+ */
+function refreshCache(convexUrl: string): Promise<CatalogEnvelope | null> {
+  if (!inflightRefresh) {
+    inflightRefresh = fetchUpstreamEnvelope(convexUrl)
+      .then((envelope) => {
+        if (
+          envelope &&
+          (!cache || envelope.version >= cache.envelope.version)
+        ) {
+          cache = { envelope, fetchedAt: Date.now() };
+        }
+        return envelope;
+      })
+      .finally(() => {
+        inflightRefresh = null;
+      });
+  }
+  return inflightRefresh;
+}
+
 hostCatalog.get("/host-catalog", async (c) => {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
@@ -94,18 +123,18 @@ hostCatalog.get("/host-catalog", async (c) => {
   }
 
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const envelope = convexUrl ? await fetchUpstreamEnvelope(convexUrl) : null;
+  const envelope = convexUrl ? await refreshCache(convexUrl) : null;
   if (envelope) {
-    cache = { envelope, fetchedAt: now };
     return c.json(envelope, 200, { "Cache-Control": "public, max-age=300" });
   }
 
   // Upstream unavailable: serve the last good envelope past its TTL rather
-  // than downgrading consumers that already saw live data.
+  // than downgrading consumers that already saw live data — but with
+  // revalidation semantics so a downstream cache rechecks on the next request
+  // instead of pinning this stale copy for another max-age window (which would
+  // mask upstream recovery).
   if (cache) {
-    return c.json(cache.envelope, 200, {
-      "Cache-Control": "public, max-age=300",
-    });
+    return c.json(cache.envelope, 200, { "Cache-Control": "no-cache" });
   }
 
   return c.json(bundledEnvelope(), 200, { "Cache-Control": "no-store" });
