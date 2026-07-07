@@ -15,16 +15,25 @@ import { z } from "zod";
  *    the bundled catalog, never partially apply a fetched one.
  */
 
+/**
+ * The catalog document schema version this SDK understands. Additive backend
+ * changes stay within this version (Zod strips unknown keys); a breaking
+ * change bumps it, and an envelope carrying any other version fails the parse
+ * below so the caller falls back to the bundled catalog rather than applying a
+ * document it can't correctly interpret.
+ */
+export const SUPPORTED_CATALOG_SCHEMA_VERSION = 1;
+
 const DISPLAY_MODES = ["inline", "fullscreen", "pip"] as const;
 
 const availableDisplayModesSchema = z.preprocess(
   (value) =>
     Array.isArray(value)
       ? value.filter((mode) =>
-          (DISPLAY_MODES as readonly unknown[]).includes(mode),
+          (DISPLAY_MODES as readonly unknown[]).includes(mode)
         )
       : value,
-  z.array(z.enum(DISPLAY_MODES)).optional(),
+  z.array(z.enum(DISPLAY_MODES)).optional()
 );
 
 export const mcpAppsCapabilitiesSchema = z.object({
@@ -57,7 +66,13 @@ const marketHostSchema = z.object({
   // SDK release to parse.
   id: z.string().min(1),
   label: z.string().min(1),
-  provenance: z.enum(["probe", "vendor-doc", "assumed"]).catch("assumed"),
+  // Includes "observed" — a first-class CompatProvenance value (the strongest
+  // trust level), not an unknown future one; leaving it out would silently
+  // downgrade an observed host to the weakest "assumed" via `.catch`. `.catch`
+  // still absorbs genuinely-unknown future provenances.
+  provenance: z
+    .enum(["observed", "probe", "vendor-doc", "assumed"])
+    .catch("assumed"),
   rendersMcpApps: z.boolean(),
   supportedProtocolVersions: z.array(z.string()).optional(),
   verifiedAt: z.number().optional(),
@@ -72,7 +87,9 @@ export const hostCompatCatalogSchema = z.object({
 /** The wire envelope around a catalog document. `source` is annotated by the
  * serving proxy (`live` | `bundled`); absent when hitting Convex directly. */
 export const hostCompatCatalogEnvelopeSchema = z.object({
-  schemaVersion: z.number(),
+  // Gate on the supported version — a future breaking schema (v2+) fails here
+  // and triggers the bundled fallback instead of being misapplied.
+  schemaVersion: z.literal(SUPPORTED_CATALOG_SCHEMA_VERSION),
   version: z.number(),
   contentHash: z.string(),
   publishedAt: z.number(),

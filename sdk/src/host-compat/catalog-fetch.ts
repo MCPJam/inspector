@@ -40,48 +40,62 @@ export type FetchHostCompatCatalogResult =
     };
 
 export async function fetchHostCompatCatalog(
-  options?: FetchHostCompatCatalogOptions,
+  options?: FetchHostCompatCatalogOptions
 ): Promise<FetchHostCompatCatalogResult> {
   const baseUrl = (options?.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL).replace(
     /\/+$/,
-    "",
+    ""
   );
   const timeoutMs = options?.timeoutMs ?? 3000;
-  const fetchImpl = options?.fetchImpl ?? fetch;
+  // Read the global via `globalThis` (not a bare `fetch`) so a runtime without
+  // a fetch binding yields `undefined` instead of a ReferenceError thrown
+  // outside the try — the never-throws contract must hold everywhere.
+  const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    return { ok: false, reason: "network" };
+  }
 
+  // The abort deadline must cover the WHOLE exchange: `fetch` resolves on
+  // headers, so clearing the timer before `response.json()` would leave a
+  // stalled body free to hang past `timeoutMs`. Keep it armed until the
+  // finally, after body parsing.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
   try {
-    response = await fetchImpl(`${baseUrl}/host-catalog`, {
+    const response = await fetchImpl(`${baseUrl}/host-catalog`, {
       method: "GET",
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
+    if (!response.ok) return { ok: false, reason: "unavailable" };
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      // A body that aborts past the deadline is a timeout, not a malformed
+      // payload — classify it as such before treating it as invalid JSON.
+      if (controller.signal.aborted) return { ok: false, reason: "timeout" };
+      return { ok: false, reason: "invalid" };
+    }
+
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
+    if (!parsed.success) return { ok: false, reason: "invalid" };
+
+    return {
+      ok: true,
+      catalog: parsed.data.catalog,
+      version: parsed.data.version,
+      contentHash: parsed.data.contentHash,
+      publishedAt: parsed.data.publishedAt,
+      source: parsed.data.source ?? "live",
+    };
   } catch {
-    return { ok: false, reason: controller.signal.aborted ? "timeout" : "network" };
+    return {
+      ok: false,
+      reason: controller.signal.aborted ? "timeout" : "network",
+    };
   } finally {
     clearTimeout(timer);
   }
-
-  if (!response.ok) return { ok: false, reason: "unavailable" };
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return { ok: false, reason: "invalid" };
-  }
-
-  const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
-  if (!parsed.success) return { ok: false, reason: "invalid" };
-
-  return {
-    ok: true,
-    catalog: parsed.data.catalog,
-    version: parsed.data.version,
-    contentHash: parsed.data.contentHash,
-    publishedAt: parsed.data.publishedAt,
-    source: parsed.data.source ?? "live",
-  };
 }

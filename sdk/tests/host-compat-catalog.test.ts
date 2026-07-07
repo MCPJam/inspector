@@ -34,7 +34,7 @@ describe("bundledHostCompatCatalog", () => {
   it("parses under the catalog schema (lockstep guard: bundled ⊆ wire shape)", () => {
     // JSON round-trip strips `undefined` optionals the way the wire would.
     const parsed = hostCompatCatalogSchema.safeParse(
-      clone(bundledHostCompatCatalog()),
+      clone(bundledHostCompatCatalog())
     );
     expect(parsed.success).toBe(true);
   });
@@ -43,7 +43,7 @@ describe("bundledHostCompatCatalog", () => {
 describe("buildHostProfilesFromCatalog", () => {
   it("deep-equals buildMarketHostProfiles() on the bundled catalog (lockstep guard)", () => {
     expect(buildHostProfilesFromCatalog(bundledHostCompatCatalog())).toEqual(
-      buildMarketHostProfiles(),
+      buildMarketHostProfiles()
     );
   });
 
@@ -52,7 +52,12 @@ describe("buildHostProfilesFromCatalog", () => {
       marketHosts: [
         // Headless host with OpenAI compat on — still rendersOpenAiApps,
         // therefore rendersWidgets, therefore gets a capability matrix.
-        { id: "ghostwriter", label: "Ghostwriter", provenance: "assumed", rendersMcpApps: false },
+        {
+          id: "ghostwriter",
+          label: "Ghostwriter",
+          provenance: "assumed",
+          rendersMcpApps: false,
+        },
       ],
       capabilitiesById: {},
       openAiCompatByStyle: { ghostwriter: true },
@@ -68,12 +73,19 @@ describe("buildHostProfilesFromCatalog", () => {
   it("leaves capabilities undefined for fully headless hosts", () => {
     const catalog: HostCompatCatalog = {
       marketHosts: [
-        { id: "headless", label: "Headless", provenance: "probe", rendersMcpApps: false },
+        {
+          id: "headless",
+          label: "Headless",
+          provenance: "probe",
+          rendersMcpApps: false,
+        },
       ],
       capabilitiesById: {},
       openAiCompatByStyle: {},
     };
-    expect(buildHostProfilesFromCatalog(catalog)[0].capabilities).toBeUndefined();
+    expect(
+      buildHostProfilesFromCatalog(catalog)[0].capabilities
+    ).toBeUndefined();
   });
 
   it("freezes the input catalog and returns mutable profile copies", () => {
@@ -82,9 +94,9 @@ describe("buildHostProfilesFromCatalog", () => {
     expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
     // Caller copies stay safe to edit.
     profiles[0].label = "edited";
-    expect(buildHostProfilesFromCatalog(clone(bundledHostCompatCatalog()))[0].label).not.toBe(
-      "edited",
-    );
+    expect(
+      buildHostProfilesFromCatalog(clone(bundledHostCompatCatalog()))[0].label
+    ).not.toBe("edited");
   });
 });
 
@@ -92,7 +104,12 @@ describe("evaluateMarketHosts with a catalog", () => {
   it("threads options.catalog into the evaluation", () => {
     const catalog: HostCompatCatalog = {
       marketHosts: [
-        { id: "solo", label: "Solo", provenance: "probe", rendersMcpApps: true },
+        {
+          id: "solo",
+          label: "Solo",
+          provenance: "probe",
+          rendersMcpApps: true,
+        },
       ],
       capabilitiesById: {},
       openAiCompatByStyle: {},
@@ -112,7 +129,7 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
 
   it("parses a well-formed envelope", () => {
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
-      envelopeFor(bundled(), { source: "live" }),
+      envelopeFor(bundled(), { source: "live" })
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
@@ -126,35 +143,38 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     catalog.futureTopLevelField = { anything: true };
     (catalog.marketHosts as Record<string, unknown>[])[0].futureHostField = 1;
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
-      envelopeFor(catalog as unknown as HostCompatCatalog),
+      envelopeFor(catalog as unknown as HostCompatCatalog)
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect("futureTopLevelField" in parsed.data.catalog).toBe(false);
-      expect("futureHostField" in parsed.data.catalog.marketHosts[0]).toBe(false);
+      expect("futureHostField" in parsed.data.catalog.marketHosts[0]).toBe(
+        false
+      );
     }
   });
 
   it("filters unknown display modes and absorbs widened enums", () => {
     const catalog = bundled();
     (catalog.capabilitiesById.claude.availableDisplayModes as string[]).push(
-      "holodeck",
+      "holodeck"
     );
     (catalog.marketHosts[0] as Record<string, unknown>).provenance =
       "future-source";
-    (catalog.capabilitiesById.claude as Record<string, unknown>).widgetDisplayModeRequests =
-      "future-policy";
-    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(envelopeFor(catalog));
+    (
+      catalog.capabilitiesById.claude as Record<string, unknown>
+    ).widgetDisplayModeRequests = "future-policy";
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
+      envelopeFor(catalog)
+    );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.catalog.capabilitiesById.claude.availableDisplayModes).toEqual([
-        "inline",
-        "fullscreen",
-        "pip",
-      ]);
+      expect(
+        parsed.data.catalog.capabilitiesById.claude.availableDisplayModes
+      ).toEqual(["inline", "fullscreen", "pip"]);
       expect(parsed.data.catalog.marketHosts[0].provenance).toBe("assumed");
       expect(
-        parsed.data.catalog.capabilitiesById.claude.widgetDisplayModeRequests,
+        parsed.data.catalog.capabilitiesById.claude.widgetDisplayModeRequests
       ).toBeUndefined();
     }
   });
@@ -164,9 +184,29 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     catalog.marketHosts = "not-an-array";
     expect(
       hostCompatCatalogEnvelopeSchema.safeParse(
-        envelopeFor(catalog as unknown as HostCompatCatalog),
-      ).success,
+        envelopeFor(catalog as unknown as HostCompatCatalog)
+      ).success
     ).toBe(false);
+  });
+
+  it("rejects an unsupported (future breaking) schemaVersion", () => {
+    expect(
+      hostCompatCatalogEnvelopeSchema.safeParse(
+        envelopeFor(bundled(), { schemaVersion: 2 })
+      ).success
+    ).toBe(false);
+  });
+
+  it("preserves an 'observed' provenance instead of downgrading it", () => {
+    const catalog = bundled();
+    (catalog.marketHosts[0] as Record<string, unknown>).provenance = "observed";
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
+      envelopeFor(catalog)
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.catalog.marketHosts[0].provenance).toBe("observed");
+    }
   });
 });
 
@@ -179,7 +219,7 @@ describe("fetchHostCompatCatalog", () => {
 
   it("returns the parsed catalog on success (source defaults to live)", async () => {
     const fetchImpl = vi.fn(async () =>
-      okResponse(envelopeFor(clone(bundledHostCompatCatalog()))),
+      okResponse(envelopeFor(clone(bundledHostCompatCatalog())))
     );
     const result = await fetchHostCompatCatalog({
       baseUrl: "http://localhost:9/api/v1",
@@ -188,7 +228,7 @@ describe("fetchHostCompatCatalog", () => {
     expect(result).toMatchObject({ ok: true, version: 7, source: "live" });
     expect(fetchImpl).toHaveBeenCalledWith(
       "http://localhost:9/api/v1/host-catalog",
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ method: "GET" })
     );
   });
 
@@ -203,12 +243,12 @@ describe("fetchHostCompatCatalog", () => {
     expect(
       await fetchHostCompatCatalog({
         fetchImpl: async () => okResponse({ nope: true }),
-      }),
+      })
     ).toEqual({ ok: false, reason: "invalid" });
     expect(
       await fetchHostCompatCatalog({
         fetchImpl: async () => new Response("not json", { status: 200 }),
-      }),
+      })
     ).toEqual({ ok: false, reason: "invalid" });
   });
 
@@ -227,7 +267,7 @@ describe("fetchHostCompatCatalog", () => {
       fetchImpl: (_url, init) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () =>
-            reject(new DOMException("aborted", "AbortError")),
+            reject(new DOMException("aborted", "AbortError"))
           );
         }),
     });
