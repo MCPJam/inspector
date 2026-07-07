@@ -41,6 +41,7 @@ import {
 import { resolveRequestedScopeValue } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
+  normalizeRegisteredClientAuthMethod,
   resolvePreregisteredClientAuthMethod,
 } from "./shared/client-auth.js";
 
@@ -1039,7 +1040,7 @@ export const createDebugOAuthStateMachine = (
                   clientId: clientInfo.client_id,
                   clientSecret: clientInfo.client_secret,
                   tokenEndpointAuthMethod:
-                    clientInfo.token_endpoint_auth_method || "none",
+                    normalizeRegisteredClientAuthMethod(clientInfo),
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
                   infoLogs,
@@ -1199,7 +1200,7 @@ export const createDebugOAuthStateMachine = (
             });
             break;
 
-          case "received_authorization_code":
+          case "received_authorization_code": {
             // Step 10: Prepare token exchange
             if (
               !state.authorizationCode ||
@@ -1267,6 +1268,7 @@ export const createDebugOAuthStateMachine = (
 
             autoAdvance(50);
             return;
+          }
 
           case "token_request":
             // Step 11: Exchange authorization code for access token

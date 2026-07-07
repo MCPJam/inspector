@@ -76,6 +76,15 @@ export interface TokenRequestClientAuth {
 }
 
 /**
+ * RFC 6749 §2.3.1 / Appendix B: each Basic-auth credential part is encoded
+ * per application/x-www-form-urlencoded (space → `+`, `!`/`~`/`'`/`(`/`)`
+ * percent-encoded) before base64 — which differs from encodeURIComponent.
+ */
+function formUrlEncode(value: string): string {
+  return new URLSearchParams([["v", value]]).toString().slice(2);
+}
+
+/**
  * Translate the resolved token-endpoint auth method into how the client
  * credential is actually transmitted (#3034 — previously the secret always
  * went in the body regardless of the resolved method):
@@ -97,7 +106,7 @@ export function buildTokenRequestClientAuth(input: {
 
   if (clientSecret && tokenEndpointAuthMethod === "client_secret_basic") {
     const credentials = btoa(
-      `${encodeURIComponent(clientId ?? "")}:${encodeURIComponent(clientSecret)}`,
+      `${formUrlEncode(clientId ?? "")}:${formUrlEncode(clientSecret)}`,
     );
     return {
       headers: { Authorization: `Basic ${credentials}` },
@@ -113,4 +122,23 @@ export function buildTokenRequestClientAuth(input: {
     bodyParams.client_secret = clientSecret;
   }
   return { headers: {}, bodyParams };
+}
+
+/**
+ * Normalize the auth method echoed by a DCR registration response before it
+ * is stored on flow state. A server that issues a `client_secret` while
+ * echoing `"none"` (typically just our own requested hint bounced back) or
+ * omitting the method is contradicting itself — favor the credential: store
+ * `undefined` so the token request keeps the legacy `client_secret_post`
+ * body shape instead of dropping the secret (#2505's bug class).
+ */
+export function normalizeRegisteredClientAuthMethod(clientInfo: {
+  client_secret?: string;
+  token_endpoint_auth_method?: string;
+}): string | undefined {
+  const method = clientInfo.token_endpoint_auth_method;
+  if (clientInfo.client_secret && (!method || method === "none")) {
+    return undefined;
+  }
+  return method || "none";
 }

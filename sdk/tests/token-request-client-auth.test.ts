@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildTokenRequestClientAuth } from "../src/oauth/state-machines/shared/client-auth.js";
+import {
+  buildTokenRequestClientAuth,
+  normalizeRegisteredClientAuthMethod,
+} from "../src/oauth/state-machines/shared/client-auth.js";
 
 describe("buildTokenRequestClientAuth", () => {
   it("client_secret_basic → Authorization header, empty body params", () => {
@@ -15,14 +18,21 @@ describe("buildTokenRequestClientAuth", () => {
     expect(auth.bodyParams).toEqual({});
   });
 
-  it("form-urlencodes credential parts before base64 (RFC 6749 §2.3.1)", () => {
+  it("form-urlencodes credential parts before base64 (RFC 6749 §2.3.1 / Appendix B)", () => {
     const auth = buildTokenRequestClientAuth({
       clientId: "client:with colon",
-      clientSecret: "p@ss wörd+/=",
+      clientSecret: "p@ss wörd+/=!~",
       tokenEndpointAuthMethod: "client_secret_basic",
     });
 
-    const expected = `${encodeURIComponent("client:with colon")}:${encodeURIComponent("p@ss wörd+/=")}`;
+    // application/x-www-form-urlencoded, NOT encodeURIComponent: space → "+",
+    // and "!" / "~" are percent-encoded.
+    const formEncode = (v: string) =>
+      new URLSearchParams([["v", v]]).toString().slice(2);
+    expect(formEncode("p@ss wörd+/=!~")).toContain("+w%C3%B6rd");
+    expect(formEncode("p@ss wörd+/=!~")).toContain("%21%7E");
+
+    const expected = `${formEncode("client:with colon")}:${formEncode("p@ss wörd+/=!~")}`;
     expect(auth.headers.Authorization).toBe(`Basic ${btoa(expected)}`);
   });
 
@@ -76,5 +86,40 @@ describe("buildTokenRequestClientAuth", () => {
 
     expect(auth.headers).toEqual({});
     expect(auth.bodyParams).toEqual({});
+  });
+});
+
+describe("normalizeRegisteredClientAuthMethod", () => {
+  it("drops a contradictory 'none' when the DCR response issued a secret", () => {
+    expect(
+      normalizeRegisteredClientAuthMethod({
+        client_secret: "shhh",
+        token_endpoint_auth_method: "none",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("stores undefined for a secret without an advertised method (legacy body shape)", () => {
+    expect(
+      normalizeRegisteredClientAuthMethod({ client_secret: "shhh" }),
+    ).toBeUndefined();
+  });
+
+  it("keeps an explicit method for secret-bearing clients", () => {
+    expect(
+      normalizeRegisteredClientAuthMethod({
+        client_secret: "shhh",
+        token_endpoint_auth_method: "client_secret_basic",
+      }),
+    ).toBe("client_secret_basic");
+  });
+
+  it("defaults public clients to 'none'", () => {
+    expect(normalizeRegisteredClientAuthMethod({})).toBe("none");
+    expect(
+      normalizeRegisteredClientAuthMethod({
+        token_endpoint_auth_method: "none",
+      }),
+    ).toBe("none");
   });
 });
