@@ -36,6 +36,7 @@ import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
+import type { ExecutionScope } from "./execution-scope.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -98,6 +99,9 @@ export interface WebChatTurnPersistContext {
   surface?: "preview" | "share_link";
   chatboxId?: string;
   accessVersion?: number;
+  /** Phase 3 execution scope (chatbox/host runtime-config). Threaded into the
+   *  harness path so the backend re-resolves live access + per-swarm caps. */
+  executionScope?: ExecutionScope;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
   authenticatedUserId?: string | null;
   /** UI messages from the inbound request — used to stamp `senderUserId`. */
@@ -214,7 +218,7 @@ function approvalFreeUiToolNamesFrom(
  * path and mapping the error to a `webError(...)` response.
  */
 export async function streamWebChatTurn(
-  args: StreamWebChatTurnArgs
+  args: StreamWebChatTurnArgs,
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
@@ -224,7 +228,7 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
 
@@ -239,7 +243,7 @@ export async function streamWebChatTurn(
       // trigger new linked resource reads. Fresh server-side tool execution
       // resolves resource_link results through trusted tool-origin metadata.
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
-    }
+    },
   );
 
   let prepared;
@@ -282,7 +286,7 @@ export async function streamWebChatTurn(
   } = prepared;
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-    prepare.widgetModelContext ?? []
+    prepare.widgetModelContext ?? [],
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
@@ -297,30 +301,38 @@ export async function streamWebChatTurn(
   };
 
   const isChatboxSession = persist.sourceType === "chatbox";
+  // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
+  // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
+  // is supplied. Without it, a bare id fails this check and the turn silently
+  // branches into org-BYOK — skipping runHarnessTurn even when the route's
+  // harness preflight (which does pass the provider) approved the turn.
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isMCPJamProvidedModel(String(prepare.modelDefinition.id));
+    isMCPJamProvidedModel(
+      String(prepare.modelDefinition.id),
+      prepare.modelDefinition.provider,
+    );
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? persist.hostConfig({ resolvedTemperature }) ?? null
-      : persist.hostConfig ?? null;
+      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
+      : (persist.hostConfig ?? null);
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok"
+    modelSource: "mcpjam" | "byok" | "local_byok",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
       turnTrace: PersistedTurnTrace,
-      harnessSessionCommit?: HarnessSessionCommitPayload
+      harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -338,7 +350,7 @@ export async function streamWebChatTurn(
               await exportConnectedServerToolSnapshotForEvalAuthoring(
                 manager,
                 knownIds,
-                { logPrefix: "chat-v2.persist" }
+                { logPrefix: "chat-v2.persist" },
               );
           }
         } catch {
@@ -362,7 +374,7 @@ export async function streamWebChatTurn(
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           fullHistory,
           persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId }
+          { authenticatedUserId: persist.authenticatedUserId },
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -399,13 +411,13 @@ export async function streamWebChatTurn(
 
   if (!isMCPJam) {
     const providerKeyResult = deriveOrgProviderKeyResult(
-      prepare.modelDefinition
+      prepare.modelDefinition,
     );
     if (!providerKeyResult.ok) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        providerKeyResult.error
+        providerKeyResult.error,
       );
     }
     const providerKey = providerKeyResult.key;
@@ -425,13 +437,13 @@ export async function streamWebChatTurn(
             chatboxId: persist.chatboxId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
-          }
+          },
         )
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
       modelId,
-      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok"
+      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
     );
 
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
@@ -497,7 +509,7 @@ export async function streamWebChatTurn(
   const mcpjamModelId = String(prepare.modelDefinition.id);
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam"
+    "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -535,6 +547,11 @@ export async function streamWebChatTurn(
     chatboxId: persist.chatboxId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
+    // Phase 3: thread the runtime-config execution scope into the harness path
+    // (sandbox reserve, skills, broker, session-state, commit).
+    ...(persist.executionScope
+      ? { executionScope: persist.executionScope }
+      : {}),
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,

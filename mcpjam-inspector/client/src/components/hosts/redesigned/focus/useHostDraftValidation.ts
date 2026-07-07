@@ -176,6 +176,36 @@ export function hasBlockingErrors(
   return issues.some((issue) => issue.level === "error");
 }
 
+/**
+ * Human-readable explanation for why the "Save host" button is disabled, or
+ * `null` when it's enabled (or actively saving, where the spinner already
+ * speaks for itself).
+ *
+ * Motivation: a *silently* greyed Save button reads as an arbitrary rule.
+ * A Discord report chased a phantom "you must pick a model first" gate when
+ * the real reason was simply "nothing has changed yet" — model id is only a
+ * non-blocking warning and never gates Save. Surfacing the actual reason
+ * (no changes, or the specific blocking validation errors) on hover keeps
+ * the disabled state honest. Priority mirrors the `canSave` gate order:
+ * saving → blocking errors → not dirty.
+ */
+export function saveDisabledReason(args: {
+  isDirty: boolean;
+  isSaving: boolean;
+  issues: ReadonlyArray<HostAttentionIssue>;
+}): string | null {
+  const { isDirty, isSaving, issues } = args;
+  if (isSaving) return null;
+  const blocking = issues.filter((issue) => issue.level === "error");
+  if (blocking.length > 0) {
+    return blocking.map((issue) => issue.message).join(" · ");
+  }
+  if (!isDirty) {
+    return "No unsaved changes yet — edit any field to enable Save";
+  }
+  return null;
+}
+
 export function useHostDraftValidation(
   draft: HostConfigInputV2,
   hostDisplayName?: string,

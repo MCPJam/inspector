@@ -23,7 +23,7 @@ afterEach(() => {
 
 function mockFetch(impl: (url: string, init: RequestInit) => Response) {
   globalThis.fetch = vi.fn(async (url: any, init: any) =>
-    impl(String(url), init as RequestInit)
+    impl(String(url), init as RequestInit),
   ) as unknown as typeof fetch;
 }
 
@@ -31,10 +31,10 @@ describe("buildBrokerDummyAuth", () => {
   it("claude-code → dummy anthropic auth pointed at the proxy (no real key)", () => {
     const auth = buildBrokerDummyAuth(
       "claude-code",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
     );
     expect(auth.anthropic?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
     );
     expect(auth.anthropic?.authToken).toBeTruthy();
     expect(auth.anthropic?.apiKey).toBe("");
@@ -45,10 +45,10 @@ describe("buildBrokerDummyAuth", () => {
   it("codex → dummy openaiCompatible auth pointed at the proxy", () => {
     const auth = buildBrokerDummyAuth(
       "codex",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
     );
     expect(auth.openaiCompatible?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
     );
     expect(auth.openaiCompatible?.apiKey).toBeTruthy();
     expect(auth.anthropic).toBeUndefined();
@@ -82,7 +82,7 @@ describe("startHarnessModelBroker", () => {
     });
 
     expect(seenUrl).toBe(
-      "https://convex.example.com/web/harness/model-broker/start"
+      "https://convex.example.com/web/harness/model-broker/start",
     );
     expect(seenBody).toEqual({
       projectId: "p1",
@@ -99,9 +99,42 @@ describe("startHarnessModelBroker", () => {
     }
   });
 
+  it("includes the executionScope in the body when present (guest/swarm path)", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        runId: "run_2",
+        expiresAt: 456,
+        protocol: "anthropic",
+        proxyBaseUrl: "https://proxy/anthropic",
+        delivery: "e2b-network-transform",
+      });
+    });
+    const scope = {
+      kind: "swarm" as const,
+      swarmId: "cb_1",
+      accessVersion: 3,
+      projectId: "p1",
+      workspaceId: "ws_1",
+    };
+    await startHarnessModelBroker({
+      projectId: "p1",
+      computerId: "c1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_2",
+      executionScope: scope,
+      bearer: "t",
+    });
+    expect(seenBody.executionScope).toEqual(scope);
+    expect(seenBody.runId).toBe("run_2");
+  });
+
   it("fails closed on a non-2xx response", async () => {
     mockFetch(() =>
-      Response.json({ ok: false, error: "nope" }, { status: 403 })
+      Response.json({ ok: false, error: "nope" }, { status: 403 }),
     );
     const result = await startHarnessModelBroker({
       projectId: "p1",

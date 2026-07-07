@@ -33,7 +33,9 @@ function setFullyAvailable() {
 }
 
 /** Default args: a fully-runnable harness host (no approval, no servers, eligible). */
-function args(overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {}) {
+function args(
+  overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {},
+) {
   return {
     harnessId: "claude-code" as HarnessId,
     requireToolApproval: false,
