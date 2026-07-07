@@ -303,6 +303,22 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `compat` command
+
+### `compat`
+
+Check whether an MCP server's tools and widgets work on each AI host. Uses shared connection flags plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Only report this host id. Repeat for several. Default: all hosts. |
+| `--offline` | Skip the live catalog fetch and use the bundled catalog (zero MCPJam network). |
+| `--catalog-url <url>` | Base URL to fetch the live host catalog from. Default: the hosted MCPJam API. |
+
+Plus shared connection flags (see `server` commands above).
+
+---
+
 ## `apps` commands
 
 ### Shared connection flags
