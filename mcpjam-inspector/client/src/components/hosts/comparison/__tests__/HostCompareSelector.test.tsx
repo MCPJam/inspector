@@ -100,4 +100,24 @@ describe("HostCompareSelector", () => {
     await user.click(screen.getByTestId("support-filter-missing"));
     expect(onSupportFilterChange).toHaveBeenCalledWith("missing");
   });
+
+  it("disables the diverging toggle when the selector is disabled", () => {
+    render(
+      <HostCompareSelector
+        hosts={[makeHost("h_a", "Claude")]}
+        selectedHostIds={["h_a"]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+        disabled
+      />
+    );
+
+    expect(screen.getByLabelText("Show only diverging fields")).toBeDisabled();
+  });
 });

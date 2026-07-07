@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -147,6 +148,11 @@ export function AuthenticationSection({
   // itself if they clear it back to empty).
   const [isReplacingSecret, setIsReplacingSecret] = useState(false);
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
+
+  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
+  // Keep the option visible if a server is already configured with XAA, even
+  // when the flag is off, so the trigger doesn't render blank for it.
+  const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -312,7 +318,9 @@ export function AuthenticationSection({
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
-              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+              {showXaaOption && (
+                <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -486,6 +494,11 @@ export function AuthenticationSection({
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
                     placeholder="Optional scopes separated by spaces"
+                    spellCheck={false}
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
                     className="h-10"
                   />
                 </div>
@@ -510,6 +523,11 @@ export function AuthenticationSection({
                             ? true
                             : undefined
                         }
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (
@@ -594,6 +612,11 @@ export function AuthenticationSection({
                               }}
                               placeholder="Enter a new value to replace."
                               data-testid="revealed-client-secret"
+                              spellCheck={false}
+                              autoComplete="off"
+                              data-1p-ignore
+                              data-lpignore="true"
+                              data-form-type="other"
                               className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
                             />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -659,6 +682,11 @@ export function AuthenticationSection({
                               ? "Enter a new value to replace."
                               : "Your OAuth Client Secret"
                           }
+                          spellCheck={false}
+                          autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                           className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                         />
                       )}

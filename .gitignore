@@ -6,6 +6,7 @@ node_modules/
 .mcpjam/skills/
 **/.mcpjam/skills/
 .claude/
+docs/superpowers/
 mcpjam-inspector/server/routes/apps/**/*.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
 cli/dist/
