@@ -12,6 +12,7 @@ import {
   MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_COPILOT,
+  MCP_APPS_SLACK,
   MCP_APPS_NO_CLAIMS,
 } from "./capabilities.js";
 import {
@@ -146,6 +147,13 @@ const MARKET_HOSTS: readonly (HostCompatCatalogHost & {
     rendersMcpApps: false,
     supportedProtocolVersions: ["2025-11-25"],
   },
+  {
+    id: "slack",
+    label: "Slack",
+    provenance: "probe",
+    rendersMcpApps: true,
+    supportedProtocolVersions: ["2025-06-18"],
+  },
 ];
 
 /** Per-host MCP Apps capability matrix (only the rendering hosts need one). */
@@ -156,6 +164,7 @@ const MATRIX_BY_ID: Partial<Record<HostTemplateId, McpAppsCapabilities>> = {
   goose: MCP_APPS_GOOSE,
   cursor: MCP_APPS_CURSOR,
   copilot: MCP_APPS_COPILOT,
+  slack: MCP_APPS_SLACK,
 };
 
 /**
