@@ -1,334 +1,48 @@
-diff --git a/.changeset/add-claude-sonnet-5-model.md b/.changeset/add-claude-sonnet-5-model.md
+diff --git a/.changeset/oauth-xaa-debugger-fixes.md b/.changeset/oauth-xaa-debugger-fixes.md
 deleted file mode 100644
-index fae774505..000000000
---- a/.changeset/add-claude-sonnet-5-model.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Add Claude Sonnet 5 as a supported model.
-diff --git a/.changeset/eval-iterations-bar-remaining.md b/.changeset/eval-iterations-bar-remaining.md
-deleted file mode 100644
-index 4c36bff17..000000000
---- a/.changeset/eval-iterations-bar-remaining.md
+index aa9460a6e..000000000
+--- a/.changeset/oauth-xaa-debugger-fixes.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Show remaining (not used) eval iterations in the credit balance card's progress bar, matching the monthly team credits row.
-diff --git a/.changeset/gate-xaa-auth-option.md b/.changeset/gate-xaa-auth-option.md
+-Persist OAuth debugger registration settings through project serialization and surface actionable XAA issuer-mismatch errors.
+diff --git a/.changeset/webmcp-gate-ui-tools-off-chatbox-surfaces.md b/.changeset/webmcp-gate-ui-tools-off-chatbox-surfaces.md
 deleted file mode 100644
-index 2009beb95..000000000
---- a/.changeset/gate-xaa-auth-option.md
+index ed0e2f8e5..000000000
+--- a/.changeset/webmcp-gate-ui-tools-off-chatbox-surfaces.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Gate the Cross-App Access (XAA) authentication option behind the `xaa` feature flag.
-diff --git a/.changeset/guest-auth-windows-npx-einval.md b/.changeset/guest-auth-windows-npx-einval.md
-deleted file mode 100644
-index 765ad07a9..000000000
---- a/.changeset/guest-auth-windows-npx-einval.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Fix an EINVAL crash on Windows (`npx.cmd`) when provisioning the Convex environment for guest auth.
-diff --git a/.changeset/harness-guest-execution-scope.md b/.changeset/harness-guest-execution-scope.md
-deleted file mode 100644
-index f9e5dbd9d..000000000
---- a/.changeset/harness-guest-execution-scope.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Thread `executionScope` through the guest Claude Code harness path, enabling guest-owned execution controls for the harness chat surface.
-diff --git a/.changeset/harness-mcp-traffic-in-playground-logs.md b/.changeset/harness-mcp-traffic-in-playground-logs.md
-deleted file mode 100644
-index a8f774ba1..000000000
---- a/.changeset/harness-mcp-traffic-in-playground-logs.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Surface harness MCP traffic in the Playground Logs panel.
-diff --git a/.changeset/harness-provider-dispatch-fail-closed.md b/.changeset/harness-provider-dispatch-fail-closed.md
-deleted file mode 100644
-index 64c8fdcf4..000000000
---- a/.changeset/harness-provider-dispatch-fail-closed.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Make harness chat dispatch provider-aware and fail closed on invalid chatbox config, and correctly gate cloud-skills tools.
-diff --git a/.changeset/harness-proxy-computer-upload-hardening.md b/.changeset/harness-proxy-computer-upload-hardening.md
-deleted file mode 100644
-index f5bc5b64a..000000000
---- a/.changeset/harness-proxy-computer-upload-hardening.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Harden the harness proxy and computer upload endpoints: enforce body-size limits, scope terminal tokens more tightly, and fix proxy-strategy edge cases (4 findings from the harness proxy security review).
-diff --git a/.changeset/host-compare-default-codex-claude-code.md b/.changeset/host-compare-default-codex-claude-code.md
-deleted file mode 100644
-index 3a654d363..000000000
---- a/.changeset/host-compare-default-codex-claude-code.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Default Host Compare to Codex and Claude Code.
-diff --git a/.changeset/host-compatibility-caniuse-polish.md b/.changeset/host-compatibility-caniuse-polish.md
-deleted file mode 100644
-index 55ac65531..000000000
---- a/.changeset/host-compatibility-caniuse-polish.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Polish the Host Compatibility (caniuse.dev-style) view: table/list toggle, match counts, and a mobile-optimized layout.
-diff --git a/.changeset/hosts-save-button-disabled-reason.md b/.changeset/hosts-save-button-disabled-reason.md
-deleted file mode 100644
-index fbc84ccf1..000000000
---- a/.changeset/hosts-save-button-disabled-reason.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Explain why the Save button is disabled when editing a host, instead of leaving it disabled with no indication of what's missing.
-diff --git a/.changeset/model-visible-mcp-images.md b/.changeset/model-visible-mcp-images.md
-deleted file mode 100644
-index 4ef6b1d87..000000000
---- a/.changeset/model-visible-mcp-images.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--Expose MCP tool-returned images through host-config-controlled model output.
--
--Adds model-visible conversion for direct image blocks, embedded image resources, and linked image resources behind the structured host config policy `modelVisibleMcpToolResults`. Also preserves the policy through Host JSON normalization and caps image conversion by per-image size, image count, linked resource reads, and aggregate decoded bytes.
--
--Adds host-config-controlled UI rendering for MCP tool-returned images via the structured `mcpToolResultImageRendering` policy, with `inline`, `collapsed`, and `none` placement plus independent direct image, embedded image resource, and linked image resource switches. The inspector can render supported tool-returned images for humans while keeping raw MCP JSON available.
-diff --git a/.changeset/oauth-debugger-preregistered-client-secret.md b/.changeset/oauth-debugger-preregistered-client-secret.md
-deleted file mode 100644
-index 41285975e..000000000
---- a/.changeset/oauth-debugger-preregistered-client-secret.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Fix the OAuth Debugger dropping the `client_secret` for pre-registered clients during the authorization flow.
-diff --git a/.changeset/oauth-debugger-token-exchange-client-secret.md b/.changeset/oauth-debugger-token-exchange-client-secret.md
-deleted file mode 100644
-index c4d973717..000000000
---- a/.changeset/oauth-debugger-token-exchange-client-secret.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Send the configured `client_secret` in the OAuth Debugger's token exchange request.
-diff --git a/.changeset/oauth-scope-autofill-fix.md b/.changeset/oauth-scope-autofill-fix.md
-deleted file mode 100644
-index c6ce98e77..000000000
---- a/.changeset/oauth-scope-autofill-fix.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop browser autofill from clobbering OAuth scope fields in the connection and profile forms.
-diff --git a/.changeset/org-leave-from-access-restricted.md b/.changeset/org-leave-from-access-restricted.md
-deleted file mode 100644
-index ac18e3b43..000000000
---- a/.changeset/org-leave-from-access-restricted.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Let organization members leave the organization directly from the access-restricted screen.
-diff --git a/.changeset/remove-default-host-config-project-settings.md b/.changeset/remove-default-host-config-project-settings.md
-deleted file mode 100644
-index d6d45e8d5..000000000
---- a/.changeset/remove-default-host-config-project-settings.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Remove the Default Host Config section from project settings.
-diff --git a/.changeset/sdk-oauth-authorization-header-client-secret.md b/.changeset/sdk-oauth-authorization-header-client-secret.md
-deleted file mode 100644
-index 7c4f1c43c..000000000
---- a/.changeset/sdk-oauth-authorization-header-client-secret.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Send `client_secret_basic` credentials via an `Authorization: Basic` header instead of the request body during OAuth token exchange, matching RFC 6749 §2.3.1. Applies to pre-registered clients across all three debug OAuth state machine versions (2025-03-26, 2025-06-18, 2025-11-25).
-diff --git a/.changeset/sidebar-notifications-popover-stays-open.md b/.changeset/sidebar-notifications-popover-stays-open.md
-deleted file mode 100644
-index 4af3b7223..000000000
---- a/.changeset/sidebar-notifications-popover-stays-open.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Keep the notifications popover open when it's opened from the account menu.
-diff --git a/.changeset/sidebar-world-cup-ball.md b/.changeset/sidebar-world-cup-ball.md
-deleted file mode 100644
-index 2762220c0..000000000
---- a/.changeset/sidebar-world-cup-ball.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Add a World Cup soccer ball next to the sidebar logo.
-diff --git a/.changeset/webmcp-catalog-policy-polish.md b/.changeset/webmcp-catalog-policy-polish.md
-deleted file mode 100644
-index be57fd891..000000000
---- a/.changeset/webmcp-catalog-policy-polish.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Clarify prefill-vs-execute wording in the WebMCP UI tools catalog, add a `fill` device type, and document the UI-tool policy defaults.
-diff --git a/.changeset/webmcp-expose-ui-tools-to-agents.md b/.changeset/webmcp-expose-ui-tools-to-agents.md
-deleted file mode 100644
-index e6e3a0efb..000000000
---- a/.changeset/webmcp-expose-ui-tools-to-agents.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Expose Inspector UI tools to chat agents over WebMCP, letting the agent call app-native UI actions (navigation, tool execution) during a conversation.
-diff --git a/.changeset/webmcp-keep-agent-alive-on-navigation.md b/.changeset/webmcp-keep-agent-alive-on-navigation.md
-deleted file mode 100644
-index 3997b61d9..000000000
---- a/.changeset/webmcp-keep-agent-alive-on-navigation.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Keep the chat agent's conversation alive when a WebMCP UI tool navigates the page, instead of dropping the in-flight session.
-diff --git a/.changeset/webmcp-ui-tool-approval-gating.md b/.changeset/webmcp-ui-tool-approval-gating.md
-deleted file mode 100644
-index a8d0c9e3a..000000000
---- a/.changeset/webmcp-ui-tool-approval-gating.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Add approval gating for WebMCP UI tools: the chat agent must get user confirmation before executing a UI tool. Off by default and toggleable per chatbox.
+-Stop advertising inspector-driving WebMCP `ui_*` tools on chatbox surfaces (published, share-link, and owner preview) — end-user chatbox turns no longer see or trigger inspector UI actions, on the client snapshot, the standalone chatbox route's tool registration, and both chat-v2 server boundaries.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index ee9b4da8c..af0319f85 100644
+index af0319f85..3bb7dca06 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.22.1",
-+  "version": "2.23.0",
+-  "version": "2.23.0",
++  "version": "2.23.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -131,7 +131,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.27.0",
-+    "@mcpjam/sdk": "^1.28.0",
-     "@modelcontextprotocol/client": "2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 96f9166c7..f20cab218 100644
+index f20cab218..cf10a4302 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.22.1",
-+      "version": "2.23.0",
+-      "version": "2.23.0",
++      "version": "2.23.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -360,7 +360,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.27.0",
-+        "@mcpjam/sdk": "^1.28.0",
-         "@modelcontextprotocol/client": "2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37020,7 +37020,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.27.0",
-+      "version": "1.28.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/amazon-bedrock": "^3.0.101",
-diff --git a/sdk/package.json b/sdk/package.json
-index 33046d757..9714c5f2f 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.27.0",
-+  "version": "1.28.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",
