@@ -52,6 +52,68 @@ describe("handleUiToolCall", () => {
     });
   });
 
+  it("fires onNavigationToolCall BEFORE execute for mayNavigate tools", async () => {
+    const order: string[] = [];
+    const def = makeTool({
+      mayNavigate: true,
+      execute: vi.fn(async () => {
+        order.push("execute");
+        return { content: [{ type: "text" as const, text: "ok" }] };
+      }),
+    });
+    useUiToolsRegistry.getState().registerUiTool(def);
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-nav",
+      input: {},
+      addToolOutput: vi.fn(),
+      onNavigationToolCall: (name) => {
+        order.push(`handoff:${name}`);
+      },
+    });
+
+    expect(order).toEqual(["handoff:ui_navigate", "execute"]);
+  });
+
+  it("does not fire onNavigationToolCall for unflagged tools", async () => {
+    const def = makeTool({ name: "ui_snapshot_app", readOnly: true });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const onNavigationToolCall = vi.fn();
+
+    await handleUiToolCall({
+      toolName: "ui_snapshot_app",
+      toolCallId: "tc-snap",
+      input: {},
+      addToolOutput: vi.fn(),
+      onNavigationToolCall,
+    });
+
+    expect(onNavigationToolCall).not.toHaveBeenCalled();
+  });
+
+  it("a throwing onNavigationToolCall never blocks the tool output", async () => {
+    const def = makeTool({ mayNavigate: true });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    const handled = await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-throw",
+      input: {},
+      addToolOutput,
+      onNavigationToolCall: () => {
+        throw new Error("handoff exploded");
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(def.execute).toHaveBeenCalled();
+    expect(addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCallId: "tc-throw" })
+    );
+  });
+
   it("coerces non-object input to empty args", async () => {
     const def = makeTool();
     useUiToolsRegistry.getState().registerUiTool(def);

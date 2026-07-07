@@ -127,6 +127,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      mayNavigate: true,
       execute: async (args) => {
         const target = asOptionalString(args.target);
         if (!target) return errorResult("Missing required 'target' string.");
@@ -169,6 +170,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      mayNavigate: true,
       execute: async (args) =>
         fromActionResult(
           await openPlaygroundAction(asOptionalString(args.serverName)),
@@ -195,6 +197,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
@@ -236,6 +241,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
@@ -278,6 +286,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const payload: SetAppContextInspectorCommand["payload"] = {};
         const theme = asOptionalString(args.theme);
