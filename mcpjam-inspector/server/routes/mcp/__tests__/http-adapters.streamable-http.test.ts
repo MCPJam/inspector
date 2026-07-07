@@ -119,6 +119,37 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
     }
   });
 
+  it("returns a JSON-RPC -32700 parse error for garbage bytes (NOT 202)", async () => {
+    const res = await app.request("/api/mcp/adapter-http/test-server", {
+      method: "POST",
+      headers: STREAMABLE_HTTP_HEADERS,
+      body: "this is not json {{{",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("returns a JSON-RPC -32600 invalid request when method is missing (NOT 202)", async () => {
+    const res = await post({ id: 7, params: {} });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(7);
+  });
+
+  it("still 202s a real notification (method present, no id)", async () => {
+    const res = await post({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    expect(res.status).toBe(202);
+  });
+
   it("returns NO Mcp-Session-Id header → a Streamable-HTTP client must treat the server as stateless (LIVE-SPIKE UNKNOWN: does Claude Code accept that?)", async () => {
     const res = await post({
       id: 1,

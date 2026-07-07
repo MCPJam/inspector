@@ -1490,6 +1490,15 @@ export async function runHarnessTurn(
             // NOTE: how the pause surfaces (this stream part vs turnState/
             // stream-end for built-in permissionMode tools) needs live
             // confirmation; host-tool `toolApproval` reliably emits this part.
+            // Fail closed without a continuity lane: the finally can only
+            // suspend + commit the continuation when `continuity` exists, so
+            // emitting the approval chunk here would show the user a prompt
+            // for a turn that can never resume.
+            if (!continuity) {
+              throw new Error(
+                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably.",
+              );
+            }
             const approvalId = String(
               (part as { approvalId?: unknown }).approvalId ??
                 crypto.randomUUID(),

@@ -38,6 +38,23 @@ describe("isPubliclyReachableUrl", () => {
     expect(isPubliclyReachableUrl("http://172.15.0.1")).toBe(true);
     expect(isPubliclyReachableUrl("http://172.32.0.1")).toBe(true);
   });
+
+  it("applies IPv6 ULA/link-local prefixes only to IPv6 literals, not hostnames", () => {
+    expect(isPubliclyReachableUrl("https://fc.example.com")).toBe(true);
+    expect(isPubliclyReachableUrl("https://fdn.example.com")).toBe(true);
+    expect(isPubliclyReachableUrl("http://[fc00::1]")).toBe(false);
+    expect(isPubliclyReachableUrl("http://[fd12:3456::1]")).toBe(false);
+    expect(isPubliclyReachableUrl("http://[fe80::1]")).toBe(false);
+  });
+
+  it("judges IPv4-mapped IPv6 by the embedded IPv4 (both dotted and hex forms)", () => {
+    // `new URL` normalizes the dotted tail to hex — both spellings must agree.
+    expect(isPubliclyReachableUrl("http://[::ffff:192.168.1.1]")).toBe(false);
+    expect(isPubliclyReachableUrl("http://[::ffff:c0a8:101]")).toBe(false);
+    expect(isPubliclyReachableUrl("http://[::ffff:127.0.0.1]")).toBe(false);
+    expect(isPubliclyReachableUrl("http://[::ffff:8.8.8.8]")).toBe(true);
+    expect(isPubliclyReachableUrl("http://[::ffff:808:808]")).toBe(true);
+  });
 });
 
 describe("resolveWebAuthorizedHarnessStrategy", () => {

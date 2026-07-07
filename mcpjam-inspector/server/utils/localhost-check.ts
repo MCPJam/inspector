@@ -39,10 +39,38 @@ export function isPubliclyReachableUrl(raw: string): boolean {
   if (host === "localhost" || host.endsWith(".local")) return false;
   // Unwrap IPv6 brackets.
   const h = host.replace(/^\[/, "").replace(/\]$/, "");
-  if (h === "::1" || h === "0.0.0.0" || h === "::") return false;
-  if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
-    return false; // IPv6 link-local / unique-local
+  if (h === "0.0.0.0") return false;
+  if (h.includes(":")) {
+    // IPv6 literal (a hostname like "fc.example.com" must NOT hit these).
+    if (h === "::1" || h === "::") return false;
+    if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
+      return false; // link-local / unique-local
+    }
+    // IPv4-mapped (::ffff:a.b.c.d): judge by the embedded IPv4. `new URL`
+    // normalizes the dotted tail to hex (`::ffff:c0a8:101`), so decode both
+    // forms; anything else under ::ffff: fails closed.
+    if (h.startsWith("::ffff:")) {
+      const tail = h.slice("::ffff:".length);
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail)) {
+        return isRoutableIpv4(tail);
+      }
+      const hex = tail.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (hex) {
+        const hi = parseInt(hex[1], 16);
+        const lo = parseInt(hex[2], 16);
+        return isRoutableIpv4(
+          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`,
+        );
+      }
+      return false;
+    }
+    return true;
   }
+  return isRoutableIpv4(h);
+}
+
+/** Non-routable IPv4 literal filter; non-IPv4 hostnames pass through as routable. */
+function isRoutableIpv4(h: string): boolean {
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (m) {
     const a = Number(m[1]);

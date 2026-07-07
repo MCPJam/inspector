@@ -605,6 +605,81 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it("pairs preflight-resolved server ids with the names they were resolved from when the selection changes mid-preflight", async () => {
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        })
+    );
+
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: [],
+            ensureServerIds,
+          },
+        }),
+      { initialProps: { selectedServers: ["server-a", "server-b"] } }
+    );
+
+    mockState.authFetch.mockClear();
+
+    // Send starts: the async preflight is now in flight for [server-a, server-b].
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" });
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a", "server-b"]);
+
+    // Selection changes BEFORE the preflight resolves.
+    rerender({ selectedServers: ["server-a"] });
+
+    resolvePreflight([{ serverId: "id-a" }, { serverId: "id-b" }]);
+    await act(async () => {
+      await sendPromise;
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+    });
+    const body = JSON.parse(
+      String(
+        (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
+          ?.body ?? "{}"
+      )
+    );
+    // Ids ride with the names they were resolved from — never stale ids
+    // paired with the fresh (shrunk) selection.
+    expect(body.selectedServerIds).toEqual(["id-a", "id-b"]);
+    expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
+  });
+
+  it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
+    const ensureServerIds = vi.fn(async (names: string[]) =>
+      names.map((name) => ({ serverId: `id-${name}` }))
+    );
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["adhoc-server"],
+        hostedContext: {
+          projectId: "project-1",
+          // Ad-hoc/App servers have no pre-resolved Convex ids — the
+          // sendMessage preflight is what persists them.
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      })
+    );
+    await waitFor(() => {
+      expect(result.current.inputDisabled).toBe(false);
+    });
+  });
+
   it("ingests hosted rpc logs from chat error responses", async () => {
     mockState.authFetch.mockResolvedValueOnce(
       new Response(

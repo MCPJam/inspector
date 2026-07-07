@@ -128,11 +128,41 @@ async function handle(c: any) {
     return c.json({ error: "Unsupported request" }, 400);
   }
 
+  // Malformed payloads must NOT fall through to the notification → 202 path
+  // (the bridge treats a missing method as a notification): a garbage body
+  // acknowledged as "Accepted" looks like a delivered message to the harness.
   let body: any;
   try {
     body = await c.req.json();
   } catch {
-    body = undefined;
+    return c.json(
+      {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Parse error" },
+      },
+      400,
+    );
+  }
+  if (
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    typeof body.method !== "string" ||
+    body.method.length === 0
+  ) {
+    const id =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body.id ?? null)
+        : null;
+    return c.json(
+      {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32600, message: "Invalid Request" },
+      },
+      400,
+    );
   }
 
   // Rebuild the user's authorized connection server-side via the acting-as

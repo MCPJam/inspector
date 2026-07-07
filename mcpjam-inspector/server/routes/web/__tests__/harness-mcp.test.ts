@@ -84,6 +84,52 @@ describe("/api/web/harness-mcp", () => {
     expect(mockManager.listTools).toHaveBeenCalledWith("srv-a");
   });
 
+  const postRaw = (bodyText: string) =>
+    app.request(`/api/web/harness-mcp/srv-a`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-MCPJam-Proxy-Token": webToken("srv-a"),
+      },
+      body: bodyText,
+    });
+
+  it("returns a JSON-RPC -32700 parse error for garbage bytes (NOT 202)", async () => {
+    const res = await postRaw("this is not json {{{");
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("returns a JSON-RPC -32600 invalid request when method is missing (NOT 202)", async () => {
+    const res = await postRaw(JSON.stringify({ id: 7, params: {} }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(7);
+  });
+
+  it("returns -32600 for non-object JSON bodies (null, arrays, scalars)", async () => {
+    for (const bodyText of ["null", "[]", '"hi"', "42"]) {
+      const res = await postRaw(bodyText);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error.code).toBe(-32600);
+      expect(data.id).toBe(null);
+    }
+  });
+
+  it("still 202s a real notification (method present, no id)", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    );
+    expect(res.status).toBe(202);
+  });
+
   it("wires an rpcLogger that publishes the sandbox's MCP traffic to the rpc-log bus", async () => {
     const { createAuthorizedManager } = await import("../auth");
     const { rpcLogBus } = await import("../../../services/rpc-log-bus.js");
