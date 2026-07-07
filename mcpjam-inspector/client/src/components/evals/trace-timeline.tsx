@@ -34,11 +34,7 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
-import {
-  META_TOOL_LOAD,
-  META_TOOL_SEARCH,
-  META_TOOL_SERVER_ID,
-} from "@/shared/progressive-tool-discovery";
+import { META_TOOL_SERVER_ID } from "@/shared/progressive-tool-discovery";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -1315,10 +1311,7 @@ function deriveSpanLabel(
 
   if (span.category === "tool") {
     const name = (span.toolName ?? span.name).trim() || "tool";
-    const isDiscoveryTool =
-      span.serverId === META_TOOL_SERVER_ID ||
-      name === META_TOOL_SEARCH ||
-      name === META_TOOL_LOAD;
+    const isDiscoveryTool = span.serverId === META_TOOL_SERVER_ID;
     const title = `${isDiscoveryTool ? "Discovery" : "Tool"} · ${name}`;
     const serverHint = isDiscoveryTool
       ? (span.serverName ?? "MCPJam")

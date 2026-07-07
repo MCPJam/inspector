@@ -1302,9 +1302,7 @@ export async function runHarnessTurn(
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
-            toolSetForTrace[toolName] = serverId
-              ? { _serverId: serverId, _serverName: serverId }
-              : {};
+            toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
             // providerExecuted:true — the harness runs ALL tools in-sandbox
             // (Claude Code executes them itself). Without it the client treats

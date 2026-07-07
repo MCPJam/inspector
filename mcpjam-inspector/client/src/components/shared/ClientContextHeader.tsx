@@ -128,6 +128,7 @@ export interface HostContextHeaderProps {
    * user understands the toolbar only affects the lead column.
    */
   leadHostInMultiHost?: string | null;
+  progressiveToolsSessionId?: string | null;
 }
 
 export function ClientContextHeader({
@@ -137,6 +138,7 @@ export function ClientContextHeader({
   showThemeToggle = false,
   className,
   leadHostInMultiHost,
+  progressiveToolsSessionId,
 }: HostContextHeaderProps) {
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
@@ -182,6 +184,10 @@ export function ClientContextHeader({
   const progressiveToolsStatus = useUIPlaygroundStore(
     (state) => state.progressiveToolsStatus
   );
+  const visibleProgressiveToolsStatus =
+    progressiveToolsStatus?.sessionId === progressiveToolsSessionId
+      ? progressiveToolsStatus
+      : null;
 
   const draftHostContext = useHostContextStore(
     (state) => state.draftHostContext
@@ -265,8 +271,8 @@ export function ClientContextHeader({
       : progressiveToolsMode === "on"
         ? "On"
         : "Off";
-  const progressiveToolsStatusText = progressiveToolsStatus
-    ? `${progressiveToolsStatus.enabled ? "active" : "inactive"} · ${progressiveToolsStatus.toolCount} tools across ${progressiveToolsStatus.serverCount} servers`
+  const progressiveToolsStatusText = visibleProgressiveToolsStatus
+    ? `${visibleProgressiveToolsStatus.enabled ? "active" : "inactive"} · ${visibleProgressiveToolsStatus.toolCount} tools across ${visibleProgressiveToolsStatus.serverCount} servers`
     : null;
 
   const handleCapabilityToggle = useCallback(

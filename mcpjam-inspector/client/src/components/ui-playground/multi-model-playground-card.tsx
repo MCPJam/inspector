@@ -64,6 +64,7 @@ import {
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
 import {
+  progressiveModeToValue,
   useUIPlaygroundStore,
   type DeviceType,
   type DisplayMode,
@@ -312,11 +313,7 @@ export function MultiModelPlaygroundCard({
     (s) => s.progressiveToolsModeTouched
   );
   const resolvedProgressiveToolDiscovery = progressiveToolsModeTouched
-    ? progressiveToolsMode === "on"
-      ? true
-      : progressiveToolsMode === "off"
-        ? false
-        : undefined
+    ? progressiveModeToValue(progressiveToolsMode)
     : hostCapsResolver?.progressiveToolDiscovery;
 
   const {

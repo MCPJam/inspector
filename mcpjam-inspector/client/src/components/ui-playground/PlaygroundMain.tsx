@@ -73,6 +73,7 @@ import {
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  progressiveModeToValue,
   useUIPlaygroundStore,
   type DeviceType,
   type DisplayMode,
@@ -715,11 +716,7 @@ export function PlaygroundMain({
     hostId: previewedHostId,
   });
   const resolvedProgressiveToolDiscovery = progressiveToolsModeTouched
-    ? progressiveToolsMode === "on"
-      ? true
-      : progressiveToolsMode === "off"
-        ? false
-        : undefined
+    ? progressiveModeToValue(progressiveToolsMode)
     : previewedHost?.config?.progressiveToolDiscovery;
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
@@ -3587,6 +3584,7 @@ export function PlaygroundMain({
             leadHostInMultiHost={
               isMultiHostMode ? leadHost?.name ?? null : null
             }
+            progressiveToolsSessionId={chatSessionId}
             // The standalone "Compare" host picker moved into the chat-input
             // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
             // switching still lives in the global `GlobalHostBar`.

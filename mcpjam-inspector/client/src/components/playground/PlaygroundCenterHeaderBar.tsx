@@ -39,6 +39,7 @@ interface Props {
    * user understands the toolbar only edits the lead column.
    */
   leadHostInMultiHost?: string | null;
+  progressiveToolsSessionId?: string | null;
 }
 
 export function PlaygroundCenterHeaderBar({
@@ -52,6 +53,7 @@ export function PlaygroundCenterHeaderBar({
   trailing,
   leading,
   leadHostInMultiHost,
+  progressiveToolsSessionId,
 }: Props) {
   const chromeRowClass = cn(
     "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
@@ -78,6 +80,7 @@ export function PlaygroundCenterHeaderBar({
             showThemeToggle
             className="w-max max-w-full"
             leadHostInMultiHost={leadHostInMultiHost}
+            progressiveToolsSessionId={progressiveToolsSessionId}
           />
         </div>
         {trailing ? (

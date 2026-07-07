@@ -35,10 +35,43 @@ export type CspMode = "permissive" | "widget-declared";
 export type ProgressiveToolsMode = "auto" | "on" | "off";
 
 export interface ProgressiveToolsStatus {
+  sessionId: string;
   enabled: boolean;
   reasons: string[];
   toolCount: number;
   serverCount: number;
+}
+
+export function progressiveModeToValue(
+  mode: ProgressiveToolsMode
+): boolean | undefined {
+  if (mode === "on") return true;
+  if (mode === "off") return false;
+  return undefined;
+}
+
+export function progressiveValueToMode(
+  value: boolean | undefined
+): ProgressiveToolsMode {
+  if (value === true) return "on";
+  if (value === false) return "off";
+  return "auto";
+}
+
+function areProgressiveToolsStatusesEqual(
+  left: ProgressiveToolsStatus | null,
+  right: ProgressiveToolsStatus | null
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.sessionId === right.sessionId &&
+    left.enabled === right.enabled &&
+    left.toolCount === right.toolCount &&
+    left.serverCount === right.serverCount &&
+    left.reasons.length === right.reasons.length &&
+    left.reasons.every((reason, index) => reason === right.reasons[index])
+  );
 }
 
 export interface DeviceCapabilities {
@@ -383,7 +416,12 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setProgressiveToolsMode: (mode) =>
     set({ progressiveToolsMode: mode, progressiveToolsModeTouched: true }),
 
-  setProgressiveToolsStatus: (status) => set({ progressiveToolsStatus: status }),
+  setProgressiveToolsStatus: (status) =>
+    set((state) =>
+      areProgressiveToolsStatusesEqual(state.progressiveToolsStatus, status)
+        ? state
+        : { progressiveToolsStatus: status }
+    ),
 
   setCapabilities: (newCapabilities) =>
     set((state) => ({
@@ -440,7 +478,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         // Preserve session-level header overrides.
         progressiveToolsMode: state.progressiveToolsMode,
         progressiveToolsModeTouched: state.progressiveToolsModeTouched,
-        progressiveToolsStatus: state.progressiveToolsStatus,
       };
     }),
 }));

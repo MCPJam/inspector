@@ -78,7 +78,10 @@ import {
 } from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  type ProgressiveToolsStatus,
+} from "@/stores/ui-playground-store";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -1099,6 +1102,42 @@ function isAuthDeniedError(error: unknown): boolean {
   if (withStatus.status === 401 || withStatus.status === 403) return true;
   if (typeof withStatus.message !== "string") return false;
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
+}
+
+function readProgressiveToolsStatus(
+  messages: UIMessage[],
+  sessionId: string
+): ProgressiveToolsStatus | null {
+  const latestMessage = messages[messages.length - 1];
+  if (latestMessage?.role !== "assistant" || !latestMessage.metadata) {
+    return null;
+  }
+
+  const metadata = latestMessage.metadata as {
+    progressiveToolDiscovery?: unknown;
+  };
+  const status = metadata.progressiveToolDiscovery;
+  if (!status || typeof status !== "object") return null;
+
+  const record = status as Record<string, unknown>;
+  if (
+    typeof record.enabled !== "boolean" ||
+    !Array.isArray(record.reasons) ||
+    typeof record.toolCount !== "number" ||
+    typeof record.serverCount !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    enabled: record.enabled,
+    reasons: record.reasons.filter(
+      (reason): reason is string => typeof reason === "string"
+    ),
+    toolCount: record.toolCount,
+    serverCount: record.serverCount,
+  };
 }
 
 export function useChatSession(
@@ -2327,6 +2366,7 @@ export function useChatSession(
     clearPendingSessionHydration();
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
+    setProgressiveToolsStatus(null);
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -2336,6 +2376,7 @@ export function useChatSession(
   }, [
     clearPendingSessionHydration,
     setMessages,
+    setProgressiveToolsStatus,
     syncResumedVersion,
     syncRestoredToolRenderOverrides,
   ]);
@@ -2741,34 +2782,10 @@ export function useChatSession(
   }, [selectedServers]);
 
   useEffect(() => {
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-      if (message.role !== "assistant" || !message.metadata) continue;
-      const metadata = message.metadata as {
-        progressiveToolDiscovery?: unknown;
-      };
-      const status = metadata.progressiveToolDiscovery;
-      if (!status || typeof status !== "object") continue;
-      const record = status as Record<string, unknown>;
-      if (
-        typeof record.enabled !== "boolean" ||
-        !Array.isArray(record.reasons) ||
-        typeof record.toolCount !== "number" ||
-        typeof record.serverCount !== "number"
-      ) {
-        continue;
-      }
-      setProgressiveToolsStatus({
-        enabled: record.enabled,
-        reasons: record.reasons.filter(
-          (reason): reason is string => typeof reason === "string"
-        ),
-        toolCount: record.toolCount,
-        serverCount: record.serverCount,
-      });
-      return;
-    }
-  }, [messages, setProgressiveToolsStatus]);
+    setProgressiveToolsStatus(
+      readProgressiveToolsStatus(messages, chatSessionId)
+    );
+  }, [chatSessionId, messages, setProgressiveToolsStatus]);
 
   // Token usage calculation
   const tokenUsage = useMemo<TokenUsage>(() => {
