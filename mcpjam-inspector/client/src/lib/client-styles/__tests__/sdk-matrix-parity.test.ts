@@ -17,6 +17,10 @@ import {
  *
  * `MCP_APPS_SLACK_SURFACE` stays a local, fully-typed resolved literal, so its
  * key set is the canonical reference.
+ *
+ * Deliberately coupled to the SDK's BUNDLED snapshot, not the live backend
+ * catalog (CANI-2): playground emulation always runs on the constants shipped
+ * in this build, so this parity guard must match those same constants.
  */
 const RESOLVED_KEYS = Object.keys(MCP_APPS_SLACK_SURFACE).sort();
 

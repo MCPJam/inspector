@@ -21,6 +21,7 @@ import {
 import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
 import { ConformanceGate } from "@/components/compat/ConformanceGate";
 import { VERDICT_META } from "@/components/compat/verdict-meta";
@@ -112,9 +113,18 @@ export function HostCompatContent({
 }) {
   const widgetUsage = useWidgetUsage(server.name, toolsData);
   const protocolVersion = server.initializationInfo?.protocolVersion;
+  // Live catalog in the deps: verdicts render from the bundled catalog first,
+  // then recompute when the live fetch lands.
+  const catalogState = useHostCatalog();
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
-    [toolsData, widgetUsage, protocolVersion]
+    () =>
+      evaluateAllHosts(
+        toolsData,
+        widgetUsage,
+        { protocolVersion },
+        catalogState?.catalog
+      ),
+    [toolsData, widgetUsage, protocolVersion, catalogState]
   );
 
   // Tier-2: render the server's widget live in each host's emulation.
