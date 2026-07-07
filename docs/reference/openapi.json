@@ -63,6 +63,129 @@
     }
   ],
   "paths": {
+    "/host-catalog": {
+      "get": {
+        "operationId": "getHostCompatCatalog",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get the host-compat catalog",
+        "description": "The versioned host-compatibility catalog (market hosts, MCP Apps capability matrices, OpenAI-compat presets) backing `mcpjam compat` verdicts. Public and unauthenticated: static host metadata with no project or user scope. Always returns a catalog — `source` is `live` when the backend publish was reachable and `bundled` when serving the SDK's built-in fallback.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The latest catalog envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schemaVersion",
+                    "version",
+                    "contentHash",
+                    "publishedAt",
+                    "catalog",
+                    "source"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "description": "Catalog document schema version (currently 1)."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "description": "Monotonic backend publish version; 0 when `source` is `bundled`."
+                    },
+                    "contentHash": {
+                      "type": "string",
+                      "description": "SHA-256 of the canonical catalog JSON; empty when `source` is `bundled`."
+                    },
+                    "publishedAt": {
+                      "type": "integer",
+                      "description": "Publish time (ms epoch); 0 when `source` is `bundled`."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "live",
+                        "bundled"
+                      ],
+                      "description": "Whether this envelope came from the backend publish or the SDK's bundled fallback."
+                    },
+                    "catalog": {
+                      "type": "object",
+                      "required": [
+                        "marketHosts",
+                        "capabilitiesById",
+                        "openAiCompatByStyle"
+                      ],
+                      "properties": {
+                        "marketHosts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "label",
+                              "provenance",
+                              "rendersMcpApps"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "provenance": {
+                                "type": "string",
+                                "enum": [
+                                  "probe",
+                                  "vendor-doc",
+                                  "assumed"
+                                ]
+                              },
+                              "rendersMcpApps": {
+                                "type": "boolean"
+                              },
+                              "supportedProtocolVersions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "verifiedAt": {
+                                "type": "integer",
+                                "description": "When this host's facts were last verified (ms epoch)."
+                              }
+                            }
+                          }
+                        },
+                        "capabilitiesById": {
+                          "type": "object",
+                          "description": "Per-host SEP-1865 MCP Apps capability matrix, keyed by host id.",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "openAiCompatByStyle": {
+                          "type": "object",
+                          "description": "OpenAI Apps compat preset per host style.",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/harness/{harnessId}/builtin-tools": {
       "get": {
         "operationId": "listHarnessBuiltinTools",

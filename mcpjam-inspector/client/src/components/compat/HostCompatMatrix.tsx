@@ -5,7 +5,8 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import type { ServerWithName } from "@/state/app-types";
-import { buildHostCompatProfiles } from "@/lib/host-compat/profiles";
+import { getHostProfiles } from "@/lib/host-compat/profiles";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
 import { VERDICT_META } from "@/components/compat/verdict-meta";
@@ -148,15 +149,18 @@ export function HostCompatMatrix({
   onSelectServer: (name: string) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // Live catalog so the column set matches the per-row verdicts (which also
+  // recompute on catalogState via useHostCompatReports).
+  const catalogState = useHostCatalog();
   const hosts = useMemo<HostColumn[]>(
     () =>
-      buildHostCompatProfiles().map((p) => ({
+      getHostProfiles(catalogState?.catalog).map((p) => ({
         id: p.id,
         label: p.label,
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
-    [],
+    [catalogState],
   );
 
   const [byServer, setByServer] = useState<Record<string, HostCompatReport[]>>(

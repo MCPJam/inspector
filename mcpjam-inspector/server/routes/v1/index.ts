@@ -25,10 +25,18 @@ import computerEnvironments from "./computer-environments.js";
 import evalIngest from "./eval-ingest.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
+
+// Host-compat catalog mounts BEFORE the auth middleware: it serves static
+// public host metadata (the same document Convex exposes unauthenticated at
+// /public/host-catalog) and must work for zero-credential consumers — the
+// OSS CLI (`mcpjam compat`), the SDK's fetchHostCompatCatalog default, and
+// share-link previews. GET-only router; no project/user data.
+v1.route("/", hostCatalog);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
@@ -53,6 +61,10 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // project/user data), read by the first-party UI to show a harness host's
   // native tools. Safe for guests (local mode + share-link previews); GET-only.
   { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
+  // Host-compat catalog: static public host metadata (no project/user data).
+  // Mounted before the auth middleware (fully public), so this rule is
+  // defense-in-depth for guests if the mount order ever changes; GET-only.
+  { pattern: /^\/host-catalog$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
   { pattern: /^\/projects$/ },
   { pattern: /^\/projects\/[^/]+\/servers$/ },
