@@ -1,0 +1,189 @@
+---
+title: "Host Compat Catalog"
+description: "Evaluate MCP server compatibility against market hosts using the bundled or live catalog"
+icon: "store"
+---
+
+Use the host-compat catalog APIs to evaluate which market hosts (Claude, ChatGPT, Cursor, etc.) are compatible with a given MCP server's tool surface. The SDK ships a bundled catalog as an offline fallback and exposes `fetchHostCompatCatalog()` to pull a live catalog from the MCPJam backend.
+
+## Import
+
+```typescript
+import {
+  evaluateMarketHosts,
+  bundledHostCompatCatalog,
+  buildHostProfilesFromCatalog,
+  fetchHostCompatCatalog,
+  hostCompatCatalogSchema,
+  hostCompatCatalogEnvelopeSchema,
+  mcpAppsCapabilitiesSchema,
+} from "@mcpjam/sdk/host-compat";
+```
+
+## Quick start
+
+Evaluate a server's tools against the bundled catalog:
+
+```typescript
+const tools = await manager.getTools();
+
+const { reports } = evaluateMarketHosts({ tools });
+
+for (const report of reports) {
+  console.log(report.hostId, report.compatible);
+}
+```
+
+Evaluate against the live catalog with a bundled fallback:
+
+```typescript
+const fetched = await fetchHostCompatCatalog();
+const catalog = fetched.ok ? fetched.catalog : undefined;
+
+const { reports } = evaluateMarketHosts({ tools }, { catalog });
+```
+
+## `evaluateMarketHosts`
+
+```typescript
+evaluateMarketHosts(
+  toolsData: HostCompatToolsInput | null | undefined,
+  options?: EvaluateMarketHostsOptions
+): HostCompatEvaluation
+```
+
+Evaluates a server's tool surface against the market-host catalog and returns per-host compatibility reports.
+
+`HostCompatToolsInput` accepts `{ tools: Tool[] }` where `tools` is the array returned by `manager.getTools()` or `manager.listTools()`.
+
+`EvaluateMarketHostsOptions`:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `catalog` | `HostCompatCatalog` | bundled catalog | A live-fetched or custom catalog to evaluate against. Omit to use the bundled fallback. |
+
+`HostCompatEvaluation` contains a `reports` array. Each entry includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `hostId` | `string` | Host identifier (e.g. `"claude"`, `"chatgpt"`) |
+| `compatible` | `boolean` | Whether the server is compatible with this host |
+| `rendersMcpApps` | `boolean` | Whether the host renders MCP Apps widgets |
+| `rendersOpenAiApps` | `boolean` | Whether the host renders OpenAI-compatible apps |
+
+## `fetchHostCompatCatalog`
+
+```typescript
+fetchHostCompatCatalog(
+  options?: FetchHostCompatCatalogOptions
+): Promise<FetchHostCompatCatalogResult>
+```
+
+Fetches the live host-compat catalog from the MCPJam platform API. Never throws — every failure returns `{ ok: false, reason }` so you can fall back to `bundledHostCompatCatalog()`.
+
+`FetchHostCompatCatalogOptions`:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `baseUrl` | `string` | MCPJam production API | API origin and version prefix. |
+| `timeoutMs` | `number` | `3000` | Abort the request after this many milliseconds. |
+| `fetchImpl` | `typeof fetch` | `globalThis.fetch` | Injectable fetch implementation for tests or non-standard runtimes. |
+
+`FetchHostCompatCatalogResult` is a discriminated union:
+
+```typescript
+// Success
+{ ok: true; catalog: HostCompatCatalog; version: number; contentHash: string; publishedAt: number; source: string }
+
+// Failure
+{ ok: false; reason: "network" | "timeout" | "invalid" | "unavailable" }
+```
+
+Failure reasons:
+
+| Reason | Meaning |
+|--------|---------|
+| `network` | Request failed outright or `fetch` is unavailable. |
+| `timeout` | Request was aborted after `timeoutMs`. |
+| `unavailable` | Non-2xx response (e.g. 503 catalog not yet seeded). |
+| `invalid` | Response body was not a parseable catalog envelope. |
+
+## `bundledHostCompatCatalog`
+
+```typescript
+bundledHostCompatCatalog(): HostCompatCatalog
+```
+
+Returns the SDK's built-in copy of the host-compat catalog. The result is deep-frozen and cached — the same object is returned on every call. Use this as the offline or OSS fallback when `fetchHostCompatCatalog` returns `{ ok: false }`.
+
+```typescript
+const catalog = bundledHostCompatCatalog();
+// catalog.marketHosts — array of host facts
+// catalog.capabilitiesById — MCP Apps capability matrix per host
+// catalog.openAiCompatByStyle — OpenAI-compat preset per host style
+```
+
+## `buildHostProfilesFromCatalog`
+
+```typescript
+buildHostProfilesFromCatalog(catalog: HostCompatCatalog): HostCompatProfile[]
+```
+
+Derives `HostCompatProfile[]` from a catalog document. Use this when you want to inspect or filter the profile list before passing it to `evaluateAllHosts`, or when you need to work with a custom catalog shape.
+
+Each returned `HostCompatProfile` includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Host identifier. |
+| `label` | `string` | Display name. |
+| `provenance` | `"observed" \| "probe" \| "vendor-doc" \| "assumed"` | How the host facts were established. |
+| `rendersMcpApps` | `boolean` | Whether the host renders MCP Apps widgets. |
+| `rendersOpenAiApps` | `boolean` | Whether the host renders OpenAI-compatible apps. |
+| `capabilities` | `McpAppsCapabilities \| undefined` | Capability matrix; `undefined` for fully headless hosts. |
+| `supportedProtocolVersions` | `string[] \| undefined` | MCP protocol versions the host advertises. |
+
+The function does not mutate or freeze the input catalog, so a catalog obtained from `fetchHostCompatCatalog` can be cached and reused by the caller.
+
+## Zod schemas
+
+The catalog schemas are exported for validation and type inference:
+
+| Export | Validates |
+|--------|-----------|
+| `hostCompatCatalogSchema` | The catalog document (`HostCompatCatalog`). |
+| `hostCompatCatalogEnvelopeSchema` | The full wire envelope returned by the platform API. |
+| `mcpAppsCapabilitiesSchema` | A single host's MCP Apps capability matrix. |
+
+Forward-compatibility policy: unknown object keys are stripped, unknown enum values are absorbed (not fatal), and a future breaking `schemaVersion` causes the whole parse to fail so callers fall back to the bundled catalog rather than partially applying an incompatible document.
+
+```typescript
+const result = hostCompatCatalogEnvelopeSchema.safeParse(body);
+if (!result.success) {
+  // Fall back to bundled catalog
+}
+```
+
+## Bundled market hosts
+
+The bundled catalog includes the following hosts:
+
+| Host | `rendersMcpApps` | Provenance |
+|------|-----------------|------------|
+| Claude | `true` | assumed |
+| ChatGPT | `true` | vendor-doc |
+| Mistral | `true` | probe |
+| Goose | `true` | probe |
+| Cursor | `true` | probe |
+| Copilot | `true` | vendor-doc |
+| Codex | `false` | assumed |
+| n8n | `false` | probe |
+| Perplexity | `false` | probe |
+| Cline | `false` | probe |
+
+Headless hosts (`rendersMcpApps: false`) may still render OpenAI-compatible apps and carry a capability matrix for protocol-bucket evaluation.
+
+## Related
+
+- [MCP Apps Conformance SDK](/sdk/reference/apps-conformance)
+- [CLI apps conformance](/cli/apps-conformance)
