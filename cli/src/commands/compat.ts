@@ -171,9 +171,11 @@ export function registerCompatCommands(program: Command): void {
         return {
           target: describeTarget(options),
           catalogSource,
-          ...(liveCatalog && catalogResult?.ok
-            ? { catalogVersion: catalogResult.version }
-            : {}),
+          // Always present for a stable contract: the backend publish version
+          // when live, else 0 (the "not a backend publish" sentinel) for the
+          // bundled/offline fallback.
+          catalogVersion:
+            liveCatalog && catalogResult?.ok ? catalogResult.version : 0,
           widgets: {
             total:
               requirements.widgets.mcpAppsOnly.length +
