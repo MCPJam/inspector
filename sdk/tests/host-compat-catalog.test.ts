@@ -129,23 +129,21 @@ describe("buildHostProfilesFromCatalog", () => {
     expect(profile.capabilities).toBeUndefined();
   });
 
-  it("deep-freezes children even under an already-shallow-frozen parent", () => {
+  it("does not freeze or mutate the caller's catalog", () => {
+    // A catalog from fetchHostCompatCatalog may be cached/reused by the caller;
+    // building profiles from it must not freeze the caller's own object.
     const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
-    // Shallow-freeze the top object only (children still mutable).
-    Object.freeze(catalog);
-    expect(Object.isFrozen(catalog)).toBe(true);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(false);
     buildHostProfilesFromCatalog(catalog);
-    // deepFreeze must have recursed past the frozen parent.
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
-    expect(Object.isFrozen(catalog.marketHosts[0])).toBe(true);
+    expect(Object.isFrozen(catalog)).toBe(false);
+    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(false);
+    expect(Object.isFrozen(catalog.marketHosts[0])).toBe(false);
   });
 
-  it("freezes the input catalog and returns mutable profile copies", () => {
-    const catalog = clone(bundledHostCompatCatalog());
-    const profiles = buildHostProfilesFromCatalog(catalog);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
-    // Caller copies stay safe to edit.
+  it("returns independent, mutable profile copies", () => {
+    const profiles = buildHostProfilesFromCatalog(
+      clone(bundledHostCompatCatalog())
+    );
+    // Editing an output profile can't leak into a later build.
     profiles[0].label = "edited";
     expect(
       buildHostProfilesFromCatalog(clone(bundledHostCompatCatalog()))[0].label
@@ -173,7 +171,9 @@ describe("evaluateMarketHosts with a catalog", () => {
 
   it("defaults to the bundled catalog when no catalog is passed", () => {
     const { reports } = evaluateMarketHosts({ tools: [] });
-    expect(reports).toHaveLength(10);
+    // Derive from the bundled catalog so this stays a behavioral check rather
+    // than a snapshot of the exact host count.
+    expect(reports).toHaveLength(bundledHostCompatCatalog().marketHosts.length);
   });
 });
 

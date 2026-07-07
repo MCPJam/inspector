@@ -242,13 +242,14 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
  *    host leaves it undefined), defaulting to `MCP_APPS_NO_CLAIMS` when the
  *    catalog carries no matrix for a rendering host.
  *
- * The catalog is deep-frozen in place (module invariant: shared state frozen,
- * copies on the way out); each call returns fresh profile copies.
+ * Does NOT mutate the input: the caller's catalog is only read, and every
+ * profile is a fresh copy (`cloneProfile`), so a catalog obtained from
+ * `fetchHostCompatCatalog` can be cached/reused by the caller afterward. (The
+ * bundled catalog is frozen at its source in `bundledHostCompatCatalog`.)
  */
 export function buildHostProfilesFromCatalog(
   catalog: HostCompatCatalog
 ): HostCompatProfile[] {
-  deepFreeze(catalog);
   return catalog.marketHosts
     .map((host) => {
       // Own-property checks throughout: host ids are arbitrary strings in a
