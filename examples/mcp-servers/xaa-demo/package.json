@@ -1,0 +1,22 @@
+{
+  "name": "xaa-demo",
+  "version": "1.0.0",
+  "description": "Toy Cross-App Access (XAA) MCP server for the MCPJam XAA Debugger how-to",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "test": "node --test --import tsx test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "express": "^5.0.0",
+    "jose": "^5.9.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
