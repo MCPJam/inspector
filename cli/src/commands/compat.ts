@@ -52,30 +52,38 @@ export function registerCompatCommands(program: Command): void {
       program
         .command("compat")
         .description(
-          "Check whether an MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, …)",
+          "Check whether an MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, …)"
         )
         .option(
           "--host <id>",
           "Only report this host id. Repeat for several. Default: all.",
           (value: string, previous: string[] = []) => [...previous, value],
-          [],
+          []
         )
         .option(
           "--offline",
-          "Skip the live host-catalog fetch and use the bundled catalog (zero MCPJam network).",
+          "Skip the live host-catalog fetch and use the bundled catalog (zero MCPJam network)."
         )
         .option(
           "--catalog-url <url>",
-          "Base URL to fetch the live host catalog from. Default: the hosted MCPJam API.",
-        ),
-    ),
+          "Base URL to fetch the live host catalog from. Default: the hosted MCPJam API."
+        )
+    )
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
 
     // Live catalog (unless --offline); silent bundled fallback on any failure.
+    // A successful fetch can still carry `source: "bundled"` (the proxy served
+    // its own bundled fallback) — that's the same data the SDK already bundles,
+    // so treat only a `source: "live"` result as live for both the profiles and
+    // the reported provenance.
     const catalogResult = await resolveHostCatalog(options);
-    const liveCatalog = catalogResult?.ok ? catalogResult.catalog : undefined;
+    const liveCatalog =
+      catalogResult?.ok && catalogResult.source === "live"
+        ? catalogResult.catalog
+        : undefined;
+    const catalogSource = liveCatalog ? "live" : "bundled";
 
     // Validate --host up front (before connecting) so a typo fails fast with the
     // valid ids, instead of silently returning an empty report. Ids come from
@@ -88,13 +96,13 @@ export function registerCompatCommands(program: Command): void {
     ).map((p) => p.id);
     const requestedHosts = options.host as string[];
     const unknownHosts = requestedHosts.filter(
-      (id) => !validHostIds.includes(id),
+      (id) => !validHostIds.includes(id)
     );
     if (unknownHosts.length > 0) {
       throw usageError(
-        `Unknown host id${unknownHosts.length === 1 ? "" : "s"}: ${unknownHosts.join(
-          ", ",
-        )}. Valid: ${validHostIds.join(", ")}`,
+        `Unknown host id${
+          unknownHosts.length === 1 ? "" : "s"
+        }: ${unknownHosts.join(", ")}. Valid: ${validHostIds.join(", ")}`
       );
     }
 
@@ -117,7 +125,7 @@ export function registerCompatCommands(program: Command): void {
             ...(result.tools as Array<{
               name: string;
               _meta?: Record<string, unknown>;
-            }>),
+            }>)
           );
           cursor = result.nextCursor;
           if (!cursor) break;
@@ -162,8 +170,8 @@ export function registerCompatCommands(program: Command): void {
 
         return {
           target: describeTarget(options),
-          catalogSource: liveCatalog ? "live" : "bundled",
-          ...(catalogResult?.ok
+          catalogSource,
+          ...(liveCatalog && catalogResult?.ok
             ? { catalogVersion: catalogResult.version }
             : {}),
           widgets: {
@@ -181,15 +189,19 @@ export function registerCompatCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         retryPolicy,
-      },
+      }
     );
 
     // One dim status line on stderr (stdout stays pure result) so a human
-    // knows which catalog produced these verdicts.
-    const catalogNote = catalogResult?.ok
-      ? `host catalog: live v${catalogResult.version}`
-      : `host catalog: bundled${options.offline ? " (--offline)" : ""}`;
-    process.stderr.write(`\x1b[2m${catalogNote}\x1b[0m\n`);
+    // knows which catalog produced these verdicts. Gated behind --quiet like
+    // every other command's progress output.
+    if (!globalOptions.quiet) {
+      const catalogNote =
+        liveCatalog && catalogResult?.ok
+          ? `host catalog: live v${catalogResult.version}`
+          : `host catalog: bundled${options.offline ? " (--offline)" : ""}`;
+      process.stderr.write(`\x1b[2m${catalogNote}\x1b[0m\n`);
+    }
 
     writeResult(result, globalOptions.format);
   });
