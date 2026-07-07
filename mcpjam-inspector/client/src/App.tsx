@@ -617,25 +617,44 @@ export function HostsRoute() {
     isAuthenticated,
     setHostsTabSelectedHostId,
   } = useAppRouteContext();
-  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const [previewedHostId, setPreviewedHostId] =
+    usePreviewedHostId(convexProjectId);
   const params = useParams<{ hostId?: string }>();
   const navigate = useAppNavigate();
+  const routeHostId =
+    params.hostId ??
+    (typeof window !== "undefined" &&
+    window.location.pathname.startsWith(`${routePaths.hosts}/`)
+      ? window.location.pathname
+          .slice(`${routePaths.hosts}/`.length)
+          .split("/")[0]
+      : null);
   const urlHostId = useMemo(() => {
-    if (!params.hostId) return null;
+    if (!routeHostId) return null;
     try {
-      return decodeURIComponent(params.hostId);
+      return decodeURIComponent(routeHostId);
     } catch {
-      return params.hostId;
+      return routeHostId;
     }
-  }, [params.hostId]);
+  }, [routeHostId]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId === urlHostId) return;
-    setHostsTabSelectedHostId(urlHostId);
-  }, [urlHostId, hostsTabSelectedHostId, setHostsTabSelectedHostId]);
+    if (hostsTabSelectedHostId !== urlHostId) {
+      setHostsTabSelectedHostId(urlHostId);
+    }
+    if (urlHostId && previewedHostId !== urlHostId) {
+      setPreviewedHostId(urlHostId);
+    }
+  }, [
+    urlHostId,
+    hostsTabSelectedHostId,
+    previewedHostId,
+    setHostsTabSelectedHostId,
+    setPreviewedHostId,
+  ]);
 
   const handleSelectHost = useCallback(
     (next: string | null) => {
@@ -2766,7 +2785,7 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "clients" && !isAuthenticated) {
+    } else if (activeTab === "clients" && !isAuthenticated && !isAuthLoading) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
@@ -2805,6 +2824,7 @@ export default function App() {
     evaluateRunsEnabled,
     xaaEnabled,
     isAuthenticated,
+    isAuthLoading,
     activeTab,
     navigateToTarget,
   ]);

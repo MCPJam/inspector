@@ -2785,6 +2785,57 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("keeps host template deep links in place while auth is loading", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/hosts?template=slack");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.location.pathname).toBe("/hosts");
+    expect(window.location.search).toBe("?template=slack");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+  });
+
+  it("syncs direct host URLs into the global previewed host selection", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "project_local",
+      projects: {
+        project_local: {
+          id: "project_local",
+          name: "Project",
+          servers: {},
+          sharedProjectId: "project_shared",
+        },
+      },
+    }));
+    localStorage.setItem(
+      "mcp-previewed-host-id",
+      JSON.stringify({ project_shared: "host-claude" })
+    );
+    window.history.replaceState({}, "", "/hosts/host-slack");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
+        .toEqual({
+          project_shared: "host-slack",
+        });
+    });
+    expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
+  });
+
   it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
