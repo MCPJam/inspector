@@ -198,6 +198,19 @@ export interface StreamWebChatTurnArgs {
 }
 
 /**
+ * Read-only `ui_*` names from the validated snapshot — exempt from the
+ * MCPJam loop's approval gate (see `isApprovalFreeToolCallName` in
+ * mcpjam-stream-handler). Computed from the VALIDATED entries' `readOnly`
+ * flag, never from the raw name, which a third-party server could spoof.
+ */
+function approvalFreeUiToolNamesFrom(
+  uiTools: UiToolEntry[] | undefined
+): ReadonlySet<string> | undefined {
+  const names = (uiTools ?? []).filter((t) => t.readOnly).map((t) => t.name);
+  return names.length > 0 ? new Set(names) : undefined;
+}
+
+/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -482,6 +495,7 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
+      approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
@@ -541,6 +555,7 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),

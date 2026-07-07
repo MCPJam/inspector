@@ -19,12 +19,14 @@ import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import posthog from "posthog-js";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -65,11 +67,27 @@ export interface AgentChatConfig {
    * re-seed stale history over an in-flight turn.
    */
   seeded: boolean;
+  /**
+   * The agent surface's "Tool Approval" preference, synced by the hook from
+   * `agent-tool-approval-storage`. Read at call time by `body()`, the
+   * executor's defer gate, and the auto-send predicate.
+   */
+  requireToolApproval: boolean;
 }
 
 export interface AgentChatEntry {
   chat: Chat<UIMessage>;
   config: AgentChatConfig;
+  /**
+   * UI-tool-aware approval responses for this instance: Approve on a `ui_*`
+   * part executes in the browser and ships the result; Deny and non-UI
+   * tools send the plain approval response. Pass as the thread's
+   * `onToolApprovalResponse`.
+   */
+  handleToolApprovalResponse: (response: {
+    id: string;
+    approved: boolean;
+  }) => void;
 }
 
 const instances = new Map<string, AgentChatEntry>();
@@ -143,6 +161,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     model: undefined,
     attachedSurfaces: new Set(),
     seeded: false,
+    requireToolApproval: false,
   };
 
   const chat: Chat<UIMessage> = new Chat<UIMessage>({
@@ -154,6 +173,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         model: config.model,
         projectId: config.projectId,
         chatSessionId,
+        requireToolApproval: config.requireToolApproval,
         // WebMCP UI tools snapshot, drained fresh at POST time (same
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
@@ -176,15 +196,37 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         onNavigationToolCall: (toolName) => {
           maybeHandoffToPanel(config, toolName);
         },
+        requireToolApproval: config.requireToolApproval,
       });
     },
     // Resume the turn automatically once every tool call has an output —
     // without this, `addToolOutput` would sit unsent until the next user
-    // message.
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // message — or once every approval request has an answer (the MCP/
+    // skill-tool deny/approve path). The approval branch is deliberately
+    // NOT gated on the CURRENT `config.requireToolApproval`: a pill minted
+    // while the toggle was on must still resume the turn if the user flips
+    // it off before answering, and the predicate is inert when the message
+    // holds no approval requests.
+    sendAutomaticallyWhen: (options) => {
+      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
+      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
+    },
   });
 
-  const entry: AgentChatEntry = { chat, config };
+  const handleToolApprovalResponse = createUiAwareApprovalResponseHandler({
+    getMessages: () => chat.messages,
+    addToolApprovalResponse: (response) => {
+      chat.addToolApprovalResponse(response);
+    },
+    addToolOutput: (output) => {
+      chat.addToolOutput(output);
+    },
+    onNavigationToolCall: (toolName) => {
+      maybeHandoffToPanel(config, toolName);
+    },
+  });
+
+  const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };
   instances.set(chatSessionId, entry);
   evictIdleInstances(chatSessionId);
   return entry;
