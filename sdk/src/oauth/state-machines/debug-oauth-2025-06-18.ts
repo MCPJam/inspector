@@ -44,7 +44,10 @@ import {
   parseScopeString,
   resolveRequestedScopeValue,
 } from "./shared/challenges.js";
-import { resolvePreregisteredClientAuthMethod } from "./shared/client-auth.js";
+import {
+  buildTokenRequestClientAuth,
+  resolvePreregisteredClientAuthMethod,
+} from "./shared/client-auth.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -1565,19 +1568,18 @@ export const createDebugOAuthStateMachine = (
             }
 
             // Build the token request body as an object (will be shown in HTTP history)
+            const previewClientAuth = buildTokenRequestClientAuth({
+              clientId: state.clientId,
+              clientSecret: state.clientSecret,
+              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+            });
+
             const tokenRequestBodyObj: Record<string, string> = {
               grant_type: "authorization_code",
               code: state.authorizationCode,
               redirect_uri: redirectUri,
+              ...previewClientAuth.bodyParams,
             };
-
-            if (state.clientId) {
-              tokenRequestBodyObj.client_id = state.clientId;
-            }
-
-            if (state.clientSecret) {
-              tokenRequestBodyObj.client_secret = state.clientSecret;
-            }
 
             if (state.codeVerifier) {
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
@@ -1592,6 +1594,7 @@ export const createDebugOAuthStateMachine = (
               url: state.authorizationServerMetadata.token_endpoint,
               headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
+                ...previewClientAuth.headers,
               },
               body: tokenRequestBodyObj,
             };
@@ -1636,32 +1639,40 @@ export const createDebugOAuthStateMachine = (
 
             try {
               // Prepare token request body (form-urlencoded)
+              const clientAuth = buildTokenRequestClientAuth({
+                clientId: state.clientId,
+                clientSecret: state.clientSecret,
+                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              });
+
               const tokenRequestBody = new URLSearchParams({
                 grant_type: "authorization_code",
                 code: state.authorizationCode,
                 redirect_uri: redirectUri,
-                client_id: state.clientId || "",
                 code_verifier: state.codeVerifier || "",
+                ...clientAuth.bodyParams,
               });
-
-              // Add client_secret if available (for confidential clients)
-              if (state.clientSecret) {
-                tokenRequestBody.set("client_secret", state.clientSecret);
-              }
 
               // Add resource parameter if available
               if (state.serverUrl) {
                 tokenRequestBody.set("resource", state.serverUrl);
               }
 
-              // Make the token request via backend proxy
+              // Make the token request via backend proxy. The client-auth
+              // Authorization header is applied AFTER the merge: the merge
+              // strips user-configured Authorization headers so MCP-server
+              // credentials never leak to the AS, but the Basic credential
+              // here IS addressed to the AS (client_secret_basic).
               const response = await executeRequest(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  headers: {
+                    ...mergeHeadersForAuthServer(customHeaders, {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                    }),
+                    ...clientAuth.headers,
+                  },
                   body: tokenRequestBody.toString(),
                 },
               );

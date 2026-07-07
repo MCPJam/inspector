@@ -122,11 +122,6 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
       protocolVersion: "2025-11-25",
       preregisteredClientId: CLIENT_ID,
       preregisteredClientSecret: CLIENT_SECRET,
-      // Pin the AS to client_secret_post so the body-borne secret asserted
-      // below is the spec-correct transport. NOTE: the debug state machines
-      // currently transmit the secret in the body even when the resolved
-      // method is client_secret_basic (no Authorization: Basic header is
-      // built anywhere) — tracked as a follow-up SDK issue.
       tokenEndpointAuthMethodsSupported: ["client_secret_post"],
     });
 
@@ -153,6 +148,102 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
         client_secret: CLIENT_SECRET,
       },
     });
+    expect(getState().lastRequest?.headers).not.toHaveProperty("Authorization");
+  });
+
+  it("sends the secret as an Authorization: Basic header for client_secret_basic (#3034)", async () => {
+    vi.useFakeTimers();
+    const { machine, getState, updateState } = createPreregisteredHarness({
+      protocolVersion: "2025-11-25",
+      preregisteredClientId: CLIENT_ID,
+      preregisteredClientSecret: CLIENT_SECRET,
+      tokenEndpointAuthMethodsSupported: ["client_secret_basic"],
+    });
+
+    await machine.proceedToNextStep();
+    expect(getState().tokenEndpointAuthMethod).toBe("client_secret_basic");
+
+    updateState({
+      currentStep: "received_authorization_code",
+      authorizationCode: "auth-code-123",
+      codeVerifier: "pkce-verifier",
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(getState().currentStep).toBe("token_request");
+    expect(getState().lastRequest?.headers).toMatchObject({
+      Authorization: `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}`,
+    });
+    // With Basic auth the credential rides in the header — the body carries
+    // neither the secret nor the (redundant) client_id.
+    expect(getState().lastRequest?.body).not.toHaveProperty("client_secret");
+    expect(getState().lastRequest?.body).not.toHaveProperty("client_id");
+  });
+
+  it("forwards the Basic header through the debug proxy on the actual exchange", async () => {
+    vi.useFakeTimers();
+    const { authFetch } = await import("@/lib/session-token");
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: { access_token: "tok", token_type: "Bearer" },
+      }),
+    } as unknown as Response);
+
+    const { machine, getState, updateState } = createPreregisteredHarness({
+      protocolVersion: "2025-11-25",
+      preregisteredClientId: CLIENT_ID,
+      preregisteredClientSecret: CLIENT_SECRET,
+      tokenEndpointAuthMethodsSupported: ["client_secret_basic"],
+    });
+
+    await machine.proceedToNextStep();
+    updateState({
+      currentStep: "token_request",
+      authorizationCode: "auth-code-123",
+      codeVerifier: "pkce-verifier",
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(authFetch).toHaveBeenCalled();
+    const proxyPayload = JSON.parse(
+      vi.mocked(authFetch).mock.calls.at(-1)![1]!.body as string,
+    );
+    expect(proxyPayload.headers.Authorization).toBe(
+      `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}`,
+    );
+    expect(proxyPayload.body).not.toHaveProperty("client_secret");
+    expect(getState().accessToken).toBe("tok");
+  });
+
+  it("never transmits the secret when the AS only supports 'none'", async () => {
+    vi.useFakeTimers();
+    const { machine, getState, updateState } = createPreregisteredHarness({
+      protocolVersion: "2025-11-25",
+      preregisteredClientId: CLIENT_ID,
+      preregisteredClientSecret: CLIENT_SECRET,
+      tokenEndpointAuthMethodsSupported: ["none"],
+    });
+
+    await machine.proceedToNextStep();
+    expect(getState().tokenEndpointAuthMethod).toBe("none");
+
+    updateState({
+      currentStep: "received_authorization_code",
+      authorizationCode: "auth-code-123",
+      codeVerifier: "pkce-verifier",
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(getState().lastRequest?.body).toMatchObject({ client_id: CLIENT_ID });
+    expect(getState().lastRequest?.body).not.toHaveProperty("client_secret");
+    expect(getState().lastRequest?.headers).not.toHaveProperty("Authorization");
   });
 
   it("stays a public client when no secret is configured", async () => {
@@ -176,6 +267,7 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
     await machine.proceedToNextStep();
 
     expect(getState().lastRequest?.body).not.toHaveProperty("client_secret");
+    expect(getState().lastRequest?.headers).not.toHaveProperty("Authorization");
   });
 
   it("prefers the profile clientId over a stored DCR client record", async () => {
