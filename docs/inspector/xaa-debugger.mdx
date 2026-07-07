@@ -64,6 +64,11 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 **Authorization Server Rejected the ID-JAG**
 - The AS returned `invalid_grant`. Common causes: MCPJam isn't registered as a trusted issuer, the `aud` claim doesn't match the AS issuer, or the `resource` claim isn't recognized.
 
+**Authorization Server Issuer Mismatch (`409 VALIDATION_ERROR`)**
+- The stored server configuration expects a specific authorization server issuer, but the issuer advertised in the server's metadata is different. The token exchange is aborted and the stored client secret is never sent. The error message names both the expected issuer and the advertised issuer.
+- **To fix:** update the server's Authorization Server issuer setting to match the advertised value, or correct the server URL so it points at the right authorization server.
+- **TLS-proxy variant:** if only the scheme differs (e.g. the stored issuer is `https://` but the metadata advertises `http://`), the authorization server is likely behind a TLS-terminating proxy that advertises an `http://` issuer. Update the issuer in the server config to the `http://` value the metadata actually returns, or configure the authorization server to advertise its public `https://` issuer.
+
 **MCP Server Rejected the Access Token**
 - The AS issued a token but the MCP server returned 401. The `resource` or `aud` claim on the access token likely doesn't match the MCP server's canonical resource URL.
 
