@@ -88,6 +88,27 @@ describe("buildHostProfilesFromCatalog", () => {
     ).toBeUndefined();
   });
 
+  it("falls back to no-claims for a host id colliding with a prototype key", () => {
+    const catalog: HostCompatCatalog = {
+      marketHosts: [
+        {
+          id: "constructor",
+          label: "Constructor",
+          provenance: "probe",
+          rendersMcpApps: true,
+        },
+      ],
+      // No own entry for "constructor" — the lookup must NOT read
+      // Object.prototype.constructor.
+      capabilitiesById: {},
+      openAiCompatByStyle: {},
+    };
+    const [profile] = buildHostProfilesFromCatalog(catalog);
+    expect(profile.capabilities).toBeDefined();
+    expect(profile.capabilities?.serverTools).toBe(false);
+    expect(typeof profile.capabilities).toBe("object");
+  });
+
   it("freezes the input catalog and returns mutable profile copies", () => {
     const catalog = clone(bundledHostCompatCatalog());
     const profiles = buildHostProfilesFromCatalog(catalog);

@@ -85,16 +85,67 @@ export type HostCompatCatalog = {
 const MARKET_HOSTS: readonly (HostCompatCatalogHost & {
   id: HostTemplateId;
 })[] = [
-  { id: "claude", label: "Claude", provenance: "assumed", rendersMcpApps: true },
-  { id: "chatgpt", label: "ChatGPT", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "mistral", label: "Mistral", provenance: "probe", rendersMcpApps: true, supportedProtocolVersions: ["2025-11-25"] },
-  { id: "goose", label: "Goose", provenance: "probe", rendersMcpApps: true, supportedProtocolVersions: ["2025-03-26"] },
+  {
+    id: "claude",
+    label: "Claude",
+    provenance: "assumed",
+    rendersMcpApps: true,
+  },
+  {
+    id: "chatgpt",
+    label: "ChatGPT",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
+  {
+    id: "mistral",
+    label: "Mistral",
+    provenance: "probe",
+    rendersMcpApps: true,
+    supportedProtocolVersions: ["2025-11-25"],
+  },
+  {
+    id: "goose",
+    label: "Goose",
+    provenance: "probe",
+    rendersMcpApps: true,
+    supportedProtocolVersions: ["2025-03-26"],
+  },
   { id: "cursor", label: "Cursor", provenance: "probe", rendersMcpApps: true },
-  { id: "copilot", label: "Copilot", provenance: "vendor-doc", rendersMcpApps: true },
-  { id: "codex", label: "Codex", provenance: "assumed", rendersMcpApps: false, supportedProtocolVersions: ["2025-06-18"] },
-  { id: "n8n", label: "n8n", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-11-25"] },
-  { id: "perplexity", label: "Perplexity", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-06-18"] },
-  { id: "cline", label: "Cline", provenance: "probe", rendersMcpApps: false, supportedProtocolVersions: ["2025-11-25"] },
+  {
+    id: "copilot",
+    label: "Copilot",
+    provenance: "vendor-doc",
+    rendersMcpApps: true,
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    provenance: "assumed",
+    rendersMcpApps: false,
+    supportedProtocolVersions: ["2025-06-18"],
+  },
+  {
+    id: "n8n",
+    label: "n8n",
+    provenance: "probe",
+    rendersMcpApps: false,
+    supportedProtocolVersions: ["2025-11-25"],
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    provenance: "probe",
+    rendersMcpApps: false,
+    supportedProtocolVersions: ["2025-06-18"],
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    provenance: "probe",
+    rendersMcpApps: false,
+    supportedProtocolVersions: ["2025-11-25"],
+  },
 ];
 
 /** Per-host MCP Apps capability matrix (only the rendering hosts need one). */
@@ -192,14 +243,22 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
  * copies on the way out); each call returns fresh profile copies.
  */
 export function buildHostProfilesFromCatalog(
-  catalog: HostCompatCatalog,
+  catalog: HostCompatCatalog
 ): HostCompatProfile[] {
   deepFreeze(catalog);
   return catalog.marketHosts
     .map((host) => {
-      const rendersOpenAiApps =
-        catalog.openAiCompatByStyle[host.id] === true;
+      const rendersOpenAiApps = catalog.openAiCompatByStyle[host.id] === true;
       const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
+      // Own-property check: a host id colliding with an Object.prototype key
+      // (`toString`, `constructor`, …) must fall back to MCP_APPS_NO_CLAIMS,
+      // not read the inherited prototype value.
+      const capabilities =
+        rendersWidgets && Object.hasOwn(catalog.capabilitiesById, host.id)
+          ? catalog.capabilitiesById[host.id]
+          : rendersWidgets
+          ? MCP_APPS_NO_CLAIMS
+          : undefined;
       return {
         id: host.id,
         label: host.label,
@@ -207,9 +266,7 @@ export function buildHostProfilesFromCatalog(
         rendersMcpApps: host.rendersMcpApps,
         rendersOpenAiApps,
         supportedProtocolVersions: host.supportedProtocolVersions,
-        capabilities: rendersWidgets
-          ? (catalog.capabilitiesById[host.id] ?? MCP_APPS_NO_CLAIMS)
-          : undefined,
+        capabilities,
       };
     })
     .map(cloneProfile);
@@ -242,7 +299,7 @@ export interface EvaluateMarketHostsOptions extends EvaluateAllHostsOptions {
  */
 export function evaluateMarketHosts(
   toolsData: HostCompatToolsInput | null | undefined,
-  options?: EvaluateMarketHostsOptions,
+  options?: EvaluateMarketHostsOptions
 ): HostCompatEvaluation {
   const { catalog, ...evaluateOptions } = options ?? {};
   const profiles = catalog
