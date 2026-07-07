@@ -1180,6 +1180,17 @@ export const createDebugOAuthStateMachine = (
               metadata["Registration Endpoint"] =
                 authServerMetadata.registration_endpoint;
             }
+            // CIMD support gates the CIMD registration strategy (see the
+            // client_id_metadata_document_supported check below), so surface it
+            // in the summary. Guard on typeof to distinguish "not advertised"
+            // from an explicit `false`.
+            if (
+              typeof authServerMetadata.client_id_metadata_document_supported ===
+              "boolean"
+            ) {
+              metadata["CIMD Supported"] =
+                authServerMetadata.client_id_metadata_document_supported;
+            }
             if (authServerMetadata.code_challenge_methods_supported) {
               metadata["PKCE Methods"] =
                 authServerMetadata.code_challenge_methods_supported;
