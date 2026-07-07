@@ -85,6 +85,12 @@ export async function discoverServerTargetTokenEndpoint(
   args: {
     resource?: string;
     explicitIssuer?: string;
+    /**
+     * Per-server opt-in: accept an advertised issuer that is a same-origin
+     * path-prefix ancestor of the requested URL (multi-tenant AS deployments
+     * like Scalekit's /resources/res_x). Off = strict RFC 8414 match.
+     */
+    allowPathScopedIssuer?: boolean;
   },
   httpsOnly: boolean
 ): Promise<{ issuer: string; tokenEndpoint: string }> {
@@ -128,19 +134,31 @@ export async function discoverServerTargetTokenEndpoint(
       // abort must NOT wear a 502/504 — CDN edges (Cloudflare in hosted)
       // replace origin 502/504 bodies with their own branded error page, which
       // would hide this message from the user entirely.
-      if (verdict.issuerMismatch) {
-        const { requested, advertised, schemeOnly } = verdict.issuerMismatch;
+      // A same-origin path-prefix "mismatch" is the multi-tenant AS shape
+      // (issuer at the origin root, endpoints scoped under a path). Only the
+      // per-server opt-in accepts it; the origin check still binds the token
+      // endpoint to the issuer's own host, so the secret never crosses
+      // origins.
+      const acceptedPathScoped =
+        args.allowPathScopedIssuer === true &&
+        verdict.issuerMismatch?.originPrefix === true;
+      if (verdict.issuerMismatch && !acceptedPathScoped) {
+        const { requested, advertised, schemeOnly, originPrefix } =
+          verdict.issuerMismatch;
+        const hint = schemeOnly
+          ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
+          : originPrefix
+            ? "The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable \"Path-scoped authorization server\" in the server's XAA settings to allow this."
+            : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
         throw new WebRouteError(
           409,
           ErrorCode.VALIDATION_ERROR,
-          `Authorization server issuer mismatch: the stored config expects "${requested}" but the server's metadata advertises "${advertised}". ` +
-            (schemeOnly
-              ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
-              : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL)."),
+          `Authorization server issuer mismatch: the stored config expects "${requested}" but the server's metadata advertises "${advertised}". ${hint}`,
           {
             requestedIssuer: requested,
             advertisedIssuer: advertised,
             schemeOnly,
+            originPrefix,
           }
         );
       }
@@ -212,6 +230,7 @@ export async function resolveServerTarget(deps: {
     {
       resource: resolved.serverUrl ?? undefined,
       explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
+      allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
     },
     deps.httpsOnly
   );

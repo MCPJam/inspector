@@ -35,6 +35,7 @@ interface InitialFormValues {
   clientCapabilitiesOverrideEnabled: boolean;
   clientCapabilitiesOverrideText: string;
   xaaAuthzIssuer: string;
+  xaaAllowPathScopedIssuer: boolean;
   xaaSubject: string;
   xaaEmail: string;
 }
@@ -151,6 +152,8 @@ export function useServerForm(
   // Cross-App Access (XAA) fields. Client id / secret / scopes are shared with
   // the OAuth preregistered path; these three are XAA-specific.
   const [xaaAuthzIssuer, setXaaAuthzIssuer] = useState("");
+  const [xaaAllowPathScopedIssuer, setXaaAllowPathScopedIssuer] =
+    useState(false);
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
 
@@ -376,6 +379,9 @@ export function useServerForm(
       // record so edit mode round-trips them. Client id / scopes reuse the
       // OAuth-credential reads above.
       setXaaAuthzIssuer(isHttpServer ? server.xaaAuthzIssuer ?? "" : "");
+      setXaaAllowPathScopedIssuer(
+        isHttpServer ? server.xaaAllowPathScopedIssuer === true : false
+      );
       setXaaSubject(server.xaaSubject ?? "");
       setXaaEmail(server.xaaEmail ?? "");
 
@@ -481,6 +487,9 @@ export function useServerForm(
           2
         ),
         xaaAuthzIssuer: isHttpServer ? server.xaaAuthzIssuer ?? "" : "",
+        xaaAllowPathScopedIssuer: isHttpServer
+          ? server.xaaAllowPathScopedIssuer === true
+          : false,
         xaaSubject: server.xaaSubject ?? "",
         xaaEmail: server.xaaEmail ?? "",
       };
@@ -828,6 +837,7 @@ export function useServerForm(
         ? submittedClearClientSecret
         : undefined,
       xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
+      xaaAllowPathScopedIssuer: useXaa ? xaaAllowPathScopedIssuer : undefined,
       // Default the simulated identity to the signed-in user when blank, so the
       // mint asserts a real subject instead of a placeholder test user. The
       // resource server still decides what subject it accepts — this is just a
@@ -908,6 +918,7 @@ export function useServerForm(
         iv.clientCapabilitiesOverrideEnabled ||
       clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       xaaAuthzIssuer !== iv.xaaAuthzIssuer ||
+      xaaAllowPathScopedIssuer !== iv.xaaAllowPathScopedIssuer ||
       xaaSubject !== iv.xaaSubject ||
       xaaEmail !== iv.xaaEmail ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
@@ -983,6 +994,8 @@ export function useServerForm(
     // XAA-specific fields (client id / secret / scopes are shared above)
     xaaAuthzIssuer,
     setXaaAuthzIssuer,
+    xaaAllowPathScopedIssuer,
+    setXaaAllowPathScopedIssuer,
     xaaSubject,
     setXaaSubject,
     xaaEmail,

@@ -894,6 +894,12 @@ export interface ServerFormData {
   /** Optional issuer override for the cross-app authorization test target. */
   xaaAuthzIssuer?: string;
   /**
+   * Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer (multi-tenant AS deployments
+   * like Scalekit). Off = strict RFC 8414 issuer match.
+   */
+  xaaAllowPathScopedIssuer?: boolean;
+  /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive
    * with `useOAuth` — the form only ever sets one.

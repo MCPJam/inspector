@@ -1429,6 +1429,9 @@ export function useServerState({
         ...(serverEntry.xaaAuthzIssuer !== undefined
           ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
           : {}),
+        ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
+          ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
+          : {}),
         ...(serverEntry.useXaa !== undefined
           ? { useXaa: serverEntry.useXaa }
           : {}),
@@ -2243,6 +2246,7 @@ export function useServerState({
             oauthFlowProfile: resolvedOAuthProfile,
             hasClientSecret: existingServer?.hasClientSecret,
             xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
+            xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             lastOAuthTrace: result.oauthTrace,
@@ -2611,6 +2615,9 @@ export function useServerState({
             : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServerForSave?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         authServerMode: formData.useXaa
           ? formData.authServerMode ?? "mcpjam"
@@ -3022,6 +3029,9 @@ export function useServerState({
             : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServer?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         authServerMode: formData.useXaa
           ? formData.authServerMode ?? "mcpjam"
@@ -4477,6 +4487,9 @@ export function useServerState({
           useOAuth: formData.useOAuth ?? false,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
+          xaaAllowPathScopedIssuer:
+            formData.xaaAllowPathScopedIssuer ??
+            originalServer?.xaaAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
           authServerMode: formData.useXaa
             ? formData.authServerMode ?? "mcpjam"
