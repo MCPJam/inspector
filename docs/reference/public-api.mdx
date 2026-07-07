@@ -200,6 +200,12 @@ to be tuned during the preview.
 Each endpoint is fully documented — request and response schemas, examples,
 and an interactive playground — under **Endpoints** in the sidebar.
 
+**Public metadata** — no authentication required:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /host-catalog` | The versioned host-compat catalog (market hosts, capability matrices, OpenAI-compat presets). Public and unauthenticated. Always returns a catalog — `source: "live"` when the backend is reachable, `source: "bundled"` as a fallback. |
+
 **Catalog** — discover the IDs everything else takes:
 
 | Endpoint | What it does |
