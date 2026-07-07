@@ -1,0 +1,127 @@
+---
+title: "Host Compatibility"
+description: "Check whether your MCP server's tools and widgets work on each AI host"
+icon: "layout-grid"
+---
+
+The `compat` command evaluates your MCP server's tools and widgets against the market-host catalog and reports a verdict for each host — Claude, ChatGPT, Cursor, Copilot, Codex, Goose, and more.
+
+## Quick start
+
+```bash
+mcpjam compat --url https://your-server.com/mcp
+```
+
+For a local stdio server:
+
+```bash
+mcpjam compat --command node --args server.js --cwd /path/to/project
+```
+
+## How it works
+
+`mcpjam compat` fetches the live host-compat catalog from MCPJam (2.5 s budget, no authentication required) and evaluates your server's tools against it. If the live catalog is unreachable, the command silently falls back to the bundled catalog that ships with the CLI — you always get verdicts.
+
+A dim status line on stderr tells you which catalog produced the results:
+
+```
+host catalog: live v12
+```
+
+or, when offline or when the fetch fails:
+
+```
+host catalog: bundled
+```
+
+This line is suppressed when `--quiet` is set.
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Only report this host id. Repeat for several. Default: all hosts. |
+| `--offline` | Skip the live catalog fetch and use the bundled catalog (zero MCPJam network). |
+| `--catalog-url <url>` | Base URL to fetch the live host catalog from. Default: the hosted MCPJam API. |
+
+Plus all [shared connection flags](#shared-connection-flags) and [global flags](/cli/overview#global-flags).
+
+## Filter by host
+
+Use `--host` to limit the report to one or more specific hosts:
+
+```bash
+# Single host
+mcpjam compat --url https://your-server.com/mcp --host claude
+
+# Multiple hosts
+mcpjam compat --url https://your-server.com/mcp --host claude --host chatgpt
+```
+
+If you pass an unknown host id, the command fails immediately with the list of valid ids.
+
+## Offline mode
+
+Pass `--offline` to skip the live catalog fetch entirely. No MCPJam network requests are made:
+
+```bash
+mcpjam compat --url https://your-server.com/mcp --offline
+```
+
+## Structured output
+
+With `--format json`, the result includes `catalogSource` and `catalogVersion`:
+
+```bash
+mcpjam compat --url https://your-server.com/mcp --format json
+```
+
+```json
+{
+  "target": "https://your-server.com/mcp",
+  "catalogSource": "live",
+  "catalogVersion": 12,
+  "widgets": {
+    "total": 2,
+    "mcpAppsOnly": 1,
+    "openAiCompatOnly": 0,
+    "both": 1
+  },
+  "hosts": [
+    {
+      "hostId": "claude",
+      "verdict": "compatible",
+      ...
+    }
+  ]
+}
+```
+
+`catalogSource` is `"live"` when the fetch succeeded and `"bundled"` when the bundled fallback was used (offline, fetch failed, or `--offline` passed). `catalogVersion` is the backend publish version when live, or `0` for the bundled fallback.
+
+## Shared connection flags
+
+`compat` uses the same shared target flags as the rest of the CLI:
+
+| Flag | Description |
+|------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
+| `--command <command>` | Command for a stdio server |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+## Related commands
+
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
+- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
+- [Command reference](/cli/reference) — every flag for every command
