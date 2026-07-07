@@ -61,7 +61,9 @@ describe("GET /api/v1/host-catalog", () => {
     const body = await res.json();
     expect(body.source).toBe("live");
     expect(body.version).toBe(3);
-    expect(body.catalog.marketHosts).toHaveLength(10);
+    expect(body.catalog.marketHosts).toHaveLength(
+      bundledHostCompatCatalog().marketHosts.length
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "https://convex-http.example.com/public/host-catalog"
@@ -85,7 +87,9 @@ describe("GET /api/v1/host-catalog", () => {
     const body = await res.json();
     expect(body.source).toBe("bundled");
     expect(body.version).toBe(0);
-    expect(body.catalog.marketHosts).toHaveLength(10);
+    expect(body.catalog.marketHosts).toHaveLength(
+      bundledHostCompatCatalog().marketHosts.length
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
