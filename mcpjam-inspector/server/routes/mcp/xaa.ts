@@ -610,6 +610,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         return toJsonError(error.message, {
           status: error.status,
           code: error.code,
+          details: error.details,
         });
       }
 
@@ -839,6 +840,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         return toJsonError(error.message, {
           status: error.status,
           code: error.code,
+          details: error.details,
         });
       }
       throw error;
