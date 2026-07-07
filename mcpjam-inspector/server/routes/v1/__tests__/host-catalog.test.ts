@@ -46,7 +46,10 @@ describe("GET /api/v1/host-catalog", () => {
   });
 
   afterEach(() => {
-    process.env.CONVEX_HTTP_URL = originalEnv;
+    // Assigning `undefined` would coerce to the string "undefined" and leak a
+    // truthy env into later tests — delete the key when it started unset.
+    if (originalEnv === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalEnv;
     global.fetch = originalFetch;
   });
 
@@ -146,5 +149,32 @@ describe("GET /api/v1/host-catalog", () => {
     expect((await r2.json()).source).toBe("live");
     // Both requests shared ONE upstream fetch, not two.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never serves an older out-of-order upstream envelope as fresh live", async () => {
+    vi.useFakeTimers();
+    try {
+      const app = makeApp();
+      // v3 cached first.
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ ...liveEnvelope(), version: 3 })
+      );
+      await app.request("/api/v1/host-catalog");
+
+      // Past the TTL, a lagged upstream returns an OLDER v2. It must not be
+      // served (nor cached) — the caller still gets the newer v3, and the
+      // cache keeps v3.
+      vi.setSystemTime(Date.now() + 301_000);
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ ...liveEnvelope(), version: 2 })
+      );
+      const res = await app.request("/api/v1/host-catalog");
+      const body = await res.json();
+      expect(body.version).toBe(3);
+      expect(body.source).toBe("live");
+      expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

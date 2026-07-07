@@ -59,16 +59,20 @@ export function useHostCatalog(): HostCatalogState {
       return;
     }
     let mounted = true;
+    // Captured once for this effect run so both the module-cache write and the
+    // local setState below ignore a resolution from a fetch started before a
+    // reset (test isolation) — `mounted` alone only blocks post-unmount writes.
+    const effectGeneration = generation;
     if (!inflight) {
-      const startedGeneration = generation;
       inflight = loadHostCatalog().then((resolved) => {
-        // Drop a resolution from a pre-reset fetch (stale generation).
-        if (startedGeneration === generation) cached = resolved;
+        if (effectGeneration === generation) cached = resolved;
         return resolved;
       });
     }
     void inflight.then((resolved) => {
-      if (mounted && resolved) setState(resolved);
+      if (mounted && resolved && effectGeneration === generation) {
+        setState(resolved);
+      }
     });
     return () => {
       mounted = false;

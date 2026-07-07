@@ -53,7 +53,9 @@ describe("getHostProfiles", () => {
 describe("evaluateAllHosts catalog threading", () => {
   it("no catalog ⇒ bundled market hosts", () => {
     const { reports } = evaluateAllHosts(null, undefined, undefined);
-    expect(reports).toHaveLength(10);
+    // Track the bundled catalog rather than a hard-coded count so this stays
+    // green when MARKET_HOSTS gains/loses a host.
+    expect(reports).toHaveLength(bundledHostCompatCatalog().marketHosts.length);
   });
 
   it("live catalog drives both verdict rows and presentation join", () => {

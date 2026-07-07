@@ -92,20 +92,23 @@ async function fetchUpstreamEnvelope(
 
 /**
  * Refresh the cache from upstream, deduped so only one fetch is in flight at a
- * time. The winner writes the cache only if the fetched version is at least
- * the cached one, so a slower/older response can't clobber a newer catalog.
+ * time. Returns the *effective* fresh envelope to serve, or null when the
+ * fetch failed (caller then serves stale/bundled):
+ *   - fetch OK, newer/equal version → cache it, return it
+ *   - fetch OK, older out-of-order version → keep (and return) the newer
+ *     cached one, so a lagged upstream reply is never served as fresh `live`
+ *   - fetch failed → null
  */
 function refreshCache(convexUrl: string): Promise<CatalogEnvelope | null> {
   if (!inflightRefresh) {
     inflightRefresh = fetchUpstreamEnvelope(convexUrl)
       .then((envelope) => {
-        if (
-          envelope &&
-          (!cache || envelope.version >= cache.envelope.version)
-        ) {
+        if (!envelope) return null;
+        if (!cache || envelope.version >= cache.envelope.version) {
           cache = { envelope, fetchedAt: Date.now() };
         }
-        return envelope;
+        // Serve the freshest we hold — never the just-rejected older one.
+        return cache.envelope;
       })
       .finally(() => {
         inflightRefresh = null;
