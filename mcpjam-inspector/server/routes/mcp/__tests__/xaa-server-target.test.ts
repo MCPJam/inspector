@@ -301,6 +301,58 @@ describe("server-target /proxy/token", () => {
     expect(discoveryUrl).not.toContain("stored-server.example.com");
   });
 
+  it("fail-closes with a 409 naming both issuers when the metadata advertises a different issuer", async () => {
+    // The stored issuer and the metadata's advertised issuer diverge — the
+    // secret must never be posted, and the error must carry both values so
+    // the user can fix the config. The status must stay out of the 502/504
+    // family: CDN edges replace those bodies with a branded error page.
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://stored-server.example.com",
+      xaaAuthzIssuer: "https://stored-issuer.example.com",
+    }));
+    const app = buildApp(resolver);
+
+    let tokenPosted = false;
+    // stubDiscoveryAndToken serves metadata advertising
+    // https://stored-server.example.com — not the stored issuer above.
+    stubDiscoveryAndToken({
+      onTokenPost: () => {
+        tokenPosted = true;
+      },
+    });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("https://stored-issuer.example.com");
+    expect(body.message).toContain("https://stored-server.example.com");
+    expect(body.details).toMatchObject({
+      requestedIssuer: "https://stored-issuer.example.com",
+      advertisedIssuer: "https://stored-server.example.com",
+      schemeOnly: false,
+    });
+    expect(tokenPosted).toBe(false);
+  });
+
   it("returns 404 when no authorization server can be discovered", async () => {
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",

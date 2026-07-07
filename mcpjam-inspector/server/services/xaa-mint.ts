@@ -124,12 +124,24 @@ export async function discoverServerTargetTokenEndpoint(
       });
       // Fail closed on an issuer mismatch: the metadata's advertised issuer
       // differs from the one we asked for, so its token endpoint can't be
-      // trusted with the stored confidential client secret.
+      // trusted with the stored confidential client secret. This deliberate
+      // abort must NOT wear a 502/504 — CDN edges (Cloudflare in hosted)
+      // replace origin 502/504 bodies with their own branded error page, which
+      // would hide this message from the user entirely.
       if (verdict.issuerMismatch) {
+        const { requested, advertised, schemeOnly } = verdict.issuerMismatch;
         throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          "Authorization server metadata issuer does not match the requested issuer"
+          409,
+          ErrorCode.VALIDATION_ERROR,
+          `Authorization server issuer mismatch: the stored config expects "${requested}" but the server's metadata advertises "${advertised}". ` +
+            (schemeOnly
+              ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
+              : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL)."),
+          {
+            requestedIssuer: requested,
+            advertisedIssuer: advertised,
+            schemeOnly,
+          }
         );
       }
       // The AS explicitly declares it doesn't support the jwt-bearer grant —
