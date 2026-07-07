@@ -203,7 +203,8 @@ describe("CreditBalanceCard", () => {
 
     const evalRow = screen.getByTestId("usage-eval-iterations");
     expect(evalRow).toHaveTextContent(/Monthly eval iterations/);
-    expect(evalRow).toHaveTextContent(/7,580 \/ 10,000/);
+    // Remaining / allowed — 10,000 allowed minus 7,580 used.
+    expect(evalRow).toHaveTextContent(/2,420 \/ 10,000/);
     expect(evalRow).not.toHaveTextContent(/Resets/);
   });
 

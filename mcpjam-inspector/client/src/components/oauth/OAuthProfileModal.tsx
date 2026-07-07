@@ -396,6 +396,11 @@ export function OAuthProfileModal({
                         }
                         placeholder="openid profile email"
                         rows={1}
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
                       />
                     </div>
 
@@ -419,6 +424,9 @@ export function OAuthProfileModal({
                           placeholder="Client ID"
                           spellCheck={false}
                           autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                         />
                         <Input
                           type="password"
@@ -431,6 +439,9 @@ export function OAuthProfileModal({
                           }
                           placeholder="Client Secret (optional)"
                           autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                         />
                       </div>
                     </div>

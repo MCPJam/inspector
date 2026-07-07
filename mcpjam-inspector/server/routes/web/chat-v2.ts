@@ -99,7 +99,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required"
+        "messages are required",
       );
     }
 
@@ -108,7 +108,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported"
+        "model is not supported",
       );
     }
 
@@ -136,18 +136,26 @@ chatV2.post("/", async (c) => {
           unknown
         >;
       } else {
-        // Don't fail the chat send on a transient Convex blip — fall
-        // through to client-supplied values and warn. The chat will run
-        // with potentially stale config, which is the current behavior;
-        // the host-side override is best-effort hardening, not a
-        // hard gate.
+        // FAIL CLOSED, matching the host-bound branch below. The fetched
+        // config is the ONLY source of `harness`/`computer` (deliberately
+        // excluded from ExecutionOverrides so the body can't set them) and of
+        // every host-wins protection. Falling back to body values would (a)
+        // silently run a harness-published chatbox on the emulated engine —
+        // misrepresenting the runtime — and (b) let client-supplied
+        // model/approval/server values govern a share-link-reachable turn,
+        // the exact tampered-body window this fetch exists to close.
         logger.warn(
-          "[chat-v2] runtime-config fetch failed; using body values",
+          "[chat-v2] runtime-config fetch failed; failing closed",
           {
             chatboxId,
             status: runtime.status,
             error: runtime.error,
-          }
+          },
+        );
+        throw new WebRouteError(
+          runtime.status >= 500 ? 502 : runtime.status,
+          ErrorCode.INTERNAL_ERROR,
+          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
         );
       }
     } else if (!isChatboxSession && hostId) {
@@ -174,12 +182,12 @@ chatV2.post("/", async (c) => {
             hostId,
             status: runtime.status,
             error: runtime.error,
-          }
+          },
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
         );
       }
     }
@@ -210,7 +218,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -219,7 +227,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -228,7 +236,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -270,7 +278,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
-        }
+        },
       );
       modelDefinition = hostModel;
     }
@@ -304,20 +312,20 @@ chatV2.post("/", async (c) => {
           (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
         modelEligible: isMCPJamProvidedModel(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
         // Canonical id so the adapter's supportsModel check sees the prefixed
         // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
         modelId: getCanonicalModelId(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
       });
       if (!availability.ok) {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
         );
       }
     }
@@ -351,32 +359,28 @@ chatV2.post("/", async (c) => {
         isChatboxSession,
         requireToolApproval,
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      }
+      },
     );
 
-    // Cloud Skills: only when the (server-resolved) host actually has a
-    // computer — the SAME source the bash/computer built-in tool resolves from
-    // (`resolveHostTools` above), so skills wire wherever computer tools do.
-    // Today that's chatbox sessions (the only path that resolves
-    // hostRuntimeConfig); playground/direct host-config resolution lands later.
-    // Guests are excluded, mirroring the `isGuest` gate already applied to the
-    // computer-backed bash tool — a guest share-link/chatbox session must not
-    // be handed E2B skill tools. Loaded lazily so no wake unless a skill tool
-    // is called ("advertise == enforce").
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path wires the listSkills/loadSkill tools for any
     // signed-in member with a project. Gate only on:
     //   - not a guest (a share-link/chatbox guest gets no skill tools), and
-    //   - the turn will NOT run the real Claude Code harness — which delivers
-    //     skills via the adapter `skills` param instead, so advertising the tools
-    //     here would be a prompt/tool mismatch.
-    // The harness runs ONLY for harness:"claude-code" hosts on an MCPJam model; a
-    // BYOK model on such a host still runs emulated (web-chat-turn), so gate on
-    // the actual engine (model), not host config alone.
+    //   - the turn will NOT run a real harness runtime — Claude Code delivers
+    //     skills via the adapter `skills` param instead (Codex delivers none),
+    //     so advertising the tools here would be a prompt/tool mismatch.
+    // The harness runs only for harness hosts on an MCPJam model; a BYOK model
+    // on such a host is rejected by the availability preflight above, so gate
+    // on the actual engine (harness id + canonicalized model), not host config
+    // alone.
     const cloudSkillsEnabled = shouldEnableCloudSkillTools({
       isGuest: Boolean(c.get("guestId")),
       harness: resolvedExecution.harness,
       modelId: String(modelDefinition.id),
+      // Provider is required so bare hosted ids canonicalize — without it a
+      // bare-id harness turn would be mis-detected as emulated and get the
+      // emulated skill tools on top of adapter-delivered skills.
+      provider: modelDefinition.provider,
       hasProjectId: Boolean(hostedBody.projectId),
     });
 
@@ -404,7 +408,7 @@ chatV2.post("/", async (c) => {
         serverNames: selectedServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,
-      }
+      },
     );
     oauthServerUrls = urls;
 
@@ -435,7 +439,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext
+        body.widgetModelContext,
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -495,6 +499,9 @@ chatV2.post("/", async (c) => {
           ...(isChatboxSession && surface ? { surface } : {}),
           chatboxId,
           accessVersion,
+          // Phase 3: forward the runtime-config scope into the harness path
+          // (alongside the bash-tool path threaded above).
+          ...(executionScope ? { executionScope } : {}),
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
@@ -558,7 +565,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
     const routeError = mapRuntimeError(error);
@@ -568,7 +575,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
   }
 });
