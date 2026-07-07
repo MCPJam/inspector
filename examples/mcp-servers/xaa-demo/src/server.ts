@@ -1,8 +1,10 @@
 import express, { type Express } from "express";
 import type { Server } from "node:http";
 import { getConfig, resourceUrl, asIssuer } from "./config.ts";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { verifyIdJag } from "./idjag.ts";
-import { mintAccessToken } from "./access-token.ts";
+import { mintAccessToken, verifyAccessToken } from "./access-token.ts";
+import { buildMcpServer } from "./mcp.ts";
 
 const JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
@@ -68,6 +70,47 @@ export function buildApp(): Express {
         error_description: String((err as Error).message),
       });
     }
+  });
+
+  // The office door: the MCP endpoint. Guarded — it checks the keycard's
+  // stamped address (`aud`) against the address this server requires. Mismatch
+  // → 401 (the bug the how-to teaches). Match → serve MCP.
+  app.post("/mcp", async (req, res) => {
+    const cfg = getConfig();
+    const auth = req.header("authorization");
+    const sendUnauthorized = (desc: string) => {
+      res
+        .status(401)
+        .set(
+          "WWW-Authenticate",
+          `Bearer resource_metadata="${asIssuer(req)}/.well-known/oauth-protected-resource", error="invalid_token", error_description="${desc}"`,
+        )
+        .json({ error: "invalid_token", error_description: desc });
+    };
+    if (!auth?.startsWith("Bearer ")) {
+      return sendUnauthorized("missing bearer token");
+    }
+    try {
+      await verifyAccessToken(auth.slice("Bearer ".length), {
+        issuer: asIssuer(req),
+        audience: cfg.canonicalUrl,
+        secret: cfg.accessTokenSecret,
+      });
+    } catch {
+      return sendUnauthorized(
+        `token audience does not match this server's required audience (${cfg.canonicalUrl})`,
+      );
+    }
+    const server = buildMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
   });
 
   return app;

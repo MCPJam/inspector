@@ -56,6 +56,42 @@ async function startFakeIdp() {
   };
 }
 
+async function getKeycard(
+  app: { url: string },
+  idp: Awaited<ReturnType<typeof startFakeIdp>>,
+) {
+  const assertion = await idp.mint({
+    sub: "user-12345",
+    aud: app.url,
+    resource: `${app.url}/mcp`,
+    client_id: "demo-client",
+  });
+  const res = await fetch(`${app.url}/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+      resource: `${app.url}/mcp`,
+      client_id: "demo-client",
+    }),
+  });
+  return (await res.json()).access_token as string;
+}
+
+function initializeBody() {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id: "1",
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1.0.0" },
+    },
+  });
+}
+
 test("getConfig defaults the canonical URL to the rigged (wrong) value", () => {
   delete process.env.CANONICAL_URL;
   const cfg = getConfig();
@@ -112,6 +148,53 @@ test("/token verifies the pass and mints a keycard bound to the requested resour
     const json = await res.json();
     assert.equal(typeof json.access_token, "string");
     assert.equal(json.token_type, "Bearer");
+  } finally {
+    await app.close();
+    await idp.close();
+  }
+});
+
+test("the door returns 401 when the keycard audience does not match (the rigged bug)", async () => {
+  const idp = await startFakeIdp();
+  const app = await startServer({
+    PORT: "0",
+    CANONICAL_URL: "https://demo.example.com/mcp",
+  });
+  try {
+    const token = await getKeycard(app, idp); // aud = http://localhost:.../mcp
+    const res = await fetch(`${app.url}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: initializeBody(),
+    });
+    assert.equal(res.status, 401);
+  } finally {
+    await app.close();
+    await idp.close();
+  }
+});
+
+test("the door opens (200) when CANONICAL_URL matches the real address (the fix)", async () => {
+  const idp = await startFakeIdp();
+  const app = await startServer({ PORT: "0" });
+  try {
+    // Match the guard to the address the token is actually bound to.
+    process.env.CANONICAL_URL = `${app.url}/mcp`;
+    const token = await getKeycard(app, idp);
+    const res = await fetch(`${app.url}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: initializeBody(),
+    });
+    assert.equal(res.status, 200);
   } finally {
     await app.close();
     await idp.close();
