@@ -1421,6 +1421,11 @@ export function useServerState({
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
           storedOAuthConfig.resourceUrl,
+        // Persist the debugger test-profile choices so the catalog
+        // round-trip doesn't silently reset them to DCR / 2025-11-25.
+        oauthProtocolVersion: serverEntry.oauthFlowProfile?.protocolVersion,
+        oauthRegistrationStrategy:
+          serverEntry.oauthFlowProfile?.registrationStrategy,
         ...(serverEntry.xaaAuthzIssuer !== undefined
           ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
           : {}),

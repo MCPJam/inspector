@@ -1,4 +1,8 @@
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
+import {
+  normalizeOAuthProtocolVersion,
+  normalizeOAuthRegistrationStrategy,
+} from "@/lib/oauth/profile";
 
 type SerializeOptions = {
   /**
@@ -259,13 +263,21 @@ export function deserializeServersFromConvex(
       server.oauthFlowProfile = serverData.oauthFlowProfile;
     }
 
-    // NEW: Handle flat oauthScopes/clientId from servers table
+    // NEW: Handle flat OAuth profile fields from the servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
+    const flatProtocolVersion = normalizeOAuthProtocolVersion(
+      serverData.oauthProtocolVersion,
+    );
+    const flatRegistrationStrategy = normalizeOAuthRegistrationStrategy(
+      serverData.oauthRegistrationStrategy,
+    );
     if (
       serverData.oauthScopes ||
       serverData.clientId ||
       serverData.hasClientSecret ||
-      serverData.oauthResourceUrl
+      serverData.oauthResourceUrl ||
+      flatProtocolVersion ||
+      flatRegistrationStrategy
     ) {
       const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
@@ -277,6 +289,15 @@ export function deserializeServersFromConvex(
         clientSecret: "",
         resourceUrl:
           serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
+        // Persisted debugger test-profile choices. Absent (legacy rows or an
+        // unknown wire value) keeps the legacy-nested value when present and
+        // otherwise falls to the reader-side defaults (DCR / 2025-11-25).
+        ...(flatProtocolVersion
+          ? { protocolVersion: flatProtocolVersion }
+          : {}),
+        ...(flatRegistrationStrategy
+          ? { registrationStrategy: flatRegistrationStrategy }
+          : {}),
       } as typeof server.oauthFlowProfile;
     }
 
