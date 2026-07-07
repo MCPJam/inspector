@@ -6,6 +6,7 @@ import App, {
   ChatboxesRoute,
   CiEvalsRoute,
   ConformanceRoute,
+  CaniuseCapabilityRoute,
   CompatibilityRoute,
   ComputerRoute,
   EvalsRoute,
@@ -83,6 +84,10 @@ export function createAppRouter(): AppRouter {
         // first-run onboarding redirect. `bare` forces the no-sub-nav render
         // even for signed-in users.
         { path: "embed/host-compare", element: <HostCompareRoute bare /> },
+        {
+          path: "capabilities/:capabilitySlug",
+          element: <CaniuseCapabilityRoute />,
+        },
         { path: "computer", element: <ComputerRoute /> },
         { path: "hosts", element: <HostsRoute /> },
         { path: "hosts/:hostId", element: <HostsRoute /> },

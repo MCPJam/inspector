@@ -28,6 +28,7 @@ export const routePaths = {
   hostCompare: "/host-compare",
   /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
   embedHostCompare: "/embed/host-compare",
+  capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
   tools: "/tools",
@@ -307,6 +308,9 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
 
 export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
+  if (pathname.startsWith(`${routePaths.capabilities}/`)) {
+    return "host-compare";
+  }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
   // Unknown first segments include chatbox slugs; App handles those surfaces

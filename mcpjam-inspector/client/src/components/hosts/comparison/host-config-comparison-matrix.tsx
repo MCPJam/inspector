@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Info, X } from "lucide-react";
+import { Info, PlugZap, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Popover,
@@ -22,7 +22,9 @@ import {
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 import { SupportChip } from "./support-chip";
+import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 import {
+  cellPassesSupportFilter,
   computeVisibleFieldIds,
   getCapabilityCaveats,
   getSupportLevel,
@@ -33,6 +35,7 @@ import {
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
+  fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
   /** caniuse-style row filter by aggregate support level. Default `"all"`. */
@@ -49,6 +52,13 @@ interface HostConfigComparisonMatrixProps {
   onRemoveHost?: (hostId: string) => void;
   themeMode?: HostThemeMode;
   mobileOptimized?: boolean;
+  /**
+   * When set, each column header gets a "Verify against your server" action
+   * deep-linking to `<verifyBaseUrl>/hosts?template=<templateId>` — the hosted
+   * app opens (or creates) that client's host. Used only on the public caniuse
+   * surface (`presetOnly`), where every column is a synthetic preset host.
+   */
+  verifyBaseUrl?: string;
 }
 
 /**
@@ -61,6 +71,7 @@ interface HostConfigComparisonMatrixProps {
  */
 export function HostConfigComparisonMatrix({
   subjects,
+  fields = HOST_CONFIG_FIELDS,
   divergingOnly = false,
   supportFilter = "all",
   searchQuery = "",
@@ -68,17 +79,20 @@ export function HostConfigComparisonMatrix({
   onRemoveHost,
   themeMode = "light",
   mobileOptimized = false,
+  verifyBaseUrl,
 }: HostConfigComparisonMatrixProps) {
-  const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
+  const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
 
   const divergingIds = useMemo(() => {
     const set = new Set<string>();
-    for (const field of HOST_CONFIG_FIELDS) {
+    for (const field of fields) {
       if (fieldDiverges(field, configs)) set.add(field.id);
     }
     return set;
-  }, [configs]);
+  }, [configs, fields]);
+  const useCellSupportFilter =
+    searchQuery.trim().length > 0 && supportFilter !== "all";
 
   // Rows surviving the diverging toggle, support filter, and search query.
   // Computed once here so the section/subsection passes stay in lockstep, and
@@ -86,13 +100,33 @@ export function HostConfigComparisonMatrix({
   const visibleFieldIds = useMemo(
     () =>
       computeVisibleFieldIds({
+        fields,
         configs,
         divergingOnly,
-        supportFilter,
+        supportFilter: useCellSupportFilter ? "all" : supportFilter,
         searchQuery,
       }),
-    [configs, divergingOnly, supportFilter, searchQuery]
+    [
+      fields,
+      configs,
+      divergingOnly,
+      supportFilter,
+      searchQuery,
+      useCellSupportFilter,
+    ]
   );
+  const visibleFields = useMemo(
+    () => fields.filter((field) => visibleFieldIds.has(field.id)),
+    [fields, visibleFieldIds]
+  );
+  const displaySubjects = useMemo(() => {
+    if (!useCellSupportFilter) return subjects;
+    return subjects.filter((subject) =>
+      visibleFields.some((field) =>
+        cellPassesSupportFilter(field, subject.config, supportFilter)
+      )
+    );
+  }, [subjects, supportFilter, useCellSupportFilter, visibleFields]);
 
   if (subjects.length === 0) {
     return (
@@ -106,6 +140,14 @@ export function HostConfigComparisonMatrix({
     return (
       <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
         No fields match the current search and filters.
+      </div>
+    );
+  }
+
+  if (displaySubjects.length === 0) {
+    return (
+      <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
+        No clients match the current search and filters.
       </div>
     );
   }
@@ -142,7 +184,7 @@ export function HostConfigComparisonMatrix({
                   : "w-[168px] sm:w-[300px]"
               }
             />
-            {subjects.map((s) => (
+            {displaySubjects.map((s) => (
               <col
                 key={s.hostId}
                 className={
@@ -161,12 +203,13 @@ export function HostConfigComparisonMatrix({
                   Field
                 </span>
               </th>
-              {subjects.map((s) => (
+              {displaySubjects.map((s) => (
                 <HostColumnHeader
                   key={s.hostId}
                   subject={s}
                   onRemove={onRemoveHost}
                   themeMode={themeMode}
+                  verifyBaseUrl={verifyBaseUrl}
                 />
               ))}
             </tr>
@@ -190,7 +233,8 @@ export function HostConfigComparisonMatrix({
                   sectionLabel={group.section.label}
                   divergeCount={groupDivergeCount}
                   subsections={group.subsections}
-                  subjects={subjects}
+                  subjects={displaySubjects}
+                  coverageSubjects={subjects}
                   divergingIds={divergingIds}
                   visibleFieldIds={visibleFieldIds}
                   showDescriptions={showDescriptions}
@@ -214,6 +258,7 @@ interface SectionRowsProps {
     fields: ReadonlyArray<HostConfigFieldDef>;
   }>;
   subjects: ReadonlyArray<HostComparisonSubject>;
+  coverageSubjects: ReadonlyArray<HostComparisonSubject>;
   divergingIds: ReadonlySet<string>;
   visibleFieldIds: ReadonlySet<string>;
   showDescriptions: boolean;
@@ -226,6 +271,7 @@ function SectionRows({
   divergeCount,
   subsections,
   subjects,
+  coverageSubjects,
   divergingIds,
   visibleFieldIds,
   showDescriptions,
@@ -283,6 +329,7 @@ function SectionRows({
             label={sub.label}
             fields={fields}
             subjects={subjects}
+            coverageSubjects={coverageSubjects}
             divergingIds={divergingIds}
             colSpan={colSpan}
             showDescriptions={showDescriptions}
@@ -298,6 +345,7 @@ function SubsectionRows({
   label,
   fields,
   subjects,
+  coverageSubjects,
   divergingIds,
   colSpan,
   showDescriptions,
@@ -306,6 +354,7 @@ function SubsectionRows({
   label: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
+  coverageSubjects: ReadonlyArray<HostComparisonSubject>;
   divergingIds: ReadonlySet<string>;
   colSpan: number;
   showDescriptions: boolean;
@@ -326,6 +375,7 @@ function SubsectionRows({
           key={field.id}
           field={field}
           subjects={subjects}
+          coverageSubjects={coverageSubjects}
           diverges={divergingIds.has(field.id)}
           showDescriptions={showDescriptions}
           mobileOptimized={mobileOptimized}
@@ -338,24 +388,30 @@ function SubsectionRows({
 function FieldRow({
   field,
   subjects,
+  coverageSubjects,
   diverges,
   showDescriptions,
   mobileOptimized,
 }: {
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
+  coverageSubjects: ReadonlyArray<HostComparisonSubject>;
   diverges: boolean;
   showDescriptions: boolean;
   mobileOptimized: boolean;
 }) {
   // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
   const coverage =
-    subjects.length >= 2
+    coverageSubjects.length >= 2
       ? rowCoverage(
           field,
-          subjects.map((s) => s.config)
+          coverageSubjects.map((s) => s.config)
         )
       : null;
+  const labelClassName = cn(
+    "text-[13px] font-medium leading-tight text-foreground",
+    mobileOptimized && "min-w-0 break-words"
+  );
   return (
     <tr className="border-b border-border last:border-b-0">
       <td
@@ -383,14 +439,7 @@ function FieldRow({
             mobileOptimized && "min-w-0"
           )}
         >
-          <span
-            className={cn(
-              "text-[13px] font-medium leading-tight text-foreground",
-              mobileOptimized && "min-w-0 break-words"
-            )}
-          >
-            {field.label}
-          </span>
+          <span className={labelClassName}>{field.label}</span>
           {coverage && (
             <span
               className="text-[10.5px] text-muted-foreground tabular-nums"
@@ -699,10 +748,12 @@ function HostColumnHeader({
   subject,
   onRemove,
   themeMode,
+  verifyBaseUrl,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
   themeMode: HostThemeMode;
+  verifyBaseUrl?: string;
 }) {
   const logoSrc = getChatboxHostLogo(
     subject.hostStyle,
@@ -710,6 +761,7 @@ function HostColumnHeader({
     themeMode
   );
   const reduceMotion = useReducedMotion();
+  const verifyHref = buildVerifyHref(verifyBaseUrl, subject.hostId);
 
   return (
     <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-3 py-3 sm:px-4 sm:py-4 text-left align-top">
@@ -740,14 +792,47 @@ function HostColumnHeader({
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
         <div
-          className="min-w-0 font-medium text-[14px] truncate leading-tight"
+          className="min-w-0 flex-1 font-medium text-[14px] truncate leading-tight"
           title={subject.hostName}
         >
           {subject.hostName}
         </div>
+        {verifyHref ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={verifyHref}
+                data-testid={`host-compare-verify-${subject.hostId}`}
+                aria-label={`Verify ${subject.hostName} against your server`}
+                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <PlugZap className="size-3.5" />
+              </a>
+            </TooltipTrigger>
+            <TooltipContent side="top" variant="muted">
+              Verify against your server
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </motion.div>
     </th>
   );
+}
+
+/**
+ * Deep-link a preset column to the hosted app's "verify" entry point:
+ * `<base>/hosts?template=claude`. Only preset columns carry a template id;
+ * a non-preset host (shouldn't happen on the public surface) falls back to
+ * the bare base URL. Returns null when verification is disabled.
+ */
+function buildVerifyHref(
+  baseUrl: string | undefined,
+  hostId: string
+): string | null {
+  if (!baseUrl) return null;
+  if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return baseUrl;
+  const templateId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
+  return `${baseUrl}/hosts?template=${encodeURIComponent(templateId)}`;
 }
 
 /** Compact one-line rendering of an object entry's value for inline display. */

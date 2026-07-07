@@ -49,6 +49,7 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { CaniuseCapabilityPage } from "./components/hosts/comparison/CaniuseCapabilityPage";
 import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
@@ -207,6 +208,12 @@ import {
   resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
+import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  HOST_TEMPLATES,
+  seedFromHostTemplate,
+  type HostTemplateId,
+} from "@/lib/client-templates";
 import {
   buildHostsPath,
   buildOrganizationPath,
@@ -637,6 +644,12 @@ export function HostsRoute() {
     [navigate]
   );
 
+  useTemplateVerifyDeepLink({
+    isAuthenticated,
+    projectId: convexProjectId,
+    navigate,
+  });
+
   if (!isAuthenticated) {
     return <ServersTabBody />;
   }
@@ -650,6 +663,83 @@ export function HostsRoute() {
       serversTabElement={<ServersTabBody />}
     />
   );
+}
+
+/**
+ * "Verify against your server" deep-link from the public caniuse surface.
+ * `/hosts?template=claude` opens that client's host, creating it from the
+ * template (matched by name) when the account doesn't already have one — then
+ * navigates to `/hosts/:hostId`, which drops the query param. Runs once per
+ * mount; guests are covered because host creation doesn't require a full login.
+ */
+function useTemplateVerifyDeepLink({
+  isAuthenticated,
+  projectId,
+  navigate,
+}: {
+  isAuthenticated: boolean;
+  projectId: string;
+  navigate: (to: string, options?: { replace?: boolean }) => void;
+}) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { hosts, isLoading: hostsLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  const { createHost } = useHostMutations();
+  const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("template");
+    if (!raw) return null;
+    return HOST_TEMPLATES.some((t) => t.id === raw)
+      ? (raw as HostTemplateId)
+      : null;
+  }, []);
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
+    // Wait for the host list before deciding create-vs-open. `useHostList`
+    // stays loading while `projectId` is still a placeholder, so this also
+    // guards `createHost` from firing with a not-yet-real project id.
+    if (hostsLoading) return;
+    const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
+    if (!template) return;
+    handledRef.current = true;
+
+    const existing = hosts.find((h) => h.name === template.label);
+    if (existing) {
+      navigate(buildHostsPath(existing.hostId), { replace: true });
+      return;
+    }
+
+    void (async () => {
+      try {
+        const seed = seedFromHostTemplate(template.id, { theme: themeMode });
+        const { hostId } = await createHost({
+          projectId,
+          name: template.label,
+          input: { ...seed, serverIds: [] },
+        });
+        navigate(buildHostsPath(hostId), { replace: true });
+      } catch (err) {
+        // Let the user retry (e.g. via the same link) after a transient failure.
+        handledRef.current = false;
+        toast.error(
+          err instanceof Error ? err.message : "Couldn't open that client"
+        );
+      }
+    })();
+  }, [
+    requestedTemplateId,
+    isAuthenticated,
+    hostsLoading,
+    hosts,
+    projectId,
+    themeMode,
+    createHost,
+    navigate,
+  ]);
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -711,6 +801,11 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
       <div className="min-h-0 flex-1">{compareView}</div>
     </motion.div>
   );
+}
+
+export function CaniuseCapabilityRoute() {
+  const params = useParams<{ capabilitySlug?: string }>();
+  return <CaniuseCapabilityPage capabilitySlug={params.capabilitySlug} />;
 }
 
 export function ComputerRoute() {
@@ -1384,11 +1479,11 @@ export default function App() {
   const isChatboxChatRoute =
     !exitedChatboxChat && hostedRouteKind === "chatbox";
 
-  // Chrome-less host-compare for vanity domains (caniuse.dev): rendered
-  // full-bleed without the sidebar/header, and the first-run onboarding
-  // redirect is suppressed so guests land directly on the comparison.
-  const isBareCompareRoute =
-    window.location.pathname === routePaths.embedHostCompare;
+  // Chrome-less caniuse.dev surfaces: render full-bleed without the
+  // sidebar/header, and suppress first-run onboarding so guests land directly.
+  const isBareCaniuseRoute =
+    window.location.pathname === routePaths.embedHostCompare ||
+    window.location.pathname.startsWith(`${routePaths.capabilities}/`);
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
@@ -1890,9 +1985,17 @@ export default function App() {
       !areServersHydrated ||
       !activeProjectId ||
       activeProjectId === "none");
+  // A "Verify against your server" deep-link (`/hosts?template=claude`) must
+  // reach HostsRoute so it can open/create that client's host. Without this
+  // guard the first-run onboarding redirect below fires on the fresh load and
+  // navigates to Playground, dropping the `?template` param before it's handled.
+  const hasHostTemplateVerifyParam =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("template");
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
-    !isBareCompareRoute &&
+    !isBareCaniuseRoute &&
+    !hasHostTemplateVerifyParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -3336,8 +3439,8 @@ export default function App() {
     </SidebarProvider>
   );
 
-  // Vanity-domain embed (caniuse.dev): render the matched route
-  // (`HostCompareRoute bare`) full-bleed without the sidebar/header chrome.
+  // Vanity-domain caniuse.dev pages: render the matched route full-bleed
+  // without the sidebar/header chrome.
   // Still nested inside every provider in the return below, so auth, project,
   // and the guest session resolve exactly as on the normal route.
   const bareCompareContent = (
@@ -3426,7 +3529,7 @@ export default function App() {
                     pathToken={chatboxPathToken}
                     onExitChatboxChat={() => setExitedChatboxChat(true)}
                   />
-                ) : isBareCompareRoute ? (
+                ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
                   appContent

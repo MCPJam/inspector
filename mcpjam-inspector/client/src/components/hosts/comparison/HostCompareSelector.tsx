@@ -61,6 +61,7 @@ interface HostCompareSelectorProps {
   onDivergingOnlyChange: (enabled: boolean) => void;
   supportFilter: SupportFilterMode;
   onSupportFilterChange: (mode: SupportFilterMode) => void;
+  supportFiltersDisabled?: boolean;
   showDescriptions: boolean;
   onShowDescriptionsChange: (enabled: boolean) => void;
   descriptionsDisabled?: boolean;
@@ -84,6 +85,7 @@ export function HostCompareSelector({
   onDivergingOnlyChange,
   supportFilter,
   onSupportFilterChange,
+  supportFiltersDisabled = false,
   showDescriptions,
   onShowDescriptionsChange,
   descriptionsDisabled = false,
@@ -196,12 +198,17 @@ export function HostCompareSelector({
         >
           {SUPPORT_FILTERS.map((f) => {
             const active = supportFilter === f.value;
+            const filterDisabled = disabled || supportFiltersDisabled;
             return (
               <button
                 key={f.value}
                 type="button"
-                disabled={disabled}
-                title={f.title}
+                disabled={filterDisabled}
+                title={
+                  supportFiltersDisabled
+                    ? "Search for a capability before filtering by support"
+                    : f.title
+                }
                 aria-pressed={active}
                 data-testid={`support-filter-${f.value}`}
                 onClick={() => onSupportFilterChange(f.value)}

@@ -26,6 +26,7 @@ import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
+import caniuse from "./caniuse.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -94,6 +95,9 @@ web.route("/checks", checks);
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
 web.route("/skills", skills);
+// Public caniuse.dev correction reports. No bearer auth: the vanity compare
+// surface is intentionally anonymous.
+web.route("/caniuse", caniuse);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

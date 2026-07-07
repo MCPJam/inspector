@@ -246,6 +246,51 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.queryByText("Model")).not.toBeInTheDocument();
   });
 
+  it("filters columns instead of rows for searched support filters", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_supported", "Supported Host", {
+            clientCapabilities: { sampling: {} },
+          }),
+          makeSubject("h_missing_a", "Missing A", { clientCapabilities: {} }),
+          makeSubject("h_missing_b", "Missing B", { clientCapabilities: {} }),
+        ]}
+        searchQuery="sampling"
+        supportFilter="missing"
+      />
+    );
+
+    expect(screen.getByText("Sampling")).toBeInTheDocument();
+    expect(screen.queryByText("Supported Host")).not.toBeInTheDocument();
+    expect(screen.getByText("Missing A")).toBeInTheDocument();
+    expect(screen.getByText("Missing B")).toBeInTheDocument();
+    expect(screen.getByTestId("coverage-capabilities.sampling")).toHaveTextContent(
+      "1/3"
+    );
+  });
+
+  it("shows supported columns for searched support filters", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_supported", "Supported Host", {
+            clientCapabilities: { sampling: {} },
+          }),
+          makeSubject("h_missing", "Missing Host", { clientCapabilities: {} }),
+        ]}
+        searchQuery="sampling"
+        supportFilter="supported"
+      />
+    );
+
+    expect(screen.getByText("Supported Host")).toBeInTheDocument();
+    expect(screen.queryByText("Missing Host")).not.toBeInTheDocument();
+    expect(screen.getByTestId("coverage-capabilities.sampling")).toHaveTextContent(
+      "1/2"
+    );
+  });
+
   it("renders column remove buttons when onRemoveHost is provided", async () => {
     const user = userEvent.setup();
     const onRemoveHost = vi.fn();

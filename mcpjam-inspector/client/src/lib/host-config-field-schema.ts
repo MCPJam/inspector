@@ -291,12 +291,12 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
 
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
-  // Agent · Model & sampling
+  // Agent · Agent tooling
   // ============================================================
   {
     id: "modelId",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Model",
     path: "modelId",
     description: "LLM the host runs the agent on.",
@@ -306,7 +306,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "temperature",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Temperature",
     path: "temperature",
     description: "0–1 sampling temperature.",
@@ -316,7 +316,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "requireToolApproval",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Require tool approval",
     path: "requireToolApproval",
     description: "Prompts the user before each tool call.",
@@ -326,7 +326,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "respectToolVisibility",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Respect tool visibility",
     path: "respectToolVisibility",
     description: "SEP-1865 `_meta.ui.visibility` filter.",
@@ -339,7 +339,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "modelVisibleMcpToolResults.directContent.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Make tool image content visible to model",
     path: "modelVisibleMcpToolResults.directContent.image",
     description: "Pass MCP image content from tool results to the model.",
@@ -350,7 +350,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "modelVisibleMcpToolResults.embeddedResources.blob.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Make embedded resource images visible to model",
     path: "modelVisibleMcpToolResults.embeddedResources.blob.image",
     description:
@@ -362,7 +362,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "modelVisibleMcpToolResults.linkedResources.blob.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Make resource link images visible to model",
     path: "modelVisibleMcpToolResults.linkedResources.blob.image",
     description: "Resolve MCP resource link images and pass them to the model.",
@@ -373,7 +373,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "mcpToolResultImageRendering",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Render tool images",
     path: "mcpToolResultImageRendering.placement",
     description: "Human-facing display mode for MCP tool-returned images.",
@@ -387,7 +387,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "mcpToolResultImageRendering.directContent.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Render tool image content",
     path: "mcpToolResultImageRendering.directContent.image",
     description: "Render direct MCP image content from tool results in the UI.",
@@ -398,7 +398,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "mcpToolResultImageRendering.embeddedResources.blob.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Render embedded resource images",
     path: "mcpToolResultImageRendering.embeddedResources.blob.image",
     description:
@@ -410,7 +410,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "mcpToolResultImageRendering.linkedResources.blob.image",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Render resource link images",
     path: "mcpToolResultImageRendering.linkedResources.blob.image",
     description: "Resolve MCP resource link images and render them in the UI.",
@@ -421,7 +421,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "progressiveToolDiscovery",
     section: "agent",
-    subsection: "Model & sampling",
+    subsection: "Agent tooling",
     label: "Progressive tools",
     path: "progressiveToolDiscovery",
     description:
