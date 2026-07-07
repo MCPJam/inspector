@@ -49,8 +49,10 @@ export async function fetchHostCompatCatalog(
   const timeoutMs = options?.timeoutMs ?? 3000;
   // Read the global via `globalThis` (not a bare `fetch`) so a runtime without
   // a fetch binding yields `undefined` instead of a ReferenceError thrown
-  // outside the try — the never-throws contract must hold everywhere.
-  const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
+  // outside the try — the never-throws contract must hold everywhere. Bind the
+  // global to `globalThis` too: a detached `fetch` throws "Illegal invocation"
+  // in browsers/workers when called without its receiver.
+  const fetchImpl = options?.fetchImpl ?? globalThis.fetch?.bind(globalThis);
   if (typeof fetchImpl !== "function") {
     return { ok: false, reason: "network" };
   }
