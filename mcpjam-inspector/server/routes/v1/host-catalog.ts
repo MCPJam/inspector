@@ -106,6 +106,11 @@ function refreshCache(convexUrl: string): Promise<CatalogEnvelope | null> {
         if (!envelope) return null;
         if (!cache || envelope.version >= cache.envelope.version) {
           cache = { envelope, fetchedAt: Date.now() };
+        } else {
+          // Upstream is healthy but returned an older version — keep the newer
+          // cached content, but still refresh its TTL so we don't re-hit
+          // upstream on every subsequent request (cache-thrash).
+          cache.fetchedAt = Date.now();
         }
         // Serve the freshest we hold — never the just-rejected older one.
         return cache.envelope;

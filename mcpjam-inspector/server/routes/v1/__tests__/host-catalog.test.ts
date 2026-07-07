@@ -177,6 +177,14 @@ describe("GET /api/v1/host-catalog", () => {
       expect(body.version).toBe(3);
       expect(body.source).toBe("live");
       expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // The older-response refresh must still bump the TTL — a follow-up
+      // request inside the window is served from cache without re-hitting
+      // upstream (no cache-thrash).
+      const res2 = await app.request("/api/v1/host-catalog");
+      expect((await res2.json()).version).toBe(3);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
